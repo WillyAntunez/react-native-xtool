@@ -114,4 +114,50 @@ describe("doctorWithProbes", () => {
     expect(statusOf(r, "apple-login")).toBe("fail");
     expect(r.ok).toBe(false);
   });
+
+  it("never fails on a ufw query error", async () => {
+    const r = await doctorWithProbes({
+      ...good,
+      ufwActive: async () => {
+        throw new Error("spawn systemctl ENOENT");
+      },
+    });
+    expect(statusOf(r, "firewall")).toBe("ok");
+    expect(r.ok).toBe(true);
+  });
+
+  it("warns, not fails, when listing devices errors", async () => {
+    const r = await doctorWithProbes({
+      ...good,
+      devices: async () => {
+        throw new Error("usbmuxd down");
+      },
+    });
+    expect(r.checks.find((c) => c.name === "device")).toMatchObject({ status: "warn", detail: "usbmuxd down" });
+    expect(r.ok).toBe(true);
+  });
+
+  it("reports a timed-out probe as a failed check", async () => {
+    const r = await doctorWithProbes({
+      ...good,
+      xtoolVersion: async () => {
+        throw new Error("timed out");
+      },
+    });
+    expect(r.checks.find((c) => c.name === "xtool")).toMatchObject({ status: "fail", detail: "timed out" });
+  });
+
+  it("uses the built Metro port in the ufw hint and keeps report order", async () => {
+    const r = await doctorWithProbes({ ...good, ufwActive: async () => true, buildState: async () => ({ metroPort: 8099, lanIp: "1.2.3.4" }) }, "/p");
+    expect(r.checks.find((c) => c.name === "firewall")?.detail).toContain("ufw allow 8099/tcp");
+    expect(r.checks.map((c) => c.name)).toEqual([
+      "node", "swift", "xtool", "darwin-sdk", "apple-login", "device", "firewall", "expo-sdk", "build-state", "metro-port",
+    ]);
+  });
+
+  it("fails build-state when reading it throws", async () => {
+    const r = await doctorWithProbes({ ...good, buildState: async () => { throw new Error("bad json"); } }, "/p");
+    expect(r.checks.find((c) => c.name === "build-state")).toMatchObject({ status: "fail", detail: "bad json" });
+    expect(r.checks.some((c) => c.name === "metro-port")).toBe(false);
+  });
 });

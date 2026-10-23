@@ -35,6 +35,8 @@ export interface DoctorProbes {
   portFree: (port: number) => Promise<boolean>;
 }
 
+const PROBE_TIMEOUT_MS = 15_000;
+
 const SYMBOL = { ok: "✔", fail: "✖", warn: "⚠" } as const;
 
 export function renderReport(checks: DoctorCheck[]): string {
@@ -47,14 +49,20 @@ export function realProbes(config: ExpoXtoolConfig): DoctorProbes {
   const bin = (): string => xtoolBin(config);
   return {
     nodeVersion: () => process.versions.node,
-    swiftVersion: swiftVersionText,
+    swiftVersion: () => swiftVersionText(PROBE_TIMEOUT_MS),
     xtoolInstalled: () => isExecutable(config.xtoolPath ?? xtoolPath()),
     xtoolVersion: async () => {
-      const r = await execa(bin(), ["--version"], { env: toolEnv(), extendEnv: false, reject: false });
+      const r = await execa(bin(), ["--version"], {
+        env: toolEnv(),
+        extendEnv: false,
+        reject: false,
+        timeout: PROBE_TIMEOUT_MS,
+      });
+      if (r.timedOut) throw new Error("timed out");
       return `${r.stdout}\n${r.stderr}`.trim();
     },
     sdkInstalled: () => existsSync(sdkBundle()),
-    authStatus: () => authStatus(bin()),
+    authStatus: () => authStatus(bin(), PROBE_TIMEOUT_MS),
     devices: () => listDevices(bin(), 10_000),
     ufwActive: async () => {
       const r = await execa("systemctl", ["is-active", "ufw"], { reject: false });
@@ -112,33 +120,57 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
   });
   await add("device", async () => {
     if (!p.xtoolInstalled()) return { status: "warn", detail: "xtool not installed" };
-    const [d] = await p.devices();
+    let d: Device | undefined;
+    try {
+      [d] = await p.devices();
+    } catch (e) {
+      return { status: "warn", detail: message(e) };
+    }
     return d
       ? { status: "ok", detail: `${d.name} (${d.transport})` }
       : { status: "warn", detail: "no USB device found — connect and unlock your iPhone" };
   });
-  await add("firewall", async () =>
-    (await p.ufwActive())
-      ? { status: "warn", detail: "ufw is active: allow the Metro port, e.g. sudo ufw allow <port>/tcp" }
-      : { status: "ok", detail: "ufw not active" },
-  );
+  const stateResult =
+    root === undefined
+      ? undefined
+      : await p.buildState(root).then(
+          (state) => ({ state }),
+          (error: unknown) => ({ error }),
+        );
+  const knownPort = stateResult && "state" in stateResult ? stateResult.state?.metroPort : undefined;
+  await add("firewall", async () => {
+    let active: boolean;
+    try {
+      active = await p.ufwActive();
+    } catch {
+      return { status: "ok", detail: "could not query ufw" };
+    }
+    return active
+      ? {
+          status: "warn",
+          detail: `ufw is active: allow the Metro port, e.g. sudo ufw allow ${knownPort ?? "<port>"}/tcp`,
+        }
+      : { status: "ok", detail: "ufw not active" };
+  });
 
-  if (root !== undefined) {
+  if (root !== undefined && stateResult) {
     await add("expo-sdk", async () => {
       await p.expoProject(root);
       return { status: "ok", detail: "supported Expo project" };
     });
-    const state = await p.buildState(root).catch((e: unknown) => e as Error);
-    if (state instanceof Error) {
-      checks.push({ name: "build-state", status: "fail", detail: state.message });
-    } else if (!state) {
-      checks.push({ name: "build-state", status: "warn", detail: "no build yet — run expo-xtool build" });
-    } else {
-      checks.push({ name: "build-state", status: "ok", detail: `port ${state.metroPort}, ip ${state.lanIp}` });
+    await add("build-state", async () => {
+      if ("error" in stateResult) throw stateResult.error;
+      const state = stateResult.state;
+      return state
+        ? { status: "ok", detail: `port ${state.metroPort}, ip ${state.lanIp}` }
+        : { status: "warn", detail: "no build yet — run expo-xtool build" };
+    });
+    if ("state" in stateResult && stateResult.state) {
+      const { metroPort } = stateResult.state;
       await add("metro-port", async () =>
-        (await p.portFree(state.metroPort))
-          ? { status: "ok", detail: `port ${state.metroPort} is free` }
-          : { status: "warn", detail: `port ${state.metroPort} is busy` },
+        (await p.portFree(metroPort))
+          ? { status: "ok", detail: `port ${metroPort} is free` }
+          : { status: "warn", detail: `port ${metroPort} is busy` },
       );
     }
   }

@@ -54,11 +54,16 @@ export function isExecutable(file: string): boolean {
   }
 }
 
-export async function swiftVersionText(): Promise<string | undefined> {
+export async function swiftVersionText(timeoutMs?: number): Promise<string | undefined> {
   try {
-    const { stdout, stderr } = await execa("swift", ["--version"], { env: toolEnv(), extendEnv: false });
+    const { stdout, stderr } = await execa("swift", ["--version"], {
+      env: toolEnv(),
+      extendEnv: false,
+      timeout: timeoutMs,
+    });
     return /Swift version (\d+\.\d+(?:\.\d+)?)/.exec(`${stdout}\n${stderr}`)?.[1];
-  } catch {
+  } catch (e) {
+    if ((e as { timedOut?: boolean }).timedOut) throw new Error("timed out");
     return undefined;
   }
 }
