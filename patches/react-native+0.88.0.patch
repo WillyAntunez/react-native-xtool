@@ -1,8 +1,86 @@
 diff --git a/node_modules/react-native/scripts/spm/read-podspec.js b/node_modules/react-native/scripts/spm/read-podspec.js
-index 8fcf04b..37d6d94 100644
+index 8fcf04b..df95e68 100644
 --- a/node_modules/react-native/scripts/spm/read-podspec.js
 +++ b/node_modules/react-native/scripts/spm/read-podspec.js
-@@ -235,6 +235,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -170,15 +170,72 @@ function cleanupPatchedPodspec(patchedPath /*: ?string */) /*: void */ {
+ // Regex fallback
+ // ---------------------------------------------------------------------------
+ 
++// Ruby constants. Podspecs commonly hoist a glob or extension list into a local
++// and reuse it (react-native-screens: `source_files_exts = '{h,m,mm,cpp}'`,
++// `source_files = ["ios/**/*.#{source_files_exts}"]`, `s.source_files =
++// source_files`). The field regexes below only understand literals, so such a
++// field read as missing and the library scaffolded with no sources.
++//
++// This pre-pass resolves the simple cases textually, so the regexes stay
++// untouched: single-line `ident = 'str' | "str" | ["a", "b"]` assignments are
++// collected (first assignment wins; `if`/`ENV[...]` conditions are NOT
++// evaluated), then `#{ident}` inside the text is replaced by a known string
++// constant, and a field assigned a bare known identifier (`s.x = ident`) is
++// rewritten to the literal value. Unknown interpolations/identifiers are left
++// as they are.
++function resolveRubyConstants(content /*: string */) /*: string */ {
++  const strings /*: Map<string, string> */ = new Map();
++  const arrays /*: Map<string, Array<string>> */ = new Map();
++  const assignRe = /^[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*(.+?)[ \t]*$/gm;
++  for (const m of content.matchAll(assignRe)) {
++    const name = m[1];
++    if (strings.has(name) || arrays.has(name)) continue;
++    const rhs = m[2];
++    const str = rhs.match(/^(?:"([^"]*)"|'([^']*)')$/);
++    if (str != null) {
++      strings.set(name, str[1] ?? str[2]);
++      continue;
++    }
++    const arr = rhs.match(/^\[([^\]]*)\]$/);
++    if (arr != null) {
++      const items = [];
++      for (const it of arr[1].matchAll(/"([^"]*)"|'([^']*)'/g)) {
++        items.push(it[1] ?? it[2]);
++      }
++      arrays.set(name, items);
++    }
++  }
++  if (strings.size === 0 && arrays.size === 0) return content;
++  const interpolate = (text /*: string */) =>
++    text.replace(/#\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}/g, (whole, id) =>
++      strings.has(id) ? (strings.get(id) /*: any */) : whole,
++    );
++  // Constants may be built from earlier ones: resolve the arrays' items too.
++  for (const [k, v] of arrays) arrays.set(k, v.map(interpolate));
++  const quote = (v /*: string */) => JSON.stringify(v);
++  return interpolate(content).replace(
++    /^(\s*(?:s|spec)\.[A-Za-z_]+\s*=\s*)([A-Za-z_][A-Za-z0-9_]*)[ \t]*$/gm,
++    (whole, lhs, id) => {
++      if (strings.has(id)) return lhs + quote((strings.get(id) /*: any */));
++      if (arrays.has(id)) {
++        return lhs + '[' + (arrays.get(id) /*: any */).map(quote).join(', ') + ']';
++      }
++      return whole;
++    },
++  );
++}
++
+ // Comment-only lines are dropped so a commented-out `# s.header_dir` cannot win
+ // over the live one. A trailing `#` and a `#` inside a string survive: only the
+ // first non-whitespace character counts.
+ function readPodspecSource(podspecPath /*: string */) /*: string */ {
+-  return fs
+-    .readFileSync(podspecPath, 'utf8')
+-    .split('\n')
+-    .filter(line => !/^\s*#/.test(line))
+-    .join('\n');
++  return resolveRubyConstants(
++    fs
++      .readFileSync(podspecPath, 'utf8')
++      .split('\n')
++      .filter(line => !/^\s*#/.test(line))
++      .join('\n'),
++  );
+ }
+ 
+ // A subspec that re-binds a receiver the identity regexes trust: inside
+@@ -235,6 +292,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    // Matches:
    //   s.<field> = ["a", "b"]            (array)
    //   s.<field> = "single"              (single value treated as 1-element array)
@@ -10,7 +88,7 @@ index 8fcf04b..37d6d94 100644
    function getArrayField(name /*: string */) /*: Array<string> */ {
      const reArr = new RegExp(`(?:s|spec)\\.${name}\\s*=\\s*\\[([^\\]]*)\\]`);
      const mArr = content.match(reArr);
-@@ -249,6 +250,21 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -249,6 +307,21 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
        }
        return out;
      }

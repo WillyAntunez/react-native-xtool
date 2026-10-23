@@ -1,4 +1,4 @@
-# React Native SwiftPM scaffolder: two generic fixes (0.88.0)
+# React Native SwiftPM scaffolder: three generic fixes (0.88.0)
 
 Both bugs make `react-native spm scaffold` emit an invalid or incomplete `Package.swift` for
 CocoaPods-only libraries such as `react-native-gesture-handler`. The fixes live in
@@ -150,9 +150,39 @@ index cf7e587..5e60de0 100644
            'utf8',
 ```
 
+## 3. `scripts/spm/read-podspec.js`: Ruby local variables on the right-hand side are not resolved
+
+The regex fallback only understands literal strings/arrays. `react-native-screens/RNScreens.podspec`
+hoists its globs into locals:
+
+```ruby
+source_files_exts = '{h,m,mm,cpp}'
+source_files = ["ios/**/*.#{source_files_exts}"]
+s.source_files = source_files
+s.exclude_files = "ios/gamma/**/*.#{source_files_exts}"
+```
+
+Repro (no `pod` on `PATH`):
+
+```js
+require("react-native/scripts/spm/read-podspec.js")
+  .readPodspecCached("node_modules/react-native-screens/RNScreens.podspec")
+  .sourceFiles; // undefined  (expected ["ios/**/*.{h,m,mm,cpp}"])
+```
+
+Effect: the scaffolded `Package.swift` has no `ios/` sources (only the `common` subspec), so the
+app builds but crashes at startup with `Screen native module hasn't been linked`.
+
+Fix: a pre-pass `resolveRubyConstants(content)` over the comment-stripped source. It collects
+single-line `ident = 'str' | "str" | ["a", "b"]` assignments (first wins), replaces `#{ident}` for
+known string constants, and rewrites `s.<field> = ident` to the literal value. Unknown
+interpolations and identifiers are left untouched; `ENV[...]` and `if` conditions are not
+evaluated. The existing field regexes are unchanged. See the `resolveRubyConstants` hunk in
+`patches/react-native+0.88.0.patch`.
+
 ## Tests
 
-`tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks both
+`tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks the
 fixes against fixtures (skipped when the reference app is not present; set `EXPO_XTOOL_REF_APP` to point at it). It also
 asserts that each hunk is present in the installed RN files. Upstream, equivalent tests belong in
 RN's own `__tests__` next to `read-podspec` and `scaffold-package-swift`.

@@ -13,6 +13,7 @@ const RNGH_PODSPEC = path.join(
   APP,
   "node_modules/react-native-gesture-handler/RNGestureHandler.podspec",
 );
+const SCREENS_PODSPEC = path.join(APP, "node_modules/react-native-screens/RNScreens.podspec");
 const available = existsSync(path.join(SPM, "read-podspec.js"));
 
 type Model = { sourceFiles: string[] };
@@ -48,6 +49,9 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
     it("read-podspec.js has the bare-list hunk", () => {
       expect(src("read-podspec.js")).toContain("Ruby bare list without brackets");
     });
+    it("read-podspec.js has the Ruby constants hunk", () => {
+      expect(src("read-podspec.js")).toContain("function resolveRubyConstants");
+    });
     it("scaffold-package-swift.js has the umbrella-header and shim hunks", () => {
       const f = src("scaffold-package-swift.js");
       expect(f).toContain("umbrellaNextToSubdirs");
@@ -75,6 +79,35 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       const globs = load<ReadPodspec>("read-podspec.js").readPodspecCached(RNGH_PODSPEC).sourceFiles;
       expect(globs).toContain("shared/**/*.{h,cpp}");
       expect(globs.length).toBeGreaterThan(1);
+    });
+  });
+
+  describe("read-podspec Ruby constants", () => {
+    const read = (body: string) =>
+      load<ReadPodspec>("read-podspec.js").readPodspecCached(podspec(body)).sourceFiles;
+
+    it("resolves a string constant, interpolation and identifier RHS", () => {
+      expect(
+        read(
+          "exts = '{h,m,mm,cpp}'\n  files = [\"ios/**/*.#{exts}\"]\n  s.source_files = files",
+        ),
+      ).toEqual(["ios/**/*.{h,m,mm,cpp}"]);
+    });
+    it("resolves interpolation in a literal field", () => {
+      expect(read('exts = "{h,m}"\n  s.source_files = "a/*.#{exts}"')).toEqual(["a/*.{h,m}"]);
+    });
+    it("resolves an array constant", () => {
+      expect(read('globs = ["a/*.h", "b/*.m"]\n  s.source_files = globs')).toEqual(["a/*.h", "b/*.m"]);
+    });
+    it("leaves an unknown interpolation as-is", () => {
+      expect(read('s.source_files = "a/*.#{x}"')).toEqual(["a/*.#{x}"]);
+    });
+    it.skipIf(!existsSync(SCREENS_PODSPEC))("reads the real RNScreens podspec", () => {
+      const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(SCREENS_PODSPEC) as Model & {
+        excludeFiles: string[];
+      };
+      expect(m.sourceFiles).toContain("ios/**/*.{h,m,mm,cpp}");
+      expect(m.excludeFiles).toContain("ios/gamma/**/*.{h,m,mm,cpp}");
     });
   });
 
