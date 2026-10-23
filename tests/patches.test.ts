@@ -69,9 +69,9 @@ describe("rnSpmArgs", () => {
 });
 
 describe("patches", () => {
-  it("has exactly 3 patch-package files", () => {
+  it("has exactly 4 patch-package files", () => {
     const files = readdirSync(path.join(packageRoot(), "patches")).filter((f) => f.endsWith(".patch"));
-    expect(files).toHaveLength(3);
+    expect(files).toHaveLength(4);
     for (const f of files) expect(f).toMatch(/^[^+]+\+\d+\.\d+\.\d+\.patch$/);
   });
 
