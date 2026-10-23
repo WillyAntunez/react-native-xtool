@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native/scripts/spm/read-podspec.js b/node_modules/react-native/scripts/spm/read-podspec.js
-index 8fcf04b..76efd91 100644
+index 8fcf04b..3f1c81c 100644
 --- a/node_modules/react-native/scripts/spm/read-podspec.js
 +++ b/node_modules/react-native/scripts/spm/read-podspec.js
 @@ -170,58 +170,261 @@ function cleanupPatchedPodspec(patchedPath /*: ?string */) /*: void */ {
@@ -614,11 +614,30 @@ index 8fcf04b..76efd91 100644
    // Only the spec's own value: a subspec's `header_dir` names that subspec's
    // headers, and several subspecs can disagree.
    function specStringField(key /*: string */) /*: string | null */ {
-@@ -554,7 +918,10 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -544,6 +908,14 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+   // `-D`s are safe to forward; arbitrary flags may be machine- or
+   // example-app-specific. $(inherited), unresolved $(...) tokens, and invalid
+   // C identifiers are skipped.
++  //
++  // `FOLLY_*` defines are never lifted: the prebuilt React Native headers ship
++  // `folly/folly-config.h`, and `FOLLY_NO_CONFIG` (the usual
++  // `folly_compiler_flags`) turns that include off without the full CocoaPods
++  // define set, which breaks the build. What was dropped is named in a warning.
++  const droppedFollyDefines /*: Set<string> */ = new Set();
++  const isFollyDefine = (name /*: string */) /*: boolean */ =>
++    name.startsWith('FOLLY_');
+   function mergePreprocessorDefines() /*: Array<PreprocessorDefine> */ {
+     const out /*: Array<PreprocessorDefine> */ = [];
+     const seen /*: Set<string> */ = new Set();
+@@ -554,7 +926,14 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        config /*: ?('debug' | 'release') */,
      ) => {
        if (!validName.test(name)) return;
 -      if (/\$[({]/.test(name) || (value != null && /\$[({]/.test(value))) {
++      if (isFollyDefine(name)) {
++        droppedFollyDefines.add(value != null ? `${name}=${value}` : name);
++        return;
++      }
 +      if (
 +        /\$[({]|#\{/.test(name) ||
 +        (value != null && /\$[({]|#\{/.test(value))
@@ -626,7 +645,7 @@ index 8fcf04b..76efd91 100644
          return; // unresolved Xcode/Ruby token — don't emit a broken define
        }
        const key = `${name}|${config ?? ''}`;
-@@ -571,6 +938,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -571,6 +950,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        'xcconfig',
        'user_target_xcconfig',
      ];
@@ -647,7 +666,7 @@ index 8fcf04b..76efd91 100644
      for (const layer of layers) {
        if (layer == null || typeof layer !== 'object') continue;
        for (const xcKey of XCCONFIG_KEYS) {
-@@ -648,23 +1029,33 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -648,23 +1041,35 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return Array.from(new Set(out));
    }
  
@@ -691,11 +710,28 @@ index 8fcf04b..76efd91 100644
 +      for (const tok of compilerFlagTokens(layer)) {
 +        // A `-D` already emitted as a `.define(...)` is not repeated as a flag.
 +        if (tok.startsWith('-D') && liftedDefines.has(tok.slice(2))) continue;
++        // A dropped `-DFOLLY_*` is not smuggled back in as a raw flag either.
++        if (tok.startsWith('-DFOLLY_')) continue;
 +        out.push(tok);
        }
      }
      return out;
-@@ -693,6 +1084,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -677,6 +1082,14 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+       ? false
+       : true; // RN ecosystem default
+ 
++  const preprocessorDefines = mergePreprocessorDefines();
++  const compilerFlags = mergeCompilerFlags();
++  if (droppedFollyDefines.size > 0) {
++    warnings.push(
++      `Dropped Folly define(s) ${Array.from(droppedFollyDefines).join(', ')} — the prebuilt React Native headers ship folly-config.h, and defining them without the full CocoaPods set breaks the build.`,
++    );
++  }
++
+   return {
+     name: specStringField('name') ?? '',
+     version: specStringField('version') ?? '',
+@@ -693,13 +1106,24 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      // header_mappings_dir copy step, which SPM has no equivalent for.
      headerMappingsDirs: mergeArrayField('header_mappings_dir'),
      headerDir: specStringField('header_dir'),
@@ -713,7 +749,16 @@ index 8fcf04b..76efd91 100644
      moduleName: specStringField('module_name'),
      frameworks: mergeArrayField('frameworks'),
      weakFrameworks: mergeArrayField('weak_frameworks'),
-@@ -794,12 +1196,13 @@ function readPodspecNames(
+     libraries: mergeArrayField('libraries'),
+     dependencies: mergeDependencies(),
+-    preprocessorDefines: mergePreprocessorDefines(),
+-    compilerFlags: mergeCompilerFlags(),
++    preprocessorDefines,
++    compilerFlags,
+     headerSearchPaths: mergeHeaderSearchPaths(),
+     resources: mergeArrayField('resources'),
+     requiresArc,
+@@ -794,12 +1218,13 @@ function readPodspecNames(
    if (hasShadowingSubspec(source)) {
      return null;
    }
@@ -729,7 +774,7 @@ index 8fcf04b..76efd91 100644
    const name = field('name');
    const moduleName = field('module_name');
 diff --git a/node_modules/react-native/scripts/spm/scaffold-package-swift.js b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
-index cf7e587..e4ad73b 100644
+index cf7e587..541ac33 100644
 --- a/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 +++ b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 @@ -435,7 +435,8 @@ function translatePodspecToSpmTarget(
@@ -838,7 +883,7 @@ index cf7e587..e4ad73b 100644
    const siblingSwiftNames /*: {[npmName: string]: string} */ = {};
    for (const npmName of siblingNames) {
      const resolved = swiftNameByNpm.get(npmName);
-@@ -526,11 +609,35 @@ function translatePodspecToSpmTarget(
+@@ -526,11 +609,40 @@ function translatePodspecToSpmTarget(
      }
    }
  
@@ -850,14 +895,19 @@ index cf7e587..e4ad73b 100644
 +  // its Paper code paths (and Fabric views would be missing at runtime). Added
 +  // only for React Native libraries (`coreReactNative`: React-* dependency,
 +  // `codegenConfig` or `install_modules_dependencies`) and only when the
-+  // podspec did not set it already. The Folly macros are NOT added:
-+  // folly/portability/Config.h includes the prebuilt headers' folly-config.h,
-+  // which already defines FOLLY_MOBILE/FOLLY_USE_LIBCPP/... (defining
-+  // FOLLY_NO_CONFIG would turn that include off).
++  // podspec did not set it already (globally; a config-scoped define does
++  // not count). The Folly macros are NOT added, and the podspec's own
++  // `-DFOLLY_*` are dropped by read-podspec: folly/portability/Config.h
++  // includes the prebuilt headers' folly-config.h, which already defines
++  // FOLLY_MOBILE/FOLLY_USE_LIBCPP/... (defining FOLLY_NO_CONFIG would turn
++  // that include off).
 +  const preprocessorDefines = [...model.preprocessorDefines];
 +  if (
 +    coreReactNative &&
-+    !preprocessorDefines.some(d => d.name === 'RCT_NEW_ARCH_ENABLED')
++    // A Debug-only define must not suppress the global one.
++    !preprocessorDefines.some(
++      d => d.name === 'RCT_NEW_ARCH_ENABLED' && d.config == null,
++    )
 +  ) {
 +    preprocessorDefines.push({
 +      name: 'RCT_NEW_ARCH_ENABLED',
@@ -875,7 +925,7 @@ index cf7e587..e4ad73b 100644
      needsObjCPrefix,
      coreReactNative,
      siblingNames,
-@@ -540,6 +647,7 @@ function translatePodspecToSpmTarget(
+@@ -540,6 +652,7 @@ function translatePodspecToSpmTarget(
      compilerFlags: model.compilerFlags,
      publicHeadersPath,
      namespacedShimHeaders,
@@ -883,7 +933,7 @@ index cf7e587..e4ad73b 100644
      resources: model.resources,
      warnings,
    };
-@@ -1099,16 +1207,34 @@ function scaffoldPackageSwiftForDep(
+@@ -1099,16 +1212,34 @@ function scaffoldPackageSwiftForDep(
        const shimDir = path.join(dep.root, 'include', spec.swiftName);
        fs.mkdirSync(shimDir, {recursive: true});
        for (const header of spec.namespacedShimHeaders) {

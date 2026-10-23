@@ -273,13 +273,17 @@ unresolved ones). `mergePreprocessorDefines` also lifts `-D` tokens from `compil
 `mergeCompilerFlags` no longer repeats a lifted `-D` as an unsafe flag. In
 `translatePodspecToSpmTarget`, a React Native library (`coreReactNative`: React-* dependency,
 `codegenConfig`, or `install_modules_dependencies`) gets `.define("RCT_NEW_ARCH_ENABLED", to: "1")`
-unless the podspec already defines it.
+unless the podspec already defines it globally (a per-configuration define does not count).
 
 Why only that macro: CocoaPods' `computeFlags` (`scripts/cocoapods/new_architecture.rb`) adds
 `-DRCT_NEW_ARCH_ENABLED=1` and expo's autolinking emits the same define for its own targets. The
 Folly macros (`FOLLY_MOBILE`, `FOLLY_USE_LIBCPP`, `FOLLY_CFG_NO_COROUTINES`,
 `FOLLY_HAVE_CLOCK_GETTIME`) come from `folly/folly-config.h`, which `folly/portability/Config.h`
 includes from the prebuilt headers; defining `FOLLY_NO_CONFIG` would switch that include off.
+Consequently the lifting step drops `FOLLY_NO_CONFIG` and every other `FOLLY_*` define found in
+`compiler_flags` / xcconfigs (the usual `folly_compiler_flags`), also from the raw flags, and
+records one warning naming what was dropped. Defining `FOLLY_NO_CONFIG` without the full CocoaPods
+set breaks the build.
 `REACT_NATIVE_MINOR_VERSION` is not an RN-defined macro (react-native-svg computes it in its own
 podspec) and is not added.
 

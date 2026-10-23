@@ -342,6 +342,32 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       const defs = scaffold('s.compiler_flags = "-DRCT_NEW_ARCH_ENABLED=1"\n  s.dependency "React-Core"');
       expect(names(defs).filter((n) => n.startsWith("RCT_NEW_ARCH_ENABLED"))).toEqual(["RCT_NEW_ARCH_ENABLED=1"]);
     });
+    it("a Debug-only RCT_NEW_ARCH_ENABLED does not suppress the global one", () => {
+      const defs = scaffold(
+        's.dependency "React-Core"\n  s.pod_target_xcconfig = { "GCC_PREPROCESSOR_DEFINITIONS[config=*Debug*]" => "RCT_NEW_ARCH_ENABLED=1" }',
+      );
+      const arch = defs.filter((d) => d.name === "RCT_NEW_ARCH_ENABLED");
+      expect(arch.map((d) => d.config).sort()).toEqual(["debug", null].sort());
+    });
+    it("never lifts FOLLY_* defines from compiler flags, and warns once", () => {
+      const m = model(
+        's.compiler_flags = "-DFOLLY_NO_CONFIG -DFOLLY_MOBILE=1 -DKEEP=1 -Wno-comma"',
+      ) as Model & { warnings: string[] };
+      expect(names(m.preprocessorDefines)).toEqual(["KEEP=1"]);
+      expect(m.compilerFlags).toEqual(["-Wno-comma"]);
+      const w = m.warnings.filter((x) => x.startsWith("Dropped Folly define(s)"));
+      expect(w).toHaveLength(1);
+      expect(w[0]).toContain("FOLLY_NO_CONFIG");
+      expect(w[0]).toContain("FOLLY_MOBILE=1");
+    });
+    it("drops FOLLY_* from an xcconfig and from a constant-held flag string", () => {
+      const m = model(
+        "folly_flags = '-DFOLLY_NO_CONFIG -DFOLLY_USE_LIBCPP=1'\n  s.compiler_flags = folly_flags\n" +
+          '  s.pod_target_xcconfig = { "GCC_PREPROCESSOR_DEFINITIONS" => "FOLLY_CFG_NO_COROUTINES=1 OK=1" }',
+      );
+      expect(names(m.preprocessorDefines)).toEqual(["OK=1"]);
+      expect(m.compilerFlags).toEqual([]);
+    });
     it("does not add it to a library that is not React Native", () => {
       expect(names(scaffold('s.compiler_flags = "-DFOO=1"'))).toEqual(["FOO=1"]);
     });
