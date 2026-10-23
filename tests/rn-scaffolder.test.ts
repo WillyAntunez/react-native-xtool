@@ -373,6 +373,79 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
     });
   });
 
+  describe("Metal shaders", () => {
+    type MetalSpec = Spec & { sources: string[]; excludePaths: string[] };
+    function lib(sourceGlob: string): { model: Model; dep: Dep } {
+      const root = tempDir();
+      for (const f of ["apple/Foo.m", "apple/Foo.h", "apple/Filters/A.metal", "apple/Filters/B.metal"]) {
+        mkdirSync(path.dirname(path.join(root, f)), { recursive: true });
+        writeFileSync(path.join(root, f), "");
+      }
+      writeFileSync(
+        path.join(root, "Foo.podspec"),
+        `Pod::Spec.new do |s|\n  s.name = "Foo"\n  s.source_files = "${sourceGlob}"\nend\n`,
+      );
+      const model = load<ReadPodspec>("read-podspec.js").readPodspecCached(path.join(root, "Foo.podspec"));
+      return { model, dep: { name: "foo", root, swiftName: "Foo", platforms: { ios: {} } } };
+    }
+    function withPlatform<T>(platform: string, fn: () => T): T {
+      const original = Object.getOwnPropertyDescriptor(process, "platform")!;
+      Object.defineProperty(process, "platform", { value: platform });
+      try {
+        return fn();
+      } finally {
+        Object.defineProperty(process, "platform", original);
+      }
+    }
+    const translate = (glob: string, platform: string) => {
+      const { model, dep } = lib(glob);
+      return withPlatform(platform, () =>
+        load<Scaffold>("scaffold-package-swift.js").translatePodspecToSpmTarget(model, dep),
+      ) as MetalSpec;
+    };
+
+    it("excludes .metal files and warns when the host is not macOS", () => {
+      const spec = translate("apple/**/*.{h,m}", "linux");
+      expect(spec.excludePaths).toEqual(["apple/Filters/A.metal", "apple/Filters/B.metal"]);
+      expect(spec.warnings).toContain(
+        "Skipped 2 Metal shader(s) (A.metal, B.metal) — the Metal compiler is only available on macOS; features relying on them are unavailable in this build.",
+      );
+    });
+    it("also removes .metal files that a source glob selects", () => {
+      const spec = translate("apple/**/*.{h,m,metal}", "linux");
+      expect(spec.sources.some((f) => f.endsWith(".metal"))).toBe(false);
+      expect(spec.excludePaths).toHaveLength(2);
+    });
+    it("keeps the current behaviour on macOS", () => {
+      const spec = translate("apple/**/*.{h,m,metal}", "darwin");
+      expect(spec.excludePaths).toEqual([]);
+      expect(spec.sources.filter((f) => f.endsWith(".metal"))).toHaveLength(2);
+      expect(spec.warnings.some((w) => w.includes("Metal"))).toBe(false);
+    });
+    it("skips on macOS too with RN_SPM_SKIP_METAL=1", () => {
+      process.env["RN_SPM_SKIP_METAL"] = "1";
+      try {
+        expect(translate("apple/**/*.{h,m}", "darwin").excludePaths).toHaveLength(2);
+      } finally {
+        delete process.env["RN_SPM_SKIP_METAL"];
+      }
+    });
+    it("emits an exclude: list in Package.swift", () => {
+      const { dep } = lib("apple/**/*.{h,m}");
+      const full = {
+        ...dep,
+        swiftNameSource: "podspec",
+        platforms: { ios: { podspecPath: path.join(dep.root, "Foo.podspec") } },
+      };
+      const ctx = { appRoot: dep.root, projectRoot: dep.root, reactNativeRoot: dep.root, force: true, dryRun: false, cacheSlotLabel: null, remote: null };
+      withPlatform("linux", () =>
+        load<{ scaffoldPackageSwiftForDep(d: object, c: object): unknown }>("scaffold-package-swift.js").scaffoldPackageSwiftForDep(full, ctx),
+      );
+      const pkg = readFileSync(path.join(dep.root, "Package.swift"), "utf8");
+      expect(pkg).toContain('exclude: ["apple/Filters/A.metal", "apple/Filters/B.metal"]');
+    });
+  });
+
   describe("umbrella header layout", () => {
     function analyse(files: string[], dirs: string[]): Spec {
       const root = tempDir();

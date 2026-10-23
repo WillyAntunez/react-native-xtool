@@ -14,7 +14,7 @@ Legend: ✅ works · ⚠️ works with caveats · ❌ fails · ⏳ not tested ye
 | react-native-gesture-handler | 3.3.0 | CocoaPods-only → scaffold | ✅ 2026-10-23 (auto-scaffold + patched scaffolder) | ✅ 2026-10-23 | RN scaffolder bugs found: (1) `read-podspec` keeps only the first value of `s.source_files = "a", "b"` (lost `shared/**`); (2) `publicHeadersPath: "apple"` holds an umbrella header next to subdirs → SwiftPM rejects; using the `include/<Name>/` shim fixes it. Both are generic → patched in expo-xtool and to be upstreamed to RN |
 | react-native-reanimated (+ worklets) | 4.7.1 (+ worklets 0.13.0) | ships Package.swift (self-managed) | ✅ 2026-10-23 | ✅ 2026-10-23 | manifest uses CFGetTypeID → fails on Linux host; patched (project `patches/`), upstream PR pending; see `docs/upstream/reanimated-worklets-manifest.md` |
 | expo-router | | | ⏳ | ⏳ | needs screens + safe-area-context |
-| react-native-svg | | | ⏳ | ⏳ | |
+| react-native-svg | 15.16.0 | CocoaPods-only → scaffold | ⏳ | ⏳ | Linux host: the `apple/Filters/MetalCI/*.metal` shaders (custom filter effects) are skipped by the patched scaffolder (`exclude:` in Package.swift) because SwiftPM cannot run the `metal` compiler; other rendering is unaffected, features relying on those shaders are unavailable. Set `RN_SPM_SKIP_METAL=1` to force the same on macOS |
 | react-native-webview | | | ⏳ | ⏳ | |
 | expo-notifications (local) | | | ⏳ | ⏳ | remote push needs a paid Apple account |
 | expo-secure-store | | | ⏳ | ⏳ | |

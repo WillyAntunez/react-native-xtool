@@ -128,6 +128,10 @@ Details and file locations: [docs/recipe.md](docs/recipe.md). Design:
 - **"No script URL" with a VPN on:** expo-xtool bakes in the IP of your default route; a VPN can make that a tunnel
   address (`tun0`, `wg0`, `tailscale0`) the phone cannot reach. `build` and `doctor` warn about it; set `lanIp` in
   `expo-xtool.config.json` to your Wi‑Fi address and rebuild.
+- **Metal shaders are skipped on Linux:** a library that ships `.metal` files (react-native-svg's `MetalCI` filters)
+  would fail the build with `unable to spawn process 'metal'`, because the Metal compiler only exists on macOS. The
+  scaffolder excludes them and prints `Skipped N Metal shader(s)`; the library works, but features that rely on those
+  shaders are unavailable in the build.
 - **Firewall:** ufw blocks Metro by default: `sudo ufw allow <port>/tcp`.
 - **A committed project patch no longer applies** (after a library upgrade): delete it from `patches/` and let
   `expo-xtool build` re-scaffold it.
