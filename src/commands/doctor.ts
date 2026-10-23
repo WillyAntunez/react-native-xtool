@@ -5,9 +5,9 @@ import { projectPaths } from "../paths.js";
 import { readExpoProject } from "../project.js";
 import { readState } from "../state.js";
 import { toolEnv } from "../tools/exec.js";
-import { authStatus, listDevices, xtoolBin, xtoolUnrunnableError, type AuthStatus, type Device } from "../tools/xtool.js";
+import { authStatus, listDevices, defaultXtoolPath, xtoolBin, xtoolUnrunnableError, type AuthStatus, type Device } from "../tools/xtool.js";
 import { XTOOL_VERSION, SWIFT_VERSION } from "../versions.js";
-import { isExecutable, sdkBundle, swiftMeetsMin, swiftVersionText, xtoolPath } from "./setup.js";
+import { isExecutable, sdkBundle, swiftMeetsMin, swiftVersionText } from "./setup.js";
 import { existsSync } from "node:fs";
 
 export interface DoctorCheck {
@@ -52,8 +52,8 @@ export function realProbes(config: ExpoXtoolConfig): DoctorProbes {
   return {
     nodeVersion: () => process.versions.node,
     swiftVersion: () => swiftVersionText(PROBE_TIMEOUT_MS),
-    xtoolPath: () => config.xtoolPath ?? xtoolPath(),
-    xtoolInstalled: () => isExecutable(config.xtoolPath ?? xtoolPath()),
+    xtoolPath: () => config.xtoolPath ?? defaultXtoolPath(),
+    xtoolInstalled: () => isExecutable(config.xtoolPath ?? defaultXtoolPath()),
     xtoolVersion: async () => {
       const r = await execa(bin(), ["--version"], {
         env: toolEnv(),

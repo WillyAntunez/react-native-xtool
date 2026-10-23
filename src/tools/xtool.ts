@@ -17,8 +17,13 @@ export interface Device {
   transport: string;
 }
 
+/** Where `expo-xtool setup` downloads the pinned xtool AppImage. */
+export function defaultXtoolPath(): string {
+  return join(cacheDir(), `xtool-${XTOOL_VERSION}.AppImage`);
+}
+
 export function xtoolBin(config: ExpoXtoolConfig): string {
-  const bin = config.xtoolPath ?? join(cacheDir(), `xtool-${XTOOL_VERSION}.AppImage`);
+  const bin = config.xtoolPath ?? defaultXtoolPath();
   try {
     accessSync(bin, constants.X_OK);
   } catch {

@@ -67,6 +67,27 @@ describe("preflightSdk", () => {
   });
 });
 
+describe("setup config handling", () => {
+  it("probes and hints with the configured xtoolPath and skips the download", async () => {
+    const probe = vi.fn(async () => ({ ...all, loggedIn: false }));
+    const log = vi.fn();
+    await setup({ xtoolPath: "/opt/xtool" }, { probe, log });
+    expect(probe).toHaveBeenCalledWith("/opt/xtool");
+    expect(log).toHaveBeenCalledWith("Run: /opt/xtool auth login");
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("xtool 1.23.0"));
+  });
+  it("fails when the configured xtoolPath is not executable", async () => {
+    const probe = async () => ({ ...all, hasXtool: false });
+    await expect(setup({ xtoolPath: "/opt/xtool" }, { probe, log: vi.fn() })).rejects.toThrow("/opt/xtool");
+  });
+  it("uses the xip passed in opts for the preflight", async () => {
+    const preflightProbes = { exists: () => false, freeBytes: async () => 20 * 1024 ** 3 };
+    await expect(
+      setup({ xcodeXip: "/cfg.xip" }, { probe: async () => ({ ...all, hasSdk: false }), preflightProbes, log: vi.fn() }),
+    ).rejects.toThrow("Xcode xip not found: /cfg.xip");
+  });
+});
+
 describe("login probe", () => {
   it("propagates an unrunnable xtool instead of reporting logged out", async () => {
     const dir = mkdtempSync(join(tmpdir(), "xtool-setup-"));

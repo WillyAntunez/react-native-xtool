@@ -6,7 +6,7 @@ import path from "node:path";
 import { cacheDir } from "../paths.js";
 import { downloadFile } from "../tools/download.js";
 import { run, toolEnv } from "../tools/exec.js";
-import { authStatus } from "../tools/xtool.js";
+import { authStatus, defaultXtoolPath } from "../tools/xtool.js";
 import { SWIFT_VERSION, XTOOL_VERSION } from "../versions.js";
 
 export type SetupAction = "install-swift" | "download-xtool" | "install-sdk" | "login-hint";
@@ -17,7 +17,7 @@ export interface SetupState {
   loggedIn: boolean;
 }
 export interface SetupDeps {
-  probe: () => Promise<SetupState>;
+  probe: (xtoolBin: string) => Promise<SetupState>;
   preflightProbes: Parameters<typeof preflightSdk>[1];
   log: (line: string) => void;
 }
@@ -43,7 +43,6 @@ export function swiftlyDownloadUrl(arch: string = linuxArch()): string {
   return `https://download.swift.org/swiftly/linux/swiftly-${arch}.tar.gz`;
 }
 
-export const xtoolPath = (): string => path.join(cacheDir(), `xtool-${XTOOL_VERSION}.AppImage`);
 export const sdkBundle = (): string => path.join(homedir(), ".swiftpm", "swift-sdks", "darwin.artifactbundle");
 
 export function isExecutable(file: string): boolean {
@@ -81,17 +80,17 @@ async function swiftOk(): Promise<boolean> {
   return v !== undefined && swiftMeetsMin(v);
 }
 
-export async function loggedIn(bin: string = xtoolPath()): Promise<boolean> {
+export async function loggedIn(bin: string): Promise<boolean> {
   if (!isExecutable(bin)) return false;
   return (await authStatus(bin)).loggedIn;
 }
 
-export async function probeSetupState(): Promise<SetupState> {
+export async function probeSetupState(bin: string): Promise<SetupState> {
   return {
     hasSwift: await swiftOk(),
-    hasXtool: isExecutable(xtoolPath()),
+    hasXtool: isExecutable(bin),
     hasSdk: existsSync(sdkBundle()),
-    loggedIn: await loggedIn(),
+    loggedIn: await loggedIn(bin),
   };
 }
 
@@ -130,9 +129,9 @@ export async function preflightSdk(
   }
 }
 
-async function installSdk(xip: string, log: (l: string) => void): Promise<void> {
+async function installSdk(bin: string, xip: string, log: (l: string) => void): Promise<void> {
   log(`Installing Darwin SDK from ${xip} (this takes several minutes and ~7 GB)`);
-  await run(xtoolPath(), ["sdk", "install", xip]);
+  await run(bin, ["sdk", "install", xip]);
 }
 
 async function step(name: string, log: (l: string) => void, fn: () => Promise<void>): Promise<void> {
@@ -146,11 +145,15 @@ async function step(name: string, log: (l: string) => void, fn: () => Promise<vo
 }
 
 export async function setup(
-  opts: { xcodeXip?: string },
+  opts: { xcodeXip?: string; xtoolPath?: string },
   deps: Partial<SetupDeps> = {},
 ): Promise<void> {
   const log = deps.log ?? ((l: string) => console.log(l));
-  const state = await (deps.probe ?? probeSetupState)();
+  const bin = opts.xtoolPath ?? defaultXtoolPath();
+  const state = await (deps.probe ?? probeSetupState)(bin);
+  if (opts.xtoolPath && !state.hasXtool) {
+    throw new Error(`xtoolPath is set to ${bin} but it does not exist or is not executable`);
+  }
   const actions = planSetup(state);
   if (actions.length === 0) {
     log("✔ Nothing to do: toolchain already set up");
@@ -164,14 +167,14 @@ export async function setup(
         break;
       case "download-xtool":
         await step(`xtool ${XTOOL_VERSION}`, log, () =>
-          downloadFile(xtoolDownloadUrl(), xtoolPath(), { mode: 0o755 }),
+          downloadFile(xtoolDownloadUrl(), bin, { mode: 0o755 }),
         );
         break;
       case "install-sdk":
-        await step("Darwin SDK", log, () => installSdk(opts.xcodeXip!, log));
+        await step("Darwin SDK", log, () => installSdk(bin, opts.xcodeXip!, log));
         break;
       case "login-hint":
-        log(`Run: ${xtoolPath()} auth login`);
+        log(`Run: ${bin} auth login`);
         break;
     }
   }

@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { Command } from "commander";
 import { existsSync } from "node:fs";
+import { loadConfig } from "./config.js";
 import { build } from "./commands/build.js";
 import { doctor, renderReport } from "./commands/doctor.js";
 import { install } from "./commands/install.js";
@@ -33,7 +34,8 @@ export function buildProgram(): Command {
     .option("--xcode-xip <path>", "path to Xcode.xip (needed to install the Darwin SDK)")
     .action(
       action(async (o: { xcodeXip?: string }) => {
-        await setup({ xcodeXip: o.xcodeXip });
+        const config = await loadConfig(process.cwd());
+        await setup({ xcodeXip: o.xcodeXip ?? config.xcodeXipPath, xtoolPath: config.xtoolPath });
       }),
     );
   program
