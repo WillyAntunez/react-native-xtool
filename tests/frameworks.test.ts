@@ -1,8 +1,8 @@
 import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import os, { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { jsiFramework, readFlavoredFrameworks, stageFrameworks } from "../src/frameworks.js";
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
@@ -10,6 +10,7 @@ const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtur
 const tempDirs: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(tempDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
 });
 
@@ -97,15 +98,38 @@ describe("stageFrameworks", () => {
     await expect(lstat(path.join(dest, "stale"))).rejects.toThrow();
   });
 
-  it.each([
-    ["a relative path", "."],
-    ["the filesystem root", path.parse(tmpdir()).root],
-    ["the home directory", homedir()],
-    ["the working directory", process.cwd()],
-  ])("refuses %s", async (_label, dir) => {
-    await expect(stageFrameworks([], dir)).rejects.toThrow(
-      `Refusing to stage frameworks into unsafe directory: ${dir}`,
-    );
-    await expect(lstat(dir)).resolves.toBeDefined();
+  const unsafe = (dir: string) => `Refusing to stage frameworks into unsafe directory: ${dir}`;
+
+  async function sandbox(): Promise<{ dir: string; sentinel: string }> {
+    const dir = await tempDir();
+    const sentinel = path.join(dir, "sentinel");
+    await writeFile(sentinel, "keep");
+    return { dir, sentinel };
+  }
+
+  it("refuses the filesystem root", async () => {
+    const root = path.parse(tmpdir()).root;
+    await expect(stageFrameworks([], root)).rejects.toThrow(unsafe(root));
+  });
+
+  it("refuses the home directory", async () => {
+    const { dir, sentinel } = await sandbox();
+    vi.spyOn(os, "homedir").mockReturnValue(dir);
+    await expect(stageFrameworks([], dir)).rejects.toThrow(unsafe(dir));
+    await expect(lstat(sentinel)).resolves.toBeDefined();
+  });
+
+  it("refuses the working directory", async () => {
+    const { dir, sentinel } = await sandbox();
+    vi.spyOn(process, "cwd").mockReturnValue(dir);
+    await expect(stageFrameworks([], dir)).rejects.toThrow(unsafe(dir));
+    await expect(lstat(sentinel)).resolves.toBeDefined();
+  });
+
+  it("refuses a relative path", async () => {
+    const { dir, sentinel } = await sandbox();
+    vi.spyOn(process, "cwd").mockReturnValue(dir);
+    await expect(stageFrameworks([], ".")).rejects.toThrow(unsafe("."));
+    await expect(lstat(sentinel)).resolves.toBeDefined();
   });
 });

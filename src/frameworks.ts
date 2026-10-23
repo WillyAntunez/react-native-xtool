@@ -1,6 +1,6 @@
 import { cp, mkdir, rm } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import os from "node:os";
 import path from "node:path";
 
 export interface RuntimeFramework {
@@ -82,7 +82,7 @@ export async function stageFrameworks(frameworks: RuntimeFramework[], destDir: s
     !path.isAbsolute(destDir) ||
     path.basename(resolved) === "" ||
     resolved === path.parse(resolved).root ||
-    resolved === path.resolve(homedir()) ||
+    resolved === path.resolve(os.homedir()) ||
     resolved === path.resolve(process.cwd())
   ) {
     throw new Error(`Refusing to stage frameworks into unsafe directory: ${destDir}`);
