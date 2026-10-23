@@ -174,6 +174,68 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
     });
   });
 
+  describe("read-podspec hardening", () => {
+    type M = Model & { excludeFiles: string[]; frameworks: string[] };
+    function readRaw(src: string): M {
+      const file = path.join(tempDir(), "Foo.podspec");
+      writeFileSync(file, src);
+      return load<ReadPodspec>("read-podspec.js").readPodspecCached(file) as M;
+    }
+    const wrap = (body: string, v = "s") => `Pod::Spec.new do |${v}|\n  ${v}.name = "Foo"\n${body}\nend\n`;
+
+    it("derives the main receiver from Pod::Spec.new (|podspec|)", () => {
+      const m = readRaw(wrap('  podspec.source_files = "ios/**/*.{h,m}"', "podspec"));
+      expect(m.sourceFiles).toEqual(["ios/**/*.{h,m}"]);
+    });
+    it("ignores a trailing comment after `do |x|` when finding the subspec end", () => {
+      const m = readRaw(
+        wrap(
+          '  s.subspec "a" do |ss|\n    ss.source_files = "a/*.m"\n    [1].each do |x| # loop\n      x\n    end\n    ss.header_dir = "aa"\n  end\n  s.source_files = "ios/*.m"',
+        ),
+      );
+      expect(m.sourceFiles).toEqual(["ios/*.m", "a/*.m"]);
+    });
+    it("counts a one-line `if … end` as net 0", () => {
+      const m = readRaw(
+        wrap(
+          '  s.subspec "a" do |ss|\n    ss.source_files = "a/*.m"\n    if ENV[\'X\'] == \'1\' then ss.exclude_files = "a/x.m" end\n  end\n  s.subspec "b" do |ss|\n    ss.source_files = "b/*.m"\n  end\n  s.frameworks = "UIKit"',
+        ),
+      );
+      expect(m.sourceFiles).toEqual(["a/*.m", "b/*.m"]);
+      expect(m.excludeFiles).toEqual(["a/x.m"]);
+      expect(m.frameworks).toEqual(["UIKit"]);
+    });
+    it("reads a one-line `do |ss| … end` subspec", () => {
+      const m = readRaw(
+        wrap('  s.subspec "a" do |ss| ss.source_files = "a/*.m" end\n  s.source_files = "ios/*.m"\n  s.frameworks = "UIKit"'),
+      );
+      expect(m.sourceFiles).toEqual(["ios/*.m", "a/*.m"]);
+      expect(m.frameworks).toEqual(["UIKit"]);
+    });
+    it("merges no subspec for default_subspecs = :none", () => {
+      const m = readRaw(
+        wrap('  s.default_subspecs = :none\n  s.source_files = "ios/*.m"\n  s.subspec "a" do |ss|\n    ss.source_files = "a/*.m"\n  end'),
+      );
+      expect(m.sourceFiles).toEqual(["ios/*.m"]);
+    });
+    it("resolves `ss.x = ident` and `s.ios.x = ident`", () => {
+      const m = readRaw(
+        'common = ["common/**/*.{h,cpp}"]\nskip = "ios/skip/*.m"\n' +
+          wrap('  s.source_files = "ios/*.m"\n  s.ios.exclude_files = skip\n  s.subspec "c" do |ss|\n    ss.source_files = common\n  end'),
+      );
+      expect(m.sourceFiles).toEqual(["ios/*.m", "common/**/*.{h,cpp}"]);
+      expect(m.excludeFiles).toEqual(["ios/skip/*.m"]);
+    });
+    it("does not interpolate #{} inside single-quoted strings", () => {
+      const m = readRaw('exts = "{h,m}"\n' + wrap("  s.source_files = 'ios/*.#{exts}'"));
+      expect(m.sourceFiles).toEqual(["ios/*.#{exts}"]);
+    });
+    it("still interpolates inside double-quoted strings next to single-quoted ones", () => {
+      const m = readRaw('exts = "{h,m}"\n' + wrap("  s.source_files = 'a/*.m', \"ios/*.#{exts}\""));
+      expect(m.sourceFiles).toEqual(["a/*.m", "ios/*.{h,m}"]);
+    });
+  });
+
   describe("read-podspec platform-scoped fields", () => {
     const readModel = (body: string) =>
       load<ReadPodspec>("read-podspec.js").readPodspecCached(podspec(body)) as Model & {

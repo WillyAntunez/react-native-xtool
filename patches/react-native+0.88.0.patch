@@ -1,8 +1,8 @@
 diff --git a/node_modules/react-native/scripts/spm/read-podspec.js b/node_modules/react-native/scripts/spm/read-podspec.js
-index 8fcf04b..8aeed46 100644
+index 8fcf04b..76efd91 100644
 --- a/node_modules/react-native/scripts/spm/read-podspec.js
 +++ b/node_modules/react-native/scripts/spm/read-podspec.js
-@@ -170,15 +170,72 @@ function cleanupPatchedPodspec(patchedPath /*: ?string */) /*: void */ {
+@@ -170,58 +170,261 @@ function cleanupPatchedPodspec(patchedPath /*: ?string */) /*: void */ {
  // Regex fallback
  // ---------------------------------------------------------------------------
  
@@ -17,11 +17,13 @@ index 8fcf04b..8aeed46 100644
 +// collected (first assignment wins; `if`/`ENV[...]` conditions are NOT
 +// evaluated), then `#{ident}` inside the text is replaced by a known string
 +// constant, and a field assigned a bare known identifier (`s.x = ident`) is
-+// rewritten to the literal value. Unknown interpolations/identifiers are left
-+// as they are.
++// rewritten to the literal value (`s.x = ident`, `s.ios.x = ident`, and a
++// subspec's `ss.x = ident`). `#{}` is only interpolated inside double-quoted
++// strings, as in Ruby. Unknown interpolations/identifiers are left as they are.
 +function resolveRubyConstants(content /*: string */) /*: string */ {
 +  const strings /*: Map<string, string> */ = new Map();
-+  const arrays /*: Map<string, Array<string>> */ = new Map();
++  const arrays /*: Map<string, Array<{value: string, dq: boolean}>> */ =
++    new Map();
 +  const assignRe = /^[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*(.+?)[ \t]*$/gm;
 +  for (const m of content.matchAll(assignRe)) {
 +    const name = m[1];
@@ -36,7 +38,7 @@ index 8fcf04b..8aeed46 100644
 +    if (arr != null) {
 +      const items = [];
 +      for (const it of arr[1].matchAll(/"([^"]*)"|'([^']*)'/g)) {
-+        items.push(it[1] ?? it[2]);
++        items.push({value: it[1] ?? it[2], dq: it[1] != null});
 +      }
 +      arrays.set(name, items);
 +    }
@@ -46,15 +48,27 @@ index 8fcf04b..8aeed46 100644
 +    text.replace(/#\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}/g, (whole, id) =>
 +      strings.has(id) ? (strings.get(id) /*: any */) : whole,
 +    );
-+  // Constants may be built from earlier ones: resolve the arrays' items too.
-+  for (const [k, v] of arrays) arrays.set(k, v.map(interpolate));
++  // Constants may be built from earlier ones: resolve the arrays' items too
++  // (double-quoted items only).
++  const arrayValues /*: Map<string, Array<string>> */ = new Map();
++  for (const [k, v] of arrays) {
++    arrayValues.set(k, v.map(i => (i.dq ? interpolate(i.value) : i.value)));
++  }
++  // Only double-quoted string literals interpolate; scan literal by literal
++  // (a line never spans a string here) so `'ios/*.#{x}'` stays as written.
++  const interpolated = content.replace(
++    /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g,
++    lit => (lit[0] === '"' ? interpolate(lit) : lit),
++  );
 +  const quote = (v /*: string */) => JSON.stringify(v);
-+  return interpolate(content).replace(
-+    /^(\s*(?:s|spec)\.[A-Za-z_]+\s*=\s*)([A-Za-z_][A-Za-z0-9_]*)[ \t]*$/gm,
++  return interpolated.replace(
++    /^(\s*[A-Za-z_]\w*(?:\.(?:ios|osx|tvos|visionos|watchos))?\.[A-Za-z_]+\s*=\s*)([A-Za-z_][A-Za-z0-9_]*)[ \t]*$/gm,
 +    (whole, lhs, id) => {
 +      if (strings.has(id)) return lhs + quote((strings.get(id) /*: any */));
-+      if (arrays.has(id)) {
-+        return lhs + '[' + (arrays.get(id) /*: any */).map(quote).join(', ') + ']';
++      if (arrayValues.has(id)) {
++        return (
++          lhs + '[' + (arrayValues.get(id) /*: any */).map(quote).join(', ') + ']'
++        );
 +      }
 +      return whole;
 +    },
@@ -77,32 +91,68 @@ index 8fcf04b..8aeed46 100644
 +      .filter(line => !/^\s*#/.test(line))
 +      .join('\n'),
 +  );
++}
++
++// The main spec's block variable: `Pod::Spec.new do |podspec|` -> `podspec`.
++// Falls back to the two conventional names when the header is not found.
++function mainReceiverName(content /*: string */) /*: string */ {
++  const m = content.match(/Pod::Spec\.new\s+do\s*\|\s*(\w+)\s*\|/);
++  return m != null ? m[1] : 's|spec';
++}
++
++// The main spec's receiver as a regex source. The lookbehind keeps it from
++// matching INSIDE a longer identifier or a member chain: `ss.source_files` (a
++// subspec's block variable) contains the substring `s.source_files`, which
++// used to be read as the main spec's own field.
++function mainRecvPattern(name /*: string */) /*: string */ {
++  return `(?<![\\w.])(?:${name})`;
  }
  
  // A subspec that re-binds a receiver the identity regexes trust: inside
-@@ -187,6 +244,63 @@ function readPodspecSource(podspecPath /*: string */) /*: string */ {
- const SHADOWING_SUBSPEC_RE =
-   /\.subspec\s+["'][^"']*["']\s+do\s*\|\s*(?:s|spec)\s*\|/;
- 
-+// The main spec's receiver. The lookbehind keeps it from matching INSIDE a
-+// longer identifier or a member chain: `ss.source_files` (a subspec's block
-+// variable) contains the substring `s.source_files`, which used to be read as
-+// the main spec's own field.
-+const MAIN_RECV = '(?<![\\w.])(?:s|spec)';
+ // `s.subspec "common" do |s|`, `s` is the CHILD, and no regex over flat text
+ // can see that. Any other block variable (`do |ss|`) is unambiguous.
+-const SHADOWING_SUBSPEC_RE =
+-  /\.subspec\s+["'][^"']*["']\s+do\s*\|\s*(?:s|spec)\s*\|/;
++function shadowingSubspecRe(name /*: string */) /*: RegExp */ {
++  return new RegExp(
++    `\\.subspec\\s+["'][^"']*["']\\s+do\\s*\\|\\s*(?:${name})\\s*\\|`,
++  );
++}
 +
-+const SUBSPEC_OPEN_RE =
-+  /(?:^|[;\s])(?:s|spec)\.subspec\s+["']([^"']+)["']\s+do\s*\|\s*(\w+)\s*\|[^\n]*/g;
++function subspecOpenRe(name /*: string */) /*: RegExp */ {
++  return new RegExp(
++    `(?:^|[;\\s])(?:${name})\\.subspec\\s+["']([^"']+)["']\\s+do\\s*\\|\\s*(\\w+)\\s*\\|[^\\n]*`,
++    'g',
++  );
++}
 +
 +// Ruby block openers/closers, line-based: enough to find the `end` that closes
 +// a subspec body. Strings and heredocs containing these words are not
 +// understood.
 +function blockDelta(line /*: string */) /*: number */ {
-+  const t = line.trim();
++  const t = stripTrailingComment(line).trim();
 +  let d = 0;
-+  if (/^(?:if|unless|case|begin|while|until|for|def)\b/.test(t)) d++;
++  const startsBlock = /^(?:if|unless|case|begin|while|until|for|def)\b/.test(t);
++  if (startsBlock) d++;
 +  else if (/\bdo(?:\s*\|[^|]*\|)?\s*$/.test(t)) d++;
++  // `if … end` / `unless … end` opened and closed on the same line: net 0.
++  if (startsBlock && /[\s;]end\s*;?$/.test(t)) d--;
 +  if (/^end\b/.test(t)) d--;
 +  return d;
++}
++
++// Drops a trailing `# comment`: the first `#` outside a quoted string.
++function stripTrailingComment(line /*: string */) /*: string */ {
++  let quote = '';
++  for (let i = 0; i < line.length; i++) {
++    const c = line[i];
++    if (quote !== '') {
++      if (c === '\\') i++;
++      else if (c === quote) quote = '';
++    } else if (c === '"' || c === "'") quote = c;
++    else if (c === '#') return line.slice(0, i);
++  }
++  return line;
 +}
 +
 +/**
@@ -113,14 +163,26 @@ index 8fcf04b..8aeed46 100644
 + */
 +function splitSubspecs(
 +  content /*: string */,
++  mainName /*: string */,
 +) /*: {main: string, subspecs: Array<{name: string, recv: string, body: string}>} */ {
 +  const subspecs = [];
 +  let main = '';
 +  let pos = 0;
-+  for (const m of content.matchAll(SUBSPEC_OPEN_RE)) {
++  const mainRe = new RegExp(`^(?:${mainName})$`);
++  for (const m of content.matchAll(subspecOpenRe(mainName))) {
 +    const start = m.index ?? 0;
-+    if (start < pos || /^(?:s|spec)$/.test(m[2])) continue;
++    if (start < pos || mainRe.test(m[2])) continue;
 +    const bodyStart = start + m[0].length;
++    // `s.subspec "a" do |ss| ss.x = 1 end`: the block closes on its own line.
++    const tail = stripTrailingComment(
++      m[0].replace(/^.*?\bdo\s*\|\s*\w+\s*\|/, ''),
++    );
++    if (/(?:^|[\s;])end\s*;?\s*$/.test(tail)) {
++      subspecs.push({name: m[1], recv: m[2], body: tail});
++      main += content.slice(pos, start);
++      pos = bodyStart;
++      continue;
++    }
 +    const lines = content.slice(bodyStart).split('\n');
 +    let depth = 1;
 +    let len = 0;
@@ -140,19 +202,36 @@ index 8fcf04b..8aeed46 100644
 +  }
 +  return {main: main + content.slice(pos), subspecs};
 +}
-+
+ 
  function hasShadowingSubspec(source /*: string */) /*: boolean */ {
-   return SHADOWING_SUBSPEC_RE.test(source);
+-  return SHADOWING_SUBSPEC_RE.test(source);
++  return shadowingSubspecRe(mainReceiverName(source)).test(source);
  }
-@@ -201,27 +315,52 @@ function hasShadowingSubspec(source /*: string */) /*: boolean */ {
+ 
+ /**
+  * Best-effort Ruby podspec parser. Extracts the literal-string and
+- * literal-array fields most RN libs use. Skips subspec blocks, Ruby helper
+- * calls (install_modules_dependencies, ENV[], $config[:...]), and
+- * interpolation — appends a warning so the caller can surface it to the
+- * user. Always returns a RawSpec; pure-JS, no Ruby dep required.
++ * literal-array fields most RN libs use, merges the `do |ss| … end` subspecs
++ * (all of them, or the declared `default_subspecs`; `:none` merges nothing),
++ * and reads `ios`-scoped fields. Ruby helper calls (install_modules_dependencies,
++ * ENV[], $config[:...]) and most interpolation are not evaluated — a warning
++ * is appended so the caller can surface it. Known limits: nested subspecs,
++ * heredocs, `{ |x| … }` brace blocks and conditionals are not understood.
++ * Always returns a RawSpec; pure-JS, no Ruby dep required.
+  */
  function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    const content = readPodspecSource(podspecPath);
++  const mainName = mainReceiverName(content);
++  const MAIN_RECV = mainRecvPattern(mainName);
    const warnings /*: Array<string> */ = [];
 +  // The main spec's own statements, and each subspec block apart. The readers
 +  // below default to the main text and receiver; a subspec is read with the
 +  // same readers anchored on its block variable, then merged like
 +  // flattenSubspecs does for `pod ipc spec` output.
-+  const {main, subspecs: allSubspecs} = splitSubspecs(content);
++  const {main, subspecs: allSubspecs} = splitSubspecs(content, mainName);
  
 -  // Matches:  s.<field> = "value"   or   s.<field> = 'value'  — at ANY scope,
 -  // so a subspec's value counts. Right for the fields flattenSubspecs merges
@@ -200,7 +279,7 @@ index 8fcf04b..8aeed46 100644
 -    return m ? m[1] : null;
 +    for (const scope of ['ios\\.', '']) {
 +      const re = new RegExp(
-+        `(?:^|[;|])\\s*(?:s|spec)\\.${scope}${name}\\s*=\\s*["']([^"']+)["']`,
++        `(?:^|[;|])\\s*(?:${mainName})\\.${scope}${name}\\s*=\\s*["']([^"']+)["']`,
 +        'm',
 +      );
 +      const m = main.match(re);
@@ -210,7 +289,7 @@ index 8fcf04b..8aeed46 100644
    }
  
    // The fields that identify the spec, and only when the receiver spelling
-@@ -235,9 +374,27 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -235,9 +438,27 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    // Matches:
    //   s.<field> = ["a", "b"]            (array)
    //   s.<field> = "single"              (single value treated as 1-element array)
@@ -241,7 +320,7 @@ index 8fcf04b..8aeed46 100644
      if (mArr != null) {
        const inner = mArr[1];
        const out /*: Array<string> */ = [];
-@@ -249,16 +406,34 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -249,16 +470,34 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
        }
        return out;
      }
@@ -280,7 +359,7 @@ index 8fcf04b..8aeed46 100644
        if (m == null) break;
        out.push(m[1]);
      }
-@@ -269,21 +444,25 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -269,21 +508,25 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    //   s.framework "X"          → ["X"]
    //   s.framework = "X"        → ["X"]
    //   s.frameworks = ["X","Y"] → ["X","Y"]
@@ -311,7 +390,7 @@ index 8fcf04b..8aeed46 100644
        if (m == null) break;
        const itemRe = /["']([^"']+)["']/g;
        while (true) {
-@@ -298,12 +477,14 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -298,12 +541,14 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    // Matches:  'HEADER_SEARCH_PATHS' => '...'   or  => ["...","..."]
    // Returns the raw token strings (still containing $(PODS_TARGET_SRCROOT)
    // etc.); substitution happens at translation time.
@@ -328,7 +407,7 @@ index 8fcf04b..8aeed46 100644
        if (m == null) break;
        const itemRe = /["']((?:[^"'\\]|\\.)+)["']/g;
        while (true) {
-@@ -321,7 +502,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -321,7 +566,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      const strRe =
        /["']HEADER_SEARCH_PATHS["']\s*=>\s*["']((?:[^"'\\]|\\.)+)["']/g;
      while (true) {
@@ -337,7 +416,7 @@ index 8fcf04b..8aeed46 100644
        if (m == null) break;
        for (const token of m[1].split(/\s+/)) {
          if (token.length > 0) {
-@@ -332,6 +513,28 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -332,15 +577,37 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      return Array.from(new Set(out));
    }
  
@@ -366,16 +445,18 @@ index 8fcf04b..8aeed46 100644
    // Surface known unparseable constructs so the caller can warn the user.
    if (shadowedIdentity) {
      warnings.push(
-@@ -340,7 +543,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+       "A subspec rebinds the spec variable (`do |s|`), so its `name`, `module_name` and `header_dir` cannot be told from the library's own — those are left unread. Install CocoaPods (`gem install cocoapods`) to enable full `pod ipc spec` parsing.",
+     );
    }
-   if (/(?:s|spec)\.subspec\s+["']/.test(content)) {
+-  if (/(?:s|spec)\.subspec\s+["']/.test(content)) {
++  if (new RegExp(`(?:${mainName})\\.subspec\\b`).test(content)) {
      warnings.push(
 -      'Subspecs detected — regex parser only extracts top-level fields. Install CocoaPods (`gem install cocoapods`) to enable full `pod ipc spec` parsing.',
-+      'Subspecs detected — regex parser merges their source/exclude/header fields only. Install CocoaPods (`gem install cocoapods`) to enable full `pod ipc spec` parsing.',
++      'Subspecs detected — regex parser merges their source/exclude/header, framework, dependency and define fields (default_subspecs honoured); nested subspecs, `{ }` brace blocks and heredocs are not understood. Install CocoaPods (`gem install cocoapods`) to enable full `pod ipc spec` parsing.',
      );
    }
    if (/install_modules_dependencies/.test(content)) {
-@@ -354,24 +557,75 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -354,24 +621,80 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      );
    }
  
@@ -385,8 +466,13 @@ index 8fcf04b..8aeed46 100644
 +    ...getArrayField('default_subspecs'),
 +    ...getArrayField('default_subspec'),
 +  ]);
-+  const subspecs =
-+    defaults.size > 0
++  // `default_subspecs = :none` selects no subspec at all.
++  const none = new RegExp(
++    `${MAIN_RECV}\\.default_subspecs?\\s*=\\s*:none\\b`,
++  ).test(main);
++  const subspecs = none
++    ? []
++    : defaults.size > 0
 +      ? allSubspecs.filter(sub => defaults.has(sub.name))
 +      : allSubspecs;
 +  // Layer 0 is the main spec; the rest are the selected subspecs, each read
@@ -464,7 +550,7 @@ index 8fcf04b..8aeed46 100644
      __regex_partial__: true,
      __warnings__: warnings,
    };
-@@ -423,6 +677,31 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
+@@ -423,6 +746,31 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
    return tokens;
  }
  
@@ -496,7 +582,21 @@ index 8fcf04b..8aeed46 100644
  // ---------------------------------------------------------------------------
  // Subspec flattening
  // ---------------------------------------------------------------------------
-@@ -482,6 +761,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -456,7 +804,12 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+   //   - `default_subspecs`: array of names (or undefined → use all subspecs)
+   const subspecs = Array.isArray(rawSpec.subspecs) ? rawSpec.subspecs : [];
+   let selected = subspecs;
+-  if (Array.isArray(rawSpec.default_subspecs)) {
++  if (
++    rawSpec.default_subspecs === 'none' ||
++    rawSpec.default_subspec === 'none'
++  ) {
++    selected = []; // `default_subspecs = :none`
++  } else if (Array.isArray(rawSpec.default_subspecs)) {
+     const wanted = new Set(rawSpec.default_subspecs);
+     selected = subspecs.filter(s => {
+       // $FlowFixMe[prop-missing] dynamic shape
+@@ -482,6 +835,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return Array.from(new Set(out));
    }
  
@@ -514,7 +614,7 @@ index 8fcf04b..8aeed46 100644
    // Only the spec's own value: a subspec's `header_dir` names that subspec's
    // headers, and several subspecs can disagree.
    function specStringField(key /*: string */) /*: string | null */ {
-@@ -554,7 +844,10 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -554,7 +918,10 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        config /*: ?('debug' | 'release') */,
      ) => {
        if (!validName.test(name)) return;
@@ -526,7 +626,7 @@ index 8fcf04b..8aeed46 100644
          return; // unresolved Xcode/Ruby token — don't emit a broken define
        }
        const key = `${name}|${config ?? ''}`;
-@@ -571,6 +864,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -571,6 +938,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        'xcconfig',
        'user_target_xcconfig',
      ];
@@ -547,7 +647,7 @@ index 8fcf04b..8aeed46 100644
      for (const layer of layers) {
        if (layer == null || typeof layer !== 'object') continue;
        for (const xcKey of XCCONFIG_KEYS) {
-@@ -648,23 +955,33 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -648,23 +1029,33 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return Array.from(new Set(out));
    }
  
@@ -595,7 +695,7 @@ index 8fcf04b..8aeed46 100644
        }
      }
      return out;
-@@ -693,6 +1010,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -693,6 +1084,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      // header_mappings_dir copy step, which SPM has no equivalent for.
      headerMappingsDirs: mergeArrayField('header_mappings_dir'),
      headerDir: specStringField('header_dir'),
@@ -613,6 +713,21 @@ index 8fcf04b..8aeed46 100644
      moduleName: specStringField('module_name'),
      frameworks: mergeArrayField('frameworks'),
      weakFrameworks: mergeArrayField('weak_frameworks'),
+@@ -794,12 +1196,13 @@ function readPodspecNames(
+   if (hasShadowingSubspec(source)) {
+     return null;
+   }
++  const mainName = mainReceiverName(source);
+   const declaredUnread = (
+     key /*: string */,
+     value /*: ?string */,
+   ) /*: boolean */ =>
+     value == null &&
+-    new RegExp(`(?:^|[;|])\\s*(?:s|spec)\\.${key}\\s*=`, 'm').test(source);
++    new RegExp(`(?:^|[;|])\\s*(?:${mainName})\\.${key}\\s*=`, 'm').test(source);
+ 
+   const name = field('name');
+   const moduleName = field('module_name');
 diff --git a/node_modules/react-native/scripts/spm/scaffold-package-swift.js b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 index cf7e587..e4ad73b 100644
 --- a/node_modules/react-native/scripts/spm/scaffold-package-swift.js

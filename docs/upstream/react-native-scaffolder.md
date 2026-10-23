@@ -175,7 +175,7 @@ app builds but crashes at startup with `Screen native module hasn't been linked`
 
 Fix: a pre-pass `resolveRubyConstants(content)` over the comment-stripped source. It collects
 single-line `ident = 'str' | "str" | ["a", "b"]` assignments (first wins), replaces `#{ident}` for
-known string constants, and rewrites `s.<field> = ident` to the literal value. Unknown
+known string constants, and rewrites `s.<field> = ident` (and `ss.`/`s.ios.` forms) to the literal value. Unknown
 interpolations and identifiers are left untouched; `ENV[...]` and `if` conditions are not
 evaluated. The existing field regexes are unchanged. See the `resolveRubyConstants` hunk in
 `patches/react-native+0.88.0.patch`.
@@ -210,8 +210,19 @@ removed, each subspec with its own block variable. Values are merged like `flatt
 array fields and `HEADER_SEARCH_PATHS` are unions, `header_dir` stays the main spec's,
 `header_mappings_dir`/`compiler_flags` fall back to the first subspec. All subspecs are merged
 unless the spec declares `default_subspecs`/`default_subspec`, then only those. A block that
-re-binds `s`/`spec` is left alone (see the shadowing warning). Nested subspecs and heredocs are
-not understood.
+re-binds `s`/`spec` is left alone (see the shadowing warning).
+
+Hardening: the main receiver is read from `Pod::Spec.new do |x|` (fallback `s|spec`), so
+`|podspec|` works; `blockDelta` ignores a trailing `# comment` and counts a block opened and closed
+on one line (`if … end`, `s.subspec "a" do |ss| … end`) as net 0; `default_subspecs = :none` merges
+no subspec (also for `pod ipc` output); `ss.x = ident` and `s.ios.x = ident` get the same bare
+identifier rewrite as `s.x = ident`; `#{}` is interpolated only inside double-quoted strings.
+
+Known limits (the regex parser warns that CocoaPods gives the full result): nested subspecs (a
+subspec inside a subspec is not split out and its fields read as the parent's), heredocs and
+multi-line strings containing `do`/`end`/`if` words, `{ |ss| … }` brace-block subspecs (not
+recognised, their fields are lost), and block openers hidden behind modifiers or conditionals other
+than the leading-keyword and trailing-`do` forms.
 
 ## 5. `scripts/spm/scaffold-package-swift.js`: CocoaPods `header_dir` namespaces are not emulated
 
