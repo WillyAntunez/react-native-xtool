@@ -20,7 +20,7 @@ Legend: ✅ works · ⚠️ works with caveats · ❌ fails · ⏳ not tested ye
 | expo-secure-store | | Expo source package | ⏳ | ⏳ | |
 | expo-image-picker | | Expo source package | ⏳ | ⏳ | needs the Expo umbrella-import patch: `StatusBarVisibilityController.swift` has no imports and uses UIKit; see `docs/upstream/expo-spm-plugin-umbrella.md` |
 | @gorhom/bottom-sheet | 5.2 | pure JS (no native code) | ⏳ | ⏳ | needs reanimated + gesture-handler, already ✅ |
-| @react-native-async-storage/async-storage | | | ⏳ | ⏳ | |
+| @react-native-async-storage/async-storage | 2.x/3.x | mixed ObjC→Swift (`AsyncStorage.mm` imports `AsyncStorage-Swift.h`) + vendored static xcframework | ❌ not scaffoldable | — | SwiftPM cannot express ObjC-depends-on-Swift in one package. Use `expo-sqlite/kv-store` (AsyncStorage-compatible API; expo-sqlite is SPM-ready in SDK 58). See `.superpowers/async-storage-analysis.md` summary in docs/upstream |
 | @react-native-community/datetimepicker | 9.2.1 | CocoaPods-only → auto-scaffold | ⏳ | ⏳ | |
 
 "Linkage seen" records how the library reached the SwiftPM graph: Expo source package, Expo
