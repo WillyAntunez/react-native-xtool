@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native/scripts/spm/read-podspec.js b/node_modules/react-native/scripts/spm/read-podspec.js
-index 8fcf04b..4f1a55d 100644
+index 8fcf04b..09247b7 100644
 --- a/node_modules/react-native/scripts/spm/read-podspec.js
 +++ b/node_modules/react-native/scripts/spm/read-podspec.js
 @@ -170,58 +170,263 @@ function cleanupPatchedPodspec(patchedPath /*: ?string */) /*: void */ {
@@ -621,7 +621,7 @@ index 8fcf04b..4f1a55d 100644
    // Only the spec's own value: a subspec's `header_dir` names that subspec's
    // headers, and several subspecs can disagree.
    function specStringField(key /*: string */) /*: string | null */ {
-@@ -544,6 +915,14 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -544,6 +915,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
    // `-D`s are safe to forward; arbitrary flags may be machine- or
    // example-app-specific. $(inherited), unresolved $(...) tokens, and invalid
    // C identifiers are skipped.
@@ -633,10 +633,16 @@ index 8fcf04b..4f1a55d 100644
 +  const droppedFollyDefines /*: Set<string> */ = new Set();
 +  const isFollyDefine = (name /*: string */) /*: boolean */ =>
 +    name.startsWith('FOLLY_');
++  // `REACT_NATIVE_{MAJOR,MINOR,PATCH}_VERSION=#{...}` is a community
++  // convention computed in Ruby from react-native/package.json, always meaning
++  // the installed React Native. The regex path cannot evaluate it, so those
++  // (and only those) names take the installed version's number instead.
++  const rnVersionMacros /*: {[string]: number} */ = readRnVersionMacros();
++  const substitutedRnVersionDefines /*: Set<string> */ = new Set();
    function mergePreprocessorDefines() /*: Array<PreprocessorDefine> */ {
      const out /*: Array<PreprocessorDefine> */ = [];
      const seen /*: Set<string> */ = new Set();
-@@ -554,7 +933,14 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -554,7 +939,23 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        config /*: ?('debug' | 'release') */,
      ) => {
        if (!validName.test(name)) return;
@@ -646,13 +652,22 @@ index 8fcf04b..4f1a55d 100644
 +        return;
 +      }
 +      if (
++        value != null &&
++        /#\{/.test(value) &&
++        !/\$[({]/.test(value) &&
++        Object.prototype.hasOwnProperty.call(rnVersionMacros, name)
++      ) {
++        value = String(rnVersionMacros[name]);
++        substitutedRnVersionDefines.add(`${name}=${value}`);
++      }
++      if (
 +        /\$[({]|#\{/.test(name) ||
 +        (value != null && /\$[({]|#\{/.test(value))
 +      ) {
          return; // unresolved Xcode/Ruby token — don't emit a broken define
        }
        const key = `${name}|${config ?? ''}`;
-@@ -571,6 +957,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -571,6 +972,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        'xcconfig',
        'user_target_xcconfig',
      ];
@@ -673,7 +688,7 @@ index 8fcf04b..4f1a55d 100644
      for (const layer of layers) {
        if (layer == null || typeof layer !== 'object') continue;
        for (const xcKey of XCCONFIG_KEYS) {
-@@ -648,23 +1048,35 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -648,23 +1063,35 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return Array.from(new Set(out));
    }
  
@@ -723,7 +738,7 @@ index 8fcf04b..4f1a55d 100644
        }
      }
      return out;
-@@ -677,6 +1089,14 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -677,6 +1104,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        ? false
        : true; // RN ecosystem default
  
@@ -735,10 +750,16 @@ index 8fcf04b..4f1a55d 100644
 +    );
 +  }
 +
++  if (substitutedRnVersionDefines.size > 0) {
++    warnings.push(
++      `Resolved interpolated define(s) ${Array.from(substitutedRnVersionDefines).join(', ')} from the installed React Native version (${rnVersionMacros.REACT_NATIVE_MAJOR_VERSION}.${rnVersionMacros.REACT_NATIVE_MINOR_VERSION}.${rnVersionMacros.REACT_NATIVE_PATCH_VERSION}) — the regex parser cannot evaluate the Ruby expression.`,
++    );
++  }
++
    return {
      name: specStringField('name') ?? '',
      version: specStringField('version') ?? '',
-@@ -693,13 +1113,24 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -693,13 +1134,24 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      // header_mappings_dir copy step, which SPM has no equivalent for.
      headerMappingsDirs: mergeArrayField('header_mappings_dir'),
      headerDir: specStringField('header_dir'),
@@ -765,7 +786,34 @@ index 8fcf04b..4f1a55d 100644
      headerSearchPaths: mergeHeaderSearchPaths(),
      resources: mergeArrayField('resources'),
      requiresArc,
-@@ -794,12 +1225,13 @@ function readPodspecNames(
+@@ -746,6 +1198,26 @@ function readPodspec(podspecPath /*: string */) /*: PodspecModel */ {
+   return model;
+ }
+ 
++// The installed React Native's version as the macros libraries derive from it.
++function readRnVersionMacros() /*: {[string]: number} */ {
++  try {
++    const pkg = JSON.parse(
++      fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8'),
++    );
++    const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(pkg.version));
++    if (m != null) {
++      return {
++        REACT_NATIVE_MAJOR_VERSION: Number(m[1]),
++        REACT_NATIVE_MINOR_VERSION: Number(m[2]),
++        REACT_NATIVE_PATCH_VERSION: Number(m[3]),
++      };
++    }
++  } catch {
++    // unreadable: the defines stay dropped
++  }
++  return {};
++}
++
+ const podspecModels /*: Map<string, PodspecModel> */ = new Map();
+ 
+ /**
+@@ -794,12 +1266,13 @@ function readPodspecNames(
    if (hasShadowingSubspec(source)) {
      return null;
    }

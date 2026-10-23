@@ -291,7 +291,23 @@ Consequently the lifting step drops `FOLLY_NO_CONFIG` and every other `FOLLY_*` 
 records one warning naming what was dropped. Defining `FOLLY_NO_CONFIG` without the full CocoaPods
 set breaks the build.
 `REACT_NATIVE_MINOR_VERSION` is not an RN-defined macro (react-native-svg computes it in its own
-podspec) and is not added.
+podspec) and is not added blindly; see bug 8.
+
+## 8. `scripts/spm/read-podspec.js`: `REACT_NATIVE_*_VERSION=#{...}` defines are dropped
+
+react-native-svg sets `"OTHER_CFLAGS" => "$(inherited) -DREACT_NATIVE_MINOR_VERSION=#{svgConfig[:react_native_minor_version]}"`,
+computed in Ruby from `react-native/package.json`. The regex path cannot evaluate it, so the
+unresolved-token rule of bug 7 dropped the define and `RNSVGImage.mm` (`#if REACT_NATIVE_MINOR_VERSION > 84`)
+compiled the old-RN branch (`no viable conversion from 'RCTImageResponseObserverProxy' to
+'std::shared_ptr<const ImageResponseObserver>'`). Many community libraries use this convention, always
+meaning the installed React Native.
+
+Fix: `mergePreprocessorDefines` substitutes the number from the installed React Native version
+(read from the `package.json` two levels above `scripts/spm`; 0.88.0 gives major 0, minor 88,
+patch 0) when the unresolved define is named `REACT_NATIVE_MAJOR_VERSION`,
+`REACT_NATIVE_MINOR_VERSION` or `REACT_NATIVE_PATCH_VERSION` and its value has no Xcode `$(...)`
+token. It emits the `.define` and records a warning naming the substitution. Any other interpolated
+define stays dropped.
 
 ## Tests
 

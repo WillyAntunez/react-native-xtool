@@ -63,6 +63,9 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
     it("read-podspec.js has the platform-scoped fields hunk", () => {
       expect(src("read-podspec.js")).toContain("function getStringFieldOn");
     });
+    it("read-podspec.js has the React Native version macros hunk", () => {
+      expect(src("read-podspec.js")).toContain("function readRnVersionMacros");
+    });
     it("the scaffolder has the preprocessor defines hunks", () => {
       expect(src("read-podspec.js")).toContain("function getDefineXcconfig");
       expect(src("scaffold-package-swift.js")).toContain("RCT_NEW_ARCH_ENABLED");
@@ -326,6 +329,36 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
     it("drops interpolated defines", () => {
       const m = model('s.pod_target_xcconfig = { "OTHER_CFLAGS" => "-DV=#{x} -DOK=1" }');
       expect(names(m.preprocessorDefines)).toEqual(["OK=1"]);
+    });
+    describe("React Native version macros", () => {
+      const rnVersion = (
+        JSON.parse(readFileSync(path.join(APP, "node_modules/react-native/package.json"), "utf8")) as { version: string }
+      ).version.split(".");
+      const [major, minor, patch] = rnVersion;
+      it("resolves REACT_NATIVE_*_VERSION=#{...} from the installed RN and warns", () => {
+        const m = model(
+          "s.pod_target_xcconfig = { \"OTHER_CFLAGS\" => \"$(inherited) -DREACT_NATIVE_MINOR_VERSION=#{cfg[:minor]} -DFOO=#{bar}\" }\n" +
+            "  s.xcconfig = { \"GCC_PREPROCESSOR_DEFINITIONS\" => \"REACT_NATIVE_MAJOR_VERSION=#{a} REACT_NATIVE_PATCH_VERSION=#{b}\" }",
+        ) as Model & { warnings: string[] };
+        expect(names(m.preprocessorDefines)).toEqual(
+          expect.arrayContaining([
+            `REACT_NATIVE_MINOR_VERSION=${minor}`,
+            `REACT_NATIVE_MAJOR_VERSION=${major}`,
+            `REACT_NATIVE_PATCH_VERSION=${patch}`,
+          ]),
+        );
+        const w = m.warnings.filter((x) => x.startsWith("Resolved interpolated define(s)"));
+        expect(w).toHaveLength(1);
+        expect(w[0]).toContain(`REACT_NATIVE_MINOR_VERSION=${minor}`);
+      });
+      it("still drops any other interpolated define", () => {
+        const m = model('s.pod_target_xcconfig = { "OTHER_CFLAGS" => "-DFOO=#{bar} -DREACT_NATIVE_VERSION_X=#{y}" }');
+        expect(names(m.preprocessorDefines)).toEqual([]);
+      });
+      it.skipIf(!existsSync(SVG_PODSPEC))("the real react-native-svg podspec gets REACT_NATIVE_MINOR_VERSION", () => {
+        const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(SVG_PODSPEC) as unknown as Model;
+        expect(names(m.preprocessorDefines)).toContain(`REACT_NATIVE_MINOR_VERSION=${minor}`);
+      });
     });
     it("adds RCT_NEW_ARCH_ENABLED=1 once to a React Native library", () => {
       const defs = scaffold(
