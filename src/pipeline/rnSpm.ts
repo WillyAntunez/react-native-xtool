@@ -95,9 +95,12 @@ export const streamingRunner: RnRunner = async (cmd, args, opts) => {
   return { exitCode: r.exitCode ?? 1, output };
 };
 
-const MISSING_RE = /error: Package\.swift is missing for library "([^"]+)"/;
+// RN's other variant (`..., and it ships no podspec so it cannot be scaffolded`) is not scaffoldable.
+const MISSING_RE =
+  /error: Package\.swift is missing for library "([^"]+)"(?!, and it ships no podspec)/;
+const CREATED_RE = /Created file (patches\/\S+\.patch)/;
 
-/** Library names RN reports as lacking a Package.swift, deduped, in first-seen order. */
+/** Scaffoldable libraries RN reports as lacking a Package.swift (has a podspec), deduped, in first-seen order. */
 export function parseMissingPackageSwift(output: string): string[] {
   const names: string[] = [];
   for (const line of output.split("\n")) {
@@ -118,12 +121,28 @@ export function scaffoldArgv(
   return args;
 }
 
-/** `--patch-dir patches` is relative to the project root: the user's patches, not expo-xtool's. */
+/**
+ * `--patch-dir patches` is relative to the project root: the user's patches, not expo-xtool's.
+ * `--exclude` replaces patch-package's default (`package\.json$`): it also drops SwiftPM build
+ * artifacts (`.build/.lock`, `CACHEDIR.TAG`, ...). package.json stays excluded on purpose:
+ * `swiftpmConfig.name` falls back to the podspec name, so the scaffolded manifest does not need it.
+ */
+export const PERSIST_EXCLUDE = "(^|/)\\.build/|^package\\.json$";
 export function persistScaffoldArgv(name: string): [string, string[]] {
   return [
     process.execPath,
-    [patchPackageScript(), name, "--patch-dir", "patches"],
+    [patchPackageScript(), name, "--patch-dir", "patches", "--exclude", PERSIST_EXCLUDE],
   ];
+}
+
+/** patch-package prints `✔ Created file patches/<x>.patch`; prefer that over guessing the name. */
+function createdPatchFile(output: string): string | undefined {
+  return CREATED_RE.exec(output)?.[1];
+}
+
+function computedPatchFile(root: string, name: string): string {
+  const version = installedVersion(root, name) ?? "unknown";
+  return `patches/${name.replace("/", "+")}+${version}.patch`;
 }
 
 function firstLine(text: string): string {
@@ -165,8 +184,10 @@ export async function runRnSpm(
   for (const name of names) {
     const [cmd, args] = persistScaffoldArgv(name);
     let failure: string | undefined;
+    let persisted = "";
     try {
       const r = await runner(cmd, args, { cwd: paths.root });
+      persisted = r.output;
       if (r.exitCode !== 0) failure = firstLine(r.output) || `exit ${r.exitCode}`;
     } catch (e) {
       failure = firstLine(e instanceof Error ? e.message : String(e)) || "spawn error";
@@ -177,10 +198,7 @@ export async function runRnSpm(
       );
       continue;
     }
-    const version = installedVersion(paths.root, name) ?? "unknown";
-    log(
-      `✔ scaffold — persisted patches/${name.replace("/", "+")}+${version}.patch`,
-    );
+    log(`✔ scaffold — persisted ${createdPatchFile(persisted) ?? computedPatchFile(paths.root, name)}`);
   }
 
   const second = await runner("node", rnArgs, { cwd: paths.ios });
