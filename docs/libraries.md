@@ -16,12 +16,12 @@ Legend: ✅ works · ⚠️ works with caveats · ❌ fails · ⏳ not tested ye
 | expo-router | | | ⏳ | ⏳ | needs screens + safe-area-context |
 | react-native-svg | 15.16.0 | CocoaPods-only → auto-scaffold | ✅ 2026-10-23 | ✅ 2026-10-23 | needed scaffolder fixes 6, 8 and 9. Metal filters are unavailable: they load prebuilt `*.metallib` from `RNSVGFilters.bundle`, declared via `s.ios.resource_bundles`, which the scaffolder does not read (resource bundles are unsupported for now, on any host). The Linux-only part is just that `apple/Filters/MetalCI/*.metal` are skipped (`exclude:` in Package.swift) because SwiftPM cannot run the `metal` compiler; `RN_SPM_SKIP_METAL=1` forces the same on macOS. Other rendering is unaffected |
 | react-native-webview | 14.0.1 | CocoaPods-only → auto-scaffold | ✅ 2026-10-23 | ✅ 2026-10-23 | |
-| expo-notifications (local) | | | ⏳ | ⏳ | remote push needs a paid Apple account |
-| expo-secure-store | | | ⏳ | ⏳ | |
-| expo-image-picker | | | ⏳ | ⏳ | |
-| @gorhom/bottom-sheet | | | ⏳ | ⏳ | |
+| expo-notifications (local) | | Expo source package | ❌ | ❌ | blocked by Expo: depends on expo-application, which has mixed Swift/ObjC sources and no checked-in Package.swift nor prebuilt xcframework in SDK 58 (Expo's plugin refuses it on every host); upstream fix needed in expo-application. Remote push needs a paid Apple account |
+| expo-secure-store | | Expo source package | ⏳ | ⏳ | |
+| expo-image-picker | | Expo source package | ⏳ | ⏳ | needs the Expo umbrella-import patch: `StatusBarVisibilityController.swift` has no imports and uses UIKit; see `docs/upstream/expo-spm-plugin-umbrella.md` |
+| @gorhom/bottom-sheet | 5.2 | pure JS (no native code) | ⏳ | ⏳ | needs reanimated + gesture-handler, already ✅ |
 | @react-native-async-storage/async-storage | | | ⏳ | ⏳ | |
-| @react-native-community/datetimepicker | | | ⏳ | ⏳ | |
+| @react-native-community/datetimepicker | 9.2.1 | CocoaPods-only → auto-scaffold | ⏳ | ⏳ | |
 
 "Linkage seen" records how the library reached the SwiftPM graph: Expo source package, Expo
 precompiled xcframework, RN library with its own Package.swift, or CocoaPods-only (→ Package.swift generated automatically by `spm scaffold` and persisted in the

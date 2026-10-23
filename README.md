@@ -83,7 +83,7 @@ must be CommonJS (`module.exports = {...}`) unless your project is ESM. Both are
 
 ## How it works
 
-1. Applies four small patches to `node_modules` with patch-package.
+1. Applies four small patches to `node_modules` with patch-package. The Expo patch has two jobs: it finds the Swift macro plugin on Linux and makes Expo's SwiftPM plugin give pure-Swift modules the Foundation/UIKit imports CocoaPods' umbrella header provides ([docs/upstream/expo-spm-plugin-umbrella.md](docs/upstream/expo-spm-plugin-umbrella.md)).
 2. Runs React Native 0.88's SwiftPM pipeline and Expo's SPM plugin, with Linux shims for `plutil` and `otool`.
 3. Builds ExpoModulesJSI with the Darwin SDK and stages the runtime frameworks.
 4. Generates `ios-xtool/` (Package.swift, xtool.yml, Info.plist, ip.txt, app config). It is a regenerable
