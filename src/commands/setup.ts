@@ -1,0 +1,151 @@
+import { execa } from "execa";
+import { accessSync, constants, existsSync } from "node:fs";
+import { mkdir, statfs } from "node:fs/promises";
+import { homedir } from "node:os";
+import path from "node:path";
+import { cacheDir } from "../paths.js";
+import { downloadFile } from "../tools/download.js";
+import { run, toolEnv } from "../tools/exec.js";
+import { SWIFT_VERSION, XTOOL_VERSION } from "../versions.js";
+
+export type SetupAction = "install-swift" | "download-xtool" | "install-sdk" | "login-hint";
+export interface SetupState {
+  hasSwift: boolean;
+  hasXtool: boolean;
+  hasSdk: boolean;
+  loggedIn: boolean;
+}
+export interface SetupDeps {
+  probe: () => Promise<SetupState>;
+  log: (line: string) => void;
+}
+
+const MIN_FREE_BYTES = 10 * 1024 ** 3;
+
+export function planSetup(state: SetupState): SetupAction[] {
+  const actions: SetupAction[] = [];
+  if (!state.hasSwift) actions.push("install-swift");
+  if (!state.hasXtool) actions.push("download-xtool");
+  if (!state.hasSdk) actions.push("install-sdk");
+  if (!state.loggedIn) actions.push("login-hint");
+  return actions;
+}
+
+const linuxArch = (): string => (process.arch === "arm64" ? "aarch64" : "x86_64");
+
+export function xtoolDownloadUrl(arch: string = linuxArch()): string {
+  return `https://github.com/xtool-org/xtool/releases/download/${XTOOL_VERSION}/xtool-${arch}.AppImage`;
+}
+
+export function swiftlyDownloadUrl(arch: string = linuxArch()): string {
+  return `https://download.swift.org/swiftly/linux/swiftly-${arch}.tar.gz`;
+}
+
+export const xtoolPath = (): string => path.join(cacheDir(), `xtool-${XTOOL_VERSION}.AppImage`);
+const sdkBundle = (): string => path.join(homedir(), ".swiftpm", "swift-sdks", "darwin.artifactbundle");
+
+function isExecutable(file: string): boolean {
+  try {
+    accessSync(file, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function swiftOk(): Promise<boolean> {
+  try {
+    const { stdout, stderr } = await execa("swift", ["--version"], { env: toolEnv(), extendEnv: false });
+    const m = /Swift version (\d+)\.(\d+)/.exec(`${stdout}\n${stderr}`);
+    if (!m) return false;
+    const [reqMajor, reqMinor] = SWIFT_VERSION.split(".").map(Number);
+    const [major, minor] = [Number(m[1]), Number(m[2])];
+    return major > reqMajor! || (major === reqMajor && minor >= reqMinor!);
+  } catch {
+    return false;
+  }
+}
+
+async function loggedIn(): Promise<boolean> {
+  if (!isExecutable(xtoolPath())) return false;
+  try {
+    const r = await execa(xtoolPath(), ["auth", "status"], { env: toolEnv(), extendEnv: false, reject: false });
+    return !`${r.stdout}\n${r.stderr}`.includes("Logged out");
+  } catch {
+    return false;
+  }
+}
+
+export async function probeSetupState(): Promise<SetupState> {
+  return {
+    hasSwift: await swiftOk(),
+    hasXtool: isExecutable(xtoolPath()),
+    hasSdk: existsSync(sdkBundle()),
+    loggedIn: await loggedIn(),
+  };
+}
+
+async function installSwift(): Promise<void> {
+  const dir = path.join(cacheDir(), "swiftly");
+  await mkdir(dir, { recursive: true });
+  const tarball = path.join(dir, "swiftly.tar.gz");
+  await downloadFile(swiftlyDownloadUrl(), tarball, { minBytes: 100 * 1024 });
+  await run("tar", ["-xzf", tarball], { cwd: dir });
+  await run("./swiftly", ["init", "--assume-yes", "--skip-install"], { cwd: dir });
+  await run("swiftly", ["install", SWIFT_VERSION, "--use", "--assume-yes"], { cwd: dir });
+}
+
+async function installSdk(xip: string | undefined, log: (l: string) => void): Promise<void> {
+  if (!xip) {
+    throw new Error("Darwin SDK is missing: pass --xcode-xip <path to Xcode.xip> to install it");
+  }
+  if (!existsSync(xip)) throw new Error(`Xcode xip not found: ${xip}`);
+  await mkdir(cacheDir(), { recursive: true });
+  const fs = await statfs(cacheDir());
+  if (fs.bavail * fs.bsize < MIN_FREE_BYTES) {
+    throw new Error(`Need at least 10 GB free on the filesystem of ${cacheDir()} to install the Darwin SDK`);
+  }
+  log(`Installing Darwin SDK from ${xip} (this takes several minutes and ~7 GB)`);
+  await run(xtoolPath(), ["sdk", "install", xip]);
+}
+
+async function step(name: string, log: (l: string) => void, fn: () => Promise<void>): Promise<void> {
+  try {
+    await fn();
+    log(`✔ ${name}`);
+  } catch (err) {
+    log(`✖ ${name}`);
+    throw err;
+  }
+}
+
+export async function setup(
+  opts: { xcodeXip?: string },
+  deps: Partial<SetupDeps> = {},
+): Promise<void> {
+  const log = deps.log ?? ((l: string) => console.log(l));
+  const state = await (deps.probe ?? probeSetupState)();
+  const actions = planSetup(state);
+  if (actions.length === 0) {
+    log("✔ Nothing to do: toolchain already set up");
+    return;
+  }
+  for (const action of actions) {
+    switch (action) {
+      case "install-swift":
+        await step(`Swift ${SWIFT_VERSION} via swiftly`, log, installSwift);
+        break;
+      case "download-xtool":
+        await step(`xtool ${XTOOL_VERSION}`, log, () =>
+          downloadFile(xtoolDownloadUrl(), xtoolPath(), { mode: 0o755 }),
+        );
+        break;
+      case "install-sdk":
+        await step("Darwin SDK", log, () => installSdk(opts.xcodeXip, log));
+        break;
+      case "login-hint":
+        log(`Run: ${xtoolPath()} auth login`);
+        break;
+    }
+  }
+}
