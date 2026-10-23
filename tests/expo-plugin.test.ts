@@ -8,17 +8,28 @@ import { describe, expect, it } from "vitest";
 // reference app (override with EXPO_XTOOL_REF_APP). Skipped when that app is not on this machine.
 const APP = process.env["EXPO_XTOOL_REF_APP"] ?? "/home/willy/Desktop/willy/expo-ios-linux/app";
 const MANIFESTS = path.join(APP, "node_modules/expo/scripts/spm/manifests.js");
+const COMMITTED_PATCH = path.resolve(import.meta.dirname, "../patches/expo+58.0.17.patch");
+// The functional test re-runs `setup-apple-spm.js update` and rewrites the app's ios/build, so it
+// is opt-in: EXPO_XTOOL_E2E=1.
+const e2e = process.env["EXPO_XTOOL_E2E"] === "1";
 const available = existsSync(MANIFESTS) && existsSync(path.join(APP, "ios/build"));
 
 describe.skipIf(!available)("patched Expo SwiftPM plugin", () => {
-  it("carries the umbrella-header hunk", () => {
+  it("the committed patch carries the umbrella-header hunk", () => {
+    const patch = readFileSync(COMMITTED_PATCH, "utf8");
+    const hunk = patch.split(/^diff --git /m).find((h) => h.includes("scripts/spm/manifests.js")) ?? "";
+    expect(hunk).toContain("umbrella.h");
+    expect(hunk).toContain("-import-objc-header");
+  });
+
+  it("the installed copy carries the umbrella-header hunk", () => {
     const src = readFileSync(MANIFESTS, "utf8");
     expect(src).toContain("declaresBridgingHeader");
     expect(src).toContain("umbrella.h");
     expect(src).toContain("-import-objc-header");
   });
 
-  it("emits umbrella.h and the bridging-header flag for ExpoImagePicker", async () => {
+  it.skipIf(!e2e)("emits umbrella.h and the bridging-header flag for ExpoImagePicker", async () => {
     const shims = path.resolve(import.meta.dirname, "../shims");
     const env = {
       ...process.env,
