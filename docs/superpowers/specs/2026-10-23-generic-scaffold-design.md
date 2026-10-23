@@ -22,7 +22,7 @@ nunca con un `Package.swift` escrito a mano por librería.
      globs (`apple`); si ese directorio contiene el header paraguas `<SwiftName>.h` junto a
      subdirectorios (`Handlers/`, `*.xcodeproj`), SwiftPM rechaza el target ("invalid header
      layout"). El propio scaffolder ya tiene el mecanismo `include/<SwiftName>/` (shim de
-     symlinks) para headers en la raíz; basta aplicarlo también en este caso.
+     stubs `#import`) para headers en la raíz; basta aplicarlo también en este caso.
   Con ambos arreglos aplicados a mano, gesture-handler compila y enlaza (spike verificado).
 
 ## Objetivos
@@ -52,7 +52,7 @@ nunca con un `Package.swift` escrito a mano por librería.
 1. Parche `read-podspec.js`: `getArrayField` acepta `= "a", "b"` (lista separada por comas sin
    corchetes). Test con fixture podspec. Verificar con el podspec real de gesture-handler.
 2. Parche `scaffold-package-swift.js`: si `publicHeadersPath` elegido contiene `<SwiftName>.h`
-   y tiene subdirectorios, usar el shim `include/` con todos los headers públicos (symlinks) y
+   y tiene subdirectorios, usar el shim `include/` con todos los headers públicos (archivos stub con `#import`, no symlinks) y
    `publicHeadersPath: "include"`. Test con fixture de layout.
 3. `src/pipeline/rnSpm.ts`: detectar el error de `Package.swift is missing` (capturar stderr),
    ejecutar `scaffold`, `patch-package <lib>` (con la copia fijada), log, reintentar `update` una
@@ -60,3 +60,11 @@ nunca con un `Package.swift` escrito a mano por librería.
 4. Verificación real: gesture-handler desde cero (`rm node_modules/react-native-gesture-handler/Package.swift`,
    `expo-xtool build`) compila; luego reanimated + worklets como siguiente caso de la matriz.
 5. `docs/upstream/react-native-scaffolder.md`: descripción de los dos bugs y los diffs para el PR.
+
+## Fallos externos
+
+| Fallo | Decisión |
+| --- | --- |
+| `patch-package <lib>` necesita lockfile y red; si falla, no se persiste el `Package.swift` | handle: aviso (`⚠ Could not persist ...`) y el build continúa; se re-escaffoldea tras la próxima instalación limpia |
+| Instalación limpia (`node_modules` nuevo) | handle: expo-xtool aplica los parches del proyecto (`patches/`) en el paso `patches`; se recomienda `"postinstall": "patch-package"` |
+| Monorepo / hoisting | accept: documentado, solo layout plano de npm / yarn classic |
