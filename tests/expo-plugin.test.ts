@@ -22,6 +22,17 @@ describe.skipIf(!available)("patched Expo SwiftPM plugin", () => {
     expect(hunk).toContain("-import-objc-header");
   });
 
+  it("the committed patch matches an actual bridging-header assignment and writes umbrella.h only on change", () => {
+    const patch = readFileSync(COMMITTED_PATCH, "utf8");
+    const m = /\+.*\/(SWIFT_OBJC_BRIDGING_HEADER\[.*?\)\/)\.test\(/.exec(patch);
+    expect(m).not.toBeNull();
+    const re = new RegExp(m![1]!.slice(0, -1).replace(/\/$/, ""));
+    expect(re.test("s.pod_target_xcconfig = { 'SWIFT_OBJC_BRIDGING_HEADER' => 'a.h' }")).toBe(true);
+    expect(re.test("SWIFT_OBJC_BRIDGING_HEADER = a.h")).toBe(true);
+    expect(re.test("# SWIFT_OBJC_BRIDGING_HEADER is not set here")).toBe(false);
+    expect(patch).toContain("if (current !== umbrellaSource) fs.writeFileSync(umbrella, umbrellaSource);");
+  });
+
   it("the installed copy carries the umbrella-header hunk", () => {
     const src = readFileSync(MANIFESTS, "utf8");
     expect(src).toContain("declaresBridgingHeader");

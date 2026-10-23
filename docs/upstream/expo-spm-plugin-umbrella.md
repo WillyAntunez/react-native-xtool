@@ -21,8 +21,10 @@ Expo SDK 58 app with `expo-image-picker`, SwiftPM pipeline (`setup-apple-spm`), 
 ## Fix
 
 For each pure-Swift package the plugin writes a bridging header next to `Package.swift` (not under `root/`,
-so it is not a source) and passes it to the Swift compiler. A module whose podspec sets
-`SWIFT_OBJC_BRIDGING_HEADER` is left alone.
+so it is not a source) and passes it to the Swift compiler. A module whose podspec assigns
+`SWIFT_OBJC_BRIDGING_HEADER` (`=` or `=>`) is left alone. Limitation: this is a text scan of the `*.podspec`
+files in the module root, `ios/` and `apple/`; the podspec is not evaluated, so a dynamic or out-of-tree assignment is
+missed. `umbrella.h` is rewritten only when its content differs, to avoid mtime churn.
 
 ```js
 const umbrella = path.join(pkgDir, 'umbrella.h');
