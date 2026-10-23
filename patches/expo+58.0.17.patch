@@ -1,5 +1,6 @@
---- node_modules/expo/scripts/spm/plugin.js.orig	2026-10-23 08:26:56.789784317 -0600
-+++ node_modules/expo/scripts/spm/plugin.js	2026-10-23 08:26:56.799140152 -0600
+diff --git a/node_modules/expo/scripts/spm/plugin.js b/node_modules/expo/scripts/spm/plugin.js
+--- a/node_modules/expo/scripts/spm/plugin.js
++++ b/node_modules/expo/scripts/spm/plugin.js
 @@ -656,7 +656,11 @@
        { cause: error }
      );

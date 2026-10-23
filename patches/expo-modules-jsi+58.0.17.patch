@@ -1,0 +1,12 @@
+diff --git a/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Runtime/Values/JavaScriptError.swift b/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Runtime/Values/JavaScriptError.swift
+--- a/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Runtime/Values/JavaScriptError.swift
++++ b/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Runtime/Values/JavaScriptError.swift
+@@ -88,7 +88,7 @@
+ /// via the `SWIFT_NAME(_message)` annotation in `CppError.h`. This extension
+ /// wraps it in a Swift `String` for cleaner call-site usage.
+ extension expo.CppError: Error {
+-  public var message: String {
++  var message: String {
+     return String(_getMessage())
+   }
+ }

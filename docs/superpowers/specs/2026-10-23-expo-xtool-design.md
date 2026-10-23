@@ -149,3 +149,22 @@ por USB (device), Metro por WiFi (red local). Cada hop se tabula en el plan con 
 - Formato exacto de plantillas y de `expo-xtool.config`.
 - Cómo detectar la IP de LAN (interfaz por defecto vía `ip route`).
 - Dónde cachear descargas (`~/.cache/expo-xtool`).
+
+## Enmiendas (2026-10-23)
+
+Cambios surgidos durante la implementación; el texto de arriba se conserva como historia.
+
+- `build` elige y hornea el puerto de Metro y la IP de LAN,
+  los escribe en `ip.txt` / `RCTMetroPort` y guarda el estado en `ios-xtool/.expo-xtool-state.json`.
+  `start` ya no elige nada: verifica que el puerto horneado esté libre y que la IP no haya cambiado, y
+  se niega a arrancar si hay desajuste (hay que reconstruir e reinstalar). Así sustituye a la
+  descripción anterior de `start`.
+- `templates/` pasó a ser renderizadores en TypeScript bajo `src/generate/` (`packageSwift.ts`,
+  `xtoolYml.ts`, `iosXtool.ts`); no hay carpeta `templates/`.
+- `scripts/stage-frameworks.sh` fue reemplazado por `src/frameworks.ts` (`stageFrameworks`); el script se
+  conserva sólo como referencia de la receta manual.
+- La comprobación de ufw vive en `doctor` (no en `setup`).
+- `install` imprime el bundle ID instalado (`XTL-<TEAM>.<bundleID>`), tomado del estado de `build`, y exige
+  que exista un build previo.
+- `setup` respeta `xcodeXipPath` y `xtoolPath` de la config; `patch-package` se ejecuta desde la
+  dependencia fijada del CLI en lugar de `npx`.
