@@ -4,12 +4,16 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  applyPatches,
   applyPatchesArgv,
+  hasProjectPatches,
+  projectPatchesArgv,
   findPatchMismatch,
   genericPatchFailureMessage,
   outputNamesPackage,
   parsePatchFileName,
   patchFailureMessage,
+  patchPackageOutputFailed,
 } from "../src/pipeline/patches.js";
 import { AUTOLINKING_CONFIG_COMMAND, rnSpmArgs } from "../src/pipeline/rnSpm.js";
 import { packageRoot } from "../src/tools/exec.js";
@@ -39,6 +43,7 @@ describe("rnSpmArgs", () => {
       "add",
       "--config-command",
       config,
+      "--yes",
     ]);
   });
 
@@ -69,9 +74,9 @@ describe("rnSpmArgs", () => {
 });
 
 describe("patches", () => {
-  it("has exactly 3 patch-package files", () => {
+  it("has exactly 4 patch-package files", () => {
     const files = readdirSync(path.join(packageRoot(), "patches")).filter((f) => f.endsWith(".patch"));
-    expect(files).toHaveLength(3);
+    expect(files).toHaveLength(4);
     for (const f of files) expect(f).toMatch(/^[^+]+\+\d+\.\d+\.\d+\.patch$/);
   });
 
@@ -188,5 +193,82 @@ describe("genericPatchFailureMessage", () => {
     const m = genericPatchFailureMessage({ shortMessage: "Command failed with ENOENT: node" }, "");
     expect(m).toContain("exit unknown");
     expect(m).toContain("Command failed with ENOENT: node");
+  });
+});
+
+describe("applyPatches with project patches", () => {
+  const ok = async () => ({ exitCode: 0 });
+
+  it("applies only the bundled patches when the project has no patches dir", async () => {
+    const { root } = await tempProject();
+    const calls: string[][] = [];
+    await applyPatches(root, async (_c, args) => (calls.push(args), { exitCode: 0 }));
+    expect(calls).toHaveLength(1);
+    expect(hasProjectPatches(root)).toBe(false);
+  });
+
+  it("ignores an empty project patches dir", async () => {
+    const { root } = await tempProject();
+    await mkdir(path.join(root, "patches"));
+    const calls: string[][] = [];
+    await applyPatches(root, async (_c, args) => (calls.push(args), { exitCode: 0 }));
+    expect(calls).toHaveLength(1);
+  });
+
+  it("applies the project's patches second, from the project root", async () => {
+    const { root } = await tempProject();
+    await mkdir(path.join(root, "patches"));
+    await writeFile(path.join(root, "patches", "lib+1.0.0.patch"), "");
+    const calls: { args: string[]; cwd: string }[] = [];
+    await applyPatches(root, async (_c, args, cwd) => (calls.push({ args, cwd }), { exitCode: 0 }));
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.args.slice(1)).toEqual(applyPatchesArgv(root)[1].slice(1));
+    expect(calls[1]!.args.slice(1)).toEqual(["--patch-dir", "patches", "--error-on-fail"]);
+    expect(calls[1]!.args).toEqual(projectPatchesArgv()[1]);
+    expect(calls[1]!.cwd).toBe(root);
+  });
+
+  it("throws when the project's patches fail to apply", async () => {
+    const { root } = await tempProject();
+    await mkdir(path.join(root, "patches"));
+    await writeFile(path.join(root, "patches", "lib+1.0.0.patch"), "");
+    let n = 0;
+    await expect(
+      applyPatches(root, async () => (++n === 1 ? ok() : { exitCode: 1, all: "bad patch" })),
+    ).rejects.toThrow(/project's patches[\s\S]*bad patch/);
+  });
+});
+
+describe("patch-package failure detection", () => {
+  it("passes --error-on-fail in both apply argv builders", () => {
+    expect(applyPatchesArgv("/proj")[1]).toContain("--error-on-fail");
+    expect(projectPatchesArgv()[1]).toContain("--error-on-fail");
+  });
+
+  it("patchPackageOutputFailed detects failures", () => {
+    expect(patchPackageOutputFailed("**ERROR** Failed to apply patch for x")).toBe(true);
+    expect(patchPackageOutputFailed("patch-package finished with 1 error(s).")).toBe(true);
+    expect(patchPackageOutputFailed("patch-package 8.0.0\nApplying patches...\nx@1.0.0 ✔")).toBe(false);
+    expect(patchPackageOutputFailed("")).toBe(false);
+  });
+
+  it("applyPatches throws on exit 0 with failure output", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "xtool-pf-"));
+    tempDirs.push(root);
+    const exec = async () => ({ exitCode: 0, all: "**ERROR** Failed to apply patch for foo" });
+    await expect(applyPatches(root, exec)).rejects.toThrow(/patch-package failed/);
+  });
+
+  it("applyPatches throws on exit 0 with failure output for project patches", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "xtool-pf-"));
+    tempDirs.push(root);
+    await mkdir(path.join(root, "patches"));
+    await writeFile(path.join(root, "patches", "a+b+1.0.0.patch"), "x");
+    let n = 0;
+    const exec = async () => ({
+      exitCode: 0,
+      all: n++ === 0 ? "ok" : "patch-package finished with 1 error(s).",
+    });
+    await expect(applyPatches(root, exec)).rejects.toThrow(/project's patches/);
   });
 });

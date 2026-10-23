@@ -83,12 +83,20 @@ must be CommonJS (`module.exports = {...}`) unless your project is ESM. Both are
 
 ## How it works
 
-1. Applies three small patches to `node_modules` with patch-package.
+1. Applies four small patches to `node_modules` with patch-package.
 2. Runs React Native 0.88's SwiftPM pipeline and Expo's SPM plugin, with Linux shims for `plutil` and `otool`.
 3. Builds ExpoModulesJSI with the Darwin SDK and stages the runtime frameworks.
 4. Generates `ios-xtool/` (Package.swift, xtool.yml, Info.plist, ip.txt, app config). It is a regenerable
    artifact; do not edit it by hand.
-5. `xtool` builds, signs and installs it; Metro serves JS to the phone over Wi-Fi.
+5. CocoaPods-only libraries (no `Package.swift`) get one generated automatically by React Native's `spm scaffold`.
+   expo-xtool persists it in your project's `patches/` with patch-package: commit those files. The fourth patch fixes
+   two bugs in that scaffolder ([docs/upstream/react-native-scaffolder.md](docs/upstream/react-native-scaffolder.md)).
+   On every build the `patches` step applies expo-xtool's own patches and then your project's `patches/` (when
+   present), so a fresh `node_modules` gets those Package.swift files back. To also restore them on a plain
+   `npm install`, add `"postinstall": "patch-package"` to your `package.json` scripts and `patch-package` to your
+   devDependencies. If persisting a scaffolded package fails (no lockfile, no network, ...), expo-xtool prints a
+   warning and keeps building; the package is simply re-scaffolded after the next fresh install.
+6. `xtool` builds, signs and installs it; Metro serves JS to the phone over Wi-Fi.
 
 Details and file locations: [docs/recipe.md](docs/recipe.md). Design:
 [docs/superpowers/specs/2026-10-23-expo-xtool-design.md](docs/superpowers/specs/2026-10-23-expo-xtool-design.md).
@@ -121,6 +129,8 @@ Details and file locations: [docs/recipe.md](docs/recipe.md). Design:
   address (`tun0`, `wg0`, `tailscale0`) the phone cannot reach. `build` and `doctor` warn about it; set `lanIp` in
   `expo-xtool.config.json` to your Wi‑Fi address and rebuild.
 - **Firewall:** ufw blocks Metro by default: `sudo ufw allow <port>/tcp`.
+- **A committed project patch no longer applies** (after a library upgrade): delete it from `patches/` and let
+  `expo-xtool build` re-scaffold it.
 - **"expo-xtool could not patch <package>":** your project has a different version of an Expo package than the one
   this release of expo-xtool patches. The message names the versions: pin the package to the patched version, or
   report the new version in the issue tracker so the patch can be refreshed.

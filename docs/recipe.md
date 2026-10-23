@@ -47,13 +47,14 @@ Expo 58 builds ExpoModulesCore as a Debug/Release dynamic pair; source modules c
 headers, modulemaps and `.swiftinterface` files. ExpoModulesCore's interface was produced by Xcode's Swift 6.3.1 and
 imports fine with Swift 6.4.1.
 
-`src/pipeline/patches.ts` applies three patch-package patches from `patches/`:
+`src/pipeline/patches.ts` applies four patch-package patches from `patches/`, then the project's own `patches/` (persisted library `Package.swift` files) when present:
 
 | Patch | Effect |
 | --- | --- |
 | `patches/expo-modules-autolinking+58.0.14.patch` | Removes the `process.platform !== 'darwin'` gate in the `@ExpoModule` scanner (the Linux macros binary `@expo/modules-macros-linux-x64` works). |
 | `patches/expo+58.0.17.patch` | `expo/scripts/spm/plugin.js` resolves the macro plugin binary path per platform. |
 | `patches/expo-modules-jsi+58.0.17.patch` | Swift 6.4 rejects a `public` member in an extension of a C++ type under library evolution (`CppError.message`); made internal. |
+| `patches/react-native+0.88.0.patch` | Fixes two bugs in RN's `spm scaffold`: `read-podspec.js` reads Ruby bare lists (`s.source_files = "a", "b"`), and `scaffold-package-swift.js` falls back to the `include/<Name>/` shim when the umbrella header sits next to subdirectories. See `docs/upstream/react-native-scaffolder.md`. |
 
 Without `expo-dev-client`: dev-launcher, dev-menu, json-utils and updates-interface are not SwiftPM-ready in Expo 58.
 
