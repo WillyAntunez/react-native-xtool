@@ -1,12 +1,13 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
 // Exercises the PATCHED react-native SwiftPM scaffolder (patches/react-native+0.88.0.patch)
-// as installed in the reference app. Skipped when that app is not on this machine.
-const APP = "/home/willy/Desktop/willy/expo-ios-linux/app";
+// as installed in the reference app (override with EXPO_XTOOL_REF_APP). Skipped when that app is
+// not on this machine.
+const APP = process.env["EXPO_XTOOL_REF_APP"] ?? "/home/willy/Desktop/willy/expo-ios-linux/app";
 const SPM = path.join(APP, "node_modules/react-native/scripts/spm");
 const RNGH_PODSPEC = path.join(
   APP,
@@ -40,6 +41,19 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
     writeFileSync(file, `Pod::Spec.new do |s|\n  s.name = "Foo"\n  ${body}\nend\n`);
     return file;
   }
+
+  describe("the installed RN files carry the patch", () => {
+    // Guards against testing an unpatched RN: each hunk must be present in what the tests load.
+    const src = (f: string) => readFileSync(path.join(SPM, f), "utf8");
+    it("read-podspec.js has the bare-list hunk", () => {
+      expect(src("read-podspec.js")).toContain("Ruby bare list without brackets");
+    });
+    it("scaffold-package-swift.js has the umbrella-header and shim hunks", () => {
+      const f = src("scaffold-package-swift.js");
+      expect(f).toContain("umbrellaNextToSubdirs");
+      expect(f).toContain("stub is named by basename");
+    });
+  });
 
   describe("read-podspec getArrayField", () => {
     const read = (body: string) =>
@@ -97,10 +111,15 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       expect(spec.namespacedShimHeaders).toEqual([]);
     });
 
-    it("keeps the first header and warns on a basename collision", () => {
+    it("keeps one header and warns on a basename collision", () => {
       const spec = analyse(["apple/Foo.h", "apple/a/Dup.h", "apple/b/Dup.h"], []);
-      expect(spec.namespacedShimHeaders.filter((h) => h.endsWith("Dup.h"))).toHaveLength(1);
+      expect(spec.namespacedShimHeaders.filter((h) => h.endsWith("Dup.h"))).toEqual(["apple/a/Dup.h"]);
       expect(spec.warnings.some((w) => w.includes("Dup.h"))).toBe(true);
+    });
+
+    it("prefers the shallowest path on a basename collision", () => {
+      const spec = analyse(["apple/Foo.h", "apple/a/b/Dup.h", "apple/z/Dup.h"], []);
+      expect(spec.namespacedShimHeaders.filter((h) => h.endsWith("Dup.h"))).toEqual(["apple/z/Dup.h"]);
     });
   });
 });

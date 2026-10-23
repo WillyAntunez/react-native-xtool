@@ -17,10 +17,15 @@ require("react-native/scripts/spm/read-podspec.js")
   .sourceFiles; // ["apple/**/*.{h,m,mm}"]  (expected both globs)
 ```
 
+The repro needs the regex fallback of `read-podspec.js`, i.e. no CocoaPods (`pod`) on `PATH`; with
+CocoaPods available RN reads the podspec through Ruby and gets both globs.
+
 Effect: the `shared/` C++ sources and header search paths are missing from the scaffold.
 
 Fix: after the `[...]` form fails, match a comma-separated list of quoted strings on one line and
-collect every item; otherwise fall back to the single-string path.
+collect every item; otherwise fall back to the single-string path. `getArrayField` backs
+`source_files` and also `frameworks`, `libraries`, `resources`, `exclude_files` and
+`public_header_files`, so bare lists are now read correctly for all of them.
 
 ```diff
 diff --git a/node_modules/react-native/scripts/spm/read-podspec.js b/node_modules/react-native/scripts/spm/read-podspec.js
@@ -78,14 +83,15 @@ Fix: reuse the existing `include/<SwiftName>/` shim (already used for root-level
 case `namespacedShimHeaders` holds every header among the sources, `publicHeadersPath` becomes
 `include`, and the header search paths are unchanged so bare `#import "X.h"` still resolves. The
 shim entries may now be relative paths: the shim file is named by basename and imports
-`../../<relative path>`. On a basename collision the first header wins and a warning is emitted.
+`../../<relative path>`. On a basename collision the shallowest path (fewest `/`, then lexicographic order) wins and a warning is emitted. The shim
+files are `#import` stubs, not symlinks.
 
 ```diff
 diff --git a/node_modules/react-native/scripts/spm/scaffold-package-swift.js b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
-index cf7e587..b03f9c1 100644
+index cf7e587..5e60de0 100644
 --- a/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 +++ b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
-@@ -497,6 +497,34 @@ function translatePodspecToSpmTarget(
+@@ -497,6 +497,40 @@ function translatePodspecToSpmTarget(
      }
    }
    let namespacedShimHeaders /*: Array<string> */ = [];
@@ -96,12 +102,18 @@ index cf7e587..b03f9c1 100644
 +  // sources; the header search paths above keep bare `#import "X.h"` working.
 +  if (publicHeadersPath != null) {
 +    const phDir = path.join(dep.root, publicHeadersPath);
-+    const hasSubdir =
++    const umbrellaNextToSubdirs =
 +      fs.existsSync(path.join(phDir, `${swiftName}.h`)) &&
 +      fs.readdirSync(phDir, {withFileTypes: true}).some(e => e.isDirectory());
-+    if (hasSubdir) {
-+      const seen = new Map();
-+      for (const h of headerFiles) {
++    if (umbrellaNextToSubdirs) {
++      // On a basename collision keep the shallowest path (fewest '/'), then
++      // the lexicographically first, so the choice is deterministic.
++      const byDepth = [...headerFiles].sort(
++        (a, b) =>
++          a.split('/').length - b.split('/').length || (a < b ? -1 : a > b ? 1 : 0),
++      );
++      const seen /*: Map<string, string> */ = new Map();
++      for (const h of byDepth) {
 +        const base = path.posix.basename(h);
 +        if (seen.has(base)) {
 +          if (seen.get(base) !== h) {
@@ -120,18 +132,19 @@ index cf7e587..b03f9c1 100644
    if (publicHeadersPath == null) {
      // Root-level podspecs (`s.source_files = "*.{h,m,mm}"`) keep their
      // headers in the package root. CocoaPods exposes them to dependents as
-@@ -1099,10 +1127,12 @@ function scaffoldPackageSwiftForDep(
+@@ -1099,10 +1133,13 @@ function scaffoldPackageSwiftForDep(
        const shimDir = path.join(dep.root, 'include', spec.swiftName);
        fs.mkdirSync(shimDir, {recursive: true});
        for (const header of spec.namespacedShimHeaders) {
-+        // Entries may be relative paths; the shim file is named by basename.
++        // Entries may be nested relative paths (e.g. apple/Handlers/X.h): the
++        // stub is named by basename and #imports the real header by path.
 +        const name = path.posix.basename(header);
          fs.writeFileSync(
 -          path.join(shimDir, header),
 +          path.join(shimDir, name),
            `// AUTO-SCAFFOLDED by react-native spm scaffold — the namespaced\n` +
 -            `// spelling (<${spec.swiftName}/${header}>) of the package-root header,\n` +
-+            `// spelling (<${spec.swiftName}/${name}>) of the package-root header,\n` +
++            `// spelling (<${spec.swiftName}/${name}>) of the header,\n` +
              `// matching how CocoaPods header maps expose it.\n` +
              `#import "../../${header}"\n`,
            'utf8',
@@ -140,4 +153,6 @@ index cf7e587..b03f9c1 100644
 ## Tests
 
 `tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks both
-fixes against fixtures (skipped when the reference app is not present).
+fixes against fixtures (skipped when the reference app is not present; set `EXPO_XTOOL_REF_APP` to point at it). It also
+asserts that each hunk is present in the installed RN files. Upstream, equivalent tests belong in
+RN's own `__tests__` next to `read-podspec` and `scaffold-package-swift`.
