@@ -51,7 +51,7 @@ const realDeps: StartDeps = {
 
 export async function start(root: string, overrides: Partial<StartDeps> = {}): Promise<void> {
   const d: StartDeps = { ...realDeps, ...overrides };
-  const state = await d.readState(projectPaths(root).iosXtool);
+  const state = await d.readState(projectPaths(root).iosXtool).catch(() => undefined);
   if (!state) throw new Error("No build state found. Run `expo-xtool build` first.");
   const portFree = await d.isPortFree(state.metroPort);
   const config = await d.loadConfig(root);

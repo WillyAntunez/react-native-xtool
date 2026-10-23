@@ -181,9 +181,11 @@ describe("doctorWithProbes", () => {
     ]);
   });
 
-  it("fails build-state when reading it throws", async () => {
+  it("warns on build-state when reading it throws", async () => {
     const r = await doctorWithProbes({ ...good, buildState: async () => { throw new Error("bad json"); } }, "/p");
-    expect(r.checks.find((c) => c.name === "build-state")).toMatchObject({ status: "fail", detail: "bad json" });
+    expect(r.checks.find((c) => c.name === "build-state")).toMatchObject({ status: "warn" });
+    expect(r.checks.find((c) => c.name === "build-state")?.detail).toContain("bad json");
+    expect(r.ok).toBe(true);
     expect(r.checks.some((c) => c.name === "metro-port")).toBe(false);
   });
 

@@ -54,7 +54,7 @@ export async function install(root: string, deps: InstallDeps = {}): Promise<voi
     );
   }
   const iosXtool = projectPaths(root).iosXtool;
-  const state = await (x.readState ?? readState)(iosXtool);
+  const state = await (x.readState ?? readState)(iosXtool).catch(() => undefined);
   if (!state) throw new Error("No build found. Run `expo-xtool build` first.");
   await (x.devRun ?? devRun)(bin, iosXtool);
   const id = installedBundleId(auth.teamId, state.bundleIdentifier);
