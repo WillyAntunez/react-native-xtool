@@ -1,6 +1,6 @@
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
 import { projectPaths } from "../paths.js";
-import { readExpoProject } from "../project.js";
+import { readState, type BuildState } from "../state.js";
 import {
   authStatus,
   devRun,
@@ -17,7 +17,7 @@ export interface InstallDeps {
     bin?: (config: ExpoXtoolConfig) => string;
     authStatus?: (bin: string) => Promise<AuthStatus>;
     listDevices?: (bin: string) => Promise<Device[]>;
-    readProject?: (root: string) => Promise<{ bundleIdentifier: string }>;
+    readState?: (iosXtoolDir: string) => Promise<Pick<BuildState, "bundleIdentifier"> | undefined>;
     devRun?: (bin: string, iosXtoolDir: string) => Promise<void>;
   };
   log?: (s: string) => void;
@@ -53,9 +53,11 @@ export async function install(root: string, deps: InstallDeps = {}): Promise<voi
       "No iPhone found over USB. Connect it, tap Trust on the phone, and enable Developer Mode (Settings → Privacy & Security).",
     );
   }
-  const project = await (x.readProject ?? readExpoProject)(root);
-  await (x.devRun ?? devRun)(bin, projectPaths(root).iosXtool);
-  const id = installedBundleId(auth.teamId, project.bundleIdentifier);
+  const iosXtool = projectPaths(root).iosXtool;
+  const state = await (x.readState ?? readState)(iosXtool);
+  if (!state) throw new Error("No build found. Run `expo-xtool build` first.");
+  await (x.devRun ?? devRun)(bin, iosXtool);
+  const id = installedBundleId(auth.teamId, state.bundleIdentifier);
   log(`Installed ${id} on ${devices[0]!.name}`);
   log(firstRunChecklist(auth.appleId));
 }

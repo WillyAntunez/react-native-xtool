@@ -52,6 +52,21 @@ describe("install", () => {
     ).rejects.toThrow("No iPhone found over USB");
     expect(devRun).not.toHaveBeenCalled();
   });
+  it("fails with a build hint when there is no build state", async () => {
+    const devRun = vi.fn();
+    await expect(
+      install("/p", {
+        xtool: {
+          ...base,
+          authStatus: async () => ({ loggedIn: true, teamId: "T" }),
+          listDevices: async () => [{ name: "Phone", udid: "u", transport: "usb" }],
+          readState: async () => undefined,
+          devRun,
+        },
+      }),
+    ).rejects.toThrow("No build found. Run `expo-xtool build` first.");
+    expect(devRun).not.toHaveBeenCalled();
+  });
   it("runs, then logs bundle id and checklist", async () => {
     const logs: string[] = [];
     const devRun = vi.fn(async () => {});
@@ -60,7 +75,7 @@ describe("install", () => {
         ...base,
         authStatus: async () => ({ loggedIn: true, teamId: "TEAM", appleId: "a@b.c" }),
         listDevices: async () => [{ name: "Phone", udid: "u", transport: "usb" }],
-        readProject: async () => ({ bundleIdentifier: "com.a.b" }),
+        readState: async () => ({ bundleIdentifier: "com.a.b" }),
         devRun,
       },
       log: (s) => logs.push(s),
