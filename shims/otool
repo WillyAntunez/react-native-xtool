@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Linux stand-in for the subset of macOS `otool` that React Native's SPM scripts use.
+
+Supported: `otool -l <mach-o>` — prints the load command names of a thin or fat
+Mach-O. React Native only greps the output for `LC_ID_DYLIB`.
+"""
+import struct
+import sys
+
+MH_MAGIC_64 = 0xFEEDFACF
+MH_CIGAM_64 = 0xCFFAEDFE
+MH_MAGIC = 0xFEEDFACE
+MH_CIGAM = 0xCEFAEDFE
+FAT_MAGIC = 0xCAFEBABE
+FAT_CIGAM = 0xBEBAFECA
+
+LC_NAMES = {
+    0x1: "LC_SEGMENT", 0x2: "LC_SYMTAB", 0xB: "LC_DYSYMTAB", 0xC: "LC_LOAD_DYLIB",
+    0xD: "LC_ID_DYLIB", 0xE: "LC_LOAD_DYLINKER", 0x19: "LC_SEGMENT_64", 0x1B: "LC_UUID",
+    0x1D: "LC_CODE_SIGNATURE", 0x22: "LC_DYLD_INFO", 0x80000022: "LC_DYLD_INFO_ONLY",
+    0x24: "LC_VERSION_MIN_MACOSX", 0x25: "LC_VERSION_MIN_IPHONEOS", 0x2A: "LC_SOURCE_VERSION",
+    0x32: "LC_BUILD_VERSION", 0x80000028: "LC_MAIN", 0x8000001C: "LC_RPATH",
+    0x80000018: "LC_LOAD_WEAK_DYLIB", 0x80000033: "LC_DYLD_EXPORTS_TRIE",
+    0x80000034: "LC_DYLD_CHAINED_FIXUPS",
+}
+
+
+def load_commands(buf, off):
+    magic = struct.unpack_from(">I", buf, off)[0]
+    if magic in (MH_MAGIC_64, MH_MAGIC):
+        end = ">"
+    elif magic in (MH_CIGAM_64, MH_CIGAM):
+        end = "<"
+    else:
+        raise ValueError("not a Mach-O at offset %d" % off)
+    is64 = magic in (MH_MAGIC_64, MH_CIGAM_64)
+    ncmds = struct.unpack_from(end + "I", buf, off + 16)[0]
+    pos = off + (32 if is64 else 28)
+    for _ in range(ncmds):
+        cmd, size = struct.unpack_from(end + "II", buf, pos)
+        yield LC_NAMES.get(cmd, "LC_0x%X" % cmd)
+        pos += size
+
+
+def main(argv):
+    if len(argv) != 2 or argv[0] != "-l":
+        sys.stderr.write("otool shim: unsupported arguments: %r\n" % (argv,))
+        return 2
+    with open(argv[1], "rb") as f:
+        buf = f.read()
+    magic = struct.unpack_from(">I", buf, 0)[0]
+    offsets = [0]
+    if magic in (FAT_MAGIC, FAT_CIGAM):
+        nfat = struct.unpack_from(">I", buf, 4)[0]
+        offsets = [struct.unpack_from(">I", buf, 8 + i * 20 + 8)[0] for i in range(nfat)]
+    for off in offsets:
+        print(argv[1] + ":")
+        for name in load_commands(buf, off):
+            print("      cmd " + name)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

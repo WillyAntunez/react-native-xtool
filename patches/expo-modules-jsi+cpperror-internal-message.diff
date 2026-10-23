@@ -1,0 +1,11 @@
+--- apple/Sources/ExpoModulesJSI/Runtime/Values/JavaScriptError.swift.orig	2026-10-23 08:33:00.286290585 -0600
++++ apple/Sources/ExpoModulesJSI/Runtime/Values/JavaScriptError.swift	2026-10-23 08:33:00.287435913 -0600
+@@ -88,7 +88,7 @@
+ /// via the `SWIFT_NAME(_message)` annotation in `CppError.h`. This extension
+ /// wraps it in a Swift `String` for cleaner call-site usage.
+ extension expo.CppError: Error {
+-  public var message: String {
++  var message: String {
+     return String(_getMessage())
+   }
+ }

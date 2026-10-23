@@ -1,0 +1,15 @@
+--- node_modules/expo/scripts/spm/plugin.js.orig	2026-10-23 08:26:56.789784317 -0600
++++ node_modules/expo/scripts/spm/plugin.js	2026-10-23 08:26:56.799140152 -0600
+@@ -656,7 +656,11 @@
+       { cause: error }
+     );
+   }
+-  const tool = path.join(path.dirname(pkgJsonPath), 'apple', 'ExpoModulesMacros');
++  // expo-xtool: on Linux/Windows the macro plugin is the per-platform scanner binary.
++  const tool =
++    process.platform === 'darwin'
++      ? path.join(path.dirname(pkgJsonPath), 'apple', 'ExpoModulesMacros')
++      : require.resolve(`@expo/modules-macros-${process.platform}-${process.arch}/ExpoModulesMacros`, { paths: [path.dirname(pkgJsonPath)] });
+   if (!fs.existsSync(tool)) {
+     throw pluginError(
+       macroPluginFault(`The Expo Swift macro plugin is missing its executable at ${tool}.`, 'it')
