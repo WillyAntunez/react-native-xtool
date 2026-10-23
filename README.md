@@ -83,12 +83,15 @@ must be CommonJS (`module.exports = {...}`) unless your project is ESM. Both are
 
 ## How it works
 
-1. Applies three small patches to `node_modules` with patch-package.
+1. Applies four small patches to `node_modules` with patch-package.
 2. Runs React Native 0.88's SwiftPM pipeline and Expo's SPM plugin, with Linux shims for `plutil` and `otool`.
 3. Builds ExpoModulesJSI with the Darwin SDK and stages the runtime frameworks.
 4. Generates `ios-xtool/` (Package.swift, xtool.yml, Info.plist, ip.txt, app config). It is a regenerable
    artifact; do not edit it by hand.
-5. `xtool` builds, signs and installs it; Metro serves JS to the phone over Wi-Fi.
+5. CocoaPods-only libraries (no `Package.swift`) get one generated automatically by React Native's `spm scaffold`.
+   expo-xtool persists it in your project's `patches/` with patch-package: commit those files. The fourth patch fixes
+   two bugs in that scaffolder ([docs/upstream/react-native-scaffolder.md](docs/upstream/react-native-scaffolder.md)).
+6. `xtool` builds, signs and installs it; Metro serves JS to the phone over Wi-Fi.
 
 Details and file locations: [docs/recipe.md](docs/recipe.md). Design:
 [docs/superpowers/specs/2026-10-23-expo-xtool-design.md](docs/superpowers/specs/2026-10-23-expo-xtool-design.md).

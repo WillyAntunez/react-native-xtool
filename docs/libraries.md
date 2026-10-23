@@ -24,4 +24,5 @@ Legend: ✅ works · ⚠️ works with caveats · ❌ fails · ⏳ not tested ye
 | @react-native-community/datetimepicker | | | ⏳ | ⏳ | |
 
 "Linkage seen" records how the library reached the SwiftPM graph: Expo source package, Expo
-precompiled xcframework, RN library with its own Package.swift, or CocoaPods-only (→ catalog work).
+precompiled xcframework, RN library with its own Package.swift, or CocoaPods-only (→ Package.swift generated automatically by `spm scaffold` and persisted in the
+project's `patches/`).
