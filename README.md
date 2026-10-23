@@ -1,16 +1,129 @@
 # expo-xtool
 
-Build, sign and install Expo (SDK 58+) iOS dev builds from Linux — no Mac — using
+Build, sign and install Expo (SDK 58+) iOS dev builds from Linux, with no Mac, using
 [xtool](https://github.com/xtool-org/xtool) and the official React Native / Expo SwiftPM pipeline.
+Then develop with Metro and Fast Refresh over Wi-Fi, as you would with Xcode.
 
-Status: early stage. The recipe works end to end on a physical iPhone (2026-10-23); the CLI that
-automates it is being built. See `docs/superpowers/specs/2026-10-23-expo-xtool-design.md`.
+**Status:** early. Works end to end on a physical iPhone as of 2026-10-23. Expo SDK 58+ only.
+Version 0.x, not published to npm yet.
 
-What's here today:
+## Requirements
 
-- `patches/` — small diffs to Expo's node_modules so the SPM pipeline runs on Linux.
-- `scripts/` — build ExpoModulesJSI with the xtool Darwin SDK; stage runtime frameworks.
-- `shims/` — minimal `plutil` and `otool` for Linux.
+- Linux x86_64 (arm64 should work, untested). Node 20+.
+- About 15 GB of free disk (Xcode.xip is about 12 GB, the extracted SDK about 7 GB).
+- `Xcode.xip` (Xcode 27.x) that you download yourself from developer.apple.com.
+- An Apple ID (free or paid) and an iPhone connected over USB for the first install.
+- An Expo SDK 58+ project (React Native 0.88+).
 
-You bring your own `Xcode.xip` and Apple ID. Free Apple IDs work with the usual limits
-(7-day signing, 3 apps, no push/entitlements).
+## Quick start
+
+```sh
+# Once per machine: Swift 6.4 (swiftly), xtool 1.23.0, Darwin SDK from your Xcode.xip
+npx expo-xtool setup --xcode-xip ~/Downloads/Xcode_27.1.xip
+
+# Sign in with your Apple ID (interactive, handled by xtool)
+xtool auth login
+
+# In your Expo project, with the iPhone plugged in
+cd my-app
+npx expo-xtool run
+```
+
+`run` = `build` + `install` + `start`. After the first install you only need
+`npx expo-xtool start`; the cable is needed again only to reinstall.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `setup [--xcode-xip <path>]` | Installs Swift via swiftly, the xtool AppImage and the Darwin SDK. Idempotent. |
+| `doctor` | Checks toolchain, SDK, login, connected device and project. Exits non-zero on problems. |
+| `build [--clean]` | Prebuild if `ios/` is missing, patches, RN/Expo SwiftPM pipeline, ExpoModulesJSI, generates `ios-xtool/`, `xtool dev build`. `--clean` re-runs `expo prebuild --clean`. |
+| `install` | Signs and installs the app on the USB-connected iPhone, then prints the first-run checklist. |
+| `start` | Starts Metro on the port and LAN IP the app was built for. Tells you to rebuild if either changed. |
+| `run [--clean]` | `build`, `install`, `start`. |
+
+Reference timings on a warm cache: patches 3.6 s, RN SwiftPM 11.1 s, ExpoModulesJSI 12.7 s,
+xtool build 24.5 s. The resulting `App.app` is about 99 MB with 8 embedded frameworks.
+
+## Configuration
+
+Optional `expo-xtool.config.json` (or `.js` with a default export) in the project root:
+
+```json
+{
+  "xcodeXipPath": "/home/me/Downloads/Xcode_27.1.xip",
+  "metroPort": 8082,
+  "lanIp": "192.168.1.20",
+  "rnArtifactsDir": "/home/me/rn-artifacts/0.88.0/debug",
+  "xtoolPath": "/opt/xtool/xtool"
+}
+```
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `xcodeXipPath` | none | Xcode.xip used by `setup` when `--xcode-xip` is not given. |
+| `metroPort` | `8081` | Metro port, baked into the app at build time. |
+| `lanIp` | auto-detected | LAN IP the phone uses to reach Metro, baked into the app. |
+| `rnArtifactsDir` | none | Use already-downloaded React Native prebuilts instead of downloading (offline). |
+| `xtoolPath` | managed copy | Use a specific xtool binary. |
+
+## How it works
+
+1. Applies three small patches to `node_modules` with patch-package.
+2. Runs React Native 0.88's SwiftPM pipeline and Expo's SPM plugin, with Linux shims for `plutil` and `otool`.
+3. Builds ExpoModulesJSI with the Darwin SDK and stages the runtime frameworks.
+4. Generates `ios-xtool/` (Package.swift, xtool.yml, Info.plist, ip.txt, app config). It is a regenerable
+   artifact; do not edit it by hand.
+5. `xtool` builds, signs and installs it; Metro serves JS to the phone over Wi-Fi.
+
+Details and file locations: [docs/recipe.md](docs/recipe.md). Design:
+[docs/superpowers/specs/2026-10-23-expo-xtool-design.md](docs/superpowers/specs/2026-10-23-expo-xtool-design.md).
+
+## Limits and non-goals
+
+- Expo SDK 57 and older are out of scope. Production / App Store builds are out of scope (use EAS).
+- `expo-dev-client` is not supported (not SwiftPM-ready in Expo 58). The dev menu is React Native's (shake the phone).
+- No iOS simulator (macOS only). macOS and native Windows are not supported; WSL is untested.
+- Free Apple ID: signature lasts 7 days, 3 apps at a time, no push notifications or special entitlements.
+  A paid developer account lifts these.
+- The installed bundle ID is `XTL-<TEAM_ID>.<bundleIdentifier>` because xtool renames it.
+- The Metro port and LAN IP are baked into the app. If either changes you must rebuild and reinstall.
+
+## First-run checklist (on the iPhone)
+
+1. Enable Developer Mode (Settings > Privacy & Security > Developer Mode); the phone reboots.
+2. Trust the certificate: Settings > General > VPN & Device Management > your Apple ID > Trust.
+3. Open the app by hand, and allow Local Network access when asked.
+4. Keep the phone and the computer on the same Wi-Fi network with `expo-xtool start` running.
+
+## Troubleshooting
+
+- **Black screen on launch:** Info.plist had an unresolved `$(VAR)` (for example
+  `$(PRODUCT_MODULE_NAME).SceneDelegate`). expo-xtool resolves them; if you see this, rebuild with `build --clean`
+  and report it.
+- **Red screen "No script URL provided":** the app cannot reach Metro. Check that `start` is running, that the phone is
+  on the same Wi-Fi, that Local Network is allowed, and the firewall (below).
+- **Firewall:** ufw blocks Metro by default: `sudo ufw allow <port>/tcp`.
+- **Port busy (8081 taken, for example by Docker):** free the port, or set `metroPort` in the config and rebuild + reinstall
+  (the port is baked in; `start` tells you which).
+- **LAN IP changed (new network, DHCP):** `start` detects it and tells you; rebuild and reinstall, or pin `lanIp`.
+- **"Developer Mode required":** enable it on the phone (see checklist) and reboot.
+- **"Untrusted Developer":** trust the certificate under VPN & Device Management.
+- **App stops opening after a week:** free-account signatures expire after 7 days. Run `expo-xtool install` again.
+- **`xtool launch` fails with `DebugserverClient.Error`:** known on current iOS. Open the app by hand.
+- **Anything else:** run `expo-xtool doctor` first.
+
+## Legal
+
+You bring your own `Xcode.xip` and Apple ID. expo-xtool does not redistribute anything from Apple; it extracts the
+SDK locally from your copy, and Apple's Xcode license terms apply to that use.
+
+## Contributing
+
+Branches: `feature/<kebab-name>` or `fix/<kebab-name>`. Commits follow Conventional Commits in English
+(`type: short imperative summary`). Run `npm test` before opening a PR.
+
+## License
+
+TBD
