@@ -233,6 +233,20 @@ collision the shallowest path wins and a warning is added. `include` is added to
 header search paths unless it is already `publicHeadersPath`; `include/` is never ingested as a
 source.
 
+## 6. `scripts/spm/read-podspec.js`: platform-scoped fields (`s.ios.<field>`) are invisible
+
+The field regexes only match `s.<field>`, so `s.ios.exclude_files = '**/*.macos.{h,m,mm}'`
+(react-native-svg) is never read and the macOS-only sources (`*.macos.mm`, AppKit) are compiled for
+iOS.
+
+Fix: every string/array reader also tries `<recv>.ios.<field>`. Array fields (`source_files`,
+`exclude_files`, `public_header_files`, `frameworks`, `weak_frameworks`, `resources`, ...) are the
+union of the generic and the `ios` values; string fields (`header_dir`, `header_mappings_dir`,
+`compiler_flags`, ...) take the `ios` value over the generic one. Also applies inside subspecs
+(`ss.ios.<field>`). `s.osx.`, `s.macos.`, `s.tvos.`, `s.visionos.` and `s.watchos.` are never read:
+the receiver pattern (`(?<![\w.])(?:s|spec)`, then `.`, optionally `ios.`, then the field name)
+cannot match them.
+
 ## Tests
 
 `tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks the

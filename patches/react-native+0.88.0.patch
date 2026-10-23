@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native/scripts/spm/read-podspec.js b/node_modules/react-native/scripts/spm/read-podspec.js
-index 8fcf04b..0097c63 100644
+index 8fcf04b..756431b 100644
 --- a/node_modules/react-native/scripts/spm/read-podspec.js
 +++ b/node_modules/react-native/scripts/spm/read-podspec.js
 @@ -170,15 +170,72 @@ function cleanupPatchedPodspec(patchedPath /*: ?string */) /*: void */ {
@@ -144,7 +144,7 @@ index 8fcf04b..0097c63 100644
  function hasShadowingSubspec(source /*: string */) /*: boolean */ {
    return SHADOWING_SUBSPEC_RE.test(source);
  }
-@@ -201,14 +315,21 @@ function hasShadowingSubspec(source /*: string */) /*: boolean */ {
+@@ -201,27 +315,52 @@ function hasShadowingSubspec(source /*: string */) /*: boolean */ {
  function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    const content = readPodspecSource(podspecPath);
    const warnings /*: Array<string> */ = [];
@@ -163,26 +163,54 @@ index 8fcf04b..0097c63 100644
 -    const m = content.match(re);
 +  // Matches:  s.<field> = "value"   or   s.<field> = 'value'  — on `recv`
 +  // (the main spec unless told otherwise).
-+  function getStringField(
++  function getStringFieldOn(
 +    name /*: string */,
-+    text /*: string */ = main,
-+    recv /*: string */ = MAIN_RECV,
++    text /*: string */,
++    recv /*: string */,
 +  ) /*: string | null */ {
 +    const re = new RegExp(`${recv}\\.${name}\\s*=\\s*["']([^"']+)["']`);
 +    const m = text.match(re);
      return m ? m[1] : null;
    }
  
-@@ -220,7 +341,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
-       `(?:^|[;|])\\s*(?:s|spec)\\.${name}\\s*=\\s*["']([^"']+)["']`,
-       'm',
-     );
++  // `s.ios.<field>` counts as `s.<field>` and wins over it. The other
++  // platforms' scopes (`s.osx.`, `s.tvos.`, `s.visionos.`, `s.watchos.`) are
++  // never read: the receiver pattern only matches `s.` followed by the field
++  // name or `ios.`.
++  function getStringField(
++    name /*: string */,
++    text /*: string */ = main,
++    recv /*: string */ = MAIN_RECV,
++  ) /*: string | null */ {
++    return (
++      getStringFieldOn(name, text, `${recv}\\.ios`) ??
++      getStringFieldOn(name, text, recv)
++    );
++  }
++
+   // The same, but only where the receiver starts the statement — so a subspec's
+   // block variable (`ss.header_dir`, the shape react-native-screens and
+   // react-native-svg ship) cannot answer for the spec itself.
+   function getSpecStringField(name /*: string */) /*: string | null */ {
+-    const re = new RegExp(
+-      `(?:^|[;|])\\s*(?:s|spec)\\.${name}\\s*=\\s*["']([^"']+)["']`,
+-      'm',
+-    );
 -    const m = content.match(re);
-+    const m = main.match(re);
-     return m ? m[1] : null;
+-    return m ? m[1] : null;
++    for (const scope of ['ios\\.', '']) {
++      const re = new RegExp(
++        `(?:^|[;|])\\s*(?:s|spec)\\.${scope}${name}\\s*=\\s*["']([^"']+)["']`,
++        'm',
++      );
++      const m = main.match(re);
++      if (m) return m[1];
++    }
++    return null;
    }
  
-@@ -235,9 +356,14 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+   // The fields that identify the spec, and only when the receiver spelling
+@@ -235,9 +374,27 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    // Matches:
    //   s.<field> = ["a", "b"]            (array)
    //   s.<field> = "single"              (single value treated as 1-element array)
@@ -195,12 +223,25 @@ index 8fcf04b..0097c63 100644
 +    text /*: string */ = main,
 +    recv /*: string */ = MAIN_RECV,
 +  ) /*: Array<string> */ {
++    return Array.from(
++      new Set([
++        ...getArrayFieldOn(name, text, recv),
++        ...getArrayFieldOn(name, text, `${recv}\\.ios`),
++      ]),
++    );
++  }
++
++  function getArrayFieldOn(
++    name /*: string */,
++    text /*: string */,
++    recv /*: string */,
++  ) /*: Array<string> */ {
 +    const reArr = new RegExp(`${recv}\\.${name}\\s*=\\s*\\[([^\\]]*)\\]`);
 +    const mArr = text.match(reArr);
      if (mArr != null) {
        const inner = mArr[1];
        const out /*: Array<string> */ = [];
-@@ -249,16 +375,34 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -249,16 +406,34 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
        }
        return out;
      }
@@ -220,7 +261,7 @@ index 8fcf04b..0097c63 100644
 +      }
 +      if (out.length > 0) return out;
 +    }
-+    const single = getStringField(name, text, recv);
++    const single = getStringFieldOn(name, text, recv);
      return single != null ? [single] : [];
    }
  
@@ -232,14 +273,14 @@ index 8fcf04b..0097c63 100644
 +  ) /*: Array<string> */ {
      const out /*: Array<string> */ = [];
 -    const re = /(?:s|spec)\.dependency\s+["']([^"']+)["']/g;
-+    const re = new RegExp(`${recv}\\.dependency\\s+["']([^"']+)["']`, 'g');
++    const re = new RegExp(`${recv}\\.(?:ios\\.)?dependency\\s+["']([^"']+)["']`, 'g');
      while (true) {
 -      const m = re.exec(content);
 +      const m = re.exec(text);
        if (m == null) break;
        out.push(m[1]);
      }
-@@ -269,21 +413,25 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -269,21 +444,25 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    //   s.framework "X"          → ["X"]
    //   s.framework = "X"        → ["X"]
    //   s.frameworks = ["X","Y"] → ["X","Y"]
@@ -261,7 +302,7 @@ index 8fcf04b..0097c63 100644
      // only matches assignment, so handle this case separately.
      const callRe = new RegExp(
 -      `(?:s|spec)\\.${prefix}s?\\s+((?:["'][^"']+["']\\s*,?\\s*)+)`,
-+      `${recv}\\.${prefix}s?\\s+((?:["'][^"']+["']\\s*,?\\s*)+)`,
++      `${recv}\\.(?:ios\\.)?${prefix}s?\\s+((?:["'][^"']+["']\\s*,?\\s*)+)`,
        'g',
      );
      while (true) {
@@ -270,7 +311,7 @@ index 8fcf04b..0097c63 100644
        if (m == null) break;
        const itemRe = /["']([^"']+)["']/g;
        while (true) {
-@@ -298,12 +446,14 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -298,12 +477,14 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    // Matches:  'HEADER_SEARCH_PATHS' => '...'   or  => ["...","..."]
    // Returns the raw token strings (still containing $(PODS_TARGET_SRCROOT)
    // etc.); substitution happens at translation time.
@@ -287,7 +328,7 @@ index 8fcf04b..0097c63 100644
        if (m == null) break;
        const itemRe = /["']((?:[^"'\\]|\\.)+)["']/g;
        while (true) {
-@@ -321,7 +471,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -321,7 +502,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      const strRe =
        /["']HEADER_SEARCH_PATHS["']\s*=>\s*["']((?:[^"'\\]|\\.)+)["']/g;
      while (true) {
@@ -296,7 +337,7 @@ index 8fcf04b..0097c63 100644
        if (m == null) break;
        for (const token of m[1].split(/\s+/)) {
          if (token.length > 0) {
-@@ -340,7 +490,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -340,7 +521,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    }
    if (/(?:s|spec)\.subspec\s+["']/.test(content)) {
      warnings.push(
@@ -305,7 +346,7 @@ index 8fcf04b..0097c63 100644
      );
    }
    if (/install_modules_dependencies/.test(content)) {
-@@ -354,24 +504,68 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -354,24 +535,68 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      );
    }
  
@@ -387,7 +428,7 @@ index 8fcf04b..0097c63 100644
      __regex_partial__: true,
      __warnings__: warnings,
    };
-@@ -423,6 +617,31 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
+@@ -423,6 +648,31 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
    return tokens;
  }
  
@@ -419,7 +460,7 @@ index 8fcf04b..0097c63 100644
  // ---------------------------------------------------------------------------
  // Subspec flattening
  // ---------------------------------------------------------------------------
-@@ -482,6 +701,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -482,6 +732,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return Array.from(new Set(out));
    }
  
@@ -437,7 +478,7 @@ index 8fcf04b..0097c63 100644
    // Only the spec's own value: a subspec's `header_dir` names that subspec's
    // headers, and several subspecs can disagree.
    function specStringField(key /*: string */) /*: string | null */ {
-@@ -693,6 +923,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -693,6 +954,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      // header_mappings_dir copy step, which SPM has no equivalent for.
      headerMappingsDirs: mergeArrayField('header_mappings_dir'),
      headerDir: specStringField('header_dir'),

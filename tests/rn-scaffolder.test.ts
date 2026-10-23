@@ -13,6 +13,8 @@ const RNGH_PODSPEC = path.join(
   APP,
   "node_modules/react-native-gesture-handler/RNGestureHandler.podspec",
 );
+const SVG_PODSPEC =
+  "/home/willy/.cache/bun-tmp/claude-1000/-home-willy-Desktop-willy/7d78ce0e-5f57-4e54-a4f3-af12f364a53c/scratchpad/rn-libs-analysis/node_modules/react-native-svg/RNSVG.podspec";
 const SCREENS_PODSPEC = path.join(APP, "node_modules/react-native-screens/RNScreens.podspec");
 const available = existsSync(path.join(SPM, "read-podspec.js"));
 
@@ -56,6 +58,9 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       const f = src("read-podspec.js");
       expect(f).toContain("function splitSubspecs");
       expect(f).toContain("const MAIN_RECV");
+    });
+    it("read-podspec.js has the platform-scoped fields hunk", () => {
+      expect(src("read-podspec.js")).toContain("function getStringFieldOn");
     });
     it("scaffold-package-swift.js has the umbrella-header and shim hunks", () => {
       const f = src("scaffold-package-swift.js");
@@ -161,6 +166,51 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
         ]),
       );
       expect(m.headerSearchPaths).toContain("$(PODS_TARGET_SRCROOT)/common/cpp");
+    });
+  });
+
+  describe("read-podspec platform-scoped fields", () => {
+    const readModel = (body: string) =>
+      load<ReadPodspec>("read-podspec.js").readPodspecCached(podspec(body)) as Model & {
+        excludeFiles: string[];
+        frameworks: string[];
+        headerDir: string | null;
+      };
+
+    it("merges s.ios.<field> and ignores the other platforms", () => {
+      const m = readModel(
+        's.source_files = "a/*.mm"\n  s.exclude_files = "a/x.mm"\n' +
+          '  s.ios.exclude_files = "**/*.macos.mm"\n  s.osx.source_files = "mac/*.mm"\n' +
+          '  s.macos.exclude_files = "m"\n  s.tvos.source_files = "t"\n  s.visionos.source_files = "v"\n' +
+          '  s.watchos.frameworks = "W"\n  s.osx.frameworks = "AppKit"',
+      );
+      expect(m.sourceFiles).toEqual(["a/*.mm"]);
+      expect(m.excludeFiles).toEqual(["a/x.mm", "**/*.macos.mm"]);
+      expect(m.frameworks).not.toContain("AppKit");
+      expect(m.frameworks).not.toContain("W");
+    });
+    it("reads s.ios.source_files and s.ios.frameworks, and lets ios win string fields", () => {
+      const m = readModel(
+        's.header_dir = "generic"\n  s.ios.header_dir = "iosdir"\n  s.ios.source_files = ["i/*.m"]\n' +
+          '  s.frameworks = "UIKit"\n  s.ios.frameworks = ["WebKit"]\n  s.osx.header_dir = "mac"',
+      );
+      expect(m.sourceFiles).toEqual(["i/*.m"]);
+      expect(m.frameworks).toEqual(expect.arrayContaining(["UIKit", "WebKit"]));
+      expect(m.headerDir).toBe("iosdir");
+    });
+    it("reads ss.ios.<field> inside a subspec and ignores ss.osx.<field>", () => {
+      const m = readModel(
+        's.subspec "a" do |ss|\n    ss.source_files = "a/*.m"\n    ss.ios.exclude_files = "a/*.macos.m"\n' +
+          '    ss.osx.source_files = "a/mac/*.m"\n  end',
+      );
+      expect(m.sourceFiles).toEqual(["a/*.m"]);
+      expect(m.excludeFiles).toEqual(["a/*.macos.m"]);
+    });
+    it.skipIf(!existsSync(SVG_PODSPEC))("reads the real react-native-svg podspec", () => {
+      const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(SVG_PODSPEC) as Model & {
+        excludeFiles: string[];
+      };
+      expect(m.excludeFiles).toContain("**/*.macos.{h,m,mm}");
     });
   });
 
