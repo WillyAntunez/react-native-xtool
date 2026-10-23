@@ -1,6 +1,6 @@
 # async-storage v3.1.1 under SwiftPM: analysis (Expo SDK 58 / RN 0.88)
 
-Scratch: /home/willy/.cache/bun-tmp/claude-1000/-home-willy-Desktop-willy/7d78ce0e-5f57-4e54-a4f3-af12f364a53c/scratchpad/rn-libs-analysis (installed there: async-storage 3.1.1, expo-sqlite 58.0.13, expo-application 58.1.2, screens/gesture-handler/safe-area-context latest).
+Versions analysed: async-storage 3.1.1, expo-sqlite 58.0.13, expo-application 58.1.2, plus the latest react-native-screens, react-native-gesture-handler and react-native-safe-area-context (Expo SDK 58, RN 0.88).
 
 ## Q1. What makes it "mixed"; what is the xcframework
 Podspec: `source_files = apple/**/*.{h,m,mm,cpp,swift}`, `swift_version 5.9.2`, `ios/osx.vendored_frameworks = apple-frameworks/SharedAsyncStorage.xcframework`, `resource_bundles AsyncStorage_resources => apple/PrivacyInfo.xcprivacy`, `install_modules_dependencies`.
@@ -28,11 +28,11 @@ Generic two-target emission (what SwiftPM requires):
 - Detectable generically: ObjC sources that `#import "*-Swift.h"` => direction Clang->Swift => keep skipping (clear message); otherwise split.
 
 ## Which libs a generic mixed emission (Swift -> Clang only) would unblock
-Heuristic scan (podspec + >=1 Swift + >=1 .m/.mm/.c/.cpp, excl. android/example/tests) over scratch, the reference app, and three other Willy apps' node_modules (doktu mobile-app, bella-vita rork apps):
+Heuristic scan (podspec + >=1 Swift + >=1 .m/.mm/.c/.cpp, excl. android/example/tests) over a fresh install of the packages above, the reference app, and several other Expo apps' node_modules:
 - Expo SDK 58 modules: expo, expo-constants, expo-application, expo-file-system, expo-modules-core, expo-modules-jsi, expo-sqlite (counts only because vendored C), @expo/log-box. These are NOT scaffolder cases in SDK 58: they ship Package.swift (expo, expo-constants, log-box) or `spm.config.json` consumed by Expo's own SPM autolinking plugin, with exactly this objc+swift split. So no gain for them.
-- Non-Expo, in older installs seen: react-native-screens (older versions with 11 Swift files; latest has NO swift and no Package.swift, scaffoldable), react-native-compressor (20 swift + 1 oc), @stripe/stripe-react-native (44 swift + 27 oc; likely bidirectional, not verified), expo-dev-launcher/dev-menu/updates (Expo, own plugin).
+- Non-Expo, in older installs: react-native-screens (older versions with 11 Swift files; latest has NO swift and no Package.swift, scaffoldable), react-native-compressor (20 swift + 1 oc), @stripe/stripe-react-native (44 swift + 27 oc; likely bidirectional, not verified), expo-dev-launcher/dev-menu/updates (Expo, own plugin).
 - react-native-gesture-handler and react-native-safe-area-context latest ship their own Package.swift (self-managed).
-Net: a generic mixed emitter would unblock essentially nothing in Willy's current app set (async-storage is the wrong direction); at most react-native-compressor (unverified direction) and stripe (unverified).
+Net: a generic mixed emitter would unblock essentially nothing in the current app set (async-storage is the wrong direction); at most react-native-compressor (unverified direction) and stripe (unverified).
 
 ## Q3. Vendored xcframework
 - SwiftPM: `.binaryTarget(name: "SharedAsyncStorage", path: "apple-frameworks/SharedAsyncStorage.xcframework")` works for local xcframeworks, listed as a dependency of the Swift target. It has an `ios-arm64` device slice (also simulator and macOS), so device-only builds are fine.
@@ -56,4 +56,4 @@ Optional small scaffolder improvement: change the skip message to detect `*-Swif
 - kv-store swap in the app: hours (plus a build check of expo-sqlite via the Expo plugin).
 
 ## Unblock list (generic mixed emission)
-Realistically none of Willy's current libs. Candidates only: react-native-compressor (Swift+1 oc, direction unverified), @stripe/stripe-react-native (probably bidirectional). async-storage v3: NOT unblocked (ObjC->Swift).
+Realistically none of the current libs. Candidates only: react-native-compressor (Swift+1 oc, direction unverified), @stripe/stripe-react-native (probably bidirectional). async-storage v3: NOT unblocked (ObjC->Swift).
