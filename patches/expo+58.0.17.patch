@@ -1,7 +1,76 @@
+diff --git a/node_modules/expo/scripts/spm/manifests.js b/node_modules/expo/scripts/spm/manifests.js
+index b1454bc..27162e8 100644
+--- a/node_modules/expo/scripts/spm/manifests.js
++++ b/node_modules/expo/scripts/spm/manifests.js
+@@ -848,6 +848,25 @@ function withoutSatisfiedProducts(manifest, satisfiedDependencies) {
+   return { manifest: { ...manifest, targets, packageDeps }, partlyProvidedPackages };
+ }
+ 
++/**
++ * Whether a podspec under the module assigns `SWIFT_OBJC_BRIDGING_HEADER` (expo-xtool).
++ * Limitation: a plain text scan of `*.podspec` files in the module root, `ios/` and `apple/`;
++ * the podspec is not evaluated, so an assignment built dynamically or living elsewhere is missed.
++ */
++function declaresBridgingHeader(moduleRoot) {
++  return ['', 'ios', 'apple'].some((dir) => {
++    const base = path.join(moduleRoot, dir);
++    try {
++      return fs
++        .readdirSync(base)
++        .filter((name) => name.endsWith('.podspec'))
++        .some((name) => /SWIFT_OBJC_BRIDGING_HEADER['"]?\s*(=>|=)/.test(fs.readFileSync(path.join(base, name), 'utf8')));
++    } catch {
++      return false;
++    }
++  });
++}
++
+ /**
+  * Render `manifest` against Expo's binary-free framework interface tree, with RN's
+  * invariant React products injected and its floor raised to the minimum, and write it
+@@ -873,6 +892,25 @@ function emitPackage(
+     manifest,
+     satisfiedDependencies
+   );
++  const pkgDir = path.join(outDir, 'expo-source', manifest.name);
++  fs.mkdirSync(pkgDir, { recursive: true });
++  // expo-xtool: CocoaPods gives every Swift file an implicit `import <Pod>` whose umbrella
++  // header pulls in Foundation and UIKit; a pure-Swift SwiftPM target has no such module, so
++  // files without imports (e.g. ExpoImagePicker) fail. Mirror it with a bridging header kept
++  // beside the manifest (not under root/, so it is not a source). A module that sets its own
++  // SWIFT_OBJC_BRIDGING_HEADER keeps it.
++  const umbrellaFlags = [];
++  if (manifest.pureSwift && !declaresBridgingHeader(moduleRoot)) {
++    const umbrella = path.join(pkgDir, 'umbrella.h');
++    const umbrellaSource = '#import <Foundation/Foundation.h>\n#import <UIKit/UIKit.h>\n';
++    // Write only on change, to avoid mtime churn that would invalidate SwiftPM's build.
++    let current = null;
++    try {
++      current = fs.readFileSync(umbrella, 'utf8');
++    } catch {}
++    if (current !== umbrellaSource) fs.writeFileSync(umbrella, umbrellaSource);
++    umbrellaFlags.push('-import-objc-header', umbrella);
++  }
+   const manifestSwift = renderSourceManifest({
+     manifest: {
+       ...linked,
+@@ -881,10 +919,8 @@ function emitPackage(
+     pkgDeps,
+     injectedTargetDeps: targetDeps,
+     frameworkSearchPath,
+-    extraSwiftFlags: macroFlags,
++    extraSwiftFlags: [...macroFlags, ...umbrellaFlags],
+   });
+-  const pkgDir = path.join(outDir, 'expo-source', manifest.name);
+-  fs.mkdirSync(pkgDir, { recursive: true });
+   const rootLink = path.join(pkgDir, 'root');
+   try {
+     fs.rmSync(rootLink, { recursive: true, force: true });
 diff --git a/node_modules/expo/scripts/spm/plugin.js b/node_modules/expo/scripts/spm/plugin.js
+index 1141e7c..21fa829 100644
 --- a/node_modules/expo/scripts/spm/plugin.js
 +++ b/node_modules/expo/scripts/spm/plugin.js
-@@ -656,7 +656,11 @@
+@@ -656,7 +656,11 @@ function macroPluginFlags(coreModuleRoot) {
        { cause: error }
      );
    }
