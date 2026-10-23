@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import type { ProjectPaths } from "../paths.js";
@@ -18,12 +18,24 @@ function resolveRnDir(paths: ProjectPaths): string {
   return path.dirname(require.resolve("react-native/package.json", { paths: [paths.root] }));
 }
 
+/** RN writes `.spm-injected.json` inside `ios/<App>.xcodeproj/`; the bare `ios/` location is accepted too. */
+function hasSpmMarker(iosDir: string): boolean {
+  if (existsSync(path.join(iosDir, ".spm-injected.json"))) return true;
+  try {
+    return readdirSync(iosDir).some(
+      (name) => name.endsWith(".xcodeproj") && existsSync(path.join(iosDir, name, ".spm-injected.json")),
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function rnSpmArgs(
   paths: ProjectPaths,
   opts: { rnArtifactsDir?: string },
   rnDir: string = resolveRnDir(paths),
 ): string[] {
-  const mode = existsSync(path.join(paths.ios, ".spm-injected.json")) ? "update" : "add";
+  const mode = hasSpmMarker(paths.ios) ? "update" : "add";
   return [
     path.join(rnDir, "scripts", "setup-apple-spm.js"),
     mode,

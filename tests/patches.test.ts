@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -17,7 +17,6 @@ async function tempProject() {
   const root = await mkdtemp(path.join(tmpdir(), "xtool-rnspm-"));
   tempDirs.push(root);
   const paths = projectPaths(root);
-  const { mkdir } = await import("node:fs/promises");
   await mkdir(paths.ios, { recursive: true });
   return paths;
 }
@@ -36,7 +35,15 @@ describe("rnSpmArgs", () => {
     ]);
   });
 
-  it("uses update when .spm-injected.json exists", async () => {
+  it("uses update when the marker exists inside the xcodeproj", async () => {
+    const paths = await tempProject();
+    const proj = path.join(paths.ios, "app.xcodeproj");
+    await mkdir(proj);
+    await writeFile(path.join(proj, ".spm-injected.json"), "{}");
+    expect(rnSpmArgs(paths, {}, rn)[1]).toBe("update");
+  });
+
+  it("still accepts the marker directly in ios/", async () => {
     const paths = await tempProject();
     await writeFile(path.join(paths.ios, ".spm-injected.json"), "{}");
     expect(rnSpmArgs(paths, {}, rn)[1]).toBe("update");
