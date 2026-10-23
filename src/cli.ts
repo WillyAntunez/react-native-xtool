@@ -1,6 +1,9 @@
 import { createRequire } from "node:module";
+import path from "node:path";
 import { Command } from "commander";
+import { existsSync } from "node:fs";
 import { build } from "./commands/build.js";
+import { doctor, renderReport } from "./commands/doctor.js";
 import { install } from "./commands/install.js";
 import { run } from "./commands/run.js";
 import { setup } from "./commands/setup.js";
@@ -65,6 +68,17 @@ export function buildProgram(): Command {
     .action(
       action(async (o: { clean?: boolean }) => {
         await run(process.cwd(), { clean: o.clean });
+      }),
+    );
+  program
+    .command("doctor")
+    .description("Check the toolchain, login, device and project")
+    .action(
+      action(async () => {
+        const cwd = process.cwd();
+        const report = await doctor(existsSync(path.join(cwd, "app.json")) ? cwd : undefined);
+        console.log(renderReport(report.checks));
+        if (!report.ok) throw new Error("doctor found problems");
       }),
     );
   return program;

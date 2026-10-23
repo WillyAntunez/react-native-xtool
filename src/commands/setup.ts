@@ -43,9 +43,9 @@ export function swiftlyDownloadUrl(arch: string = linuxArch()): string {
 }
 
 export const xtoolPath = (): string => path.join(cacheDir(), `xtool-${XTOOL_VERSION}.AppImage`);
-const sdkBundle = (): string => path.join(homedir(), ".swiftpm", "swift-sdks", "darwin.artifactbundle");
+export const sdkBundle = (): string => path.join(homedir(), ".swiftpm", "swift-sdks", "darwin.artifactbundle");
 
-function isExecutable(file: string): boolean {
+export function isExecutable(file: string): boolean {
   try {
     accessSync(file, constants.X_OK);
     return true;
@@ -54,17 +54,25 @@ function isExecutable(file: string): boolean {
   }
 }
 
-async function swiftOk(): Promise<boolean> {
+export async function swiftVersionText(): Promise<string | undefined> {
   try {
     const { stdout, stderr } = await execa("swift", ["--version"], { env: toolEnv(), extendEnv: false });
-    const m = /Swift version (\d+)\.(\d+)/.exec(`${stdout}\n${stderr}`);
-    if (!m) return false;
-    const [reqMajor, reqMinor] = SWIFT_VERSION.split(".").map(Number);
-    const [major, minor] = [Number(m[1]), Number(m[2])];
-    return major > reqMajor! || (major === reqMajor && minor >= reqMinor!);
+    return /Swift version (\d+\.\d+(?:\.\d+)?)/.exec(`${stdout}\n${stderr}`)?.[1];
   } catch {
-    return false;
+    return undefined;
   }
+}
+
+/** True when `version` (e.g. "6.4.1") is at least the pinned SWIFT_VERSION. */
+export function swiftMeetsMin(version: string): boolean {
+  const [major = 0, minor = 0] = version.split(".").map(Number);
+  const [reqMajor = 0, reqMinor = 0] = SWIFT_VERSION.split(".").map(Number);
+  return major > reqMajor || (major === reqMajor && minor >= reqMinor);
+}
+
+async function swiftOk(): Promise<boolean> {
+  const v = await swiftVersionText();
+  return v !== undefined && swiftMeetsMin(v);
 }
 
 async function loggedIn(): Promise<boolean> {
