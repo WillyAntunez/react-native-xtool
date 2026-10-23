@@ -42,6 +42,7 @@ describe("rnSpmArgs", () => {
       "add",
       "--config-command",
       config,
+      "--yes",
     ]);
   });
 

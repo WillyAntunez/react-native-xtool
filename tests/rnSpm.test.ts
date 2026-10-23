@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { streamingRunner } from "../src/pipeline/rnSpm.js";
 import {
   parseMissingPackageSwift,
   persistScaffoldArgv,
@@ -55,6 +56,10 @@ describe("argv helpers", () => {
     expect(a[1]).toBe("scaffold");
     expect(a).toContain("--config-command");
     expect(a).not.toContain("--download");
+  });
+  it("passes --yes to add/update and scaffold", () => {
+    expect(rnSpmArgs(paths, {}, rnDir)).toContain("--yes");
+    expect(scaffoldArgv(paths, {}, rnDir)).toContain("--yes");
   });
   it("scaffoldArgv forwards the offline artifact flags", () => {
     const a = scaffoldArgv(paths, { rnArtifactsDir: "/art" }, rnDir);
@@ -202,5 +207,20 @@ describe("runRnSpm", () => {
     const h = harness([{ exitCode: 2, output: "something else" }]);
     await expect(runRnSpm(paths, {}, h.deps)).rejects.toThrow(/something else/);
     expect(h.calls).toHaveLength(1);
+  });
+});
+
+describe("streamingRunner", () => {
+  it("keeps multibyte characters split across chunks intact", async () => {
+    const script =
+      'const b=Buffer.from("héllo ✔ wörld");process.stdout.write(b.subarray(0,2));setTimeout(()=>process.stdout.write(b.subarray(2)),50)';
+    const w = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (() => true) as typeof process.stdout.write;
+    try {
+      const r = await streamingRunner(process.execPath, ["-e", script], { cwd: process.cwd() });
+      expect(r.output).toBe("héllo ✔ wörld");
+    } finally {
+      process.stdout.write = w;
+    }
   });
 });

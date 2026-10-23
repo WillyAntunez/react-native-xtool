@@ -47,6 +47,8 @@ export function rnSpmArgs(
     mode,
     "--config-command",
     JSON.stringify(AUTOLINKING_CONFIG_COMMAND),
+    // stdin is ignored by the runner, so prompts can never be answered: auto-accept them.
+    "--yes",
     ...(opts.rnArtifactsDir
       ? ["--download", "skip", "--artifacts", opts.rnArtifactsDir]
       : []),
@@ -79,14 +81,19 @@ export const streamingRunner: RnRunner = async (cmd, args, opts) => {
     extendEnv: false,
     stdio: ["ignore", "pipe", "pipe"],
     reject: false,
+    buffer: false,
   });
   let output = "";
-  child.stdout?.on("data", (c: Buffer) => {
-    output += c.toString();
+  // setEncoding makes the stream decode with a stateful decoder, so a multibyte
+  // character split across chunks is never corrupted.
+  child.stdout?.setEncoding("utf8");
+  child.stderr?.setEncoding("utf8");
+  child.stdout?.on("data", (c: string) => {
+    output += c;
     process.stdout.write(c);
   });
-  child.stderr?.on("data", (c: Buffer) => {
-    output += c.toString();
+  child.stderr?.on("data", (c: string) => {
+    output += c;
     process.stderr.write(c);
   });
   const r = await child;
