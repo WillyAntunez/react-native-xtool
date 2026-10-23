@@ -1,0 +1,369 @@
+{
+  "version": 1,
+  "frameworks": [
+    {
+      "id": "react",
+      "frameworkName": "React",
+      "executableName": "React",
+      "linkage": "dynamic",
+      "slices": [
+        {
+          "sdk": "iphoneos*",
+          "platform": "ios",
+          "variant": null,
+          "architectures": [
+            "arm64"
+          ],
+          "libraryIdentifier": "ios-arm64",
+          "libraryPath": "React.framework",
+          "binaryPath": "React.framework/React"
+        },
+        {
+          "sdk": "iphonesimulator*",
+          "platform": "ios",
+          "variant": "simulator",
+          "architectures": [
+            "arm64",
+            "x86_64"
+          ],
+          "libraryIdentifier": "ios-arm64_x86_64-simulator",
+          "libraryPath": "React.framework",
+          "binaryPath": "React.framework/React"
+        },
+        {
+          "sdk": "macosx*",
+          "platform": "ios",
+          "variant": "maccatalyst",
+          "architectures": [
+            "arm64",
+            "x86_64"
+          ],
+          "libraryIdentifier": "ios-arm64_x86_64-maccatalyst",
+          "libraryPath": "React.framework",
+          "binaryPath": "React.framework/React"
+        }
+      ],
+      "artifactRelativePath": "React.xcframework"
+    },
+    {
+      "id": "react-native-dependencies",
+      "frameworkName": "ReactNativeDependencies",
+      "executableName": "ReactNativeDependencies",
+      "linkage": "dynamic",
+      "slices": [
+        {
+          "sdk": "appletvos*",
+          "platform": "tvos",
+          "variant": null,
+          "architectures": [
+            "arm64"
+          ],
+          "libraryIdentifier": "tvos-arm64",
+          "libraryPath": "ReactNativeDependencies.framework",
+          "binaryPath": "ReactNativeDependencies.framework/ReactNativeDependencies"
+        },
+        {
+          "sdk": "appletvsimulator*",
+          "platform": "tvos",
+          "variant": "simulator",
+          "architectures": [
+            "arm64",
+            "x86_64"
+          ],
+          "libraryIdentifier": "tvos-arm64_x86_64-simulator",
+          "libraryPath": "ReactNativeDependencies.framework",
+          "binaryPath": "ReactNativeDependencies.framework/ReactNativeDependencies"
+        },
+        {
+          "sdk": "iphoneos*",
+          "platform": "ios",
+          "variant": null,
+          "architectures": [
+            "arm64"
+          ],
+          "libraryIdentifier": "ios-arm64",
+          "libraryPath": "ReactNativeDependencies.framework",
+          "binaryPath": "ReactNativeDependencies.framework/ReactNativeDependencies"
+        },
+        {
+          "sdk": "iphonesimulator*",
+          "platform": "ios",
+          "variant": "simulator",
+          "architectures": [
+            "arm64",
+            "x86_64"
+          ],
+          "libraryIdentifier": "ios-arm64_x86_64-simulator",
+          "libraryPath": "ReactNativeDependencies.framework",
+          "binaryPath": "ReactNativeDependencies.framework/ReactNativeDependencies"
+        },
+        {
+          "sdk": "macosx*",
+          "platform": "ios",
+          "variant": "maccatalyst",
+          "architectures": [
+            "arm64",
+            "x86_64"
+          ],
+          "libraryIdentifier": "ios-arm64_x86_64-maccatalyst",
+          "libraryPath": "ReactNativeDependencies.framework",
+          "binaryPath": "ReactNativeDependencies.framework/ReactNativeDependencies"
+        },
+        {
+          "sdk": "macosx*",
+          "platform": "macos",
+          "variant": null,
+          "architectures": [
+            "arm64",
+            "x86_64"
+          ],
+          "libraryIdentifier": "macos-arm64_x86_64",
+          "libraryPath": "ReactNativeDependencies.framework",
+          "binaryPath": "ReactNativeDependencies.framework/ReactNativeDependencies"
+        },
+        {
+          "sdk": "xros*",
+          "platform": "xros",
+          "variant": null,
+          "architectures": [
+            "arm64"
+          ],
+          "libraryIdentifier": "xros-arm64",
+          "libraryPath": "ReactNativeDependencies.framework",
+          "binaryPath": "ReactNativeDependencies.framework/ReactNativeDependencies"
+        },
+        {
+          "sdk": "xrsimulator*",
+          "platform": "xros",
+          "variant": "simulator",
+          "architectures": [
+            "arm64",
+            "x86_64"
+          ],
+          "libraryIdentifier": "xros-arm64_x86_64-simulator",
+          "libraryPath": "ReactNativeDependencies.framework",
+          "binaryPath": "ReactNativeDependencies.framework/ReactNativeDependencies"
+        }
+      ],
+      "artifactRelativePath": "ReactNativeDependencies.xcframework"
+    },
+    {
+      "id": "hermes",
+      "frameworkName": "hermesvm",
+      "executableName": "hermesvm",
+      "linkage": "dynamic",
+      "slices": [
+        {
+          "sdk": "appletvos*",
+          "platform": "tvos",
+          "variant": null,
+          "architectures": [
+            "arm64"
+          ],
+          "libraryIdentifier": "tvos-arm64",
+          "libraryPath": "hermesvm.framework",
+          "binaryPath": "hermesvm.framework/hermesvm"
+        },
+        {
+          "sdk": "appletvsimulator*",
+          "platform": "tvos",
+          "variant": "simulator",
+          "architectures": [
+            "arm64",
+            "x86_64"
+          ],
+          "libraryIdentifier": "tvos-arm64_x86_64-simulator",
+          "libraryPath": "hermesvm.framework",
+          "binaryPath": "hermesvm.framework/hermesvm"
+        },
+        {
+          "sdk": "iphoneos*",
+          "platform": "ios",
+          "variant": null,
+          "architectures": [
+            "arm64"
+          ],
+          "libraryIdentifier": "ios-arm64",
+          "libraryPath": "hermesvm.framework",
+          "binaryPath": "hermesvm.framework/hermesvm"
+        },
+        {
+          "sdk": "iphonesimulator*",
+          "platform": "ios",
+          "variant": "simulator",
+          "architectures": [
+            "arm64",
+            "x86_64"
+          ],
+          "libraryIdentifier": "ios-arm64_x86_64-simulator",
+          "libraryPath": "hermesvm.framework",
+          "binaryPath": "hermesvm.framework/hermesvm"
+        },
+        {
+          "sdk": "macosx*",
+          "platform": "ios",
+          "variant": "maccatalyst",
+          "architectures": [
+            "arm64",
+            "x86_64"
+          ],
+          "libraryIdentifier": "ios-arm64_x86_64-maccatalyst",
+          "libraryPath": "hermesvm.framework",
+          "binaryPath": "hermesvm.framework/Versions/1/hermesvm"
+        },
+        {
+          "sdk": "xros*",
+          "platform": "xros",
+          "variant": null,
+          "architectures": [
+            "arm64"
+          ],
+          "libraryIdentifier": "xros-arm64",
+          "libraryPath": "hermesvm.framework",
+          "binaryPath": "hermesvm.framework/hermesvm"
+        },
+        {
+          "sdk": "xrsimulator*",
+          "platform": "xros",
+          "variant": "simulator",
+          "architectures": [
+            "arm64",
+            "x86_64"
+          ],
+          "libraryIdentifier": "xros-arm64_x86_64-simulator",
+          "libraryPath": "hermesvm.framework",
+          "binaryPath": "hermesvm.framework/hermesvm"
+        }
+      ],
+      "artifactRelativePath": "hermes-engine.xcframework"
+    },
+    {
+      "id": "expo-file-system",
+      "frameworkName": "ExpoFileSystem",
+      "executableName": "ExpoFileSystem",
+      "linkage": "dynamic",
+      "slices": [
+        {
+          "sdk": "iphoneos*",
+          "platform": "ios",
+          "variant": null,
+          "architectures": [
+            "arm64"
+          ],
+          "libraryIdentifier": "ios-arm64",
+          "libraryPath": "ExpoFileSystem.framework",
+          "binaryPath": "ExpoFileSystem.framework/ExpoFileSystem"
+        },
+        {
+          "sdk": "iphonesimulator*",
+          "platform": "ios",
+          "variant": "simulator",
+          "architectures": [
+            "arm64",
+            "x86_64"
+          ],
+          "libraryIdentifier": "ios-arm64_x86_64-simulator",
+          "libraryPath": "ExpoFileSystem.framework",
+          "binaryPath": "ExpoFileSystem.framework/ExpoFileSystem"
+        }
+      ],
+      "artifactRelativePath": "plugins/expo-file-system.xcframework"
+    },
+    {
+      "id": "expo-font",
+      "frameworkName": "ExpoFont",
+      "executableName": "ExpoFont",
+      "linkage": "dynamic",
+      "slices": [
+        {
+          "sdk": "iphoneos*",
+          "platform": "ios",
+          "variant": null,
+          "architectures": [
+            "arm64"
+          ],
+          "libraryIdentifier": "ios-arm64",
+          "libraryPath": "ExpoFont.framework",
+          "binaryPath": "ExpoFont.framework/ExpoFont"
+        },
+        {
+          "sdk": "iphonesimulator*",
+          "platform": "ios",
+          "variant": "simulator",
+          "architectures": [
+            "arm64",
+            "x86_64"
+          ],
+          "libraryIdentifier": "ios-arm64_x86_64-simulator",
+          "libraryPath": "ExpoFont.framework",
+          "binaryPath": "ExpoFont.framework/ExpoFont"
+        }
+      ],
+      "artifactRelativePath": "plugins/expo-font.xcframework"
+    },
+    {
+      "id": "expo-modules-core",
+      "frameworkName": "ExpoModulesCore",
+      "executableName": "ExpoModulesCore",
+      "linkage": "dynamic",
+      "slices": [
+        {
+          "sdk": "iphoneos*",
+          "platform": "ios",
+          "variant": null,
+          "architectures": [
+            "arm64"
+          ],
+          "libraryIdentifier": "ios-arm64",
+          "libraryPath": "ExpoModulesCore.framework",
+          "binaryPath": "ExpoModulesCore.framework/ExpoModulesCore"
+        },
+        {
+          "sdk": "iphonesimulator*",
+          "platform": "ios",
+          "variant": "simulator",
+          "architectures": [
+            "arm64",
+            "x86_64"
+          ],
+          "libraryIdentifier": "ios-arm64_x86_64-simulator",
+          "libraryPath": "ExpoModulesCore.framework",
+          "binaryPath": "ExpoModulesCore.framework/ExpoModulesCore"
+        }
+      ],
+      "artifactRelativePath": "plugins/expo-modules-core.xcframework"
+    },
+    {
+      "id": "expo-modules-worklets",
+      "frameworkName": "ExpoModulesWorklets",
+      "executableName": "ExpoModulesWorklets",
+      "linkage": "dynamic",
+      "slices": [
+        {
+          "sdk": "iphoneos*",
+          "platform": "ios",
+          "variant": null,
+          "architectures": [
+            "arm64"
+          ],
+          "libraryIdentifier": "ios-arm64",
+          "libraryPath": "ExpoModulesWorklets.framework",
+          "binaryPath": "ExpoModulesWorklets.framework/ExpoModulesWorklets"
+        },
+        {
+          "sdk": "iphonesimulator*",
+          "platform": "ios",
+          "variant": "simulator",
+          "architectures": [
+            "arm64",
+            "x86_64"
+          ],
+          "libraryIdentifier": "ios-arm64_x86_64-simulator",
+          "libraryPath": "ExpoModulesWorklets.framework",
+          "binaryPath": "ExpoModulesWorklets.framework/ExpoModulesWorklets"
+        }
+      ],
+      "artifactRelativePath": "plugins/expo-modules-worklets.xcframework"
+    }
+  ]
+}
