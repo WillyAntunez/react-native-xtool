@@ -38,6 +38,24 @@ describe("resolveBuildVars", () => {
     );
   });
 
+  it("throws on modifier forms and unterminated tokens", () => {
+    expect(() =>
+      resolveBuildVars("$(PRODUCT_NAME:rfc1034identifier)", vars),
+    ).toThrow("Unresolved build variable(s): PRODUCT_NAME:rfc1034identifier");
+    expect(() => resolveBuildVars("x $(A", vars)).toThrow(
+      "Unresolved build variable(s): A",
+    );
+    expect(() => resolveBuildVars("$(A}", {})).toThrow(
+      "Unresolved build variable(s): A",
+    );
+  });
+
+  it("escapes XML-special characters in values", () => {
+    expect(resolveBuildVars("<string>$(A)</string>", { A: "A & B" })).toBe(
+      "<string>A &amp; B</string>",
+    );
+  });
+
   it("throws on RCT_METRO_PORT when not supplied", () => {
     expect(() => resolveBuildVars(template, vars)).toThrow(
       "Unresolved build variable(s): RCT_METRO_PORT",
@@ -58,6 +76,34 @@ describe("transformInfoPlist", () => {
     expect(out.RCTMetroPort).toBe("8082");
     expect(out.NSLocalNetworkUsageDescription).toBe(
       "Connects to the Metro development server on your local network.",
+    );
+  });
+
+  it("resolves SceneDelegate end to end", () => {
+    const out = plist.parse(transformInfoPlist(template, opts)) as Record<
+      string,
+      any
+    >;
+    const scene =
+      out.UIApplicationSceneManifest.UISceneConfigurations
+        .UIWindowSceneSessionRoleApplication[0];
+    expect(scene.UISceneDelegateClassName).toBe("App.SceneDelegate");
+  });
+
+  it("handles special characters in values and rejects modifier forms", () => {
+    const out = plist.parse(
+      transformInfoPlist(template, {
+        ...opts,
+        vars: { ...vars, PRODUCT_NAME: "A & B" },
+      }),
+    ) as Record<string, unknown>;
+    expect(out.CFBundleName).toBe("A & B");
+    const bad = template.replace(
+      "$(PRODUCT_NAME)",
+      "$(PRODUCT_NAME:rfc1034identifier)",
+    );
+    expect(() => transformInfoPlist(bad, opts)).toThrow(
+      /PRODUCT_NAME:rfc1034identifier/,
     );
   });
 
