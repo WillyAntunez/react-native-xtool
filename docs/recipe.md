@@ -34,7 +34,7 @@ node node_modules/react-native/scripts/setup-apple-spm.js add|update \
   [--download skip --artifacts <rnArtifactsDir>]
 ```
 
-`add` the first time, `update` once `ios/.spm-injected.json` exists. The `--config-command` makes Expo's autolinking
+`add` the first time, `update` once the marker `ios/<App>.xcodeproj/.spm-injected.json` exists. The `--config-command` makes Expo's autolinking
 supply the module list (needed for Expo modules). Artifacts come from Maven (`repo.reactnative.dev/maven2`, falling back
 to `repo1.maven.org/maven2`): `react-native-artifacts-<v>-reactnative-{core,dependencies}-{debug,release}.tar.gz` and
 `hermes-ios-<hv>-hermes-ios-<flavor>.tar.gz`, cached in `~/Library/Caches/ReactNative/spm-artifacts/<v>/<flavor>`.
@@ -61,7 +61,8 @@ Without `expo-dev-client`: dev-launcher, dev-menu, json-utils and updates-interf
 
 `shims/plutil` and `shims/otool` are minimal replacements put first on `PATH` (with `swift`) by `toolEnv()` in
 `src/tools/exec.ts`. They answer what the RN scripts ask (both flavors resolve to debug). Steps that Xcode does with
-`xcodebuild` are replaced by `scripts/build-expo-modules-jsi.sh` and `scripts/stage-frameworks.sh`.
+`xcodebuild` are replaced by `scripts/build-expo-modules-jsi.sh` and, for framework staging, `stageFrameworks` in
+`src/frameworks.ts` (see section 6).
 
 ## 5. ExpoModulesJSI
 
@@ -78,8 +79,9 @@ Without `expo-dev-client`: dev-launcher, dev-menu, json-utils and updates-interf
 
 `src/frameworks.ts` reads `ios/build/xcframeworks/flavored-frameworks.json` (debug flavor, slice `ios-arm64`) to list
 the runtime frameworks: React, ReactNativeDependencies, hermesvm, ExpoModulesCore, ExpoModulesWorklets and any other
-dynamic ones, plus the freshly built ExpoModulesJSI. `scripts/stage-frameworks.sh` copies them (dereferencing symlinks)
-into `ios-xtool/Frameworks`, which `xtool.yml` embeds as a resource.
+dynamic ones, plus the freshly built ExpoModulesJSI. `stageFrameworks` in `src/frameworks.ts` copies them
+(dereferencing symlinks) into `ios-xtool/Frameworks`, which `xtool.yml` embeds as a resource. `scripts/stage-frameworks.sh`
+is kept only as a reference of the original manual recipe; the CLI does not call it.
 
 ## 7. Generated `ios-xtool/`
 
@@ -107,8 +109,10 @@ on current iOS, so the app is opened by hand.
 
 ## 9. Metro connectivity
 
-`src/commands/start.ts` picks the LAN IP (default-route interface; `src/net.ts`), checks that the port is free, compares
-both with what was baked into the app (state in `src/state.ts`) and runs `expo start --lan`. The phone fetches the
+`build` (`src/commands/build.ts`) picks the LAN IP (default-route interface; `src/net.ts`) and the Metro port, bakes both
+into the app and records them in the build state (`src/state.ts`). `start` (`src/commands/start.ts`) only verifies: it
+checks that the baked port is free and that the LAN IP is unchanged, refuses to start on a mismatch (rebuild and reinstall),
+and runs `expo start --lan`. The phone fetches the
 bundle over Wi-Fi (`iOS Bundled 289ms` on a warm cache). Pitfalls seen: Docker holding 8081, ufw blocking the port, and
 the iOS Local Network permission.
 

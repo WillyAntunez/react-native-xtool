@@ -10,6 +10,9 @@ Version 0.x, not published to npm yet.
 ## Requirements
 
 - Linux x86_64 (arm64 should work, untested). Node 20+.
+- `libfuse2` (runs the xtool AppImage): `sudo apt install libfuse2` on Ubuntu.
+- `python3` (used by the `plutil` / `otool` shims) and `iproute2` (the `ip` command, to detect the LAN IP).
+- Package manager: npm or Yarn classic. patch-package needs a flat `node_modules`; pnpm and Yarn PnP are not supported.
 - About 15 GB of free disk (Xcode.xip is about 12 GB, the extracted SDK about 7 GB).
 - `Xcode.xip` (Xcode 27.x) that you download yourself from developer.apple.com.
 - An Apple ID (free or paid) and an iPhone connected over USB for the first install.
@@ -17,20 +20,29 @@ Version 0.x, not published to npm yet.
 
 ## Quick start
 
+expo-xtool is not published yet, so install it from a clone:
+
+```sh
+git clone <repo-url> expo-xtool && cd expo-xtool
+npm ci && npm run build && npm link
+```
+
+`npx expo-xtool` will work once it is published; until then use `expo-xtool` as below.
+
 ```sh
 # Once per machine: Swift 6.4 (swiftly), xtool 1.23.0, Darwin SDK from your Xcode.xip
-npx expo-xtool setup --xcode-xip ~/Downloads/Xcode_27.1.xip
+expo-xtool setup --xcode-xip ~/Downloads/Xcode_27.1.xip
 
 # Sign in with your Apple ID (interactive, handled by xtool)
-xtool auth login
+~/.cache/expo-xtool/xtool-1.23.0.AppImage auth login
 
 # In your Expo project, with the iPhone plugged in
 cd my-app
-npx expo-xtool run
+expo-xtool run
 ```
 
 `run` = `build` + `install` + `start`. After the first install you only need
-`npx expo-xtool start`; the cable is needed again only to reinstall.
+`expo-xtool start`; the cable is needed again only to reinstall.
 
 ## Commands
 
@@ -48,7 +60,8 @@ xtool build 24.5 s. The resulting `App.app` is about 99 MB with 8 embedded frame
 
 ## Configuration
 
-Optional `expo-xtool.config.json` (or `.js` with a default export) in the project root:
+Optional `expo-xtool.config.json` in the project root (recommended). A `expo-xtool.config.js` also works, but it
+must be CommonJS (`module.exports = {...}`) unless your project is ESM. Both are merged, `.js` winning:
 
 ```json
 {
@@ -62,11 +75,11 @@ Optional `expo-xtool.config.json` (or `.js` with a default export) in the projec
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `xcodeXipPath` | none | Xcode.xip used by `setup` when `--xcode-xip` is not given. |
+| `xcodeXipPath` | none | Xcode.xip used by `setup` when `--xcode-xip` is not given (the flag wins). |
 | `metroPort` | `8081` | Metro port, baked into the app at build time. |
 | `lanIp` | auto-detected | LAN IP the phone uses to reach Metro, baked into the app. |
 | `rnArtifactsDir` | none | Use already-downloaded React Native prebuilts instead of downloading (offline). |
-| `xtoolPath` | managed copy | Use a specific xtool binary. |
+| `xtoolPath` | managed copy | Use a specific xtool binary in `setup`, `doctor` and `install` (`setup` skips the download; it must exist and be executable). |
 
 ## How it works
 
