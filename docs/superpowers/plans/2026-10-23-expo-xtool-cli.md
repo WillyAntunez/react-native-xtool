@@ -42,6 +42,9 @@
 | 6 | USB install | no device / untrusted / Developer Mode off | install OK but app won't open | user | **handle** timeout + first-run checklist printed after install (Task 10) |
 | 7 | Metro reachable from phone | firewall / different WiFi / port taken | — | user sees RN red screen | **handle** port selection + mismatch checks; **accept** firewall (cannot sudo): `doctor` warns if ufw active (Task 12, 13) |
 | 8 | 7-day certificate expiry | app stops launching | — | user | **accept**: documented in README; `doctor` prints days left if xtool exposes it, else static reminder (Task 14) |
+| 9 | Metro port already held | the port is Metro from an earlier run, so rebuilding would bake a different port | late: Metro stops between the probe and `start` | user sees a port mismatch | **handle**: `isMetroRunning` probes `/status`; our own Metro keeps the port (Tasks 3, 11) |
+| 10 | LAN IP detection behind a VPN | default route is a tunnel / non-private address the phone cannot reach | — | user sees "No script URL" | **handle**: `build` and `doctor lan-ip` warn and point to `lanIp`; never blocks (Tasks 3, 11, 13) |
+| 11 | `patch-package` applies Expo patches | installed Expo package version differs from the patched one | patch applies with fuzz or leaves rejects | user | **handle**: capture output, name package and versions, offer pin or issue report (Tasks 8, 11) |
 
 ---
 
