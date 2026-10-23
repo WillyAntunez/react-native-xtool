@@ -106,19 +106,52 @@ export function genericPatchFailureMessage(
   return `patch-package failed (exit ${r.exitCode ?? "unknown"}):${spawnFailure}\n${tail}\nReport this at https://github.com/WillyAntunez/expo-xtool/issues with the output above.`;
 }
 
-/** patch-package is idempotent for already-applied patches and exits non-zero on failure. */
-export async function applyPatches(projectRoot: string): Promise<void> {
+/** The project's own patches (e.g. persisted library Package.swift files), applied from its root. */
+export function projectPatchesArgv(): [string, string[]] {
+  return [process.execPath, [patchPackageScript(), "--patch-dir", "patches"]];
+}
+
+/** True when `<project>/patches` exists and holds at least one entry. */
+export function hasProjectPatches(projectRoot: string): boolean {
+  try {
+    return readdirSync(path.join(projectRoot, "patches")).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+type PatchExec = (cmd: string, args: string[], cwd: string) => Promise<ExecaResultLike>;
+interface ExecaResultLike {
+  exitCode?: number | undefined;
+  failed?: boolean | undefined;
+  all?: string | undefined;
+  stdout?: string | undefined;
+  stderr?: string | undefined;
+  shortMessage?: string | undefined;
+  message?: string | undefined;
+}
+
+const execPatchPackage: PatchExec = (cmd, args, cwd) =>
+  execa(cmd, args, { cwd, env: toolEnv(), extendEnv: false, all: true, reject: false });
+
+/**
+ * patch-package is idempotent for already-applied patches and exits non-zero on failure.
+ * Applies expo-xtool's bundled patches first, then the project's own `patches/` when present.
+ * The order does not matter: the project's patches only hold library Package.swift files.
+ */
+export async function applyPatches(projectRoot: string, exec: PatchExec = execPatchPackage): Promise<void> {
   const [cmd, args] = applyPatchesArgv(projectRoot);
-  const r = await execa(cmd, args, {
-    cwd: projectRoot,
-    env: toolEnv(),
-    extendEnv: false,
-    all: true,
-    reject: false,
-  });
-  if (r.exitCode === 0 && !r.failed) return;
-  const output = r.all ?? `${r.stdout}\n${r.stderr}`;
-  const mismatch = findPatchMismatch(projectRoot, path.join(packageRoot(), "patches"), output);
-  if (mismatch) throw new Error(patchFailureMessage({ ...mismatch, output }));
-  throw new Error(genericPatchFailureMessage(r, output));
+  const r = await exec(cmd, args, projectRoot);
+  if (r.exitCode !== 0 || r.failed) {
+    const output = r.all ?? `${r.stdout}\n${r.stderr}`;
+    const mismatch = findPatchMismatch(projectRoot, path.join(packageRoot(), "patches"), output);
+    if (mismatch) throw new Error(patchFailureMessage({ ...mismatch, output }));
+    throw new Error(genericPatchFailureMessage(r, output));
+  }
+  if (!hasProjectPatches(projectRoot)) return;
+  const [pcmd, pargs] = projectPatchesArgv();
+  const pr = await exec(pcmd, pargs, projectRoot);
+  if (pr.exitCode === 0 && !pr.failed) return;
+  const output = pr.all ?? `${pr.stdout}\n${pr.stderr}`;
+  throw new Error(`Applying the project's patches/ failed.\n${genericPatchFailureMessage(pr, output)}`);
 }

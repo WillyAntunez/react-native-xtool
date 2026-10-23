@@ -126,6 +126,10 @@ export function persistScaffoldArgv(name: string): [string, string[]] {
   ];
 }
 
+function firstLine(text: string): string {
+  return text.split("\n").map((l) => l.trim()).find((l) => l !== "") ?? "";
+}
+
 function tail(output: string): string {
   return output.trimEnd().split("\n").slice(-40).join("\n");
 }
@@ -160,11 +164,19 @@ export async function runRnSpm(
 
   for (const name of names) {
     const [cmd, args] = persistScaffoldArgv(name);
-    const r = await runner(cmd, args, { cwd: paths.root });
-    if (r.exitCode !== 0)
-      throw new Error(
-        `patch-package failed persisting ${name} (exit ${r.exitCode}):\n${tail(r.output)}`,
+    let failure: string | undefined;
+    try {
+      const r = await runner(cmd, args, { cwd: paths.root });
+      if (r.exitCode !== 0) failure = firstLine(r.output) || `exit ${r.exitCode}`;
+    } catch (e) {
+      failure = firstLine(e instanceof Error ? e.message : String(e)) || "spawn error";
+    }
+    if (failure !== undefined) {
+      log(
+        `⚠ Could not persist ${name}'s Package.swift to patches/ (${failure}). The build continues; it will be re-scaffolded on the next fresh install.`,
       );
+      continue;
+    }
     const version = installedVersion(paths.root, name) ?? "unknown";
     log(
       `✔ scaffold — persisted patches/${name.replace("/", "+")}+${version}.patch`,

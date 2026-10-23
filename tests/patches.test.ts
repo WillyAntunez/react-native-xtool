@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  applyPatches,
   applyPatchesArgv,
+  hasProjectPatches,
+  projectPatchesArgv,
   findPatchMismatch,
   genericPatchFailureMessage,
   outputNamesPackage,
@@ -188,5 +191,48 @@ describe("genericPatchFailureMessage", () => {
     const m = genericPatchFailureMessage({ shortMessage: "Command failed with ENOENT: node" }, "");
     expect(m).toContain("exit unknown");
     expect(m).toContain("Command failed with ENOENT: node");
+  });
+});
+
+describe("applyPatches with project patches", () => {
+  const ok = async () => ({ exitCode: 0 });
+
+  it("applies only the bundled patches when the project has no patches dir", async () => {
+    const { root } = await tempProject();
+    const calls: string[][] = [];
+    await applyPatches(root, async (_c, args) => (calls.push(args), { exitCode: 0 }));
+    expect(calls).toHaveLength(1);
+    expect(hasProjectPatches(root)).toBe(false);
+  });
+
+  it("ignores an empty project patches dir", async () => {
+    const { root } = await tempProject();
+    await mkdir(path.join(root, "patches"));
+    const calls: string[][] = [];
+    await applyPatches(root, async (_c, args) => (calls.push(args), { exitCode: 0 }));
+    expect(calls).toHaveLength(1);
+  });
+
+  it("applies the project's patches second, from the project root", async () => {
+    const { root } = await tempProject();
+    await mkdir(path.join(root, "patches"));
+    await writeFile(path.join(root, "patches", "lib+1.0.0.patch"), "");
+    const calls: { args: string[]; cwd: string }[] = [];
+    await applyPatches(root, async (_c, args, cwd) => (calls.push({ args, cwd }), { exitCode: 0 }));
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.args.slice(1)).toEqual(applyPatchesArgv(root)[1].slice(1));
+    expect(calls[1]!.args.slice(1)).toEqual(["--patch-dir", "patches"]);
+    expect(calls[1]!.args).toEqual(projectPatchesArgv()[1]);
+    expect(calls[1]!.cwd).toBe(root);
+  });
+
+  it("throws when the project's patches fail to apply", async () => {
+    const { root } = await tempProject();
+    await mkdir(path.join(root, "patches"));
+    await writeFile(path.join(root, "patches", "lib+1.0.0.patch"), "");
+    let n = 0;
+    await expect(
+      applyPatches(root, async () => (++n === 1 ? ok() : { exitCode: 1, all: "bad patch" })),
+    ).rejects.toThrow(/project's patches[\s\S]*bad patch/);
   });
 });

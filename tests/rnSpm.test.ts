@@ -120,6 +120,37 @@ describe("runRnSpm", () => {
     expect(h.calls).toHaveLength(4);
   });
 
+  it("warns and still retries when persisting fails", async () => {
+    const h = harness([
+      { exitCode: 1, output: missing("lib-a") },
+      { exitCode: 0, output: "" },
+      { exitCode: 1, output: "\n**ERROR** no lockfile\nmore" },
+      { exitCode: 0, output: "" },
+    ]);
+    await expect(runRnSpm(paths, {}, h.deps)).resolves.toBeUndefined();
+    expect(h.calls).toHaveLength(4);
+    expect(h.logs).toContain(
+      "⚠ Could not persist lib-a's Package.swift to patches/ (**ERROR** no lockfile). The build continues; it will be re-scaffolded on the next fresh install.",
+    );
+  });
+
+  it("warns and continues when the persist command cannot spawn", async () => {
+    const calls: string[][] = [];
+    const logs: string[] = [];
+    const results = [
+      { exitCode: 1, output: missing("lib-a") },
+      { exitCode: 0, output: "" },
+    ];
+    const runner: RnRunner = async (_c, args) => {
+      calls.push(args);
+      if (calls.length === 3) throw new Error("spawn ENOENT\nstack");
+      return results.shift() ?? { exitCode: 0, output: "" };
+    };
+    await runRnSpm(paths, {}, { runner, log: (s) => logs.push(s), rnDir });
+    expect(calls).toHaveLength(4);
+    expect(logs.some((l) => l.startsWith("⚠") && l.includes("spawn ENOENT"))).toBe(true);
+  });
+
   it("throws without scaffolding on unrelated failures", async () => {
     const h = harness([{ exitCode: 2, output: "something else" }]);
     await expect(runRnSpm(paths, {}, h.deps)).rejects.toThrow(/something else/);
