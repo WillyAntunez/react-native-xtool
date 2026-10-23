@@ -42,7 +42,12 @@ export async function install(root: string, deps: InstallDeps = {}): Promise<voi
   if (!auth.loggedIn) {
     throw new Error(`Not logged in to Apple Developer Services. Run: ${bin} auth login`);
   }
-  const devices = await (x.listDevices ?? listDevices)(bin);
+  if (!auth.teamId) {
+    throw new Error(
+      `Could not determine the Apple Team ID from \`xtool auth status\`; run \`${bin} auth login\` again.`,
+    );
+  }
+  const devices = (await (x.listDevices ?? listDevices)(bin)).filter((d) => d.transport === "usb");
   if (devices.length === 0) {
     throw new Error(
       "No iPhone found over USB. Connect it, tap Trust on the phone, and enable Developer Mode (Settings → Privacy & Security).",
@@ -50,7 +55,7 @@ export async function install(root: string, deps: InstallDeps = {}): Promise<voi
   }
   const project = await (x.readProject ?? readExpoProject)(root);
   await (x.devRun ?? devRun)(bin, projectPaths(root).iosXtool);
-  const id = auth.teamId ? installedBundleId(auth.teamId, project.bundleIdentifier) : project.bundleIdentifier;
+  const id = installedBundleId(auth.teamId, project.bundleIdentifier);
   log(`Installed ${id} on ${devices[0]!.name}`);
   log(firstRunChecklist(auth.appleId));
 }

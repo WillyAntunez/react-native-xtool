@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  authStatus,
   installedBundleId,
   listDevices,
   parseAuthStatus,
@@ -74,5 +75,20 @@ describe("xtoolBin", () => {
     expect(() => xtoolBin({ xtoolPath: "/nonexistent/xtool" })).toThrow(
       "xtool not found at /nonexistent/xtool. Run `expo-xtool setup` first.",
     );
+  });
+});
+
+describe("authStatus", () => {
+  const script = (body: string): string => {
+    const f = join(tmp(), "fake-xtool");
+    writeFileSync(f, `#!/bin/sh\n${body}\n`);
+    chmodSync(f, 0o755);
+    return f;
+  };
+  it("treats 'Logged out' on stderr with a non-zero exit as logged out", async () => {
+    await expect(authStatus(script("echo 'Logged out' >&2\nexit 1"))).resolves.toEqual({ loggedIn: false });
+  });
+  it("throws when the binary cannot be spawned", async () => {
+    await expect(authStatus("/nonexistent/xtool")).rejects.toBeDefined();
   });
 });

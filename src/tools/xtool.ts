@@ -47,8 +47,10 @@ export function parseDevices(stdout: string): Device[] {
 }
 
 export async function authStatus(bin: string): Promise<AuthStatus> {
-  const r = await execa(bin, ["auth", "status"], { env: toolEnv(), extendEnv: false });
-  return parseAuthStatus(r.stdout);
+  const r = await execa(bin, ["auth", "status"], { env: toolEnv(), extendEnv: false, reject: false });
+  // Non-zero exits still carry a usable message; only a failed spawn (no exit code) is fatal.
+  if (r.failed && r.exitCode === undefined) throw r;
+  return parseAuthStatus(`${r.stdout}\n${r.stderr}`);
 }
 
 /** `xtool devices` hangs forever with no device, so it is killed after `timeoutMs` and yields []. */

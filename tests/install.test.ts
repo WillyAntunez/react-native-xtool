@@ -20,6 +20,29 @@ describe("install", () => {
     ).rejects.toThrow("Not logged in to Apple Developer Services. Run: /bin/xtool auth login");
     expect(listDevices).not.toHaveBeenCalled();
   });
+  it("fails when login succeeded but the team id is missing", async () => {
+    const devRun = vi.fn();
+    await expect(
+      install("/p", {
+        xtool: { ...base, authStatus: async () => ({ loggedIn: true, teamId: undefined }), devRun },
+      }),
+    ).rejects.toThrow("Could not determine the Apple Team ID");
+    expect(devRun).not.toHaveBeenCalled();
+  });
+  it("ignores non-USB devices", async () => {
+    const devRun = vi.fn();
+    await expect(
+      install("/p", {
+        xtool: {
+          ...base,
+          authStatus: async () => ({ loggedIn: true, teamId: "T" }),
+          listDevices: async () => [{ name: "Wifi", udid: "u", transport: "network" }],
+          devRun,
+        },
+      }),
+    ).rejects.toThrow("No iPhone found over USB");
+    expect(devRun).not.toHaveBeenCalled();
+  });
   it("fails when no device is connected", async () => {
     const devRun = vi.fn();
     await expect(
