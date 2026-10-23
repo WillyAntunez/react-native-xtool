@@ -1,0 +1,30 @@
+{
+  "name": "expo-xtool",
+  "version": "0.1.0",
+  "description": "Build Expo iOS dev builds on Linux via xtool",
+  "type": "module",
+  "bin": {
+    "expo-xtool": "bin/expo-xtool.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "vitest run",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@expo/config": "^58.0.7",
+    "commander": "^15.0.0",
+    "execa": "^10.2.1",
+    "patch-package": "^8.0.1",
+    "plist": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "@types/plist": "^3.0.5",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}
