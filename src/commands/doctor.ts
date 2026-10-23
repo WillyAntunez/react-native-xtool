@@ -181,7 +181,9 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
       return { status: "ok", detail: "supported Expo project" };
     });
     await add("build-state", async () => {
-      if ("error" in stateResult) throw stateResult.error;
+      if ("error" in stateResult) {
+        return { status: "warn", detail: `unreadable build state (${message(stateResult.error)}) — run expo-xtool build` };
+      }
       const state = stateResult.state;
       return state
         ? { status: "ok", detail: `port ${state.metroPort}, ip ${state.lanIp}` }

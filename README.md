@@ -128,6 +128,14 @@ Details and file locations: [docs/recipe.md](docs/recipe.md). Design:
 - **"No script URL" with a VPN on:** expo-xtool bakes in the IP of your default route; a VPN can make that a tunnel
   address (`tun0`, `wg0`, `tailscale0`) the phone cannot reach. `build` and `doctor` warn about it; set `lanIp` in
   `expo-xtool.config.json` to your Wi‑Fi address and rebuild.
+- **Metal shaders are skipped on Linux:** a library that ships `.metal` files (react-native-svg's `MetalCI` filters)
+  would fail the build with `unable to spawn process 'metal'`, because the Metal compiler only exists on macOS. The
+  scaffolder excludes them and prints `Skipped N Metal shader(s)`; the library works, but features that rely on those
+  shaders are unavailable in the build.
+- **svg Metal filters stay unavailable under SwiftPM:** react-native-svg loads its prebuilt `*.metallib` files from
+  `RNSVGFilters.bundle`, declared in the podspec through `s.ios.resource_bundles`. The scaffolder does not read
+  resource bundles yet (on any host, macOS included), so the bundle is never built or copied into the app. Skipping
+  `.metal` compilation is the only Linux-specific part. Rendering that does not use those filters is unaffected.
 - **Firewall:** ufw blocks Metro by default: `sudo ufw allow <port>/tcp`.
 - **A committed project patch no longer applies** (after a library upgrade): delete it from `patches/` and let
   `expo-xtool build` re-scaffold it.
@@ -136,8 +144,11 @@ Details and file locations: [docs/recipe.md](docs/recipe.md). Design:
   report the new version in the issue tracker so the patch can be refreshed.
 - **Metro already running on 8081:** `build` keeps the port when a Metro already serves `packager-status:running` there
   (expo-xtool cannot tell which project it belongs to; if it is another project's Metro, stop it). `start` then reports
-  that Metro is running and leaves it alone. Only a different program on the port makes `build` pick the next free one.
-- **Port busy (8081 taken, for example by Docker):** free the port, or set `metroPort` in the config and rebuild + reinstall
+  that Metro is running and leaves it alone. Only a different program on the port makes `build` look further (next item).
+- **Port busy (8081 taken, for example by Docker):** `build` picks the Metro port in this order: the configured
+  `metroPort` if free or already serving Metro; otherwise the previous build's port (from `ios-xtool/.expo-xtool-state.json`)
+  if free or serving Metro, so a running Metro keeps matching the installed app; otherwise the next free port after the
+  configured one. To choose differently, free the port, or set `metroPort` in the config and rebuild + reinstall
   (the port is baked in; `start` tells you which).
 - **LAN IP changed (new network, DHCP):** `start` detects it and tells you; rebuild and reinstall, or pin `lanIp`.
 - **"Developer Mode required":** enable it on the phone (see checklist) and reboot.

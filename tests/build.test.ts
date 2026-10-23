@@ -1,9 +1,9 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { build, buildSteps, type BuildDeps } from "../src/commands/build.js";
-import { readState } from "../src/state.js";
+import { build, buildSteps, chooseMetroPort, type BuildDeps } from "../src/commands/build.js";
+import { readState, writeState } from "../src/state.js";
 
 describe("buildSteps", () => {
   it("starts with prebuild when ios/ is missing", () => {
@@ -55,6 +55,7 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
     detectLanRoute: async () => over.route ?? { ip: "10.0.0.7", dev: "eth0" },
     devBuild: rec("xtool-build"),
     xtoolBin: () => "/bin/xtool",
+    readState,
     log: (s) => logs.push(s),
   };
   return { root, calls, logs, deps, writeIosXtool };
@@ -125,5 +126,62 @@ describe("build", () => {
     const b = setup({ cfg: { lanIp: "1.2.3.4" }, route: { ip: "10.8.0.2", dev: "tun0" } });
     await build(b.root, {}, b.deps);
     expect(b.logs.some(warning)).toBe(false);
+  });
+});
+
+describe("chooseMetroPort", () => {
+  const mk = (free: number[], metro: number[], previous?: number) => ({
+    configured: 8081,
+    previous,
+    isPortFree: async (p: number) => free.includes(p),
+    isMetroRunning: async (p: number) => metro.includes(p),
+    findFreePort: async (s: number) => s,
+  });
+  it("configured-free", async () => {
+    expect(await chooseMetroPort(mk([8081], [], 8082))).toEqual({ port: 8081, reason: "configured-free" });
+  });
+  it("configured-metro", async () => {
+    expect(await chooseMetroPort(mk([], [8081, 8082], 8082))).toEqual({ port: 8081, reason: "configured-metro" });
+  });
+  it("previous-free", async () => {
+    expect(await chooseMetroPort(mk([8082], [], 8082))).toEqual({ port: 8082, reason: "previous-free" });
+  });
+  it("previous-metro (the Docker-on-8081 regression)", async () => {
+    expect(await chooseMetroPort(mk([], [8082], 8082))).toEqual({ port: 8082, reason: "previous-metro" });
+  });
+  it("fallback when previous is busy and not Metro", async () => {
+    expect(await chooseMetroPort(mk([], [], 8082))).toEqual({ port: 8082, reason: "fallback" });
+  });
+  it("fallback without previous", async () => {
+    expect(await chooseMetroPort(mk([], []))).toEqual({ port: 8082, reason: "fallback" });
+  });
+  it("ignores previous when equal to configured", async () => {
+    const probe = vi.fn(async () => false);
+    const r = await chooseMetroPort({ ...mk([], [], 8081), isPortFree: probe });
+    expect(r.reason).toBe("fallback");
+    expect(probe).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("build previous port", () => {
+  it("keeps the previous build's Metro port when the configured one is busy", async () => {
+    const t = setup({ isPortFree: async () => false, isMetroRunning: async (p) => p === 8082 });
+    await writeState(join(t.root, "ios-xtool"), { version: 1, metroPort: 8082, lanIp: "x", bundleIdentifier: "b", builtAt: "t" });
+    await build(t.root, {}, t.deps);
+    expect(t.logs).toContain("Port 8081 is busy (not a Metro bundler); keeping the previous build's port 8082 where Metro is running.");
+    expect((await readState(join(t.root, "ios-xtool")))?.metroPort).toBe(8082);
+  });
+});
+
+describe("build corrupt state", () => {
+  it("warns, ignores the unreadable state, continues and rewrites it", async () => {
+    const t = setup();
+    const dir = join(t.root, "ios-xtool");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, ".expo-xtool-state.json"), "{not json");
+    await build(t.root, {}, t.deps);
+    expect(t.logs.some((l) => l.startsWith("⚠ Ignoring unreadable build state (") && l.endsWith("a fresh one will be written."))).toBe(true);
+    expect(t.calls).toEqual(buildSteps({ hasIos: false, clean: false }));
+    expect((await readState(dir))?.metroPort).toBe(8081);
   });
 });

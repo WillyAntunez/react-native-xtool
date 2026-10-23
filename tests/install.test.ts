@@ -67,6 +67,21 @@ describe("install", () => {
     ).rejects.toThrow("No build found. Run `expo-xtool build` first.");
     expect(devRun).not.toHaveBeenCalled();
   });
+  it("treats an unreadable build state like a missing one", async () => {
+    const devRun = vi.fn();
+    await expect(
+      install("/p", {
+        xtool: {
+          ...base,
+          authStatus: async () => ({ loggedIn: true, teamId: "T" }),
+          listDevices: async () => [{ name: "Phone", udid: "u", transport: "usb" }],
+          readState: async () => { throw new Error("bad json"); },
+          devRun,
+        },
+      }),
+    ).rejects.toThrow("No build found. Run `expo-xtool build` first.");
+    expect(devRun).not.toHaveBeenCalled();
+  });
   it("runs, then logs bundle id and checklist", async () => {
     const logs: string[] = [];
     const devRun = vi.fn(async () => {});

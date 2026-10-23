@@ -78,6 +78,12 @@ describe("start", () => {
     expect(exec).not.toHaveBeenCalled();
   });
 
+  it("treats an unreadable build state like a missing one", async () => {
+    const { deps, exec } = makeDeps({ readState: async () => { throw new Error("bad json"); } });
+    await expect(start("/p", deps)).rejects.toThrow("No build state found. Run `expo-xtool build` first.");
+    expect(exec).not.toHaveBeenCalled();
+  });
+
   it("rejects with the port message when the port is busy", async () => {
     const { deps, exec } = makeDeps({ isPortFree: async () => false, findFreePort: async () => 8082 });
     const msg = portMismatchMessage(8081, 8082);

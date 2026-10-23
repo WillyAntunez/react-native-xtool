@@ -1,6 +1,6 @@
-# React Native SwiftPM scaffolder: two generic fixes (0.88.0)
+# React Native SwiftPM scaffolder: five generic fixes (0.88.0)
 
-Both bugs make `react-native spm scaffold` emit an invalid or incomplete `Package.swift` for
+These bugs make `react-native spm scaffold` emit an invalid or incomplete `Package.swift` for
 CocoaPods-only libraries such as `react-native-gesture-handler`. The fixes live in
 `patches/react-native+0.88.0.patch` and are meant to be upstreamed to facebook/react-native.
 
@@ -150,9 +150,179 @@ index cf7e587..5e60de0 100644
            'utf8',
 ```
 
+## 3. `scripts/spm/read-podspec.js`: Ruby local variables on the right-hand side are not resolved
+
+The regex fallback only understands literal strings/arrays. `react-native-screens/RNScreens.podspec`
+hoists its globs into locals:
+
+```ruby
+source_files_exts = '{h,m,mm,cpp}'
+source_files = ["ios/**/*.#{source_files_exts}"]
+s.source_files = source_files
+s.exclude_files = "ios/gamma/**/*.#{source_files_exts}"
+```
+
+Repro (no `pod` on `PATH`):
+
+```js
+require("react-native/scripts/spm/read-podspec.js")
+  .readPodspecCached("node_modules/react-native-screens/RNScreens.podspec")
+  .sourceFiles; // undefined  (expected ["ios/**/*.{h,m,mm,cpp}"])
+```
+
+Effect: the scaffolded `Package.swift` has no `ios/` sources (only the `common` subspec), so the
+app builds but crashes at startup with `Screen native module hasn't been linked`.
+
+Fix: a pre-pass `resolveRubyConstants(content)` over the comment-stripped source. It collects
+single-line `ident = 'str' | "str" | ["a", "b"]` assignments (first wins), replaces `#{ident}` for
+known string constants, and rewrites `s.<field> = ident` (and `ss.`/`s.ios.` forms) to the literal value. Unknown
+interpolations and identifiers are left untouched; `ENV[...]` and `if` conditions are not
+evaluated. The existing field regexes are unchanged. See the `resolveRubyConstants` hunk in
+`patches/react-native+0.88.0.patch`.
+
+## 4. `scripts/spm/read-podspec.js`: the regex parser is blind to subspec blocks
+
+The regex fallback reads one `s.source_files` / `s.exclude_files` and ignores
+`s.subspec "common" do |ss| ... end`, while the `pod ipc` path merges the subspecs
+(`flattenSubspecs`). `RNScreens.podspec` keeps its C++ in such a subspec:
+
+```ruby
+s.subspec "common" do |ss|
+  ss.source_files = ["common/cpp/**/*.{cpp,h}", "cpp/**/*.{cpp,h}"]
+  ss.header_dir   = "rnscreens"
+  ss.pod_target_xcconfig = { "HEADER_SEARCH_PATHS" => "\"$(PODS_TARGET_SRCROOT)/common/cpp\"" }
+end
+```
+
+Effect: no `common/cpp` sources in the scaffolded package, and compiling
+`ios/tabs/extensions/RNSTabsHostComponentView+RNSImageLoader.mm` fails with
+`'RNSTabsHostShadowNode.h' file not found`.
+
+Accidental match: before fix 3 these sources only appeared because `(?:s|spec)\.source_files`
+also matches inside `ss.source_files` (`ss.` contains `s.`). Once the main assignment resolved,
+that accident no longer covered the subspec. The main-spec receiver is now
+`(?<![\w.])(?:s|spec)`, so it never matches `ss.<field>`.
+
+Fix: `splitSubspecs` cuts each `(s|spec).subspec "name" do |recv|` block (matched to its `end` by
+counting Ruby block openers) out of the text. `getStringField`/`getArrayField`/`getDependencies`/
+`getFrameworks` take a text and a receiver pattern; the main spec is read with the subspec blocks
+removed, each subspec with its own block variable. Values are merged like `flattenSubspecs`:
+array fields and `HEADER_SEARCH_PATHS` are unions, `header_dir` stays the main spec's,
+`header_mappings_dir`/`compiler_flags` fall back to the first subspec. All subspecs are merged
+unless the spec declares `default_subspecs`/`default_subspec`, then only those. A block that
+re-binds `s`/`spec` is left alone (see the shadowing warning).
+
+Hardening: the main receiver is read from `Pod::Spec.new do |x|` (fallback `s|spec`), so
+`|podspec|` works; `blockDelta` ignores a trailing `# comment` and counts a block opened and closed
+on one line (`if … end`, `s.subspec "a" do |ss| … end`) as net 0; `default_subspecs = :none` merges
+no subspec (also for `pod ipc` output); `ss.x = ident` and `s.ios.x = ident` get the same bare
+identifier rewrite as `s.x = ident`; `#{}` is interpolated only inside double-quoted strings.
+
+Known limits (the regex parser warns that CocoaPods gives the full result): nested subspecs (a
+subspec inside a subspec is not split out and its fields read as the parent's), heredocs and
+multi-line strings containing `do`/`end`/`if` words, `{ |ss| … }` brace-block subspecs (not
+recognised, their fields are lost), and block openers hidden behind modifiers or conditionals other
+than the leading-keyword and trailing-`do` forms.
+
+## 5. `scripts/spm/scaffold-package-swift.js`: CocoaPods `header_dir` namespaces are not emulated
+
+CocoaPods `header_dir` (on the main spec or a subspec) exposes ALL of that spec's headers,
+flattened, under one namespace. react-native-screens sets `ss.header_dir = "rnscreens"` on its
+`common` subspec, so `#import <rnscreens/RNSTabsHostComponentDescriptor.h>` works although the
+file is `common/cpp/react/renderer/components/rnscreens/RNSTabsHostComponentDescriptor.h`, and
+`cpp/*.h` and `common/cpp/.../rnscreens/utils/*.h` are reachable as `<rnscreens/X.h>` too. The
+scaffold did not emulate this (`header_mappings_dir`, the keep-subdirs variant, was already
+handled), so `ios/tabs/host/RNSTabsHostComponentView.mm` failed with
+`'rnscreens/RNSTabsHostComponentDescriptor.h' file not found`.
+
+Fix: `read-podspec.js` keeps the per-scope association as `headerDirScopes: [{headerDir,
+sourceFiles}]` (a main-spec `header_dir` covers its own sources and those of subspecs that set
+none; a subspec's covers only its own). `translatePodspecToSpmTarget` expands each scope to its
+headers and the writer emits `include/<header_dir>/<basename>.h` stubs (`#import
+"../../<path to the real header>"`, same mechanism as the umbrella-header shim). On a basename
+collision the shallowest path wins and a warning is added. `include` is added to the target's
+header search paths unless it is already `publicHeadersPath`; `include/` is never ingested as a
+source.
+
+Guards: a `header_dir` containing `..` or an absolute path is ignored with a warning (the stubs are
+written under `include/`); two scopes sharing a stub directory, or a `header_dir` equal to the
+target name (it shares `include/<name>/` with the umbrella-header shims), produce a warning; a
+subspec's `header_dir = ""` is the root namespace and gets no stubs (its headers are not inherited
+under the main spec's `header_dir`).
+
+## 6. `scripts/spm/read-podspec.js`: platform-scoped fields (`s.ios.<field>`) are invisible
+
+The field regexes only match `s.<field>`, so `s.ios.exclude_files = '**/*.macos.{h,m,mm}'`
+(react-native-svg) is never read and the macOS-only sources (`*.macos.mm`, AppKit) are compiled for
+iOS.
+
+Fix: every string/array reader also tries `<recv>.ios.<field>`. Array fields (`source_files`,
+`exclude_files`, `public_header_files`, `frameworks`, `weak_frameworks`, `resources`, ...) are the
+union of the generic and the `ios` values; string fields (`header_dir`, `header_mappings_dir`,
+`compiler_flags`, ...) take the `ios` value over the generic one. Also applies inside subspecs
+(`ss.ios.<field>`). `s.osx.`, `s.macos.`, `s.tvos.`, `s.visionos.` and `s.watchos.` are never read:
+the receiver pattern (`(?<![\w.])(?:s|spec)`, then `.`, optionally `ios.`, then the field name)
+cannot match them.
+
+## 7. `scripts/spm/*`: no preprocessor defines in the regex path, no `RCT_NEW_ARCH_ENABLED` anywhere
+
+Two gaps. (a) The regex parser only returned `pod_target_xcconfig.HEADER_SEARCH_PATHS`, so
+`mergePreprocessorDefines()` had nothing to lift: literal `-DNAME[=VALUE]` in `compiler_flags` and
+`OTHER_CFLAGS` / `GCC_PREPROCESSOR_DEFINITIONS` string literals in an xcconfig hash (also the
+`[config=*Debug*]` keys) were lost. (b) Nothing under `scripts/spm` defines `RCT_NEW_ARCH_ENABLED`
+for scaffolded targets, so libraries gated on it compile their Paper path (react-native-webview's
+Fabric view is missing at runtime; svg, screens, gesture-handler and others behave the same).
+
+Fix: `regexPodspec` now also returns those xcconfig keys (string literals only; arrays, `.join`
+and `#{}` values are not understood and interpolated tokens are dropped with the other
+unresolved ones). `mergePreprocessorDefines` also lifts `-D` tokens from `compiler_flags`, and
+`mergeCompilerFlags` no longer repeats a lifted `-D` as an unsafe flag. In
+`translatePodspecToSpmTarget`, a React Native library (`coreReactNative`: React-* dependency,
+`codegenConfig`, or `install_modules_dependencies`) gets `.define("RCT_NEW_ARCH_ENABLED", to: "1")`
+unless the podspec already defines it globally (a per-configuration define does not count).
+
+Why only that macro: CocoaPods' `computeFlags` (`scripts/cocoapods/new_architecture.rb`) adds
+`-DRCT_NEW_ARCH_ENABLED=1` and expo's autolinking emits the same define for its own targets. The
+Folly macros (`FOLLY_MOBILE`, `FOLLY_USE_LIBCPP`, `FOLLY_CFG_NO_COROUTINES`,
+`FOLLY_HAVE_CLOCK_GETTIME`) come from `folly/folly-config.h`, which `folly/portability/Config.h`
+includes from the prebuilt headers; defining `FOLLY_NO_CONFIG` would switch that include off.
+Consequently the lifting step drops `FOLLY_NO_CONFIG` and every other `FOLLY_*` define found in
+`compiler_flags` / xcconfigs (the usual `folly_compiler_flags`), also from the raw flags, and
+records one warning naming what was dropped. Defining `FOLLY_NO_CONFIG` without the full CocoaPods
+set breaks the build.
+`REACT_NATIVE_MINOR_VERSION` is not an RN-defined macro (react-native-svg computes it in its own
+podspec) and is not added blindly; see bug 8.
+
+## 8. `scripts/spm/read-podspec.js`: `REACT_NATIVE_*_VERSION=#{...}` defines are dropped
+
+react-native-svg sets `"OTHER_CFLAGS" => "$(inherited) -DREACT_NATIVE_MINOR_VERSION=#{svgConfig[:react_native_minor_version]}"`,
+computed in Ruby from `react-native/package.json`. The regex path cannot evaluate it, so the
+unresolved-token rule of bug 7 dropped the define and `RNSVGImage.mm` (`#if REACT_NATIVE_MINOR_VERSION > 84`)
+compiled the old-RN branch (`no viable conversion from 'RCTImageResponseObserverProxy' to
+'std::shared_ptr<const ImageResponseObserver>'`). Many community libraries use this convention, always
+meaning the installed React Native.
+
+Fix: `mergePreprocessorDefines` substitutes the number from the installed React Native version
+(read from the `package.json` two levels above `scripts/spm`; 0.88.0 gives major 0, minor 88,
+patch 0) when the unresolved define is named `REACT_NATIVE_MAJOR_VERSION`,
+`REACT_NATIVE_MINOR_VERSION` or `REACT_NATIVE_PATCH_VERSION` and its value has no Xcode `$(...)`
+token. It emits the `.define` and records a warning naming the substitution. Any other interpolated
+define stays dropped.
+
+## 9. `scripts/spm/scaffold-package-swift.js`: target arguments are emitted in an order SwiftPM rejects
+
+Pre-existing upstream bug, not caused by our patch. The target emitter writes `sources`, then
+`publicHeadersPath`, then `resources`. SwiftPM requires the order `exclude`, `sources`, `resources`,
+`publicHeadersPath`, `cSettings`, `cxxSettings`, `swiftSettings`, `linkerSettings`, and rejects anything
+else: `error: argument 'resources' must precede argument 'publicHeadersPath'`. Any podspec with
+`resources` (react-native-svg, for one) produced an invalid manifest.
+
+Fix: emit `resources` before `publicHeadersPath` (`exclude` stays right after `path`). Verified with
+`swift package dump-package` on the generated manifest.
+
 ## Tests
 
-`tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks both
+`tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks the
 fixes against fixtures (skipped when the reference app is not present; set `EXPO_XTOOL_REF_APP` to point at it). It also
 asserts that each hunk is present in the installed RN files. Upstream, equivalent tests belong in
 RN's own `__tests__` next to `read-podspec` and `scaffold-package-swift`.
