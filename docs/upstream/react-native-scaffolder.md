@@ -244,6 +244,12 @@ collision the shallowest path wins and a warning is added. `include` is added to
 header search paths unless it is already `publicHeadersPath`; `include/` is never ingested as a
 source.
 
+Guards: a `header_dir` containing `..` or an absolute path is ignored with a warning (the stubs are
+written under `include/`); two scopes sharing a stub directory, or a `header_dir` equal to the
+target name (it shares `include/<name>/` with the umbrella-header shims), produce a warning; a
+subspec's `header_dir = ""` is the root namespace and gets no stubs (its headers are not inherited
+under the main spec's `header_dir`).
+
 ## 6. `scripts/spm/read-podspec.js`: platform-scoped fields (`s.ios.<field>`) are invisible
 
 The field regexes only match `s.<field>`, so `s.ios.exclude_files = '**/*.macos.{h,m,mm}'`

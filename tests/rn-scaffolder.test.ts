@@ -458,6 +458,32 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       expect(spec.warnings.some((w) => w.includes("include/ns/") && w.includes("Dup.h"))).toBe(true);
     });
 
+    const sub = (dir: string, main = "") =>
+      `  s.source_files = "a/**/*.{h,m}"\n${main}  s.subspec "c" do |ss|\n    ss.source_files = "common/**/*.{h,cpp}"\n    ss.header_dir = "${dir}"\n  end`;
+
+    it("rejects a header_dir containing '..' or an absolute path", () => {
+      for (const bad of ["../escape", "a/../b", "/abs"]) {
+        const { spec } = scaffold(sub(bad));
+        expect(spec.headerDirShims, bad).toEqual([]);
+        expect(spec.warnings.some((w) => w.includes("Ignoring header_dir") && w.includes(bad)), bad).toBe(true);
+      }
+    });
+    it("warns when two scopes share a stub directory", () => {
+      const { spec } = scaffold(sub("ns", '  s.header_dir = "ns"\n'));
+      expect(spec.headerDirShims.map((s) => s.dir)).toEqual(["ns", "ns"]);
+      expect(spec.warnings.some((w) => w.includes("share include/ns/"))).toBe(true);
+    });
+    it("warns when header_dir equals the target name", () => {
+      const { spec } = scaffold(sub("Foo"));
+      expect(spec.warnings.some((w) => w.includes("equals the target name"))).toBe(true);
+    });
+    it("treats a subspec header_dir = \"\" as the root namespace (no stubs, no inheritance)", () => {
+      const { spec } = scaffold(sub("", '  s.header_dir = "ns"\n'));
+      expect(spec.headerDirShims).toHaveLength(1);
+      expect(spec.headerDirShims[0]!.dir).toBe("ns");
+      expect(spec.headerDirShims[0]!.headers).toEqual(["a/A.h"]);
+    });
+
     it("covers every header for a main-spec header_dir", () => {
       const { spec } = scaffold('  s.source_files = "a/**/*.{h,m}", "common/**/*.{h,cpp}"\n  s.header_dir = "ns"');
       expect(spec.headerDirShims[0]!.headers).toContain("a/A.h");

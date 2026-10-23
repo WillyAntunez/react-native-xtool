@@ -1,8 +1,8 @@
 diff --git a/node_modules/react-native/scripts/spm/read-podspec.js b/node_modules/react-native/scripts/spm/read-podspec.js
-index 8fcf04b..3f1c81c 100644
+index 8fcf04b..4f1a55d 100644
 --- a/node_modules/react-native/scripts/spm/read-podspec.js
 +++ b/node_modules/react-native/scripts/spm/read-podspec.js
-@@ -170,58 +170,261 @@ function cleanupPatchedPodspec(patchedPath /*: ?string */) /*: void */ {
+@@ -170,58 +170,263 @@ function cleanupPatchedPodspec(patchedPath /*: ?string */) /*: void */ {
  // Regex fallback
  // ---------------------------------------------------------------------------
  
@@ -247,7 +247,9 @@ index 8fcf04b..3f1c81c 100644
 +    text /*: string */,
 +    recv /*: string */,
 +  ) /*: string | null */ {
-+    const re = new RegExp(`${recv}\\.${name}\\s*=\\s*["']([^"']+)["']`);
++    // `header_dir = ""` is meaningful (root namespace), so only it may be empty.
++    const quant = name === 'header_dir' ? '*' : '+';
++    const re = new RegExp(`${recv}\\.${name}\\s*=\\s*["']([^"']${quant})["']`);
 +    const m = text.match(re);
      return m ? m[1] : null;
    }
@@ -289,7 +291,7 @@ index 8fcf04b..3f1c81c 100644
    }
  
    // The fields that identify the spec, and only when the receiver spelling
-@@ -235,9 +438,27 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -235,9 +440,27 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    // Matches:
    //   s.<field> = ["a", "b"]            (array)
    //   s.<field> = "single"              (single value treated as 1-element array)
@@ -320,7 +322,7 @@ index 8fcf04b..3f1c81c 100644
      if (mArr != null) {
        const inner = mArr[1];
        const out /*: Array<string> */ = [];
-@@ -249,16 +470,34 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -249,16 +472,34 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
        }
        return out;
      }
@@ -359,7 +361,7 @@ index 8fcf04b..3f1c81c 100644
        if (m == null) break;
        out.push(m[1]);
      }
-@@ -269,21 +508,25 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -269,21 +510,25 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    //   s.framework "X"          → ["X"]
    //   s.framework = "X"        → ["X"]
    //   s.frameworks = ["X","Y"] → ["X","Y"]
@@ -390,7 +392,7 @@ index 8fcf04b..3f1c81c 100644
        if (m == null) break;
        const itemRe = /["']([^"']+)["']/g;
        while (true) {
-@@ -298,12 +541,14 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -298,12 +543,14 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    // Matches:  'HEADER_SEARCH_PATHS' => '...'   or  => ["...","..."]
    // Returns the raw token strings (still containing $(PODS_TARGET_SRCROOT)
    // etc.); substitution happens at translation time.
@@ -407,7 +409,7 @@ index 8fcf04b..3f1c81c 100644
        if (m == null) break;
        const itemRe = /["']((?:[^"'\\]|\\.)+)["']/g;
        while (true) {
-@@ -321,7 +566,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -321,7 +568,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      const strRe =
        /["']HEADER_SEARCH_PATHS["']\s*=>\s*["']((?:[^"'\\]|\\.)+)["']/g;
      while (true) {
@@ -416,7 +418,7 @@ index 8fcf04b..3f1c81c 100644
        if (m == null) break;
        for (const token of m[1].split(/\s+/)) {
          if (token.length > 0) {
-@@ -332,15 +577,37 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -332,15 +579,37 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      return Array.from(new Set(out));
    }
  
@@ -456,7 +458,7 @@ index 8fcf04b..3f1c81c 100644
      );
    }
    if (/install_modules_dependencies/.test(content)) {
-@@ -354,24 +621,80 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -354,24 +623,80 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      );
    }
  
@@ -550,7 +552,7 @@ index 8fcf04b..3f1c81c 100644
      __regex_partial__: true,
      __warnings__: warnings,
    };
-@@ -423,6 +746,31 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
+@@ -423,6 +748,36 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
    return tokens;
  }
  
@@ -567,6 +569,11 @@ index 8fcf04b..3f1c81c 100644
 +  const scopes = [];
 +  const inherited = [];
 +  layers.forEach((l, i) => {
++    if (i > 0 && l.headerDir === '') {
++      // A subspec's `header_dir = ""` is the root namespace: no stubs for its
++      // headers (they are not inherited under the main spec's header_dir).
++      return;
++    }
 +    if (i > 0 && l.headerDir != null && l.headerDir.length > 0) {
 +      scopes.push({headerDir: l.headerDir, sourceFiles: l.sourceFiles});
 +    } else {
@@ -582,7 +589,7 @@ index 8fcf04b..3f1c81c 100644
  // ---------------------------------------------------------------------------
  // Subspec flattening
  // ---------------------------------------------------------------------------
-@@ -456,7 +804,12 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -456,7 +811,12 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
    //   - `default_subspecs`: array of names (or undefined → use all subspecs)
    const subspecs = Array.isArray(rawSpec.subspecs) ? rawSpec.subspecs : [];
    let selected = subspecs;
@@ -596,7 +603,7 @@ index 8fcf04b..3f1c81c 100644
      const wanted = new Set(rawSpec.default_subspecs);
      selected = subspecs.filter(s => {
        // $FlowFixMe[prop-missing] dynamic shape
-@@ -482,6 +835,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -482,6 +842,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return Array.from(new Set(out));
    }
  
@@ -614,7 +621,7 @@ index 8fcf04b..3f1c81c 100644
    // Only the spec's own value: a subspec's `header_dir` names that subspec's
    // headers, and several subspecs can disagree.
    function specStringField(key /*: string */) /*: string | null */ {
-@@ -544,6 +908,14 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -544,6 +915,14 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
    // `-D`s are safe to forward; arbitrary flags may be machine- or
    // example-app-specific. $(inherited), unresolved $(...) tokens, and invalid
    // C identifiers are skipped.
@@ -629,7 +636,7 @@ index 8fcf04b..3f1c81c 100644
    function mergePreprocessorDefines() /*: Array<PreprocessorDefine> */ {
      const out /*: Array<PreprocessorDefine> */ = [];
      const seen /*: Set<string> */ = new Set();
-@@ -554,7 +926,14 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -554,7 +933,14 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        config /*: ?('debug' | 'release') */,
      ) => {
        if (!validName.test(name)) return;
@@ -645,7 +652,7 @@ index 8fcf04b..3f1c81c 100644
          return; // unresolved Xcode/Ruby token — don't emit a broken define
        }
        const key = `${name}|${config ?? ''}`;
-@@ -571,6 +950,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -571,6 +957,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        'xcconfig',
        'user_target_xcconfig',
      ];
@@ -666,7 +673,7 @@ index 8fcf04b..3f1c81c 100644
      for (const layer of layers) {
        if (layer == null || typeof layer !== 'object') continue;
        for (const xcKey of XCCONFIG_KEYS) {
-@@ -648,23 +1041,35 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -648,23 +1048,35 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return Array.from(new Set(out));
    }
  
@@ -716,7 +723,7 @@ index 8fcf04b..3f1c81c 100644
        }
      }
      return out;
-@@ -677,6 +1082,14 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -677,6 +1089,14 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        ? false
        : true; // RN ecosystem default
  
@@ -731,7 +738,7 @@ index 8fcf04b..3f1c81c 100644
    return {
      name: specStringField('name') ?? '',
      version: specStringField('version') ?? '',
-@@ -693,13 +1106,24 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -693,13 +1113,24 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      // header_mappings_dir copy step, which SPM has no equivalent for.
      headerMappingsDirs: mergeArrayField('header_mappings_dir'),
      headerDir: specStringField('header_dir'),
@@ -758,7 +765,7 @@ index 8fcf04b..3f1c81c 100644
      headerSearchPaths: mergeHeaderSearchPaths(),
      resources: mergeArrayField('resources'),
      requiresArc,
-@@ -794,12 +1218,13 @@ function readPodspecNames(
+@@ -794,12 +1225,13 @@ function readPodspecNames(
    if (hasShadowingSubspec(source)) {
      return null;
    }
@@ -774,7 +781,7 @@ index 8fcf04b..3f1c81c 100644
    const name = field('name');
    const moduleName = field('module_name');
 diff --git a/node_modules/react-native/scripts/spm/scaffold-package-swift.js b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
-index cf7e587..541ac33 100644
+index cf7e587..50492fd 100644
 --- a/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 +++ b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 @@ -435,7 +435,8 @@ function translatePodspecToSpmTarget(
@@ -828,7 +835,7 @@ index cf7e587..541ac33 100644
    if (publicHeadersPath == null) {
      // Root-level podspecs (`s.source_files = "*.{h,m,mm}"`) keep their
      // headers in the package root. CocoaPods exposes them to dependents as
-@@ -518,6 +553,54 @@ function translatePodspecToSpmTarget(
+@@ -518,6 +553,78 @@ function translatePodspecToSpmTarget(
      );
    }
  
@@ -836,7 +843,31 @@ index cf7e587..541ac33 100644
 +  // `<header_dir/X.h>` whatever their subdirectory. Mirror each as a stub in
 +  // include/<header_dir>/ and put include/ on the header search path.
 +  const headerDirShims /*: Array<{dir: string, headers: Array<string>}> */ = [];
++  const headerDirsSeen /*: Set<string> */ = new Set();
 +  for (const scope of model.headerDirScopes ?? []) {
++    // The directory name is written under include/: refuse anything that could
++    // leave it (`..`, an absolute path).
++    if (
++      path.posix.isAbsolute(scope.headerDir) ||
++      path.win32.isAbsolute(scope.headerDir) ||
++      scope.headerDir.split(/[\\/]/).includes('..')
++    ) {
++      warnings.push(
++        `Ignoring header_dir '${scope.headerDir}': it must be a relative path without '..'; no <header_dir/...> stubs emitted for it.`,
++      );
++      continue;
++    }
++    if (headerDirsSeen.has(scope.headerDir)) {
++      warnings.push(
++        `Two header_dir scopes share include/${scope.headerDir}/: their stubs land in the same directory and a header with the same name from the later scope overwrites the earlier one.`,
++      );
++    }
++    headerDirsSeen.add(scope.headerDir);
++    if (scope.headerDir === swiftName) {
++      warnings.push(
++        `header_dir '${scope.headerDir}' equals the target name: its stubs share include/${swiftName}/ with the umbrella-header shims.`,
++      );
++    }
 +    let files /*: Array<string> */ = [];
 +    try {
 +      files = expandSpmSourceGlobs(dep.root, scope.sourceFiles);
@@ -883,7 +914,7 @@ index cf7e587..541ac33 100644
    const siblingSwiftNames /*: {[npmName: string]: string} */ = {};
    for (const npmName of siblingNames) {
      const resolved = swiftNameByNpm.get(npmName);
-@@ -526,11 +609,40 @@ function translatePodspecToSpmTarget(
+@@ -526,11 +633,40 @@ function translatePodspecToSpmTarget(
      }
    }
  
@@ -925,7 +956,7 @@ index cf7e587..541ac33 100644
      needsObjCPrefix,
      coreReactNative,
      siblingNames,
-@@ -540,6 +652,7 @@ function translatePodspecToSpmTarget(
+@@ -540,6 +676,7 @@ function translatePodspecToSpmTarget(
      compilerFlags: model.compilerFlags,
      publicHeadersPath,
      namespacedShimHeaders,
@@ -933,7 +964,7 @@ index cf7e587..541ac33 100644
      resources: model.resources,
      warnings,
    };
-@@ -1099,16 +1212,34 @@ function scaffoldPackageSwiftForDep(
+@@ -1099,16 +1236,34 @@ function scaffoldPackageSwiftForDep(
        const shimDir = path.join(dep.root, 'include', spec.swiftName);
        fs.mkdirSync(shimDir, {recursive: true});
        for (const header of spec.namespacedShimHeaders) {
