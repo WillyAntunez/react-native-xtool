@@ -132,6 +132,10 @@ Details and file locations: [docs/recipe.md](docs/recipe.md). Design:
   would fail the build with `unable to spawn process 'metal'`, because the Metal compiler only exists on macOS. The
   scaffolder excludes them and prints `Skipped N Metal shader(s)`; the library works, but features that rely on those
   shaders are unavailable in the build.
+- **svg Metal filters stay unavailable under SwiftPM:** react-native-svg loads its prebuilt `*.metallib` files from
+  `RNSVGFilters.bundle`, declared in the podspec through `s.ios.resource_bundles`. The scaffolder does not read
+  resource bundles yet (on any host, macOS included), so the bundle is never built or copied into the app. Skipping
+  `.metal` compilation is the only Linux-specific part. Rendering that does not use those filters is unaffected.
 - **Firewall:** ufw blocks Metro by default: `sudo ufw allow <port>/tcp`.
 - **A committed project patch no longer applies** (after a library upgrade): delete it from `patches/` and let
   `expo-xtool build` re-scaffold it.
