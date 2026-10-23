@@ -21,7 +21,7 @@ describe("buildSteps", () => {
   });
 });
 
-function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunning?: (p: number) => Promise<boolean>; hasIos?: boolean; cfg?: object } = {}) {
+function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunning?: (p: number) => Promise<boolean>; hasIos?: boolean; cfg?: object; route?: { ip?: string; dev?: string } } = {}) {
   const root = mkdtempSync(join(tmpdir(), "build-"));
   const calls: string[] = [];
   const logs: string[] = [];
@@ -52,6 +52,7 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
     isMetroRunning: over.isMetroRunning ?? (async () => false),
     findFreePort: async (s) => s,
     detectLanIp: async () => "10.0.0.7",
+    detectLanRoute: async () => over.route ?? { ip: "10.0.0.7", dev: "eth0" },
     devBuild: rec("xtool-build"),
     xtoolBin: () => "/bin/xtool",
     log: (s) => logs.push(s),
@@ -107,5 +108,22 @@ describe("build", () => {
     const t = setup({ isMetroRunning: probe });
     await build(t.root, {}, t.deps);
     expect(probe).not.toHaveBeenCalled();
+  });
+  const warning = (l: string) => l.includes("looks like a VPN/tunnel address");
+  it("warns, without blocking, when the detected route is a tunnel", async () => {
+    const t = setup({ route: { ip: "10.8.0.2", dev: "tun0" } });
+    await build(t.root, {}, t.deps);
+    expect(t.logs).toContain(
+      '⚠ Detected LAN IP 10.8.0.2 on tun0 looks like a VPN/tunnel address; the iPhone may not reach Metro. Set "lanIp" in expo-xtool.config.json to your Wi‑Fi address if it fails.',
+    );
+    expect(t.calls).toContain("xtool-build");
+  });
+  it("does not warn for a private Wi-Fi route or a pinned lanIp", async () => {
+    const a = setup();
+    await build(a.root, {}, a.deps);
+    expect(a.logs.some(warning)).toBe(false);
+    const b = setup({ cfg: { lanIp: "1.2.3.4" }, route: { ip: "10.8.0.2", dev: "tun0" } });
+    await build(b.root, {}, b.deps);
+    expect(b.logs.some(warning)).toBe(false);
   });
 });

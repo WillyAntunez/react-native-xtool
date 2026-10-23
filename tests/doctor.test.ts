@@ -12,6 +12,8 @@ const good: DoctorProbes = {
   authStatus: async () => ({ loggedIn: true, appleId: "me@example.com", teamId: "TEAM123" }),
   devices: async () => [{ name: "iPhone", udid: "u1", transport: "USB" }],
   ufwActive: async () => false,
+  lanRoute: async () => ({ ip: "192.168.1.5", dev: "wlp2s0" }),
+  configLanIp: () => undefined,
   expoProject: async () => undefined,
   buildState: async () => ({ metroPort: 8081, lanIp: "192.168.1.5" }),
   portFree: async () => true,
@@ -36,7 +38,7 @@ describe("doctorWithProbes", () => {
     const r = await doctorWithProbes(good);
     expect(r.ok).toBe(true);
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "swift", "xtool", "darwin-sdk", "apple-login", "device", "firewall",
+      "node", "swift", "xtool", "darwin-sdk", "apple-login", "device", "firewall", "lan-ip",
     ]);
     expect(r.checks.every((c) => c.status === "ok")).toBe(true);
   });
@@ -175,7 +177,7 @@ describe("doctorWithProbes", () => {
     const r = await doctorWithProbes({ ...good, ufwActive: async () => true, buildState: async () => ({ metroPort: 8099, lanIp: "1.2.3.4" }) }, "/p");
     expect(r.checks.find((c) => c.name === "firewall")?.detail).toContain("ufw allow 8099/tcp");
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "swift", "xtool", "darwin-sdk", "apple-login", "device", "firewall", "expo-sdk", "build-state", "metro-port",
+      "node", "swift", "xtool", "darwin-sdk", "apple-login", "device", "firewall", "lan-ip", "expo-sdk", "build-state", "metro-port",
     ]);
   });
 
@@ -183,5 +185,30 @@ describe("doctorWithProbes", () => {
     const r = await doctorWithProbes({ ...good, buildState: async () => { throw new Error("bad json"); } }, "/p");
     expect(r.checks.find((c) => c.name === "build-state")).toMatchObject({ status: "fail", detail: "bad json" });
     expect(r.checks.some((c) => c.name === "metro-port")).toBe(false);
+  });
+
+  describe("lan-ip", () => {
+    const lan = (over: Partial<DoctorProbes>) => doctorWithProbes({ ...good, ...over });
+    const find = (r: Awaited<ReturnType<typeof lan>>) => r.checks.find((c) => c.name === "lan-ip");
+
+    it("is ok with ip and interface", async () => {
+      expect(find(await lan({}))).toMatchObject({ status: "ok", detail: "192.168.1.5 (wlp2s0)" });
+    });
+    it("warns on a tunnel interface", async () => {
+      const c = find(await lan({ lanRoute: async () => ({ ip: "10.8.0.2", dev: "tun0" }) }));
+      expect(c?.status).toBe("warn");
+      expect(c?.detail).toContain("looks like a VPN/tunnel address");
+    });
+    it("warns on a public address", async () => {
+      expect(find(await lan({ lanRoute: async () => ({ ip: "8.8.4.4", dev: "eth0" }) }))?.status).toBe("warn");
+    });
+    it("fails when nothing is detected and no lanIp is configured", async () => {
+      expect(find(await lan({ lanRoute: async () => ({}) }))?.status).toBe("fail");
+      expect(find(await lan({ lanRoute: async () => { throw new Error("no ip"); } }))?.status).toBe("fail");
+    });
+    it("is ok when lanIp is pinned in config, even if undetectable", async () => {
+      const c = find(await lan({ lanRoute: async () => ({}), configLanIp: () => "192.168.0.9" }));
+      expect(c).toMatchObject({ status: "ok", detail: "192.168.0.9 (from config)" });
+    });
   });
 });

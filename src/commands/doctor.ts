@@ -1,6 +1,6 @@
 import { execa } from "execa";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
-import { isPortFree } from "../net.js";
+import { detectLanRoute, isPortFree, suspiciousLanRoute, tunnelWarning, type LanRoute } from "../net.js";
 import { projectPaths } from "../paths.js";
 import { readExpoProject } from "../project.js";
 import { readState } from "../state.js";
@@ -31,6 +31,10 @@ export interface DoctorProbes {
   authStatus: () => Promise<AuthStatus>;
   devices: () => Promise<Device[]>;
   ufwActive: () => Promise<boolean>;
+  /** Source IP and interface of the default route. */
+  lanRoute: () => Promise<LanRoute>;
+  /** The lanIp pinned in expo-xtool.config.json, if any. */
+  configLanIp: () => string | undefined;
   /** Resolves when the project is a supported Expo project; rejects with the reason otherwise. */
   expoProject: (root: string) => Promise<unknown>;
   buildState: (root: string) => Promise<{ metroPort: number; lanIp: string } | undefined>;
@@ -72,6 +76,8 @@ export function realProbes(config: ExpoXtoolConfig): DoctorProbes {
       const r = await execa("systemctl", ["is-active", "ufw"], { reject: false });
       return r.stdout.trim() === "active";
     },
+    lanRoute: () => detectLanRoute(),
+    configLanIp: () => config.lanIp,
     expoProject: (root) => readExpoProject(root),
     buildState: (root) => readState(projectPaths(root).iosXtool),
     portFree: (port) => isPortFree(port),
@@ -155,6 +161,18 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
           detail: `ufw is active: allow the Metro port, e.g. sudo ufw allow ${knownPort ?? "<port>"}/tcp`,
         }
       : { status: "ok", detail: "ufw not active" };
+  });
+
+  await add("lan-ip", async () => {
+    const pinned = p.configLanIp();
+    if (pinned) return { status: "ok", detail: `${pinned} (from config)` };
+    const route = await p.lanRoute().catch((): LanRoute => ({}));
+    if (!route.ip) {
+      return { status: "fail", detail: 'could not detect the LAN IP; set "lanIp" in expo-xtool.config.json' };
+    }
+    return suspiciousLanRoute(route)
+      ? { status: "warn", detail: tunnelWarning(route).replace(/^⚠ /, "") }
+      : { status: "ok", detail: `${route.ip} (${route.dev ?? "unknown"})` };
   });
 
   if (root !== undefined && stateResult) {

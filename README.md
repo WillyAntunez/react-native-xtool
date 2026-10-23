@@ -117,6 +117,9 @@ Details and file locations: [docs/recipe.md](docs/recipe.md). Design:
   and report it.
 - **Red screen "No script URL provided":** the app cannot reach Metro. Check that `start` is running, that the phone is
   on the same Wi-Fi, that Local Network is allowed, and the firewall (below).
+- **"No script URL" with a VPN on:** expo-xtool bakes in the IP of your default route; a VPN can make that a tunnel
+  address (`tun0`, `wg0`, `tailscale0`) the phone cannot reach. `build` and `doctor` warn about it; set `lanIp` in
+  `expo-xtool.config.json` to your Wi‑Fi address and rebuild.
 - **Firewall:** ufw blocks Metro by default: `sudo ufw allow <port>/tcp`.
 - **Port busy (8081 taken, for example by Docker):** free the port, or set `metroPort` in the config and rebuild + reinstall
   (the port is baked in; `start` tells you which).

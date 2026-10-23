@@ -12,6 +12,42 @@ export function parseLanIp(ipRouteOutput: string): string | undefined {
   return /\bsrc\s+(\d{1,3}(?:\.\d{1,3}){3})\b/.exec(ipRouteOutput)?.[1];
 }
 
+export interface LanRoute {
+  ip?: string;
+  dev?: string;
+}
+
+/** Source address and interface of the default route, from `ip route get` output. */
+export function parseLanRoute(ipRouteOutput: string): LanRoute {
+  return {
+    ip: parseLanIp(ipRouteOutput),
+    dev: /\bdev\s+(\S+)/.exec(ipRouteOutput)?.[1],
+  };
+}
+
+export function isPrivateIpv4(ip: string): boolean {
+  const [a, b] = ip.split(".").map(Number);
+  if (a === undefined || b === undefined) return false;
+  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
+
+export function looksLikeTunnel(dev?: string): boolean {
+  return dev !== undefined && /^(tun|tap|wg|tailscale|utun|ppp|zt)/.test(dev);
+}
+
+/** True when the detected address is unlikely to be reachable from the phone's Wi-Fi. */
+export function suspiciousLanRoute(route: LanRoute): boolean {
+  return route.ip !== undefined && (!isPrivateIpv4(route.ip) || looksLikeTunnel(route.dev));
+}
+
+export function tunnelWarning(route: LanRoute): string {
+  return `⚠ Detected LAN IP ${route.ip} on ${route.dev ?? "unknown"} looks like a VPN/tunnel address; the iPhone may not reach Metro. Set "lanIp" in expo-xtool.config.json to your Wi‑Fi address if it fails.`;
+}
+
+export async function detectLanRoute(runner: Runner = defaultRunner): Promise<LanRoute> {
+  return parseLanRoute(await runner("ip", ["-4", "route", "get", "1.1.1.1"]));
+}
+
 export async function detectLanIp(runner: Runner = defaultRunner): Promise<string> {
   const out = await runner("ip", ["-4", "route", "get", "1.1.1.1"]);
   const ip = parseLanIp(out);

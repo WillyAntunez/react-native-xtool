@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
 import { readFlavoredFrameworks, stageFrameworks, type RuntimeFramework } from "../frameworks.js";
 import { writeIosXtool } from "../generate/iosXtool.js";
-import { detectLanIp, findFreePort, isMetroRunning, isPortFree } from "../net.js";
+import { detectLanIp, detectLanRoute, findFreePort, isMetroRunning, isPortFree, suspiciousLanRoute, tunnelWarning, type LanRoute } from "../net.js";
 import { projectPaths, type ProjectPaths } from "../paths.js";
 import { generateAppConfig } from "../pipeline/appConfig.js";
 import { buildExpoModulesJsi } from "../pipeline/jsi.js";
@@ -47,6 +47,7 @@ export interface BuildDeps {
   isMetroRunning: (port: number) => Promise<boolean>;
   findFreePort: (start: number) => Promise<number>;
   detectLanIp: () => Promise<string>;
+  detectLanRoute: () => Promise<LanRoute>;
   devBuild: (bin: string, iosXtoolDir: string) => Promise<void>;
   xtoolBin: (config: ExpoXtoolConfig) => string;
   log: (s: string) => void;
@@ -71,6 +72,7 @@ const realDeps: BuildDeps = {
   isMetroRunning: (p) => isMetroRunning(p),
   findFreePort: (s) => findFreePort(s),
   detectLanIp: () => detectLanIp(),
+  detectLanRoute: () => detectLanRoute(),
   devBuild,
   xtoolBin,
   log: (s) => console.log(s),
@@ -118,6 +120,10 @@ export async function build(
     }
   }
   const lanIp = config.lanIp ?? (await d.detectLanIp());
+  if (config.lanIp === undefined) {
+    const route = await d.detectLanRoute().catch((): LanRoute => ({}));
+    if (suspiciousLanRoute(route)) d.log(tunnelWarning(route));
+  }
 
   await step("generate", async () => {
     await d.writeIosXtool({ project, paths, frameworks, metroPort, lanIp });

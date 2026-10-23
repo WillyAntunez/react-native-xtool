@@ -1,7 +1,17 @@
 import { createServer as createHttp } from "node:http";
 import { createServer, type Server } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { detectLanIp, findFreePort, isMetroRunning, isPortFree, parseLanIp } from "../src/net.js";
+import {
+  detectLanIp,
+  detectLanRoute,
+  findFreePort,
+  isMetroRunning,
+  isPortFree,
+  isPrivateIpv4,
+  looksLikeTunnel,
+  parseLanIp,
+  parseLanRoute,
+} from "../src/net.js";
 
 const servers: Server[] = [];
 
@@ -107,5 +117,44 @@ describe("isMetroRunning", () => {
     const port = await holdPort();
     await new Promise<void>((resolve) => servers.pop()!.close(() => resolve()));
     expect(await isMetroRunning(port)).toBe(false);
+  });
+});
+
+describe("parseLanRoute", () => {
+  it("extracts src and dev", () => {
+    expect(parseLanRoute("1.1.1.1 via 10.8.0.1 dev tun0 src 10.8.0.2 uid 1000")).toEqual({
+      ip: "10.8.0.2",
+      dev: "tun0",
+    });
+  });
+  it("returns empty fields for empty output", () => {
+    expect(parseLanRoute("")).toEqual({ ip: undefined, dev: undefined });
+  });
+});
+
+describe("detectLanRoute", () => {
+  it("returns ip and dev from the runner", async () => {
+    expect(await detectLanRoute(async () => "1.1.1.1 via 192.168.1.1 dev wlp2s0 src 192.168.1.9")).toEqual({
+      ip: "192.168.1.9",
+      dev: "wlp2s0",
+    });
+  });
+});
+
+describe("isPrivateIpv4", () => {
+  it.each(["10.0.0.1", "172.16.0.1", "172.31.255.1", "192.168.1.1"])("%s is private", (ip) => {
+    expect(isPrivateIpv4(ip)).toBe(true);
+  });
+  it.each(["8.8.8.8", "172.15.0.1", "172.32.0.1", "192.169.0.1", "100.64.0.1"])("%s is not private", (ip) => {
+    expect(isPrivateIpv4(ip)).toBe(false);
+  });
+});
+
+describe("looksLikeTunnel", () => {
+  it.each(["tun0", "tap1", "wg0", "tailscale0", "utun3", "ppp0", "zt0abc"])("%s is a tunnel", (dev) => {
+    expect(looksLikeTunnel(dev)).toBe(true);
+  });
+  it.each(["eth0", "wlp2s0", "enp4s0", undefined])("%s is not a tunnel", (dev) => {
+    expect(looksLikeTunnel(dev)).toBe(false);
   });
 });
