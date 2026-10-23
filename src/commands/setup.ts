@@ -6,6 +6,7 @@ import path from "node:path";
 import { cacheDir } from "../paths.js";
 import { downloadFile } from "../tools/download.js";
 import { run, toolEnv } from "../tools/exec.js";
+import { authStatus } from "../tools/xtool.js";
 import { SWIFT_VERSION, XTOOL_VERSION } from "../versions.js";
 
 export type SetupAction = "install-swift" | "download-xtool" | "install-sdk" | "login-hint";
@@ -80,14 +81,9 @@ async function swiftOk(): Promise<boolean> {
   return v !== undefined && swiftMeetsMin(v);
 }
 
-async function loggedIn(): Promise<boolean> {
-  if (!isExecutable(xtoolPath())) return false;
-  try {
-    const r = await execa(xtoolPath(), ["auth", "status"], { env: toolEnv(), extendEnv: false, reject: false });
-    return !`${r.stdout}\n${r.stderr}`.includes("Logged out");
-  } catch {
-    return false;
-  }
+export async function loggedIn(bin: string = xtoolPath()): Promise<boolean> {
+  if (!isExecutable(bin)) return false;
+  return (await authStatus(bin)).loggedIn;
 }
 
 export async function probeSetupState(): Promise<SetupState> {

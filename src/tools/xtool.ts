@@ -27,6 +27,14 @@ export function xtoolBin(config: ExpoXtoolConfig): string {
   return bin;
 }
 
+/** Error for an xtool that exited non-zero without producing any recognizable output. */
+export function xtoolUnrunnableError(exitCode: number | undefined, output: string): Error {
+  return new Error(
+    `xtool could not run (exit ${exitCode ?? "unknown"}): ${output.trim().slice(0, 300)}. ` +
+      "On Ubuntu this usually means libfuse2 is missing: sudo apt install libfuse2",
+  );
+}
+
 export function parseAuthStatus(stdout: string): AuthStatus {
   if (!/^Logged in\./m.test(stdout)) return { loggedIn: false };
   const status: AuthStatus = { loggedIn: true };
@@ -56,7 +64,9 @@ export async function authStatus(bin: string, timeoutMs?: number): Promise<AuthS
   if (r.timedOut) throw new Error("timed out");
   // Non-zero exits still carry a usable message; only a failed spawn (no exit code) is fatal.
   if (r.failed && r.exitCode === undefined) throw r;
-  return parseAuthStatus(`${r.stdout}\n${r.stderr}`);
+  const output = `${r.stdout}\n${r.stderr}`;
+  if (r.failed && !/Logged (in|out)/.test(output)) throw xtoolUnrunnableError(r.exitCode, output);
+  return parseAuthStatus(output);
 }
 
 /** `xtool devices` hangs forever with no device, so it is killed after `timeoutMs` and yields []. */

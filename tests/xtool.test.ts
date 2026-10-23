@@ -88,6 +88,10 @@ describe("authStatus", () => {
   it("treats 'Logged out' on stderr with a non-zero exit as logged out", async () => {
     await expect(authStatus(script("echo 'Logged out' >&2\nexit 1"))).resolves.toEqual({ loggedIn: false });
   });
+  it("reports an unrunnable binary with the libfuse2 hint instead of logged out", async () => {
+    const bin = script("echo 'fuse: failed to open /dev/fuse' >&2\nexit 1");
+    await expect(authStatus(bin)).rejects.toThrow(/xtool could not run \(exit 1\): fuse: failed to open.*libfuse2/s);
+  });
   it("throws when the binary cannot be spawned", async () => {
     await expect(authStatus("/nonexistent/xtool")).rejects.toBeDefined();
   });

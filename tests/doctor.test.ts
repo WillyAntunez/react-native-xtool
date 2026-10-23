@@ -5,6 +5,7 @@ import { XTOOL_VERSION } from "../src/versions.js";
 const good: DoctorProbes = {
   nodeVersion: () => "20.11.0",
   swiftVersion: async () => "6.4",
+  xtoolPath: () => "/cache/xtool.AppImage",
   xtoolInstalled: () => true,
   xtoolVersion: async () => `xtool ${XTOOL_VERSION}`,
   sdkInstalled: () => true,
@@ -51,6 +52,29 @@ describe("doctorWithProbes", () => {
     expect(r.ok).toBe(false);
     for (const n of ["node", "swift", "darwin-sdk", "apple-login"]) expect(statusOf(r, n)).toBe("fail");
     expect(r.checks.find((c) => c.name === "swift")?.detail).toContain("expo-xtool setup");
+  });
+
+  it("fails the xtool check when the binary cannot run", async () => {
+    const r = await doctorWithProbes({
+      ...good,
+      xtoolVersion: async () => {
+        throw new Error("xtool could not run (exit 1): fuse. libfuse2");
+      },
+      authStatus: async () => {
+        throw new Error("xtool could not run (exit 1): fuse. libfuse2");
+      },
+    });
+    expect(statusOf(r, "xtool")).toBe("fail");
+    expect(statusOf(r, "apple-login")).toBe("fail");
+    expect(r.checks.find((c) => c.name === "apple-login")?.detail).toContain("libfuse2");
+    expect(r.ok).toBe(false);
+  });
+
+  it("prints the full binary path in the login hint", async () => {
+    const r = await doctorWithProbes({ ...good, authStatus: async () => ({ loggedIn: false }) });
+    expect(r.checks.find((c) => c.name === "apple-login")?.detail).toContain(
+      "/cache/xtool.AppImage auth login",
+    );
   });
 
   it("fails on swift older than required", async () => {

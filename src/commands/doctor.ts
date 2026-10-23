@@ -5,7 +5,7 @@ import { projectPaths } from "../paths.js";
 import { readExpoProject } from "../project.js";
 import { readState } from "../state.js";
 import { toolEnv } from "../tools/exec.js";
-import { authStatus, listDevices, xtoolBin, type AuthStatus, type Device } from "../tools/xtool.js";
+import { authStatus, listDevices, xtoolBin, xtoolUnrunnableError, type AuthStatus, type Device } from "../tools/xtool.js";
 import { XTOOL_VERSION, SWIFT_VERSION } from "../versions.js";
 import { isExecutable, sdkBundle, swiftMeetsMin, swiftVersionText, xtoolPath } from "./setup.js";
 import { existsSync } from "node:fs";
@@ -23,6 +23,8 @@ export interface DoctorReport {
 export interface DoctorProbes {
   nodeVersion: () => string;
   swiftVersion: () => Promise<string | undefined>;
+  /** Full path of the xtool binary, used in hints. */
+  xtoolPath: () => string;
   xtoolInstalled: () => boolean;
   xtoolVersion: () => Promise<string>;
   sdkInstalled: () => boolean;
@@ -50,6 +52,7 @@ export function realProbes(config: ExpoXtoolConfig): DoctorProbes {
   return {
     nodeVersion: () => process.versions.node,
     swiftVersion: () => swiftVersionText(PROBE_TIMEOUT_MS),
+    xtoolPath: () => config.xtoolPath ?? xtoolPath(),
     xtoolInstalled: () => isExecutable(config.xtoolPath ?? xtoolPath()),
     xtoolVersion: async () => {
       const r = await execa(bin(), ["--version"], {
@@ -59,6 +62,7 @@ export function realProbes(config: ExpoXtoolConfig): DoctorProbes {
         timeout: PROBE_TIMEOUT_MS,
       });
       if (r.timedOut) throw new Error("timed out");
+      if (r.failed && r.exitCode !== 0) throw xtoolUnrunnableError(r.exitCode, `${r.stdout}\n${r.stderr}`);
       return `${r.stdout}\n${r.stderr}`.trim();
     },
     sdkInstalled: () => existsSync(sdkBundle()),
@@ -116,7 +120,7 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
     const a = await p.authStatus();
     return a.loggedIn
       ? { status: "ok", detail: `Apple ID ${a.appleId ?? "unknown"}, Team ID ${a.teamId ?? "unknown"}` }
-      : { status: "fail", detail: "logged out — run xtool auth login" };
+      : { status: "fail", detail: `logged out — run ${p.xtoolPath()} auth login` };
   });
   await add("device", async () => {
     if (!p.xtoolInstalled()) return { status: "warn", detail: "xtool not installed" };

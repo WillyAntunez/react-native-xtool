@@ -1,5 +1,8 @@
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { planSetup, preflightSdk, setup, swiftlyDownloadUrl, xtoolDownloadUrl } from "../src/commands/setup.js";
+import { loggedIn, planSetup, preflightSdk, setup, swiftlyDownloadUrl, xtoolDownloadUrl } from "../src/commands/setup.js";
 
 const all = { hasSwift: true, hasXtool: true, hasSdk: true, loggedIn: true };
 
@@ -61,5 +64,19 @@ describe("preflightSdk", () => {
       setup({}, { probe: async () => ({ ...all, hasSwift: false, hasSdk: false }), log }),
     ).rejects.toThrow("--xcode-xip");
     expect(log).not.toHaveBeenCalled();
+  });
+});
+
+describe("login probe", () => {
+  it("propagates an unrunnable xtool instead of reporting logged out", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "xtool-setup-"));
+    const bin = join(dir, "xtool");
+    writeFileSync(bin, "#!/bin/sh\necho 'fuse: failed to open' >&2\nexit 1\n");
+    chmodSync(bin, 0o755);
+    try {
+      await expect(loggedIn(bin)).rejects.toThrow("libfuse2");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
