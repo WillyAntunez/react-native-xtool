@@ -1,5 +1,6 @@
 import { cp, mkdir, rm } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 
 export interface RuntimeFramework {
@@ -36,12 +37,17 @@ export function readFlavoredFrameworks(
       `flavored-frameworks.json not found in ${xcframeworksDir}; run the React Native SwiftPM pipeline first`,
     );
   }
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
-    version: number;
-    frameworks: ManifestFramework[];
-  };
+  let manifest: { version: number; frameworks: ManifestFramework[] };
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  } catch (err) {
+    throw new Error(`Could not parse ${manifestPath}: ${err instanceof Error ? err.message : String(err)}`);
+  }
   if (manifest.version !== 1) {
     throw new Error(`Unsupported flavored-frameworks.json version ${manifest.version}; expected 1`);
+  }
+  if (!Array.isArray(manifest.frameworks)) {
+    throw new Error(`Invalid ${manifestPath}: "frameworks" must be an array`);
   }
   const result: RuntimeFramework[] = [];
   for (const fw of manifest.frameworks) {
@@ -71,6 +77,16 @@ export function jsiFramework(jsiOutDir: string): RuntimeFramework {
 }
 
 export async function stageFrameworks(frameworks: RuntimeFramework[], destDir: string): Promise<void> {
+  const resolved = path.resolve(destDir);
+  if (
+    !path.isAbsolute(destDir) ||
+    path.basename(resolved) === "" ||
+    resolved === path.parse(resolved).root ||
+    resolved === path.resolve(homedir()) ||
+    resolved === path.resolve(process.cwd())
+  ) {
+    throw new Error(`Refusing to stage frameworks into unsafe directory: ${destDir}`);
+  }
   await rm(destDir, { recursive: true, force: true });
   await mkdir(destDir, { recursive: true });
   for (const fw of frameworks) {

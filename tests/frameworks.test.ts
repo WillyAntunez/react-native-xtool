@@ -1,5 +1,5 @@
 import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -49,6 +49,20 @@ describe("readFlavoredFrameworks", () => {
   });
 });
 
+describe("readFlavoredFrameworks manifest validation", () => {
+  it("wraps JSON parse errors with the file path", async () => {
+    const dir = await tempDir();
+    await writeFile(path.join(dir, "flavored-frameworks.json"), "{not json");
+    expect(() => readFlavoredFrameworks(dir, "debug")).toThrow(/Could not parse .*flavored-frameworks\.json: /);
+  });
+
+  it("rejects a manifest without a frameworks array", async () => {
+    const dir = await tempDir();
+    await writeFile(path.join(dir, "flavored-frameworks.json"), JSON.stringify({ version: 1 }));
+    expect(() => readFlavoredFrameworks(dir, "debug")).toThrow(/"frameworks" must be an array/);
+  });
+});
+
 describe("jsiFramework", () => {
   it("describes the ExpoModulesJSI framework", () => {
     expect(jsiFramework("/out")).toEqual({
@@ -81,5 +95,17 @@ describe("stageFrameworks", () => {
     expect((await lstat(staged)).isSymbolicLink()).toBe(false);
     expect(await readFile(staged, "utf8")).toBe("payload");
     await expect(lstat(path.join(dest, "stale"))).rejects.toThrow();
+  });
+
+  it.each([
+    ["a relative path", "."],
+    ["the filesystem root", path.parse(tmpdir()).root],
+    ["the home directory", homedir()],
+    ["the working directory", process.cwd()],
+  ])("refuses %s", async (_label, dir) => {
+    await expect(stageFrameworks([], dir)).rejects.toThrow(
+      `Refusing to stage frameworks into unsafe directory: ${dir}`,
+    );
+    await expect(lstat(dir)).resolves.toBeDefined();
   });
 });
