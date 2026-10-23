@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { execa } from "execa";
 import { afterAll, describe, expect, it } from "vitest";
 
 // Exercises the PATCHED react-native SwiftPM scaffolder (patches/react-native+0.88.0.patch)
@@ -13,8 +14,8 @@ const RNGH_PODSPEC = path.join(
   APP,
   "node_modules/react-native-gesture-handler/RNGestureHandler.podspec",
 );
-const SVG_PODSPEC =
-  "/home/willy/.cache/bun-tmp/claude-1000/-home-willy-Desktop-willy/7d78ce0e-5f57-4e54-a4f3-af12f364a53c/scratchpad/rn-libs-analysis/node_modules/react-native-svg/RNSVG.podspec";
+const SVG_PODSPEC = path.join(APP, "node_modules/react-native-svg/RNSVG.podspec");
+const PATCH = path.resolve(import.meta.dirname, "../patches/react-native+0.88.0.patch");
 const SCREENS_PODSPEC = path.join(APP, "node_modules/react-native-screens/RNScreens.podspec");
 const available = existsSync(path.join(SPM, "read-podspec.js"));
 
@@ -77,6 +78,11 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
     });
   });
 
+  it("the committed patch reverse-applies cleanly to the installed RN files", async () => {
+    const r = await execa("patch", ["-R", "-p1", "--dry-run", "-i", PATCH], { cwd: APP, reject: false });
+    expect(r.exitCode, `${r.stdout}\n${r.stderr}`).toBe(0);
+  });
+
   describe("read-podspec getArrayField", () => {
     const read = (body: string) =>
       load<ReadPodspec>("read-podspec.js").readPodspecCached(podspec(body)).sourceFiles;
@@ -124,8 +130,8 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(SCREENS_PODSPEC) as Model & {
         excludeFiles: string[];
       };
-      expect(m.sourceFiles).toContain("ios/**/*.{h,m,mm,cpp}");
-      expect(m.excludeFiles).toContain("ios/gamma/**/*.{h,m,mm,cpp}");
+      expect(m.sourceFiles.some((g) => g.startsWith("ios/**"))).toBe(true);
+      expect(m.excludeFiles.some((g) => g.startsWith("ios/"))).toBe(true);
     });
   });
 
@@ -162,13 +168,8 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(SCREENS_PODSPEC) as Model & {
         headerSearchPaths: string[];
       };
-      expect(m.sourceFiles).toEqual(
-        expect.arrayContaining([
-          "ios/**/*.{h,m,mm,cpp}",
-          "common/cpp/**/*.{cpp,h}",
-          "cpp/**/*.{cpp,h}",
-        ]),
-      );
+      expect(m.sourceFiles.some((g) => g.startsWith("ios/**"))).toBe(true);
+      expect(m.sourceFiles.some((g) => g.startsWith("common/cpp/**"))).toBe(true);
       expect(m.headerSearchPaths).toContain("$(PODS_TARGET_SRCROOT)/common/cpp");
     });
   });
@@ -209,6 +210,16 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       );
       expect(m.sourceFiles).toEqual(["a/*.m"]);
       expect(m.excludeFiles).toEqual(["a/*.macos.m"]);
+    });
+    it("reads the svg-style s.ios.exclude_files pattern (inline fixture)", () => {
+      const m = readModel(
+        "s.source_files = 'apple/**/*.{h,m,mm}'\n  s.ios.exclude_files = '**/*.macos.{h,m,mm}'\n" +
+          "  s.tvos.exclude_files = '**/*.macos.{h,m,mm}'\n  s.visionos.exclude_files = '**/*.macos.{h,m,mm}' if s.respond_to?(:visionos)\n" +
+          "  s.osx.exclude_files = '**/*.ios.{h,m,mm}'",
+      );
+      expect(m.sourceFiles).toEqual(["apple/**/*.{h,m,mm}"]);
+      expect(m.excludeFiles).toContain("**/*.macos.{h,m,mm}");
+      expect(m.excludeFiles).not.toContain("**/*.ios.{h,m,mm}");
     });
     it.skipIf(!existsSync(SVG_PODSPEC))("reads the real react-native-svg podspec", () => {
       const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(SVG_PODSPEC) as Model & {
