@@ -4,6 +4,8 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
+const DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
+
 /** Streams `url` to `dest` via a temp file; verifies size and retries once. */
 export async function downloadFile(
   url: string,
@@ -16,7 +18,7 @@ export async function downloadFile(
   let lastErr: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const res = await fetch(url, { redirect: "follow" });
+      const res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status} ${res.statusText}`);
       await pipeline(Readable.fromWeb(res.body as never), createWriteStream(tmp));
       const { size } = await stat(tmp);

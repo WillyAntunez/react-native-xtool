@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { planSetup, setup, swiftlyDownloadUrl, xtoolDownloadUrl } from "../src/commands/setup.js";
+import { planSetup, preflightSdk, setup, swiftlyDownloadUrl, xtoolDownloadUrl } from "../src/commands/setup.js";
 
 const all = { hasSwift: true, hasXtool: true, hasSdk: true, loggedIn: true };
 
@@ -38,5 +38,28 @@ describe("setup", () => {
     const log = vi.fn();
     await setup({}, { probe: async () => all, log });
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Nothing to do"));
+  });
+});
+
+describe("preflightSdk", () => {
+  const ok = { exists: () => true, freeBytes: async () => 20 * 1024 ** 3 };
+  it("requires an xip", async () => {
+    await expect(preflightSdk(undefined, ok)).rejects.toThrow("--xcode-xip");
+  });
+  it("rejects a missing file", async () => {
+    await expect(preflightSdk("/x.xip", { ...ok, exists: () => false })).rejects.toThrow("not found");
+  });
+  it("rejects low disk space", async () => {
+    await expect(preflightSdk("/x.xip", { ...ok, freeBytes: async () => 1024 })).rejects.toThrow("10 GB");
+  });
+  it("passes with xip and space", async () => {
+    await expect(preflightSdk("/x.xip", ok)).resolves.toBeUndefined();
+  });
+  it("setup fails before running any action when the xip is missing", async () => {
+    const log = vi.fn();
+    await expect(
+      setup({}, { probe: async () => ({ ...all, hasSwift: false, hasSdk: false }), log }),
+    ).rejects.toThrow("--xcode-xip");
+    expect(log).not.toHaveBeenCalled();
   });
 });

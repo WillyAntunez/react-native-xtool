@@ -17,6 +17,7 @@ export interface SetupState {
 }
 export interface SetupDeps {
   probe: () => Promise<SetupState>;
+  preflightProbes: Parameters<typeof preflightSdk>[1];
   log: (line: string) => void;
 }
 
@@ -91,20 +92,36 @@ async function installSwift(): Promise<void> {
   const tarball = path.join(dir, "swiftly.tar.gz");
   await downloadFile(swiftlyDownloadUrl(), tarball, { minBytes: 100 * 1024 });
   await run("tar", ["-xzf", tarball], { cwd: dir });
-  await run("./swiftly", ["init", "--assume-yes", "--skip-install"], { cwd: dir });
+  if (!existsSync(path.join(homedir(), ".local", "share", "swiftly", "bin", "swiftly"))) {
+    await run("./swiftly", ["init", "--assume-yes", "--skip-install"], { cwd: dir });
+  }
   await run("swiftly", ["install", SWIFT_VERSION, "--use", "--assume-yes"], { cwd: dir });
 }
 
-async function installSdk(xip: string | undefined, log: (l: string) => void): Promise<void> {
+export async function freeBytesForSdk(): Promise<number> {
+  const swiftpm = path.join(homedir(), ".swiftpm");
+  const fs = await statfs(existsSync(swiftpm) ? swiftpm : homedir());
+  return fs.bavail * fs.bsize;
+}
+
+/** Validates the Xcode.xip and free disk space before any heavy step runs. */
+export async function preflightSdk(
+  xip: string | undefined,
+  probes: { exists: (p: string) => boolean; freeBytes: () => Promise<number> } = {
+    exists: existsSync,
+    freeBytes: freeBytesForSdk,
+  },
+): Promise<void> {
   if (!xip) {
     throw new Error("Darwin SDK is missing: pass --xcode-xip <path to Xcode.xip> to install it");
   }
-  if (!existsSync(xip)) throw new Error(`Xcode xip not found: ${xip}`);
-  await mkdir(cacheDir(), { recursive: true });
-  const fs = await statfs(cacheDir());
-  if (fs.bavail * fs.bsize < MIN_FREE_BYTES) {
-    throw new Error(`Need at least 10 GB free on the filesystem of ${cacheDir()} to install the Darwin SDK`);
+  if (!probes.exists(xip)) throw new Error(`Xcode xip not found: ${xip}`);
+  if ((await probes.freeBytes()) < MIN_FREE_BYTES) {
+    throw new Error("Need at least 10 GB free in your home filesystem (~/.swiftpm) to install the Darwin SDK");
   }
+}
+
+async function installSdk(xip: string, log: (l: string) => void): Promise<void> {
   log(`Installing Darwin SDK from ${xip} (this takes several minutes and ~7 GB)`);
   await run(xtoolPath(), ["sdk", "install", xip]);
 }
@@ -130,6 +147,7 @@ export async function setup(
     log("✔ Nothing to do: toolchain already set up");
     return;
   }
+  if (actions.includes("install-sdk")) await preflightSdk(opts.xcodeXip, deps.preflightProbes);
   for (const action of actions) {
     switch (action) {
       case "install-swift":
@@ -141,7 +159,7 @@ export async function setup(
         );
         break;
       case "install-sdk":
-        await step("Darwin SDK", log, () => installSdk(opts.xcodeXip, log));
+        await step("Darwin SDK", log, () => installSdk(opts.xcodeXip!, log));
         break;
       case "login-hint":
         log(`Run: ${xtoolPath()} auth login`);
