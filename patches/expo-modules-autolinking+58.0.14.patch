@@ -1,5 +1,6 @@
---- node_modules/expo-modules-autolinking/build/platforms/apple/apple.js.orig	2026-10-23 08:23:11.091175404 -0600
-+++ node_modules/expo-modules-autolinking/build/platforms/apple/apple.js	2026-10-23 08:23:11.102017795 -0600
+diff --git a/node_modules/expo-modules-autolinking/build/platforms/apple/apple.js b/node_modules/expo-modules-autolinking/build/platforms/apple/apple.js
+--- a/node_modules/expo-modules-autolinking/build/platforms/apple/apple.js
++++ b/node_modules/expo-modules-autolinking/build/platforms/apple/apple.js
 @@ -93,10 +93,7 @@
      return pods.map((pod)=>pod.podName.replace(/[^a-zA-Z0-9]/g, '_'));
  }
