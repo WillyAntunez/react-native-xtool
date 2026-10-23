@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -18,6 +19,7 @@ const SVG_PODSPEC = path.join(APP, "node_modules/react-native-svg/RNSVG.podspec"
 const PATCH = path.resolve(import.meta.dirname, "../patches/react-native+0.88.0.patch");
 const SCREENS_PODSPEC = path.join(APP, "node_modules/react-native-screens/RNScreens.podspec");
 const available = existsSync(path.join(SPM, "read-podspec.js"));
+const hasPatchBinary = spawnSync("patch", ["--version"]).error === undefined;
 
 type Model = { sourceFiles: string[] };
 type Spec = { publicHeadersPath: string | null; namespacedShimHeaders: string[]; warnings: string[] };
@@ -81,8 +83,8 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
     });
   });
 
-  it("the committed patch reverse-applies cleanly to the installed RN files", async () => {
-    const r = await execa("patch", ["-R", "-p1", "--dry-run", "-i", PATCH], { cwd: APP, reject: false });
+  it.skipIf(!hasPatchBinary)("the committed patch reverse-applies cleanly to the installed RN files", async () => {
+    const r = await execa("patch", ["-R", "-p1", "-F0", "--dry-run", "-i", PATCH], { cwd: APP, reject: false });
     expect(r.exitCode, `${r.stdout}\n${r.stderr}`).toBe(0);
   });
 
