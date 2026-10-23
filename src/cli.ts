@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { Command } from "commander";
+import { build } from "./commands/build.js";
 import { install } from "./commands/install.js";
 import { setup } from "./commands/setup.js";
 
@@ -22,6 +23,13 @@ export function buildProgram(): Command {
     .description("Build, sign and install the app on a USB-connected iPhone")
     .action(async () => {
       await install(process.cwd());
+    });
+  program
+    .command("build")
+    .description("Prebuild if needed, run the SwiftPM pipeline and build with xtool")
+    .option("--clean", "re-run expo prebuild --clean")
+    .action(async (o: { clean?: boolean }) => {
+      await build(process.cwd(), { clean: o.clean });
     });
   return program;
 }
