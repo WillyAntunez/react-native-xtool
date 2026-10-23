@@ -124,8 +124,9 @@ Details and file locations: [docs/recipe.md](docs/recipe.md). Design:
 - **"expo-xtool could not patch <package>":** your project has a different version of an Expo package than the one
   this release of expo-xtool patches. The message names the versions: pin the package to the patched version, or
   report the new version in the issue tracker so the patch can be refreshed.
-- **Metro already running on 8081:** `build` keeps the port when it is our own Metro (`packager-status:running`);
-  only a different program on the port makes it pick the next free one.
+- **Metro already running on 8081:** `build` keeps the port when a Metro already serves `packager-status:running` there
+  (expo-xtool cannot tell which project it belongs to; if it is another project's Metro, stop it). `start` then reports
+  that Metro is running and leaves it alone. Only a different program on the port makes `build` pick the next free one.
 - **Port busy (8081 taken, for example by Docker):** free the port, or set `metroPort` in the config and rebuild + reinstall
   (the port is baked in; `start` tells you which).
 - **LAN IP changed (new network, DHCP):** `start` detects it and tells you; rebuild and reinstall, or pin `lanIp`.

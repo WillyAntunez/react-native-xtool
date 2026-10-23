@@ -19,16 +19,19 @@ const state = {
 
 function makeDeps(over: Partial<StartDeps> = {}) {
   const exec = vi.fn(async () => {});
+  const log = vi.fn();
   const deps: StartDeps = {
     readState: async () => state,
     loadConfig: async () => ({}) as never,
     isPortFree: async () => true,
+    isMetroRunning: async () => false,
     findFreePort: async (p) => p,
     detectLanIp: async () => "192.168.1.5",
     run: exec,
+    log,
     ...over,
   };
-  return { deps, exec };
+  return { deps, exec, log };
 }
 
 describe("messages", () => {
@@ -49,14 +52,22 @@ describe("messages", () => {
 });
 
 describe("startDecision", () => {
+  const base = { portFree: true, metroRunning: false, builtIp: "a", currentIp: "a" };
   it("ok", () => {
-    expect(startDecision({ portFree: true, builtIp: "a", currentIp: "a" })).toBe("ok");
+    expect(startDecision(base)).toBe("ok");
   });
-  it("port-mismatch wins over ip-mismatch", () => {
-    expect(startDecision({ portFree: false, builtIp: "a", currentIp: "b" })).toBe("port-mismatch");
+  it("metro-running when the port is held by Metro", () => {
+    expect(startDecision({ ...base, portFree: false, metroRunning: true })).toBe("metro-running");
+  });
+  it("port-mismatch when the port is held by something else", () => {
+    expect(startDecision({ ...base, portFree: false })).toBe("port-mismatch");
   });
   it("ip-mismatch", () => {
-    expect(startDecision({ portFree: true, builtIp: "a", currentIp: "b" })).toBe("ip-mismatch");
+    expect(startDecision({ ...base, currentIp: "b" })).toBe("ip-mismatch");
+  });
+  it("ip-mismatch wins over metro-running and port-mismatch", () => {
+    expect(startDecision({ ...base, portFree: false, metroRunning: true, currentIp: "b" })).toBe("ip-mismatch");
+    expect(startDecision({ ...base, portFree: false, currentIp: "b" })).toBe("ip-mismatch");
   });
 });
 
@@ -71,6 +82,25 @@ describe("start", () => {
     const { deps, exec } = makeDeps({ isPortFree: async () => false, findFreePort: async () => 8082 });
     const msg = portMismatchMessage(8081, 8082);
     await expect(start("/p", deps)).rejects.toThrow(msg);
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("logs and does not start when Metro already serves the baked port", async () => {
+    const { deps, exec, log } = makeDeps({ isPortFree: async () => false, isMetroRunning: async () => true });
+    await expect(start("/p", deps)).resolves.toBeUndefined();
+    expect(exec).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(
+      "Metro is already running on port 8081 (http://192.168.1.5:8081). Nothing to start — open the app on your iPhone.",
+    );
+  });
+
+  it("still rejects on a LAN IP change when Metro is running", async () => {
+    const { deps, exec } = makeDeps({
+      isPortFree: async () => false,
+      isMetroRunning: async () => true,
+      detectLanIp: async () => "10.0.0.7",
+    });
+    await expect(start("/p", deps)).rejects.toThrow(ipMismatchMessage("192.168.1.5", "10.0.0.7"));
     expect(exec).not.toHaveBeenCalled();
   });
 
