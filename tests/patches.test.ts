@@ -3,7 +3,14 @@ import { existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { applyPatchesArgv, findPatchMismatch, parsePatchFileName, patchFailureMessage } from "../src/pipeline/patches.js";
+import {
+  applyPatchesArgv,
+  findPatchMismatch,
+  genericPatchFailureMessage,
+  outputNamesPackage,
+  parsePatchFileName,
+  patchFailureMessage,
+} from "../src/pipeline/patches.js";
 import { AUTOLINKING_CONFIG_COMMAND, rnSpmArgs } from "../src/pipeline/rnSpm.js";
 import { packageRoot } from "../src/tools/exec.js";
 import { projectPaths } from "../src/paths.js";
@@ -71,7 +78,7 @@ describe("patches", () => {
   it("applyPatchesArgv uses a relative patch dir from the project root", () => {
     const root = path.join(packageRoot(), "..", "proj");
     const [cmd, args] = applyPatchesArgv(root);
-    expect(cmd).toBe("node");
+    expect(cmd).toBe(process.execPath);
     expect(cmd).not.toBe("npx");
     expect(existsSync(args[0]!)).toBe(true);
     expect(args[1]).toBe("--patch-dir");
@@ -151,8 +158,35 @@ describe("findPatchMismatch", () => {
   });
   it("prefers the package named in the patch-package output", async () => {
     const { root, patchDir } = await fakeProject({ expo: "58.9.9", "expo-modules-autolinking": "58.9.9" });
-    expect(findPatchMismatch(root, patchDir, "Error: Failed to apply patch for package expo-modules-autolinking")?.pkg).toBe(
+    expect(findPatchMismatch(root, patchDir, "Error: Failed to apply patch for package expo-modules-autolinking at path\n    node_modules/expo-modules-autolinking")?.pkg).toBe(
       "expo-modules-autolinking",
     );
+  });
+  it("does not blame expo when expo-modules-jsi failed", async () => {
+    const { root, patchDir } = await fakeProject({ expo: "58.9.9", "expo-modules-autolinking": "58.9.9" });
+    const jsi = "Failed to apply patch for package expo-modules-jsi at path\n    node_modules/expo-modules-jsi\n(expo-modules-jsi+1.0.0.patch)";
+    expect(outputNamesPackage(jsi, "expo")).toBe(false);
+    const both = `${jsi}\nnode_modules/expo-modules-autolinking`;
+    expect(findPatchMismatch(root, patchDir, both)?.pkg).toBe("expo-modules-autolinking");
+  });
+  it("matches the patch file prefix and the node_modules path", () => {
+    expect(outputNamesPackage("applying expo+58.0.17.patch", "expo")).toBe(true);
+    expect(outputNamesPackage("at node_modules/expo/package.json", "expo")).toBe(true);
+    expect(outputNamesPackage("applying @expo+config+1.0.0.patch", "@expo/config")).toBe(true);
+    expect(outputNamesPackage("node_modules/@expo/config", "@expo/config")).toBe(true);
+  });
+});
+
+describe("genericPatchFailureMessage", () => {
+  it("includes exit code, output tail and the report link", () => {
+    const m = genericPatchFailureMessage({ exitCode: 1 }, "boom\n");
+    expect(m).toContain("patch-package failed (exit 1):");
+    expect(m).toContain("boom");
+    expect(m).toContain("Report this at https://github.com/WillyAntunez/expo-xtool/issues with the output above.");
+  });
+  it("includes the spawn error when the process never ran", () => {
+    const m = genericPatchFailureMessage({ shortMessage: "Command failed with ENOENT: node" }, "");
+    expect(m).toContain("exit unknown");
+    expect(m).toContain("Command failed with ENOENT: node");
   });
 });

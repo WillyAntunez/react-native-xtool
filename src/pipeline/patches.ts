@@ -13,7 +13,7 @@ function patchPackageScript(): string {
 /** patch-package rejects absolute --patch-dir, so pass it relative to the project. */
 export function applyPatchesArgv(projectRoot: string): [string, string[]] {
   const patchDir = path.relative(path.resolve(projectRoot), path.join(packageRoot(), "patches"));
-  return ["node", [patchPackageScript(), "--patch-dir", patchDir]];
+  return [process.execPath, [patchPackageScript(), "--patch-dir", patchDir]];
 }
 
 export interface PatchFileInfo {
@@ -80,9 +80,30 @@ export function findPatchMismatch(
       mismatches.push({ pkg: info.pkg, installed, patchFile, patched: info.version });
     }
   }
-  // "expo" is a substring of "expo-modules-autolinking": try the longest names first.
-  const named = [...mismatches].sort((a, b) => b.pkg.length - a.pkg.length).find((m) => output.includes(m.pkg));
+  const named = mismatches.find((m) => outputNamesPackage(output, m.pkg));
   return named ?? mismatches[0];
+}
+
+/**
+ * True when patch-package output points at the package: its patch file prefix (`<pkg>+`, scoped
+ * `@scope+pkg+`) or its `node_modules/<pkg>` path. A bare substring would blame "expo" for
+ * "expo-modules-jsi".
+ */
+export function outputNamesPackage(output: string, pkg: string): boolean {
+  const esc = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const prefix = new RegExp(`(?<![\\w@./-])${esc(pkg.replace("/", "+"))}\\+`);
+  const modulePath = new RegExp(`node_modules/${esc(pkg)}(?![\\w.-])`);
+  return prefix.test(output) || modulePath.test(output);
+}
+
+/** Message for a patch-package failure that matches no known version mismatch. */
+export function genericPatchFailureMessage(
+  r: { exitCode?: number | undefined; shortMessage?: string | undefined; message?: string | undefined },
+  output: string,
+): string {
+  const tail = output.trimEnd().split("\n").slice(-40).join("\n");
+  const spawnFailure = r.exitCode === undefined ? `\n${r.shortMessage ?? r.message ?? "process failed to spawn"}` : "";
+  return `patch-package failed (exit ${r.exitCode ?? "unknown"}):${spawnFailure}\n${tail}\nReport this at https://github.com/WillyAntunez/expo-xtool/issues with the output above.`;
 }
 
 /** patch-package is idempotent for already-applied patches and exits non-zero on failure. */
@@ -99,6 +120,5 @@ export async function applyPatches(projectRoot: string): Promise<void> {
   const output = r.all ?? `${r.stdout}\n${r.stderr}`;
   const mismatch = findPatchMismatch(projectRoot, path.join(packageRoot(), "patches"), output);
   if (mismatch) throw new Error(patchFailureMessage({ ...mismatch, output }));
-  const tail = output.trimEnd().split("\n").slice(-40).join("\n");
-  throw new Error(`patch-package failed (exit ${r.exitCode ?? "unknown"}):\n${tail}`);
+  throw new Error(genericPatchFailureMessage(r, output));
 }
