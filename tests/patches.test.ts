@@ -1,5 +1,5 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -64,8 +64,11 @@ describe("patches", () => {
   it("applyPatchesArgv uses a relative patch dir from the project root", () => {
     const root = path.join(packageRoot(), "..", "proj");
     const [cmd, args] = applyPatchesArgv(root);
-    expect(cmd).toBe("npx");
-    expect(args.slice(0, 2)).toEqual(["patch-package", "--patch-dir"]);
+    expect(cmd).toBe("node");
+    expect(cmd).not.toBe("npx");
+    expect(existsSync(args[0]!)).toBe(true);
+    expect(args[1]).toBe("--patch-dir");
+    expect(path.isAbsolute(args[2]!)).toBe(false);
     expect(path.resolve(root, args[2]!)).toBe(path.join(packageRoot(), "patches"));
   });
 });
