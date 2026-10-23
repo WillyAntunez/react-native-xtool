@@ -1,4 +1,4 @@
-# React Native SwiftPM scaffolder: four generic fixes (0.88.0)
+# React Native SwiftPM scaffolder: five generic fixes (0.88.0)
 
 These bugs make `react-native spm scaffold` emit an invalid or incomplete `Package.swift` for
 CocoaPods-only libraries such as `react-native-gesture-handler`. The fixes live in
@@ -212,6 +212,26 @@ array fields and `HEADER_SEARCH_PATHS` are unions, `header_dir` stays the main s
 unless the spec declares `default_subspecs`/`default_subspec`, then only those. A block that
 re-binds `s`/`spec` is left alone (see the shadowing warning). Nested subspecs and heredocs are
 not understood.
+
+## 5. `scripts/spm/scaffold-package-swift.js`: CocoaPods `header_dir` namespaces are not emulated
+
+CocoaPods `header_dir` (on the main spec or a subspec) exposes ALL of that spec's headers,
+flattened, under one namespace. react-native-screens sets `ss.header_dir = "rnscreens"` on its
+`common` subspec, so `#import <rnscreens/RNSTabsHostComponentDescriptor.h>` works although the
+file is `common/cpp/react/renderer/components/rnscreens/RNSTabsHostComponentDescriptor.h`, and
+`cpp/*.h` and `common/cpp/.../rnscreens/utils/*.h` are reachable as `<rnscreens/X.h>` too. The
+scaffold did not emulate this (`header_mappings_dir`, the keep-subdirs variant, was already
+handled), so `ios/tabs/host/RNSTabsHostComponentView.mm` failed with
+`'rnscreens/RNSTabsHostComponentDescriptor.h' file not found`.
+
+Fix: `read-podspec.js` keeps the per-scope association as `headerDirScopes: [{headerDir,
+sourceFiles}]` (a main-spec `header_dir` covers its own sources and those of subspecs that set
+none; a subspec's covers only its own). `translatePodspecToSpmTarget` expands each scope to its
+headers and the writer emits `include/<header_dir>/<basename>.h` stubs (`#import
+"../../<path to the real header>"`, same mechanism as the umbrella-header shim). On a basename
+collision the shallowest path wins and a warning is added. `include` is added to the target's
+header search paths unless it is already `publicHeadersPath`; `include/` is never ingested as a
+source.
 
 ## Tests
 

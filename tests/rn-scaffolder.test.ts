@@ -62,6 +62,10 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       expect(f).toContain("umbrellaNextToSubdirs");
       expect(f).toContain("stub is named by basename");
     });
+    it("scaffold-package-swift.js has the header_dir namespace hunk", () => {
+      expect(src("scaffold-package-swift.js")).toContain("headerDirShims");
+      expect(src("read-podspec.js")).toContain("function headerDirScopes");
+    });
   });
 
   describe("read-podspec getArrayField", () => {
@@ -202,6 +206,90 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
     it("prefers the shallowest path on a basename collision", () => {
       const spec = analyse(["apple/Foo.h", "apple/a/b/Dup.h", "apple/z/Dup.h"], []);
       expect(spec.namespacedShimHeaders.filter((h) => h.endsWith("Dup.h"))).toEqual(["apple/z/Dup.h"]);
+    });
+  });
+
+  describe("header_dir namespaces", () => {
+    type HdSpec = Spec & { headerSearchPaths: string[]; headerDirShims: { dir: string; headers: string[] }[] };
+    const FILES = [
+      "a/A.h",
+      "a/A.m",
+      "common/cpp/x/C1.h",
+      "common/cpp/x/C1.cpp",
+      "common/cpp/x/utils/U.h",
+      "common/cpp/Dup.h",
+      "common/cpp/z/Dup.h",
+    ];
+    function scaffold(podBody: string): { root: string; spec: HdSpec } {
+      const root = tempDir();
+      for (const f of FILES) {
+        mkdirSync(path.dirname(path.join(root, f)), { recursive: true });
+        writeFileSync(path.join(root, f), "");
+      }
+      writeFileSync(path.join(root, "Foo.podspec"), `Pod::Spec.new do |s|\n  s.name = "Foo"\n${podBody}\nend\n`);
+      const model = load<ReadPodspec>("read-podspec.js").readPodspecCached(path.join(root, "Foo.podspec"));
+      const dep: Dep = { name: "foo", root, swiftName: "Foo", platforms: { ios: {} } };
+      const spec = load<Scaffold>("scaffold-package-swift.js").translatePodspecToSpmTarget(model, dep) as HdSpec;
+      return { root, spec };
+    }
+    const SUB =
+      '  s.source_files = "a/**/*.{h,m}"\n  s.subspec "c" do |ss|\n    ss.source_files = "common/**/*.{h,cpp}"\n    ss.header_dir = "ns"\n  end';
+
+    it("stubs only the subspec's headers under its header_dir", () => {
+      const { spec } = scaffold(SUB);
+      expect(spec.headerDirShims).toHaveLength(1);
+      const shim = spec.headerDirShims[0]!;
+      expect(shim.dir).toBe("ns");
+      expect([...shim.headers].sort()).toEqual([
+        "common/cpp/Dup.h",
+        "common/cpp/x/C1.h",
+        "common/cpp/x/utils/U.h",
+      ]);
+      expect(spec.headerSearchPaths).toContain("include");
+      expect(spec.warnings.some((w) => w.includes("include/ns/") && w.includes("Dup.h"))).toBe(true);
+    });
+
+    it("covers every header for a main-spec header_dir", () => {
+      const { spec } = scaffold('  s.source_files = "a/**/*.{h,m}", "common/**/*.{h,cpp}"\n  s.header_dir = "ns"');
+      expect(spec.headerDirShims[0]!.headers).toContain("a/A.h");
+      expect(spec.headerDirShims[0]!.headers).toContain("common/cpp/x/C1.h");
+      expect(spec.headerSearchPaths).toContain("include");
+    });
+
+    it("emits nothing without header_dir", () => {
+      const { spec } = scaffold('  s.source_files = "a/**/*.{h,m}"');
+      expect(spec.headerDirShims).toEqual([]);
+      expect(spec.headerSearchPaths).not.toContain("include");
+    });
+
+    it("writes the include/<header_dir>/ stubs and the search path", () => {
+      const { root } = scaffold(SUB);
+      const dep = {
+        name: "foo",
+        root,
+        swiftName: "Foo",
+        swiftNameSource: "podspec",
+        platforms: { ios: { podspecPath: path.join(root, "Foo.podspec") } },
+      };
+      const ctx = {
+        appRoot: root,
+        projectRoot: root,
+        reactNativeRoot: root,
+        force: true,
+        dryRun: false,
+        cacheSlotLabel: null,
+        remote: null,
+      };
+      const res = load<{ scaffoldPackageSwiftForDep(d: object, c: object): { status: string } }>(
+        "scaffold-package-swift.js",
+      ).scaffoldPackageSwiftForDep(dep, ctx);
+      expect(res.status).toBe("written");
+      const stub = (f: string) => readFileSync(path.join(root, "include/ns", f), "utf8");
+      expect(stub("C1.h")).toContain('#import "../../common/cpp/x/C1.h"');
+      expect(stub("U.h")).toContain('#import "../../common/cpp/x/utils/U.h"');
+      expect(stub("Dup.h")).toContain('#import "../../common/cpp/Dup.h"');
+      expect(existsSync(path.join(root, "include/ns/A.h"))).toBe(false);
+      expect(readFileSync(path.join(root, "Package.swift"), "utf8")).toContain('.headerSearchPath("include")');
     });
   });
 });
