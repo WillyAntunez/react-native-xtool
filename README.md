@@ -136,8 +136,11 @@ Details and file locations: [docs/recipe.md](docs/recipe.md). Design:
   report the new version in the issue tracker so the patch can be refreshed.
 - **Metro already running on 8081:** `build` keeps the port when a Metro already serves `packager-status:running` there
   (expo-xtool cannot tell which project it belongs to; if it is another project's Metro, stop it). `start` then reports
-  that Metro is running and leaves it alone. Only a different program on the port makes `build` pick the next free one.
-- **Port busy (8081 taken, for example by Docker):** free the port, or set `metroPort` in the config and rebuild + reinstall
+  that Metro is running and leaves it alone. Only a different program on the port makes `build` look further (next item).
+- **Port busy (8081 taken, for example by Docker):** `build` picks the Metro port in this order: the configured
+  `metroPort` if free or already serving Metro; otherwise the previous build's port (from `ios-xtool/.expo-xtool-state.json`)
+  if free or serving Metro, so a running Metro keeps matching the installed app; otherwise the next free port after the
+  configured one. To choose differently, free the port, or set `metroPort` in the config and rebuild + reinstall
   (the port is baked in; `start` tells you which).
 - **LAN IP changed (new network, DHCP):** `start` detects it and tells you; rebuild and reinstall, or pin `lanIp`.
 - **"Developer Mode required":** enable it on the phone (see checklist) and reboot.

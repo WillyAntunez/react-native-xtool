@@ -9,7 +9,7 @@ import { buildExpoModulesJsi } from "../pipeline/jsi.js";
 import { applyPatches } from "../pipeline/patches.js";
 import { runRnSpm } from "../pipeline/rnSpm.js";
 import { readExpoProject, type ExpoProject } from "../project.js";
-import { writeState } from "../state.js";
+import { readState, writeState } from "../state.js";
 import { run } from "../tools/exec.js";
 import { devBuild, xtoolBin } from "../tools/xtool.js";
 
@@ -29,6 +29,27 @@ export function buildSteps(state: { hasIos: boolean; clean: boolean }): string[]
     steps.unshift(state.clean ? "prebuild --clean" : "prebuild");
   }
   return steps;
+}
+
+export type MetroPortReason = "configured-free" | "configured-metro" | "previous-free" | "previous-metro" | "fallback";
+
+export interface MetroPortInput {
+  configured: number;
+  previous?: number;
+  isPortFree: (port: number) => Promise<boolean>;
+  isMetroRunning: (port: number) => Promise<boolean>;
+  findFreePort: (start: number) => Promise<number>;
+}
+
+/** Configured port, then the previous build's port (so a running Metro keeps matching the app), then the next free one. */
+export async function chooseMetroPort(i: MetroPortInput): Promise<{ port: number; reason: MetroPortReason }> {
+  if (await i.isPortFree(i.configured)) return { port: i.configured, reason: "configured-free" };
+  if (await i.isMetroRunning(i.configured)) return { port: i.configured, reason: "configured-metro" };
+  if (i.previous !== undefined && i.previous !== i.configured) {
+    if (await i.isPortFree(i.previous)) return { port: i.previous, reason: "previous-free" };
+    if (await i.isMetroRunning(i.previous)) return { port: i.previous, reason: "previous-metro" };
+  }
+  return { port: await i.findFreePort(i.configured + 1), reason: "fallback" };
 }
 
 export interface BuildDeps {
@@ -110,15 +131,19 @@ export async function build(
     return fws;
   });
 
-  let metroPort = config.metroPort;
-  if (!(await d.isPortFree(metroPort))) {
-    if (await d.isMetroRunning(metroPort)) {
-      d.log(`Metro is already running on port ${metroPort}; keeping it.`);
-    } else {
-      metroPort = await d.findFreePort(metroPort + 1);
-      d.log(`Port ${config.metroPort} is busy; baking Metro port ${metroPort} into the app.`);
-    }
-  }
+  const previous = (await readState(paths.iosXtool))?.metroPort;
+  const { port: metroPort, reason } = await chooseMetroPort({
+    configured: config.metroPort,
+    previous,
+    isPortFree: d.isPortFree,
+    isMetroRunning: d.isMetroRunning,
+    findFreePort: d.findFreePort,
+  });
+  const busy = `Port ${config.metroPort} is busy (not a Metro bundler)`;
+  if (reason === "configured-metro") d.log(`Metro is already running on port ${metroPort}; keeping it.`);
+  else if (reason === "previous-free") d.log(`${busy}; reusing the previous build's port ${metroPort}.`);
+  else if (reason === "previous-metro") d.log(`${busy}; keeping the previous build's port ${metroPort} where Metro is running.`);
+  else if (reason === "fallback") d.log(`Port ${config.metroPort} is busy; baking Metro port ${metroPort} into the app.`);
   const lanIp = config.lanIp ?? (await d.detectLanIp());
   if (config.lanIp === undefined) {
     const route = await d.detectLanRoute().catch((): LanRoute => ({}));
