@@ -247,6 +247,31 @@ union of the generic and the `ios` values; string fields (`header_dir`, `header_
 the receiver pattern (`(?<![\w.])(?:s|spec)`, then `.`, optionally `ios.`, then the field name)
 cannot match them.
 
+## 7. `scripts/spm/*`: no preprocessor defines in the regex path, no `RCT_NEW_ARCH_ENABLED` anywhere
+
+Two gaps. (a) The regex parser only returned `pod_target_xcconfig.HEADER_SEARCH_PATHS`, so
+`mergePreprocessorDefines()` had nothing to lift: literal `-DNAME[=VALUE]` in `compiler_flags` and
+`OTHER_CFLAGS` / `GCC_PREPROCESSOR_DEFINITIONS` string literals in an xcconfig hash (also the
+`[config=*Debug*]` keys) were lost. (b) Nothing under `scripts/spm` defines `RCT_NEW_ARCH_ENABLED`
+for scaffolded targets, so libraries gated on it compile their Paper path (react-native-webview's
+Fabric view is missing at runtime; svg, screens, gesture-handler and others behave the same).
+
+Fix: `regexPodspec` now also returns those xcconfig keys (string literals only; arrays, `.join`
+and `#{}` values are not understood and interpolated tokens are dropped with the other
+unresolved ones). `mergePreprocessorDefines` also lifts `-D` tokens from `compiler_flags`, and
+`mergeCompilerFlags` no longer repeats a lifted `-D` as an unsafe flag. In
+`translatePodspecToSpmTarget`, a React Native library (`coreReactNative`: React-* dependency,
+`codegenConfig`, or `install_modules_dependencies`) gets `.define("RCT_NEW_ARCH_ENABLED", to: "1")`
+unless the podspec already defines it.
+
+Why only that macro: CocoaPods' `computeFlags` (`scripts/cocoapods/new_architecture.rb`) adds
+`-DRCT_NEW_ARCH_ENABLED=1` and expo's autolinking emits the same define for its own targets. The
+Folly macros (`FOLLY_MOBILE`, `FOLLY_USE_LIBCPP`, `FOLLY_CFG_NO_COROUTINES`,
+`FOLLY_HAVE_CLOCK_GETTIME`) come from `folly/folly-config.h`, which `folly/portability/Config.h`
+includes from the prebuilt headers; defining `FOLLY_NO_CONFIG` would switch that include off.
+`REACT_NATIVE_MINOR_VERSION` is not an RN-defined macro (react-native-svg computes it in its own
+podspec) and is not added.
+
 ## Tests
 
 `tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks the

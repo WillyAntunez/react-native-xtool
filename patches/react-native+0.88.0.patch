@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native/scripts/spm/read-podspec.js b/node_modules/react-native/scripts/spm/read-podspec.js
-index 8fcf04b..756431b 100644
+index 8fcf04b..8aeed46 100644
 --- a/node_modules/react-native/scripts/spm/read-podspec.js
 +++ b/node_modules/react-native/scripts/spm/read-podspec.js
 @@ -170,15 +170,72 @@ function cleanupPatchedPodspec(patchedPath /*: ?string */) /*: void */ {
@@ -337,7 +337,36 @@ index 8fcf04b..756431b 100644
        if (m == null) break;
        for (const token of m[1].split(/\s+/)) {
          if (token.length > 0) {
-@@ -340,7 +521,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -332,6 +513,28 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+     return Array.from(new Set(out));
+   }
+ 
++  // Literal `'OTHER_CFLAGS' => '-DFOO=1'` and `'GCC_PREPROCESSOR_DEFINITIONS' =>
++  // '$(inherited) BAR=1'` entries (also `[config=*Debug*]` keys), from any
++  // xcconfig hash. Returned as {rawKey: space-joined values} so
++  // flattenSubspecs lifts them like the `pod ipc` JSON. Only string literals
++  // are read: an array, `.join` or interpolated value is not understood (an
++  // interpolated token is dropped later, with the other unresolved ones).
++  function getDefineXcconfig(
++    text /*: string */,
++  ) /*: {[string]: string} */ {
++    const out /*: {[string]: string} */ = {};
++    const re =
++      /["']((?:OTHER_CFLAGS|GCC_PREPROCESSOR_DEFINITIONS)(?:\[config=\*\w+\*\])?)["']\s*=>\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/g;
++    while (true) {
++      const m = re.exec(text);
++      if (m == null) break;
++      const value =
++        m[2] != null ? m[2].replace(/\\(["\\])/g, '$1') : (m[3] ?? '');
++      out[m[1]] = out[m[1]] != null ? `${out[m[1]]} ${value}` : value;
++    }
++    return out;
++  }
++
+   // Surface known unparseable constructs so the caller can warn the user.
+   if (shadowedIdentity) {
+     warnings.push(
+@@ -340,7 +543,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    }
    if (/(?:s|spec)\.subspec\s+["']/.test(content)) {
      warnings.push(
@@ -346,7 +375,7 @@ index 8fcf04b..756431b 100644
      );
    }
    if (/install_modules_dependencies/.test(content)) {
-@@ -354,24 +535,68 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -354,24 +557,75 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      );
    }
  
@@ -411,6 +440,13 @@ index 8fcf04b..756431b 100644
 +    compiler_flags: tokenizeFlags(firstString('compiler_flags')),
 +    pod_target_xcconfig: {
 +      HEADER_SEARCH_PATHS: unionOf(text => getHeaderSearchPaths(text)),
++      ...layers.reduce((acc, l) => {
++        const found = getDefineXcconfig(l.text);
++        for (const k of Object.keys(found)) {
++          acc[k] = acc[k] != null ? `${acc[k]} ${found[k]}` : found[k];
++        }
++        return acc;
++      }, ({} /*: {[string]: string} */)),
 +    },
 +    resources: arrayUnion('resources'),
 +    requires_arc: layers.some(l =>
@@ -428,7 +464,7 @@ index 8fcf04b..756431b 100644
      __regex_partial__: true,
      __warnings__: warnings,
    };
-@@ -423,6 +648,31 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
+@@ -423,6 +677,31 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
    return tokens;
  }
  
@@ -460,7 +496,7 @@ index 8fcf04b..756431b 100644
  // ---------------------------------------------------------------------------
  // Subspec flattening
  // ---------------------------------------------------------------------------
-@@ -482,6 +732,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -482,6 +761,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return Array.from(new Set(out));
    }
  
@@ -478,7 +514,88 @@ index 8fcf04b..756431b 100644
    // Only the spec's own value: a subspec's `header_dir` names that subspec's
    // headers, and several subspecs can disagree.
    function specStringField(key /*: string */) /*: string | null */ {
-@@ -693,6 +954,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -554,7 +844,10 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+       config /*: ?('debug' | 'release') */,
+     ) => {
+       if (!validName.test(name)) return;
+-      if (/\$[({]/.test(name) || (value != null && /\$[({]/.test(value))) {
++      if (
++        /\$[({]|#\{/.test(name) ||
++        (value != null && /\$[({]|#\{/.test(value))
++      ) {
+         return; // unresolved Xcode/Ruby token — don't emit a broken define
+       }
+       const key = `${name}|${config ?? ''}`;
+@@ -571,6 +864,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+       'xcconfig',
+       'user_target_xcconfig',
+     ];
++    // `-DNAME[=VALUE]` in the spec's `compiler_flags` are defines too (the rest
++    // of the flags stay in compilerFlags; see mergeCompilerFlags).
++    for (const layer of layers) {
++      for (const tok of compilerFlagTokens(layer)) {
++        if (!tok.startsWith('-D') || tok.length === 2) continue;
++        const body = tok.slice(2);
++        const eq = body.indexOf('=');
++        add(
++          eq >= 0 ? body.slice(0, eq) : body,
++          eq >= 0 ? body.slice(eq + 1) : null,
++          null,
++        );
++      }
++    }
+     for (const layer of layers) {
+       if (layer == null || typeof layer !== 'object') continue;
+       for (const xcKey of XCCONFIG_KEYS) {
+@@ -648,23 +955,33 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+     return Array.from(new Set(out));
+   }
+ 
+-  function mergeCompilerFlags() /*: Array<string> */ {
++  function compilerFlagTokens(layer /*: unknown */) /*: Array<string> */ {
++    // $FlowFixMe[incompatible-use] layer narrowed from `mixed`; runtime-validated below
++    const value = layer != null ? layer.compiler_flags : null;
+     const out /*: Array<string> */ = [];
+-    for (const layer of layers) {
+-      // $FlowFixMe[incompatible-use] layer narrowed from `mixed`; runtime-validated below
+-      const value = layer != null ? layer.compiler_flags : null;
+-      if (typeof value === 'string') {
+-        for (const tok of value.split(/\s+/)) {
++    const values = Array.isArray(value) ? value : [value];
++    for (const v of values) {
++      if (typeof v === 'string') {
++        for (const tok of v.split(/\s+/)) {
+           if (tok.length > 0) out.push(tok);
+         }
+-      } else if (Array.isArray(value)) {
+-        for (const v of value) {
+-          if (typeof v === 'string') {
+-            for (const tok of v.split(/\s+/)) {
+-              if (tok.length > 0) out.push(tok);
+-            }
+-          }
+-        }
++      }
++    }
++    return out;
++  }
++
++  function mergeCompilerFlags() /*: Array<string> */ {
++    const liftedDefines = new Set(
++      mergePreprocessorDefines()
++        .filter(d => d.config == null)
++        .map(d => (d.value != null ? `${d.name}=${d.value}` : d.name)),
++    );
++    const out /*: Array<string> */ = [];
++    for (const layer of layers) {
++      for (const tok of compilerFlagTokens(layer)) {
++        // A `-D` already emitted as a `.define(...)` is not repeated as a flag.
++        if (tok.startsWith('-D') && liftedDefines.has(tok.slice(2))) continue;
++        out.push(tok);
+       }
+     }
+     return out;
+@@ -693,6 +1010,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      // header_mappings_dir copy step, which SPM has no equivalent for.
      headerMappingsDirs: mergeArrayField('header_mappings_dir'),
      headerDir: specStringField('header_dir'),
@@ -497,7 +614,7 @@ index 8fcf04b..756431b 100644
      frameworks: mergeArrayField('frameworks'),
      weakFrameworks: mergeArrayField('weak_frameworks'),
 diff --git a/node_modules/react-native/scripts/spm/scaffold-package-swift.js b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
-index cf7e587..e2a900f 100644
+index cf7e587..e4ad73b 100644
 --- a/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 +++ b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 @@ -435,7 +435,8 @@ function translatePodspecToSpmTarget(
@@ -606,7 +723,44 @@ index cf7e587..e2a900f 100644
    const siblingSwiftNames /*: {[npmName: string]: string} */ = {};
    for (const npmName of siblingNames) {
      const resolved = swiftNameByNpm.get(npmName);
-@@ -540,6 +623,7 @@ function translatePodspecToSpmTarget(
+@@ -526,11 +609,35 @@ function translatePodspecToSpmTarget(
+     }
+   }
+ 
++  // New Architecture macro. CocoaPods defines it for every pod that calls
++  // `install_modules_dependencies` (scripts/cocoapods/new_architecture.rb,
++  // `computeFlags`: `-DRCT_NEW_ARCH_ENABLED=1`), and expo's autolinking emits
++  // the same `.define("RCT_NEW_ARCH_ENABLED", to: "1")` for its own targets;
++  // nothing under scripts/spm does, so a scaffolded RN library would compile
++  // its Paper code paths (and Fabric views would be missing at runtime). Added
++  // only for React Native libraries (`coreReactNative`: React-* dependency,
++  // `codegenConfig` or `install_modules_dependencies`) and only when the
++  // podspec did not set it already. The Folly macros are NOT added:
++  // folly/portability/Config.h includes the prebuilt headers' folly-config.h,
++  // which already defines FOLLY_MOBILE/FOLLY_USE_LIBCPP/... (defining
++  // FOLLY_NO_CONFIG would turn that include off).
++  const preprocessorDefines = [...model.preprocessorDefines];
++  if (
++    coreReactNative &&
++    !preprocessorDefines.some(d => d.name === 'RCT_NEW_ARCH_ENABLED')
++  ) {
++    preprocessorDefines.push({
++      name: 'RCT_NEW_ARCH_ENABLED',
++      value: '1',
++      config: null,
++    });
++  }
++
+   return {
+     swiftName,
+     sources: expandedSources,
+     headerSearchPaths,
+-    preprocessorDefines: model.preprocessorDefines,
++    preprocessorDefines,
+     needsObjCPrefix,
+     coreReactNative,
+     siblingNames,
+@@ -540,6 +647,7 @@ function translatePodspecToSpmTarget(
      compilerFlags: model.compilerFlags,
      publicHeadersPath,
      namespacedShimHeaders,
@@ -614,7 +768,7 @@ index cf7e587..e2a900f 100644
      resources: model.resources,
      warnings,
    };
-@@ -1099,16 +1183,34 @@ function scaffoldPackageSwiftForDep(
+@@ -1099,16 +1207,34 @@ function scaffoldPackageSwiftForDep(
        const shimDir = path.join(dep.root, 'include', spec.swiftName);
        fs.mkdirSync(shimDir, {recursive: true});
        for (const header of spec.namespacedShimHeaders) {

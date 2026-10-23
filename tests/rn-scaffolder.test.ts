@@ -62,6 +62,10 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
     it("read-podspec.js has the platform-scoped fields hunk", () => {
       expect(src("read-podspec.js")).toContain("function getStringFieldOn");
     });
+    it("the scaffolder has the preprocessor defines hunks", () => {
+      expect(src("read-podspec.js")).toContain("function getDefineXcconfig");
+      expect(src("scaffold-package-swift.js")).toContain("RCT_NEW_ARCH_ENABLED");
+    });
     it("scaffold-package-swift.js has the umbrella-header and shim hunks", () => {
       const f = src("scaffold-package-swift.js");
       expect(f).toContain("umbrellaNextToSubdirs");
@@ -211,6 +215,62 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
         excludeFiles: string[];
       };
       expect(m.excludeFiles).toContain("**/*.macos.{h,m,mm}");
+    });
+  });
+
+  describe("preprocessor defines", () => {
+    type Def = { name: string; value: string | null; config: string | null };
+    const model = (body: string) =>
+      load<ReadPodspec>("read-podspec.js").readPodspecCached(podspec(body)) as Model & {
+        preprocessorDefines: Def[];
+        compilerFlags: string[];
+      };
+    const names = (defs: Def[]) => defs.map((d) => (d.value != null ? `${d.name}=${d.value}` : d.name));
+    function scaffold(podBody: string, pkgJson: object = {}): Def[] {
+      const root = tempDir();
+      mkdirSync(path.join(root, "apple"));
+      writeFileSync(path.join(root, "apple/Foo.m"), "");
+      writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "foo", ...pkgJson }));
+      const file = path.join(root, "Foo.podspec");
+      writeFileSync(
+        file,
+        `Pod::Spec.new do |s|\n  s.name = "Foo"\n  s.source_files = "apple/*.m"\n  ${podBody}\nend\n`,
+      );
+      const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(file);
+      const dep: Dep = { name: "foo", root, swiftName: "Foo", platforms: { ios: {} } };
+      const spec = load<Scaffold>("scaffold-package-swift.js").translatePodspecToSpmTarget(m, dep);
+      return (spec as unknown as { preprocessorDefines: Def[] }).preprocessorDefines;
+    }
+
+    it("lifts -D from literal compiler_flags and GCC_PREPROCESSOR_DEFINITIONS from the xcconfig", () => {
+      const m = model(
+        's.compiler_flags = "-DFOO=1 -Wall"\n' +
+          '  s.pod_target_xcconfig = { "GCC_PREPROCESSOR_DEFINITIONS" => "$(inherited) BAR=1", "OTHER_CFLAGS" => "-DBAZ -Wno-x" }',
+      );
+      expect(names(m.preprocessorDefines)).toEqual(expect.arrayContaining(["FOO=1", "BAR=1", "BAZ"]));
+      expect(m.compilerFlags).toEqual(["-Wall"]);
+    });
+    it("drops interpolated defines", () => {
+      const m = model('s.pod_target_xcconfig = { "OTHER_CFLAGS" => "-DV=#{x} -DOK=1" }');
+      expect(names(m.preprocessorDefines)).toEqual(["OK=1"]);
+    });
+    it("adds RCT_NEW_ARCH_ENABLED=1 once to a React Native library", () => {
+      const defs = scaffold(
+        's.compiler_flags = "-DFOO=1"\n  install_modules_dependencies(s)',
+      );
+      expect(names(defs).filter((n) => n === "RCT_NEW_ARCH_ENABLED=1")).toHaveLength(1);
+      expect(names(defs)).toContain("FOO=1");
+    });
+    it("recognises a React Native library by codegenConfig or a React-Core dependency", () => {
+      expect(names(scaffold("", { codegenConfig: { name: "X" } }))).toContain("RCT_NEW_ARCH_ENABLED=1");
+      expect(names(scaffold('s.dependency "React-Core"'))).toContain("RCT_NEW_ARCH_ENABLED=1");
+    });
+    it("does not duplicate a define the podspec already sets", () => {
+      const defs = scaffold('s.compiler_flags = "-DRCT_NEW_ARCH_ENABLED=1"\n  s.dependency "React-Core"');
+      expect(names(defs).filter((n) => n.startsWith("RCT_NEW_ARCH_ENABLED"))).toEqual(["RCT_NEW_ARCH_ENABLED=1"]);
+    });
+    it("does not add it to a library that is not React Native", () => {
+      expect(names(scaffold('s.compiler_flags = "-DFOO=1"'))).toEqual(["FOO=1"]);
     });
   });
 
