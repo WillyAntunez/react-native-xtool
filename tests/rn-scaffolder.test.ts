@@ -408,7 +408,7 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
 
   describe("Metal shaders", () => {
     type MetalSpec = Spec & { sources: string[]; excludePaths: string[] };
-    function lib(sourceGlob: string): { model: Model; dep: Dep } {
+    function lib(sourceGlob: string, extra = ""): { model: Model; dep: Dep } {
       const root = tempDir();
       for (const f of ["apple/Foo.m", "apple/Foo.h", "apple/Filters/A.metal", "apple/Filters/B.metal"]) {
         mkdirSync(path.dirname(path.join(root, f)), { recursive: true });
@@ -416,7 +416,7 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       }
       writeFileSync(
         path.join(root, "Foo.podspec"),
-        `Pod::Spec.new do |s|\n  s.name = "Foo"\n  s.source_files = "${sourceGlob}"\nend\n`,
+        `Pod::Spec.new do |s|\n  s.name = "Foo"\n  s.source_files = "${sourceGlob}"\n  ${extra}\nend\n`,
       );
       const model = load<ReadPodspec>("read-podspec.js").readPodspecCached(path.join(root, "Foo.podspec"));
       return { model, dep: { name: "foo", root, swiftName: "Foo", platforms: { ios: {} } } };
@@ -476,6 +476,56 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       );
       const pkg = readFileSync(path.join(dep.root, "Package.swift"), "utf8");
       expect(pkg).toContain('exclude: ["apple/Filters/A.metal", "apple/Filters/B.metal"]');
+    });
+    it("emits target arguments in SwiftPM's required order (resources before publicHeadersPath)", async () => {
+      const { dep } = lib("apple/**/*.{h,m}", 's.resources = "assets/*.png"');
+      mkdirSync(path.join(dep.root, "assets"), { recursive: true });
+      writeFileSync(path.join(dep.root, "assets/a.png"), "");
+      const full = {
+        ...dep,
+        swiftNameSource: "podspec",
+        platforms: { ios: { podspecPath: path.join(dep.root, "Foo.podspec") } },
+      };
+      const ctx = { appRoot: dep.root, projectRoot: dep.root, reactNativeRoot: dep.root, force: true, dryRun: false, cacheSlotLabel: null, remote: null };
+      load<{ scaffoldPackageSwiftForDep(d: object, c: object): unknown }>("scaffold-package-swift.js").scaffoldPackageSwiftForDep(full, ctx);
+      const pkg = readFileSync(path.join(dep.root, "Package.swift"), "utf8");
+      const at = (k: string) => pkg.indexOf(`${k}:`, pkg.indexOf("path:"));
+      expect(at("resources")).toBeGreaterThan(-1);
+      expect(at("publicHeadersPath")).toBeGreaterThan(-1);
+      expect(at("sources")).toBeLessThan(at("resources"));
+      expect(at("resources")).toBeLessThan(at("publicHeadersPath"));
+      const swift = await execa("swift", ["package", "dump-package"], {
+        cwd: dep.root,
+        reject: false,
+        env: { PATH: `${process.env["HOME"]}/.local/share/swiftly/bin:${process.env["PATH"]}` },
+      });
+      expect(swift.stderr).not.toContain("must precede argument");
+    });
+    it("emits target arguments in SwiftPM's required order (resources before publicHeadersPath)", async () => {
+      const { dep } = lib("apple/**/*.{h,m}", 's.resources = "assets/*.png"');
+      mkdirSync(path.join(dep.root, "assets"), { recursive: true });
+      writeFileSync(path.join(dep.root, "assets/a.png"), "");
+      const full = {
+        ...dep,
+        swiftNameSource: "podspec",
+        platforms: { ios: { podspecPath: path.join(dep.root, "Foo.podspec") } },
+      };
+      const ctx = { appRoot: dep.root, projectRoot: dep.root, reactNativeRoot: dep.root, force: true, dryRun: false, cacheSlotLabel: null, remote: null };
+      load<{ scaffoldPackageSwiftForDep(d: object, c: object): unknown }>("scaffold-package-swift.js").scaffoldPackageSwiftForDep(full, ctx);
+      const pkg = readFileSync(path.join(dep.root, "Package.swift"), "utf8");
+      const at = (k: string) => pkg.indexOf(`${k}:`, pkg.indexOf("path:"));
+      expect(at("resources")).toBeGreaterThan(-1);
+      expect(at("publicHeadersPath")).toBeGreaterThan(-1);
+      expect(at("sources")).toBeLessThan(at("resources"));
+      expect(at("resources")).toBeLessThan(at("publicHeadersPath"));
+      const swift = await execa("swift", ["package", "dump-package"], {
+        cwd: dep.root,
+        reject: false,
+        env: { PATH: `${process.env["HOME"]}/.local/share/swiftly/bin:${process.env["PATH"]}` },
+      });
+      if (!swift.failed || !/ENOENT/.test(String(swift.code ?? swift.message))) {
+        expect(swift.stderr).not.toContain("must precede argument");
+      }
     });
   });
 

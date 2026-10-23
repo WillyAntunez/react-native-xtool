@@ -309,6 +309,17 @@ patch 0) when the unresolved define is named `REACT_NATIVE_MAJOR_VERSION`,
 token. It emits the `.define` and records a warning naming the substitution. Any other interpolated
 define stays dropped.
 
+## 9. `scripts/spm/scaffold-package-swift.js`: target arguments are emitted in an order SwiftPM rejects
+
+Pre-existing upstream bug, not caused by our patch. The target emitter writes `sources`, then
+`publicHeadersPath`, then `resources`. SwiftPM requires the order `exclude`, `sources`, `resources`,
+`publicHeadersPath`, `cSettings`, `cxxSettings`, `swiftSettings`, `linkerSettings`, and rejects anything
+else: `error: argument 'resources' must precede argument 'publicHeadersPath'`. Any podspec with
+`resources` (react-native-svg, for one) produced an invalid manifest.
+
+Fix: emit `resources` before `publicHeadersPath` (`exclude` stays right after `path`). Verified with
+`swift package dump-package` on the generated manifest.
+
 ## Tests
 
 `tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks the
