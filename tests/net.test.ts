@@ -1,6 +1,7 @@
+import { createServer as createHttp } from "node:http";
 import { createServer, type Server } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { detectLanIp, findFreePort, isPortFree, parseLanIp } from "../src/net.js";
+import { detectLanIp, findFreePort, isMetroRunning, isPortFree, parseLanIp } from "../src/net.js";
 
 const servers: Server[] = [];
 
@@ -72,5 +73,39 @@ describe("findFreePort", () => {
     await expect(findFreePort(port, 1)).rejects.toThrow(
       `No free port in range ${port}-${port}`,
     );
+  });
+});
+
+describe("isMetroRunning", () => {
+  async function serve(body: string): Promise<{ port: number; close: () => Promise<void> }> {
+    const server = createHttp((_req, res) => res.end(body));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const addr = server.address();
+    if (addr === null || typeof addr === "string") throw new Error("no port");
+    return { port: addr.port, close: () => new Promise<void>((r) => server.close(() => r())) };
+  }
+
+  it("is true when the packager reports running", async () => {
+    const s = await serve("packager-status:running\n");
+    try {
+      expect(await isMetroRunning(s.port)).toBe(true);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("is false for another service", async () => {
+    const s = await serve("hello");
+    try {
+      expect(await isMetroRunning(s.port)).toBe(false);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("is false when nothing listens", async () => {
+    const port = await holdPort();
+    await new Promise<void>((resolve) => servers.pop()!.close(() => resolve()));
+    expect(await isMetroRunning(port)).toBe(false);
   });
 });

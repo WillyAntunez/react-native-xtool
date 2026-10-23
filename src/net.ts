@@ -42,3 +42,13 @@ export async function findFreePort(start: number, maxTries = 10): Promise<number
   }
   throw new Error(`No free port in range ${start}-${start + maxTries - 1}`);
 }
+
+/** True when a Metro packager answers on the port (its /status endpoint says so). */
+export async function isMetroRunning(port: number, host = "127.0.0.1", timeoutMs = 1500): Promise<boolean> {
+  try {
+    const res = await fetch(`http://${host}:${port}/status`, { signal: AbortSignal.timeout(timeoutMs) });
+    return (await res.text()).trim() === "packager-status:running";
+  } catch {
+    return false;
+  }
+}

@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
 import { readFlavoredFrameworks, stageFrameworks, type RuntimeFramework } from "../frameworks.js";
 import { writeIosXtool } from "../generate/iosXtool.js";
-import { detectLanIp, findFreePort, isPortFree } from "../net.js";
+import { detectLanIp, findFreePort, isMetroRunning, isPortFree } from "../net.js";
 import { projectPaths, type ProjectPaths } from "../paths.js";
 import { generateAppConfig } from "../pipeline/appConfig.js";
 import { buildExpoModulesJsi } from "../pipeline/jsi.js";
@@ -44,6 +44,7 @@ export interface BuildDeps {
   stageFrameworks: (fws: RuntimeFramework[], dest: string) => Promise<void>;
   writeIosXtool: typeof writeIosXtool;
   isPortFree: (port: number) => Promise<boolean>;
+  isMetroRunning: (port: number) => Promise<boolean>;
   findFreePort: (start: number) => Promise<number>;
   detectLanIp: () => Promise<string>;
   devBuild: (bin: string, iosXtoolDir: string) => Promise<void>;
@@ -67,6 +68,7 @@ const realDeps: BuildDeps = {
   stageFrameworks,
   writeIosXtool,
   isPortFree: (p) => isPortFree(p),
+  isMetroRunning: (p) => isMetroRunning(p),
   findFreePort: (s) => findFreePort(s),
   detectLanIp: () => detectLanIp(),
   devBuild,
@@ -106,11 +108,14 @@ export async function build(
     return fws;
   });
 
-  const metroPort = (await d.isPortFree(config.metroPort))
-    ? config.metroPort
-    : await d.findFreePort(config.metroPort + 1);
-  if (metroPort !== config.metroPort) {
-    d.log(`Port ${config.metroPort} is busy; baking Metro port ${metroPort} into the app.`);
+  let metroPort = config.metroPort;
+  if (!(await d.isPortFree(metroPort))) {
+    if (await d.isMetroRunning(metroPort)) {
+      d.log(`Metro is already running on port ${metroPort}; keeping it.`);
+    } else {
+      metroPort = await d.findFreePort(metroPort + 1);
+      d.log(`Port ${config.metroPort} is busy; baking Metro port ${metroPort} into the app.`);
+    }
   }
   const lanIp = config.lanIp ?? (await d.detectLanIp());
 

@@ -21,7 +21,7 @@ describe("buildSteps", () => {
   });
 });
 
-function setup(over: { isPortFree?: (p: number) => Promise<boolean>; hasIos?: boolean; cfg?: object } = {}) {
+function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunning?: (p: number) => Promise<boolean>; hasIos?: boolean; cfg?: object } = {}) {
   const root = mkdtempSync(join(tmpdir(), "build-"));
   const calls: string[] = [];
   const logs: string[] = [];
@@ -49,6 +49,7 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; hasIos?: bo
     stageFrameworks: rec("frameworks"),
     writeIosXtool,
     isPortFree: over.isPortFree ?? (async () => true),
+    isMetroRunning: over.isMetroRunning ?? (async () => false),
     findFreePort: async (s) => s,
     detectLanIp: async () => "10.0.0.7",
     devBuild: rec("xtool-build"),
@@ -91,5 +92,20 @@ describe("build", () => {
     const ctx = (t.writeIosXtool.mock.calls[0] as unknown[])[0] as { metroPort: number };
     expect(ctx.metroPort).toBe(8085);
     expect((await readState(join(t.root, "ios-xtool")))?.metroPort).toBe(8085);
+  });
+  it("keeps the configured port when our own Metro holds it", async () => {
+    const t = setup({ isPortFree: async () => false, isMetroRunning: async () => true });
+    const find = vi.fn(async (s: number) => s + 1);
+    t.deps.findFreePort = find;
+    await build(t.root, {}, t.deps);
+    expect(t.logs).toContain("Metro is already running on port 8081; keeping it.");
+    expect(find).not.toHaveBeenCalled();
+    expect((await readState(join(t.root, "ios-xtool")))?.metroPort).toBe(8081);
+  });
+  it("does not probe Metro when the port is free", async () => {
+    const probe = vi.fn(async () => true);
+    const t = setup({ isMetroRunning: probe });
+    await build(t.root, {}, t.deps);
+    expect(probe).not.toHaveBeenCalled();
   });
 });
