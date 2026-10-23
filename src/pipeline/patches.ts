@@ -5,7 +5,7 @@ import { execa } from "execa";
 import { packageRoot, toolEnv } from "../tools/exec.js";
 
 /** The patch-package pinned in this CLI's own dependencies, not whatever npx would fetch. */
-function patchPackageScript(): string {
+export function patchPackageScript(): string {
   const pkgJson = createRequire(import.meta.url).resolve("patch-package/package.json");
   return path.join(path.dirname(pkgJson), "index.js");
 }
