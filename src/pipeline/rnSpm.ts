@@ -107,20 +107,19 @@ export function parseMissingPackageSwift(output: string): string[] {
   return names;
 }
 
-export function scaffoldArgv(paths: ProjectPaths, rnDir: string): string[] {
-  return [
-    path.join(rnDir, "scripts", "setup-apple-spm.js"),
-    "scaffold",
-    "--config-command",
-    JSON.stringify(AUTOLINKING_CONFIG_COMMAND),
-  ];
+/** Same argv as the add/update run (incl. offline artifact flags) with only the action swapped. */
+export function scaffoldArgv(
+  paths: ProjectPaths,
+  opts: { rnArtifactsDir?: string },
+  rnDir: string = resolveRnDir(paths),
+): string[] {
+  const args = rnSpmArgs(paths, opts, rnDir);
+  args[1] = "scaffold";
+  return args;
 }
 
 /** `--patch-dir patches` is relative to the project root: the user's patches, not expo-xtool's. */
-export function persistScaffoldArgv(
-  _root: string,
-  name: string,
-): [string, string[]] {
+export function persistScaffoldArgv(name: string): [string, string[]] {
   return [
     process.execPath,
     [patchPackageScript(), name, "--patch-dir", "patches"],
@@ -151,7 +150,7 @@ export async function runRnSpm(
     );
 
   log(`▸ scaffold — generating Package.swift for: ${names.join(", ")}`);
-  const sc = await runner("node", scaffoldArgv(paths, rnDir), {
+  const sc = await runner("node", scaffoldArgv(paths, opts, rnDir), {
     cwd: paths.ios,
   });
   if (sc.exitCode !== 0)
@@ -160,7 +159,7 @@ export async function runRnSpm(
     );
 
   for (const name of names) {
-    const [cmd, args] = persistScaffoldArgv(paths.root, name);
+    const [cmd, args] = persistScaffoldArgv(name);
     const r = await runner(cmd, args, { cwd: paths.root });
     if (r.exitCode !== 0)
       throw new Error(

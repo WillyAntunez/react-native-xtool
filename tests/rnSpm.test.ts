@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseMissingPackageSwift,
   persistScaffoldArgv,
+  rnSpmArgs,
   runRnSpm,
   scaffoldArgv,
   type RnRunner,
@@ -42,13 +43,20 @@ describe("parseMissingPackageSwift", () => {
 
 describe("argv helpers", () => {
   it("scaffoldArgv", () => {
-    const a = scaffoldArgv(paths, rnDir);
+    const a = scaffoldArgv(paths, {}, rnDir);
     expect(a[0]).toBe(`${rnDir}/scripts/setup-apple-spm.js`);
     expect(a[1]).toBe("scaffold");
     expect(a).toContain("--config-command");
+    expect(a).not.toContain("--download");
+  });
+  it("scaffoldArgv forwards the offline artifact flags", () => {
+    const a = scaffoldArgv(paths, { rnArtifactsDir: "/art" }, rnDir);
+    expect(a[1]).toBe("scaffold");
+    expect(a.slice(-4)).toEqual(["--download", "skip", "--artifacts", "/art"]);
+    expect(a.slice(2)).toEqual(rnSpmArgs(paths, { rnArtifactsDir: "/art" }, rnDir).slice(2));
   });
   it("persistScaffoldArgv uses the project patches dir", () => {
-    const [, args] = persistScaffoldArgv("/proj", "lib");
+    const [, args] = persistScaffoldArgv("lib");
     expect(args.slice(1)).toEqual(["lib", "--patch-dir", "patches"]);
   });
 });
@@ -85,6 +93,18 @@ describe("runRnSpm", () => {
     expect(h.calls[2]!.cwd).toBe("/proj");
     expect(h.calls[4]!.args[1]).toMatch(/add|update/);
     expect(h.logs[0]).toContain("lib-a, lib-b");
+  });
+
+  it("forwards artifact flags to the scaffold run", async () => {
+    const h = harness([
+      { exitCode: 1, output: missing("lib-a") },
+      { exitCode: 0, output: "" },
+      { exitCode: 0, output: "" },
+      { exitCode: 0, output: "" },
+    ]);
+    await runRnSpm(paths, { rnArtifactsDir: "/art" }, h.deps);
+    expect(h.calls[1]!.args[1]).toBe("scaffold");
+    expect(h.calls[1]!.args).toContain("--artifacts");
   });
 
   it("throws naming the libs when the retry fails", async () => {
