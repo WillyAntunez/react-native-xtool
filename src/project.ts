@@ -19,11 +19,11 @@ export interface ExpoProject {
 }
 
 function majorOf(version: string | undefined): number | undefined {
-  const match = version?.match(/\d+/);
+  const match = version?.replace(/^npm:[^@]*@/, "").match(/\d+/);
   return match ? Number(match[0]) : undefined;
 }
 
-async function installedExpoRange(root: string): Promise<string | undefined> {
+async function declaredExpoRange(root: string): Promise<string | undefined> {
   try {
     const pkg = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
     return pkg?.dependencies?.expo ?? pkg?.devDependencies?.expo;
@@ -34,7 +34,7 @@ async function installedExpoRange(root: string): Promise<string | undefined> {
 
 export async function readExpoProject(root: string): Promise<ExpoProject> {
   const { exp } = getConfig(root, { skipSDKVersionRequirement: true });
-  const sdkVersion = majorOf(exp.sdkVersion) ?? majorOf(await installedExpoRange(root));
+  const sdkVersion = majorOf(exp.sdkVersion) ?? majorOf(await declaredExpoRange(root));
   if (sdkVersion === undefined) {
     throw new Error("Could not determine Expo SDK version");
   }
@@ -52,8 +52,8 @@ export async function readExpoProject(root: string): Promise<ExpoProject> {
     root,
     name: exp.name,
     slug: exp.slug,
-    version: exp.version ?? "1.0.0",
-    buildNumber: exp.ios?.buildNumber ?? "1",
+    version: String(exp.version ?? "1.0.0"),
+    buildNumber: String(exp.ios?.buildNumber ?? "1"),
     bundleIdentifier,
     sdkVersion,
     iosTargetName,

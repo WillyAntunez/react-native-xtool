@@ -1,16 +1,23 @@
-import { cp, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { buildVars, readExpoProject } from "../src/project.js";
 
 const fixture = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "project");
+
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
+});
 
 async function tempProject(
   mutate: (app: { expo: Record<string, any> }, pkg: Record<string, any>) => void,
 ): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), "expo-xtool-project-"));
+  tempDirs.push(dir);
   await cp(fixture, dir, { recursive: true });
   const app = JSON.parse(await readFile(path.join(dir, "app.json"), "utf8"));
   const pkg = JSON.parse(await readFile(path.join(dir, "package.json"), "utf8"));
@@ -43,8 +50,40 @@ describe("readExpoProject", () => {
     const dir = await tempProject((_app, pkg) => {
       pkg.dependencies.expo = "~57.0.0";
     });
-    await expect(readExpoProject(dir)).rejects.toThrow(/58/);
+    await expect(readExpoProject(dir)).rejects.toThrow(/SDK 57 is not supported.*58/);
   });
+
+  it("prefers exp.sdkVersion over the expo dependency", async () => {
+    const dir = await tempProject((app, pkg) => {
+      app.expo.sdkVersion = "58.0.0";
+      delete pkg.dependencies.expo;
+    });
+    expect((await readExpoProject(dir)).sdkVersion).toBe(58);
+  });
+
+  it("throws when the SDK cannot be determined (non-numeric range)", async () => {
+    const dir = await tempProject((_app, pkg) => {
+      pkg.dependencies.expo = "latest";
+    });
+    await expect(readExpoProject(dir)).rejects.toThrow("Could not determine Expo SDK version");
+  });
+
+  it("throws when the SDK cannot be determined (no expo dependency)", async () => {
+    const dir = await tempProject((_app, pkg) => {
+      delete pkg.dependencies.expo;
+    });
+    await expect(readExpoProject(dir)).rejects.toThrow("Could not determine Expo SDK version");
+  });
+
+  it.each(["58.0.17", "~58", ">=58.0.0 <59", "sdk-58.0.0", "npm:expo-next2@58"])(
+    "parses the major from expo range %s",
+    async (range) => {
+      const dir = await tempProject((_app, pkg) => {
+        pkg.dependencies.expo = range;
+      });
+      expect((await readExpoProject(dir)).sdkVersion).toBe(58);
+    },
+  );
 
   it("throws when bundleIdentifier is missing", async () => {
     const dir = await tempProject((app) => {
