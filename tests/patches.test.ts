@@ -13,6 +13,7 @@ import {
   outputNamesPackage,
   parsePatchFileName,
   patchFailureMessage,
+  patchPackageOutputFailed,
 } from "../src/pipeline/patches.js";
 import { AUTOLINKING_CONFIG_COMMAND, rnSpmArgs } from "../src/pipeline/rnSpm.js";
 import { packageRoot } from "../src/tools/exec.js";
@@ -222,7 +223,7 @@ describe("applyPatches with project patches", () => {
     await applyPatches(root, async (_c, args, cwd) => (calls.push({ args, cwd }), { exitCode: 0 }));
     expect(calls).toHaveLength(2);
     expect(calls[0]!.args.slice(1)).toEqual(applyPatchesArgv(root)[1].slice(1));
-    expect(calls[1]!.args.slice(1)).toEqual(["--patch-dir", "patches"]);
+    expect(calls[1]!.args.slice(1)).toEqual(["--patch-dir", "patches", "--error-on-fail"]);
     expect(calls[1]!.args).toEqual(projectPatchesArgv()[1]);
     expect(calls[1]!.cwd).toBe(root);
   });
@@ -235,5 +236,39 @@ describe("applyPatches with project patches", () => {
     await expect(
       applyPatches(root, async () => (++n === 1 ? ok() : { exitCode: 1, all: "bad patch" })),
     ).rejects.toThrow(/project's patches[\s\S]*bad patch/);
+  });
+});
+
+describe("patch-package failure detection", () => {
+  it("passes --error-on-fail in both apply argv builders", () => {
+    expect(applyPatchesArgv("/proj")[1]).toContain("--error-on-fail");
+    expect(projectPatchesArgv()[1]).toContain("--error-on-fail");
+  });
+
+  it("patchPackageOutputFailed detects failures", () => {
+    expect(patchPackageOutputFailed("**ERROR** Failed to apply patch for x")).toBe(true);
+    expect(patchPackageOutputFailed("patch-package finished with 1 error(s).")).toBe(true);
+    expect(patchPackageOutputFailed("patch-package 8.0.0\nApplying patches...\nx@1.0.0 ✔")).toBe(false);
+    expect(patchPackageOutputFailed("")).toBe(false);
+  });
+
+  it("applyPatches throws on exit 0 with failure output", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "xtool-pf-"));
+    tempDirs.push(root);
+    const exec = async () => ({ exitCode: 0, all: "**ERROR** Failed to apply patch for foo" });
+    await expect(applyPatches(root, exec)).rejects.toThrow(/patch-package failed/);
+  });
+
+  it("applyPatches throws on exit 0 with failure output for project patches", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "xtool-pf-"));
+    tempDirs.push(root);
+    await mkdir(path.join(root, "patches"));
+    await writeFile(path.join(root, "patches", "a+b+1.0.0.patch"), "x");
+    let n = 0;
+    const exec = async () => ({
+      exitCode: 0,
+      all: n++ === 0 ? "ok" : "patch-package finished with 1 error(s).",
+    });
+    await expect(applyPatches(root, exec)).rejects.toThrow(/project's patches/);
   });
 });

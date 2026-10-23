@@ -129,6 +129,8 @@ Details and file locations: [docs/recipe.md](docs/recipe.md). Design:
   address (`tun0`, `wg0`, `tailscale0`) the phone cannot reach. `build` and `doctor` warn about it; set `lanIp` in
   `expo-xtool.config.json` to your Wi‑Fi address and rebuild.
 - **Firewall:** ufw blocks Metro by default: `sudo ufw allow <port>/tcp`.
+- **A committed project patch no longer applies** (after a library upgrade): delete it from `patches/` and let
+  `expo-xtool build` re-scaffold it.
 - **"expo-xtool could not patch <package>":** your project has a different version of an Expo package than the one
   this release of expo-xtool patches. The message names the versions: pin the package to the patched version, or
   report the new version in the issue tracker so the patch can be refreshed.
