@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -55,6 +55,7 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
     detectLanRoute: async () => over.route ?? { ip: "10.0.0.7", dev: "eth0" },
     devBuild: rec("xtool-build"),
     xtoolBin: () => "/bin/xtool",
+    readState,
     log: (s) => logs.push(s),
   };
   return { root, calls, logs, deps, writeIosXtool };
@@ -169,5 +170,18 @@ describe("build previous port", () => {
     await build(t.root, {}, t.deps);
     expect(t.logs).toContain("Port 8081 is busy (not a Metro bundler); keeping the previous build's port 8082 where Metro is running.");
     expect((await readState(join(t.root, "ios-xtool")))?.metroPort).toBe(8082);
+  });
+});
+
+describe("build corrupt state", () => {
+  it("warns, ignores the unreadable state, continues and rewrites it", async () => {
+    const t = setup();
+    const dir = join(t.root, "ios-xtool");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, ".expo-xtool-state.json"), "{not json");
+    await build(t.root, {}, t.deps);
+    expect(t.logs.some((l) => l.startsWith("⚠ Ignoring unreadable build state (") && l.endsWith("a fresh one will be written."))).toBe(true);
+    expect(t.calls).toEqual(buildSteps({ hasIos: false, clean: false }));
+    expect((await readState(dir))?.metroPort).toBe(8081);
   });
 });

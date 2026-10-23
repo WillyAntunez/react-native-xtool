@@ -9,7 +9,7 @@ import { buildExpoModulesJsi } from "../pipeline/jsi.js";
 import { applyPatches } from "../pipeline/patches.js";
 import { runRnSpm } from "../pipeline/rnSpm.js";
 import { readExpoProject, type ExpoProject } from "../project.js";
-import { readState, writeState } from "../state.js";
+import { readState, writeState, type BuildState } from "../state.js";
 import { run } from "../tools/exec.js";
 import { devBuild, xtoolBin } from "../tools/xtool.js";
 
@@ -71,6 +71,7 @@ export interface BuildDeps {
   detectLanRoute: () => Promise<LanRoute>;
   devBuild: (bin: string, iosXtoolDir: string) => Promise<void>;
   xtoolBin: (config: ExpoXtoolConfig) => string;
+  readState: (iosXtoolDir: string) => Promise<BuildState | undefined>;
   log: (s: string) => void;
 }
 
@@ -96,6 +97,7 @@ const realDeps: BuildDeps = {
   detectLanRoute: () => detectLanRoute(),
   devBuild,
   xtoolBin,
+  readState,
   log: (s) => console.log(s),
 };
 
@@ -107,6 +109,12 @@ export async function build(
   const d: BuildDeps = { ...realDeps, ...overrides };
   const clean = opts.clean === true;
   const paths = projectPaths(root);
+  let previousState: BuildState | undefined;
+  try {
+    previousState = await d.readState(paths.iosXtool);
+  } catch (e) {
+    d.log(`⚠ Ignoring unreadable build state (${e instanceof Error ? e.message : String(e)}); a fresh one will be written.`);
+  }
   const config = await d.loadConfig(root);
   const project = await d.readProject(root);
 
@@ -131,7 +139,7 @@ export async function build(
     return fws;
   });
 
-  const previous = (await readState(paths.iosXtool))?.metroPort;
+  const previous = previousState?.metroPort;
   const { port: metroPort, reason } = await chooseMetroPort({
     configured: config.metroPort,
     previous,
