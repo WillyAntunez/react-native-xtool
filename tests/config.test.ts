@@ -28,6 +28,11 @@ describe("loadConfig", () => {
     await writeFile(join(dir, "expo-xtool.config.js"), "export default { metroPort: 9000 };\n");
     expect(await loadConfig(dir)).toEqual({ metroPort: 9000, lanIp: "10.0.0.2" });
   });
+
+  it("rejects when expo-xtool.config.js exists but fails to load", async () => {
+    await writeFile(join(dir, "expo-xtool.config.js"), 'import "nonexistent-module-xyz";\nexport default {};\n');
+    await expect(loadConfig(dir)).rejects.toThrow();
+  });
 });
 
 describe("projectPaths", () => {
