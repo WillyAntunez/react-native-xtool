@@ -1,6 +1,6 @@
-# React Native SwiftPM scaffolder: three generic fixes (0.88.0)
+# React Native SwiftPM scaffolder: four generic fixes (0.88.0)
 
-Both bugs make `react-native spm scaffold` emit an invalid or incomplete `Package.swift` for
+These bugs make `react-native spm scaffold` emit an invalid or incomplete `Package.swift` for
 CocoaPods-only libraries such as `react-native-gesture-handler`. The fixes live in
 `patches/react-native+0.88.0.patch` and are meant to be upstreamed to facebook/react-native.
 
@@ -179,6 +179,39 @@ known string constants, and rewrites `s.<field> = ident` to the literal value. U
 interpolations and identifiers are left untouched; `ENV[...]` and `if` conditions are not
 evaluated. The existing field regexes are unchanged. See the `resolveRubyConstants` hunk in
 `patches/react-native+0.88.0.patch`.
+
+## 4. `scripts/spm/read-podspec.js`: the regex parser is blind to subspec blocks
+
+The regex fallback reads one `s.source_files` / `s.exclude_files` and ignores
+`s.subspec "common" do |ss| ... end`, while the `pod ipc` path merges the subspecs
+(`flattenSubspecs`). `RNScreens.podspec` keeps its C++ in such a subspec:
+
+```ruby
+s.subspec "common" do |ss|
+  ss.source_files = ["common/cpp/**/*.{cpp,h}", "cpp/**/*.{cpp,h}"]
+  ss.header_dir   = "rnscreens"
+  ss.pod_target_xcconfig = { "HEADER_SEARCH_PATHS" => "\"$(PODS_TARGET_SRCROOT)/common/cpp\"" }
+end
+```
+
+Effect: no `common/cpp` sources in the scaffolded package, and compiling
+`ios/tabs/extensions/RNSTabsHostComponentView+RNSImageLoader.mm` fails with
+`'RNSTabsHostShadowNode.h' file not found`.
+
+Accidental match: before fix 3 these sources only appeared because `(?:s|spec)\.source_files`
+also matches inside `ss.source_files` (`ss.` contains `s.`). Once the main assignment resolved,
+that accident no longer covered the subspec. The main-spec receiver is now
+`(?<![\w.])(?:s|spec)`, so it never matches `ss.<field>`.
+
+Fix: `splitSubspecs` cuts each `(s|spec).subspec "name" do |recv|` block (matched to its `end` by
+counting Ruby block openers) out of the text. `getStringField`/`getArrayField`/`getDependencies`/
+`getFrameworks` take a text and a receiver pattern; the main spec is read with the subspec blocks
+removed, each subspec with its own block variable. Values are merged like `flattenSubspecs`:
+array fields and `HEADER_SEARCH_PATHS` are unions, `header_dir` stays the main spec's,
+`header_mappings_dir`/`compiler_flags` fall back to the first subspec. All subspecs are merged
+unless the spec declares `default_subspecs`/`default_subspec`, then only those. A block that
+re-binds `s`/`spec` is left alone (see the shadowing warning). Nested subspecs and heredocs are
+not understood.
 
 ## Tests
 

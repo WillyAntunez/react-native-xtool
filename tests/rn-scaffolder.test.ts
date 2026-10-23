@@ -52,6 +52,11 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
     it("read-podspec.js has the Ruby constants hunk", () => {
       expect(src("read-podspec.js")).toContain("function resolveRubyConstants");
     });
+    it("read-podspec.js has the subspec merge hunk", () => {
+      const f = src("read-podspec.js");
+      expect(f).toContain("function splitSubspecs");
+      expect(f).toContain("const MAIN_RECV");
+    });
     it("scaffold-package-swift.js has the umbrella-header and shim hunks", () => {
       const f = src("scaffold-package-swift.js");
       expect(f).toContain("umbrellaNextToSubdirs");
@@ -108,6 +113,50 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       };
       expect(m.sourceFiles).toContain("ios/**/*.{h,m,mm,cpp}");
       expect(m.excludeFiles).toContain("ios/gamma/**/*.{h,m,mm,cpp}");
+    });
+  });
+
+  describe("read-podspec subspecs", () => {
+    const readModel = (body: string) =>
+      load<ReadPodspec>("read-podspec.js").readPodspecCached(podspec(body)) as Model & {
+        excludeFiles: string[];
+        headerSearchPaths: string[];
+        headerDir: string | null;
+      };
+    const SUB =
+      's.header_dir = "main"\n  s.exclude_files = "x/*.cpp"\n' +
+      '  s.subspec "a" do |ss|\n    ss.source_files = ["a/*.cpp"]\n    ss.exclude_files = "a/skip/*.cpp"\n' +
+      '    ss.header_dir = "sub"\n    ss.pod_target_xcconfig = { "HEADER_SEARCH_PATHS" => "\\"$(PODS_TARGET_SRCROOT)/a\\"" }\n  end\n' +
+      '  s.subspec "b" do |ss|\n    ss.source_files = "b/*.cpp"\n    ss.foo do |x|\n      x.bar = 1\n    end\n  end';
+
+    it("merges subspec fields into the main model", () => {
+      const m = readModel(`s.source_files = "m/*.mm"\n  ${SUB}`);
+      expect(m.sourceFiles).toEqual(["m/*.mm", "a/*.cpp", "b/*.cpp"]);
+      expect(m.excludeFiles).toEqual(["x/*.cpp", "a/skip/*.cpp"]);
+      expect(m.headerSearchPaths).toEqual(["$(PODS_TARGET_SRCROOT)/a"]);
+      expect(m.headerDir).toBe("main");
+    });
+    it("does not read `ss.<field>` as the main spec's field", () => {
+      const m = readModel('s.subspec "a" do |ss|\n    ss.source_files = "a/*.cpp"\n  end');
+      expect(m.sourceFiles).toEqual(["a/*.cpp"]);
+      expect(readModel('s.subspec "a" do |ss|\n    ss.header_dir = "sub"\n  end').headerDir).toBeNull();
+    });
+    it("merges only default_subspecs when declared", () => {
+      const m = readModel(`s.default_subspecs = ["a"]\n  s.source_files = "m/*.mm"\n  ${SUB}`);
+      expect(m.sourceFiles).toEqual(["m/*.mm", "a/*.cpp"]);
+    });
+    it.skipIf(!existsSync(SCREENS_PODSPEC))("reads the real RNScreens common subspec", () => {
+      const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(SCREENS_PODSPEC) as Model & {
+        headerSearchPaths: string[];
+      };
+      expect(m.sourceFiles).toEqual(
+        expect.arrayContaining([
+          "ios/**/*.{h,m,mm,cpp}",
+          "common/cpp/**/*.{cpp,h}",
+          "cpp/**/*.{cpp,h}",
+        ]),
+      );
+      expect(m.headerSearchPaths).toContain("$(PODS_TARGET_SRCROOT)/common/cpp");
     });
   });
 
