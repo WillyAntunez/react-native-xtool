@@ -1,4 +1,4 @@
-import { nativeDepsFingerprint } from "../deps.js";
+import { depsFingerprint } from "../deps.js";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
 import { detectLanIp, findFreePort, isMetroRunning, isPortFree } from "../net.js";
 import { projectPaths } from "../paths.js";
@@ -47,7 +47,7 @@ const realDeps: StartDeps = {
   isMetroRunning: (p) => isMetroRunning(p),
   findFreePort: (s) => findFreePort(s),
   detectLanIp: () => detectLanIp(),
-  depsFingerprint: nativeDepsFingerprint,
+  depsFingerprint: depsFingerprint,
   run,
   log: (s) => console.log(s),
 };
@@ -61,7 +61,8 @@ export const DEPS_CHANGED_WARNING =
 export async function start(
   root: string,
   opts: { clear?: boolean } = {},
-  overrides: Partial<StartDeps> = {}): Promise<void> {
+  overrides: Partial<StartDeps> = {},
+): Promise<void> {
   const d: StartDeps = { ...realDeps, ...overrides };
   const state = await d.readState(projectPaths(root).iosXtool).catch(() => undefined);
   if (!state) throw new Error("No build state found. Run `expo-xtool build` first.");

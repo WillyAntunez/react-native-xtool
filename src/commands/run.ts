@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
-import { nativeDepsFingerprint } from "../deps.js";
+import { depsFingerprint } from "../deps.js";
 import { detectLanIp, isMetroRunning, isPortFree } from "../net.js";
 import { projectPaths } from "../paths.js";
 import { readState, type BuildState } from "../state.js";
@@ -27,7 +27,7 @@ const realDeps: RunDeps = {
   install,
   start,
   readState,
-  depsFingerprint: nativeDepsFingerprint,
+  depsFingerprint: depsFingerprint,
   exists: existsSync,
   loadConfig,
   isPortFree: (p) => isPortFree(p),

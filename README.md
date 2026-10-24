@@ -48,11 +48,14 @@ nothing changed since the last build. The cable is needed only when it reinstall
 
 `expo-xtool run` is the one command to use. It fingerprints your installed dependencies
 (every `dependencies`/`devDependencies` entry at its installed version, plus `patches/*.patch`)
-and compares that with the fingerprint stored by the last `build`:
+and compares that with the fingerprints stored by the last successful `build` and `install`:
 
-- **Unchanged:** it prints `Native app is up to date`, skips build and install and starts Metro.
-- **Changed** (for example after `npx expo install <native lib>`): it rebuilds, reinstalls
-  and starts Metro with `--clear`, so a new native module and new Babel plugins are picked up.
+- **Unchanged** (built and installed for the current dependencies, and the baked Metro port and
+  LAN IP still work): it prints `Native app is up to date`, skips build and install and starts
+  Metro without clearing its cache.
+- **Changed** (for example after `npx expo install <native lib>`), or never installed, or the
+  port or LAN IP no longer match: it rebuilds, reinstalls and starts Metro with `--clear`
+  (every rebuild clears the cache), so a new native module and new Babel plugins are picked up.
   Without this you get `TurboModuleRegistry.getEnforcing(...) could not be found` (app not
   rebuilt) or `Metro has encountered an error while trying to resolve module` (stale cache).
 

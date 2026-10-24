@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { nativeDepsFingerprint } from "../deps.js";
+import { depsFingerprint } from "../deps.js";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
 import { readFlavoredFrameworks, stageFrameworks, type RuntimeFramework } from "../frameworks.js";
 import { writeIosXtool } from "../generate/iosXtool.js";
@@ -100,7 +100,7 @@ const realDeps: BuildDeps = {
   devBuild,
   xtoolBin,
   readState,
-  depsFingerprint: nativeDepsFingerprint,
+  depsFingerprint: depsFingerprint,
   log: (s) => console.log(s),
 };
 

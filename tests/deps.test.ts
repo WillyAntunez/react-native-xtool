@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { fingerprintOf, nativeDepsFingerprint } from "../src/deps.js";
+import { fingerprintOf, depsFingerprint } from "../src/deps.js";
 
 function project(deps: Record<string, string>, installed: Record<string, string>, patches: string[] = []) {
   const root = mkdtempSync(join(tmpdir(), "deps-"));
@@ -25,25 +25,25 @@ describe("fingerprintOf", () => {
   });
 });
 
-describe("nativeDepsFingerprint", () => {
+describe("depsFingerprint", () => {
   const deps = { a: "^1.0.0", b: "~2.0.0" };
   it("is stable for the same project", async () => {
     const root = project(deps, { a: "1.0.0", b: "2.0.0" });
-    expect(await nativeDepsFingerprint(root)).toBe(await nativeDepsFingerprint(root));
+    expect(await depsFingerprint(root)).toBe(await depsFingerprint(root));
   });
   it("changes with the installed version, not the range", async () => {
-    const one = await nativeDepsFingerprint(project(deps, { a: "1.0.0", b: "2.0.0" }));
-    const two = await nativeDepsFingerprint(project(deps, { a: "1.1.0", b: "2.0.0" }));
+    const one = await depsFingerprint(project(deps, { a: "1.0.0", b: "2.0.0" }));
+    const two = await depsFingerprint(project(deps, { a: "1.1.0", b: "2.0.0" }));
     expect(one).not.toBe(two);
   });
   it("marks uninstalled dependencies as missing", async () => {
-    const missing = await nativeDepsFingerprint(project(deps, { a: "1.0.0" }));
+    const missing = await depsFingerprint(project(deps, { a: "1.0.0" }));
     expect(missing).toBe(fingerprintOf(["a@1.0.0", "b@missing"]));
   });
   it("changes with patch files and ignores other files", async () => {
-    const base = await nativeDepsFingerprint(project(deps, { a: "1.0.0", b: "2.0.0" }));
-    const patched = await nativeDepsFingerprint(project(deps, { a: "1.0.0", b: "2.0.0" }, ["a+1.0.0.patch", "README.md"]));
-    const patchedOnly = await nativeDepsFingerprint(project(deps, { a: "1.0.0", b: "2.0.0" }, ["a+1.0.0.patch"]));
+    const base = await depsFingerprint(project(deps, { a: "1.0.0", b: "2.0.0" }));
+    const patched = await depsFingerprint(project(deps, { a: "1.0.0", b: "2.0.0" }, ["a+1.0.0.patch", "README.md"]));
+    const patchedOnly = await depsFingerprint(project(deps, { a: "1.0.0", b: "2.0.0" }, ["a+1.0.0.patch"]));
     expect(patched).not.toBe(base);
     expect(patched).toBe(patchedOnly);
   });

@@ -1,5 +1,5 @@
 import { execa } from "execa";
-import { nativeDepsFingerprint } from "../deps.js";
+import { depsFingerprint } from "../deps.js";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
 import { detectLanRoute, isPortFree, suspiciousLanRoute, tunnelWarning, type LanRoute } from "../net.js";
 import { projectPaths } from "../paths.js";
@@ -84,7 +84,7 @@ export function realProbes(config: ExpoXtoolConfig): DoctorProbes {
     configLanIp: () => config.lanIp,
     expoProject: (root) => readExpoProject(root),
     buildState: (root) => readState(projectPaths(root).iosXtool),
-    depsFingerprint: (root) => nativeDepsFingerprint(root),
+    depsFingerprint: (root) => depsFingerprint(root),
     portFree: (port) => isPortFree(port),
   };
 }

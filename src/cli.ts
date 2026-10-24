@@ -68,7 +68,6 @@ export function buildProgram(): Command {
     .command("run")
     .description("Build and install when needed, then start Metro")
     .option("--clean", "re-run expo prebuild --clean (always rebuilds)")
-    .option("--if-needed", "skip build and install when dependencies are unchanged (default)")
     .option("--force", "always rebuild and reinstall")
     .action(
       action(async (o: { clean?: boolean; force?: boolean }) => {

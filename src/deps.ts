@@ -9,6 +9,7 @@ export function fingerprintOf(entries: string[]): string {
     .digest("hex");
 }
 
+/** Parsed JSON object, or undefined when the file is missing or malformed. */
 async function readJson(file: string): Promise<Record<string, unknown> | undefined> {
   try {
     return JSON.parse(await readFile(file, "utf8")) as Record<string, unknown>;
@@ -24,7 +25,7 @@ async function readJson(file: string): Promise<Record<string, unknown> | undefin
  * Deliberately no native/JS distinction: JS-only changes also need a Metro cache reset,
  * and telling native dependencies apart reliably needs the autolinking pass.
  */
-export async function nativeDepsFingerprint(root: string): Promise<string> {
+export async function depsFingerprint(root: string): Promise<string> {
   const pkg = await readJson(join(root, "package.json"));
   const names = new Set<string>([
     ...Object.keys((pkg?.dependencies as Record<string, string> | undefined) ?? {}),
