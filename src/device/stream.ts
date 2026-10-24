@@ -35,6 +35,7 @@ export class ByteReader {
     stream.on("end", this.onEnd);
     stream.on("close", this.onEnd);
     stream.on("error", this.onError);
+    stream.resume();
   }
 
   private notify(): void {
@@ -76,6 +77,8 @@ export class ByteReader {
 
   /** Stops consuming the stream (e.g. before handing the raw socket to TLS); returns unread bytes. */
   detach(): Buffer {
+    // Paused, not just unlistened: a flowing stream without listeners would drop bytes.
+    this.stream.pause();
     this.stream.off("data", this.onData);
     this.stream.off("end", this.onEnd);
     this.stream.off("close", this.onEnd);

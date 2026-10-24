@@ -20,7 +20,7 @@ const DEVICE_CERT = readFileSync(join(FIX, "device-cert.pem"));
 const DEVICE_KEY = readFileSync(join(FIX, "device-key.pem"));
 const DEVICE_KEY_AS_HOST = { cert: DEVICE_CERT, key: DEVICE_KEY };
 
-export const UDID = "00008030-FAKEFAKEFAKE802E";
+export const UDID = "00008030-00000000DEADBEEF";
 
 export const pairRecord = (over: Partial<PairRecord> = {}): PairRecord => ({
   HostID: "HOST-1",
