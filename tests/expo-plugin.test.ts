@@ -8,7 +8,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 // Exercises the PATCHED Expo SwiftPM plugin (patches/expo+58.0.17.patch) as installed in the
 // reference app (override with EXPO_XTOOL_REF_APP). Skipped when that app is not on this machine.
-const APP = process.env["EXPO_XTOOL_REF_APP"] ?? "/home/willy/Desktop/willy/expo-ios-linux/app";
+const APP = process.env["EXPO_XTOOL_REF_APP"] ?? path.resolve(import.meta.dirname, "../../app");
 const SPM = path.join(APP, "node_modules/expo/scripts/spm");
 const MANIFESTS = path.join(SPM, "manifests.js");
 const COMMITTED_PATCH = path.resolve(import.meta.dirname, "../patches/expo+58.0.17.patch");

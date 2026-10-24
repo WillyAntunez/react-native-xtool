@@ -216,7 +216,7 @@ Branches: `feature/<kebab-name>` or `fix/<kebab-name>`. Commits follow Conventio
 (`type: short imperative summary`). Run `npm test` before opening a PR.
 
 Testing: the suite needs no external setup. Tests that read the patched React Native / Expo files look for the
-reference app (default `expo-ios-linux/app` next to this repo, override with `EXPO_XTOOL_REF_APP`) and skip when it is
+reference app (default `../app`, a sibling of the repo checkout, override with `EXPO_XTOOL_REF_APP`) and skip when it is
 absent. The functional Expo plugin check re-runs `setup-apple-spm.js update` and rewrites that app's `ios/build`,
 so it only runs with `EXPO_XTOOL_E2E=1` (it also needs Swift and the `shims/` directory on `PATH`).
 

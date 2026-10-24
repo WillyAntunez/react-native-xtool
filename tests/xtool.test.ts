@@ -31,19 +31,19 @@ describe("parseAuthStatus", () => {
   });
   it("parses logged in", () => {
     const out =
-      "Logged in.\n- Apple ID: someone@example.com\n- Team ID: G7T6C5W9ZU\n- Token expiry: 23/10/2027, 9:48 AM\n";
+      "Logged in.\n- Apple ID: dev@example.com\n- Team ID: ABCDE12345\n- Token expiry: 23/10/2027, 9:48 AM\n";
     expect(parseAuthStatus(out)).toEqual({
       loggedIn: true,
-      appleId: "someone@example.com",
-      teamId: "G7T6C5W9ZU",
+      appleId: "dev@example.com",
+      teamId: "ABCDE12345",
     });
   });
 });
 
 describe("parseDevices", () => {
   it("parses a device line", () => {
-    expect(parseDevices("iPhone de Willy [usb]: 00008030-001645A61EBB802E\n")).toEqual([
-      { name: "iPhone de Willy", transport: "usb", udid: "00008030-001645A61EBB802E" },
+    expect(parseDevices("Test iPhone [usb]: 00008030-000000000000000E\n")).toEqual([
+      { name: "Test iPhone", transport: "usb", udid: "00008030-000000000000000E" },
     ]);
   });
   it("ignores empty output", () => {
@@ -53,7 +53,7 @@ describe("parseDevices", () => {
 
 describe("installedBundleId", () => {
   it("prefixes team id", () => {
-    expect(installedBundleId("G7T6C5W9ZU", "com.a.b")).toBe("XTL-G7T6C5W9ZU.com.a.b");
+    expect(installedBundleId("ABCDE12345", "com.a.b")).toBe("XTL-ABCDE12345.com.a.b");
   });
 });
 

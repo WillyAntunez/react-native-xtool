@@ -8,7 +8,7 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.willyantuneztowerhouse.app"
+      "bundleIdentifier": "com.example.app"
     },
     "android": {
       "adaptiveIcon": {

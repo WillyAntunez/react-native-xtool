@@ -14,7 +14,7 @@ x86_64. arm64 Linux is untested (the xtool checksum is pinned for it, but nothin
    - `LICENSE` is present and `package.json` says `MIT`.
    - No private names or paths:
      `grep -rniE "/home/|doktu|grescup|bella|\bTHS\b" --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist .`
-     must be empty, except documented defaults (`/home/me/...` examples in the README, and the
+     must be empty, except documented defaults (`/home/me/...` examples in the README, and
      `EXPO_XTOOL_REF_APP` fallback in the opt-in tests).
 5. When `XTOOL_VERSION` changes, update `XTOOL_SHA256` in `src/versions.ts` for both architectures from the official
    release assets (`gh release download <version> -R xtool-org/xtool -p 'xtool-*.AppImage'`, then `sha256sum`).
