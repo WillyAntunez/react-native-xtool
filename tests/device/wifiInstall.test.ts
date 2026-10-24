@@ -89,8 +89,26 @@ describe("installOverWifi", () => {
     const { InstallInterruptedError } = await import("../../src/device/wifiInstall.js");
     const err = await run({ installDrop: true }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(InstallInterruptedError);
-    expect((err as Error).message).toContain("Check the app on the iPhone");
+    expect((err as Error).message).toContain("check the app on it");
     expect(dev!.installs).toHaveLength(1);
+  });
+
+  it("reports heartbeat loss during the upload as an interrupted (retryable) upload", async () => {
+    await writeFile(ipa, Buffer.alloc(10 * 1024 * 1024, 1));
+    const err = await run({ heartbeatDropOnWrite: 1 }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UploadInterruptedError);
+    expect((err as Error).message).toContain("heartbeat");
+    expect(dev!.installs).toEqual([]);
+  });
+
+  it("aborts cleanly when the iPhone announces SleepyTime during the install", async () => {
+    const { InstallInterruptedError } = await import("../../src/device/wifiInstall.js");
+    const t0 = Date.now();
+    const err = await run({ installSleepy: true }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(InstallInterruptedError);
+    expect((err as Error).message).toContain("going to sleep");
+    expect((err as Error).message).toContain("Keep the iPhone unlocked");
+    expect(Date.now() - t0).toBeLessThan(5000);
   });
 
   it("fails when the pairing is not accepted", async () => {

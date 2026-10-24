@@ -331,3 +331,54 @@ describe("progressLoggers", () => {
     expect(logs.slice(-2)).toEqual(["  installing: CreatingStagingDirectory (5%)", "  installing: VerifyingApplication (40%)"]);
   });
 });
+
+describe("install --network against a fake iPhone", () => {
+  it("retries once after the heartbeat is lost mid-upload, then installs", async () => {
+    const { mkdtemp, rm, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { FakeDevice, pairRecord, UDID } = await import("./device/fakeDevice.js");
+    const { tcpConnector } = await import("../src/device/lockdown.js");
+    const { installOverWifi } = await import("../src/device/wifiInstall.js");
+    const dir = await mkdtemp(join(tmpdir(), "expo-xtool-net-"));
+    const ipa = join(dir, "App.ipa");
+    await writeFile(ipa, Buffer.alloc(10 * 1024 * 1024, 3));
+    const dev = await FakeDevice.start({ requireHeartbeat: true, bundleId: "XTL-TEAM.com.a.b", heartbeatDropOnWrite: 1 });
+    const logs: string[] = [];
+    const attempts = vi.fn();
+    try {
+      await install(
+        "/p",
+        {
+          xtool: {
+            loadConfig: async () => ({}),
+            bin: () => "/bin/xtool",
+            authStatus: async () => ({ loggedIn: true, teamId: "TEAM" }),
+            readState: async () => ({ bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20" }),
+            devBuildIpa: async () => ipa,
+          },
+          wifi: {
+            lanRoute: async () => ({ ip: "192.168.1.20", dev: "wlp2s0" }),
+            locate: async () => ({ ip: "127.0.0.1", udid: UDID, scanned: false }),
+            loadPairRecord: async () => ({ record: pairRecord(), source: "test" }),
+            installOverWifi: (o) => {
+              attempts();
+              return installOverWifi({ ...o, connect: tcpConnector("127.0.0.1", 1000), lockdownPort: dev.lockdownPort });
+            },
+            rememberDevice: async () => {},
+            sleep: async () => {},
+          },
+          log: (s) => logs.push(s),
+        },
+        { network: true },
+      );
+    } finally {
+      await dev.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+    expect(attempts).toHaveBeenCalledTimes(2);
+    expect(logs.some((l) => l.includes("Lost the Wi‑Fi heartbeat") && l.endsWith("retrying once…"))).toBe(true);
+    expect(dev.installs).toHaveLength(1);
+    expect(logs.join("\n")).toContain("Installed XTL-TEAM.com.a.b");
+  });
+});

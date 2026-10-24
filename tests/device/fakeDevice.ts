@@ -74,6 +74,10 @@ export interface FakeDeviceOptions {
   installDrop?: boolean;
   /** installd: after the first progress message, go silent. */
   installStall?: boolean;
+  /** Once (first upload only): on this AFC write, kill just the heartbeat connection. */
+  heartbeatDropOnWrite?: number;
+  /** installd: after the first progress message, the heartbeat announces SleepyTime. */
+  installSleepy?: boolean;
 }
 
 const fingerprint = (pem: Buffer): string => new X509Certificate(pem).fingerprint256;
@@ -97,6 +101,8 @@ export class FakeDevice {
   private servers: net.Server[] = [];
   private sockets = new Set<net.Socket>();
   private heartbeatTimers: NodeJS.Timeout[] = [];
+  private heartbeat: { sock: Duplex; ch: PlistChannel } | undefined;
+  private heartbeatDropped = false;
 
   private constructor(readonly opts: FakeDeviceOptions) {
     this.udid = opts.udid ?? UDID;
@@ -261,6 +267,7 @@ export class FakeDevice {
   private async serveHeartbeat(sock: Duplex): Promise<void> {
     if (this.opts.heartbeatSilent) return;
     const ch = new PlistChannel(sock, "fake heartbeat");
+    this.heartbeat = { sock, ch };
     const interval = this.opts.heartbeatIntervalSec ?? 10;
     sock.once("close", () => (this.heartbeatActive = false));
     for (;;) {
@@ -313,6 +320,11 @@ export class FakeDevice {
         }
         case AfcOp.FileWrite: {
           writes++;
+          if (this.opts.heartbeatDropOnWrite === writes && !this.heartbeatDropped) {
+            this.heartbeatDropped = true;
+            this.heartbeatActive = false;
+            this.heartbeat?.sock.destroy();
+          }
           if (this.opts.afcDropOnWrite === writes) {
             this.dropAll();
             return;
@@ -358,6 +370,10 @@ export class FakeDevice {
             return;
           }
           if (this.opts.installStall) return;
+          if (this.opts.installSleepy) {
+            await this.heartbeat?.ch.send({ Command: "SleepyTime" }).catch(() => {});
+            return;
+          }
         }
         const id = this.opts.bundleId ?? "com.example.app";
         this.apps[id] = { CFBundleIdentifier: id, CFBundleShortVersionString: "1.0.0", CFBundleVersion: "1" };

@@ -22,7 +22,7 @@ export class InstallInterruptedError extends Error {
   constructor(readonly reason: unknown) {
     super(
       `The connection to the iPhone was lost while it was installing the app (${message(reason)}). ` +
-        "Check the app on the iPhone; if it is missing or old, run the install again.",
+        "Keep the iPhone unlocked with the screen on, check the app on it, and run the install again if it is missing or old.",
     );
     this.name = "InstallInterruptedError";
   }
