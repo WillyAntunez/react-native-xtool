@@ -32,6 +32,7 @@ export function isConnectionFailure(e: unknown): boolean {
     e instanceof DeviceUnreachableError ||
     e instanceof DeviceClosedError ||
     e instanceof DeviceTimeoutError ||
+    e instanceof HeartbeatLostError ||
     (e instanceof Error && /^(ECONNRESET|EPIPE|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|ECONNREFUSED)$/.test(
       (e as NodeJS.ErrnoException).code ?? "",
     ))
@@ -39,3 +40,11 @@ export function isConnectionFailure(e: unknown): boolean {
 }
 
 export const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/** The heartbeat session died: iOS tears down every other service connection with it. */
+export class HeartbeatLostError extends Error {
+  constructor(reason: string) {
+    super(`Lost the Wi‑Fi heartbeat with the iPhone (${reason}); it probably locked, slept or left the network.`);
+    this.name = "HeartbeatLostError";
+  }
+}
