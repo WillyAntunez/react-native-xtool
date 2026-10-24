@@ -40,10 +40,14 @@ export function buildProgram(): Command {
     );
   program
     .command("install")
-    .description("Build, sign and install the app on a USB-connected iPhone")
+    .description("Build, sign and install the app on the iPhone (USB by default, Wi‑Fi with --network)")
+    .option("--network [ip]", "install over Wi‑Fi (finds the iPhone on the LAN when no IP is given)")
+    .option("--udid <udid>", "which paired iPhone to use over Wi‑Fi")
+    .option("--pair-record <file>", "pair record to use over Wi‑Fi (e.g. copied from /var/lib/lockdown on WSL2)")
     .action(
-      action(async () => {
-        await install(process.cwd());
+      action(async (o: { network?: boolean | string; udid?: string; pairRecord?: string }) => {
+        if (!o.network && (o.udid || o.pairRecord)) throw new Error("--udid and --pair-record need --network");
+        await install(process.cwd(), {}, o);
       }),
     );
   program

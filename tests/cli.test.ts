@@ -12,4 +12,10 @@ describe("buildProgram", () => {
   it("reports the package.json version", () => {
     expect(buildProgram().version()).toBe(pkg.version);
   });
+
+  it("offers install --network with an optional IP", () => {
+    const installCmd = buildProgram().commands.find((c) => c.name() === "install")!;
+    const flags = installCmd.options.map((o) => o.flags);
+    expect(flags).toEqual(["--network [ip]", "--udid <udid>", "--pair-record <file>"]);
+  });
 });

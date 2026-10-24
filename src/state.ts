@@ -45,10 +45,13 @@ export async function readState(iosXtoolDir: string): Promise<BuildState | undef
   return parsed as BuildState;
 }
 
-/** Records where the iPhone answered over Wi‑Fi; a no-op before the first build. */
+/**
+ * Records where the iPhone answered over Wi‑Fi (and, after an install, the installed build's
+ * fingerprint) in one write; a no-op before the first build.
+ */
 export async function rememberDevice(
   iosXtoolDir: string,
-  device: { deviceIp: string; deviceUdid: string },
+  device: { deviceIp: string; deviceUdid: string; installedFingerprint?: string },
 ): Promise<void> {
   const state = await readState(iosXtoolDir);
   if (state) await writeState(iosXtoolDir, { ...state, ...device });
