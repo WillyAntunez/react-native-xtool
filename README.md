@@ -41,8 +41,28 @@ cd my-app
 expo-xtool run
 ```
 
-`run` = `build` + `install` + `start`. After the first install you only need
-`expo-xtool start`; the cable is needed again only to reinstall.
+`run` = `build` + `install` + `start`, but it skips the build and install when
+nothing changed since the last build. The cable is needed only when it reinstalls.
+
+## Daily loop
+
+`expo-xtool run` is the one command to use. It fingerprints your installed dependencies
+(every `dependencies`/`devDependencies` entry at its installed version, plus `patches/*.patch`)
+and compares that with the fingerprint stored by the last `build`:
+
+- **Unchanged:** it prints `Native app is up to date`, skips build and install and starts Metro.
+- **Changed** (for example after `npx expo install <native lib>`): it rebuilds, reinstalls
+  and starts Metro with `--clear`, so a new native module and new Babel plugins are picked up.
+  Without this you get `TurboModuleRegistry.getEnforcing(...) could not be found` (app not
+  rebuilt) or `Metro has encountered an error while trying to resolve module` (stale cache).
+
+There is no native/JS distinction: any dependency change rebuilds. JS-only changes also need
+a Metro cache reset, and telling native dependencies apart reliably needs the autolinking pass.
+
+- `expo-xtool start` warns and adds `--clear` itself when dependencies changed since the last
+  build; `expo-xtool start --clear` forces a cache reset.
+- `expo-xtool run --force` always rebuilds and reinstalls (`--clean` does too).
+- `expo-xtool doctor` reports a `deps` warning when the app is out of date.
 
 ## Commands
 
@@ -52,8 +72,8 @@ expo-xtool run
 | `doctor` | Checks toolchain, SDK, login, connected device and project. Exits non-zero on problems. |
 | `build [--clean]` | Prebuild if `ios/` is missing, patches, RN/Expo SwiftPM pipeline, ExpoModulesJSI, generates `ios-xtool/`, `xtool dev build`. `--clean` re-runs `expo prebuild --clean`. |
 | `install` | Signs and installs the app on the USB-connected iPhone, then prints the Metro URL (for the expo-dev-client launcher) and the first-run checklist. |
-| `start` | Starts Metro on the port and LAN IP the app was built for. Tells you to rebuild if either changed. |
-| `run [--clean]` | `build`, `install`, `start`. |
+| `start [--clear]` | Starts Metro on the port and LAN IP the app was built for. Tells you to rebuild if either changed; clears the Metro cache when dependencies changed (or with `--clear`). |
+| `run [--clean] [--force]` | `build` and `install` when dependencies changed (or with `--force`), then `start`. |
 
 Reference timings on a warm cache: patches 3.6 s, RN SwiftPM 11.1 s, ExpoModulesJSI 12.7 s,
 xtool build 24.5 s. The resulting `App.app` is about 99 MB with 8 embedded frameworks.
