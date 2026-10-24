@@ -5,7 +5,7 @@ import { start } from "./start.js";
 export interface RunDeps {
   build: (root: string, opts: { clean?: boolean }) => Promise<void>;
   install: (root: string) => Promise<void>;
-  start: (root: string) => Promise<void>;
+  start: (root: string, opts: { clear?: boolean }) => Promise<void>;
 }
 
 export async function run(
@@ -16,5 +16,5 @@ export async function run(
   const d: RunDeps = { build, install, start, ...overrides };
   await d.build(root, opts);
   await d.install(root);
-  await d.start(root);
+  await d.start(root, {});
 }

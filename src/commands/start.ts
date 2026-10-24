@@ -1,3 +1,4 @@
+import { nativeDepsFingerprint } from "../deps.js";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
 import { detectLanIp, findFreePort, isMetroRunning, isPortFree } from "../net.js";
 import { projectPaths } from "../paths.js";
@@ -34,6 +35,7 @@ export interface StartDeps {
   isMetroRunning: (port: number) => Promise<boolean>;
   findFreePort: (start: number) => Promise<number>;
   detectLanIp: () => Promise<string>;
+  depsFingerprint: (root: string) => Promise<string>;
   run: (cmd: string, args: string[], opts: { cwd: string }) => Promise<unknown>;
   log: (s: string) => void;
 }
@@ -45,11 +47,18 @@ const realDeps: StartDeps = {
   isMetroRunning: (p) => isMetroRunning(p),
   findFreePort: (s) => findFreePort(s),
   detectLanIp: () => detectLanIp(),
+  depsFingerprint: nativeDepsFingerprint,
   run,
   log: (s) => console.log(s),
 };
 
-export async function start(root: string, overrides: Partial<StartDeps> = {}): Promise<void> {
+export const DEPS_CHANGED_WARNING =
+  "Dependencies changed since the last build; the installed app may miss native modules. Run `expo-xtool build && expo-xtool install` (or `expo-xtool run`).";
+
+export async function start(
+  root: string,
+  opts: { clear?: boolean } = {},
+  overrides: Partial<StartDeps> = {}): Promise<void> {
   const d: StartDeps = { ...realDeps, ...overrides };
   const state = await d.readState(projectPaths(root).iosXtool).catch(() => undefined);
   if (!state) throw new Error("No build state found. Run `expo-xtool build` first.");
@@ -71,5 +80,10 @@ export async function start(root: string, overrides: Partial<StartDeps> = {}): P
         : ipMismatchMessage(state.lanIp, currentIp);
     throw new Error(message);
   }
-  await d.run("npx", ["expo", "start", "--lan", "--port", String(state.metroPort)], { cwd: root });
+  const depsChanged = state.depsFingerprint === undefined || state.depsFingerprint !== (await d.depsFingerprint(root));
+  if (depsChanged) d.log(`⚠ ${DEPS_CHANGED_WARNING}`);
+  const clear = opts.clear === true || depsChanged;
+  await d.run("npx", ["expo", "start", "--lan", "--port", String(state.metroPort), ...(clear ? ["--clear"] : [])], {
+    cwd: root,
+  });
 }

@@ -15,6 +15,7 @@ const state = {
   lanIp: "192.168.1.5",
   bundleIdentifier: "com.example.app",
   builtAt: "2026-01-01T00:00:00.000Z",
+  depsFingerprint: "fp",
 };
 
 function makeDeps(over: Partial<StartDeps> = {}) {
@@ -27,6 +28,7 @@ function makeDeps(over: Partial<StartDeps> = {}) {
     isMetroRunning: async () => false,
     findFreePort: async (p) => p,
     detectLanIp: async () => "192.168.1.5",
+    depsFingerprint: async () => "fp",
     run: exec,
     log,
     ...over,
@@ -74,26 +76,26 @@ describe("startDecision", () => {
 describe("start", () => {
   it("throws when there is no build state", async () => {
     const { deps, exec } = makeDeps({ readState: async () => undefined });
-    await expect(start("/p", deps)).rejects.toThrow("No build state found. Run `expo-xtool build` first.");
+    await expect(start("/p", {}, deps)).rejects.toThrow("No build state found. Run `expo-xtool build` first.");
     expect(exec).not.toHaveBeenCalled();
   });
 
   it("treats an unreadable build state like a missing one", async () => {
     const { deps, exec } = makeDeps({ readState: async () => { throw new Error("bad json"); } });
-    await expect(start("/p", deps)).rejects.toThrow("No build state found. Run `expo-xtool build` first.");
+    await expect(start("/p", {}, deps)).rejects.toThrow("No build state found. Run `expo-xtool build` first.");
     expect(exec).not.toHaveBeenCalled();
   });
 
   it("rejects with the port message when the port is busy", async () => {
     const { deps, exec } = makeDeps({ isPortFree: async () => false, findFreePort: async () => 8082 });
     const msg = portMismatchMessage(8081, 8082);
-    await expect(start("/p", deps)).rejects.toThrow(msg);
+    await expect(start("/p", {}, deps)).rejects.toThrow(msg);
     expect(exec).not.toHaveBeenCalled();
   });
 
   it("logs and does not start when Metro already serves the baked port", async () => {
     const { deps, exec, log } = makeDeps({ isPortFree: async () => false, isMetroRunning: async () => true });
-    await expect(start("/p", deps)).resolves.toBeUndefined();
+    await expect(start("/p", {}, deps)).resolves.toBeUndefined();
     expect(exec).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(
       "Metro is already running on port 8081 (http://192.168.1.5:8081). Nothing to start — open the app on your iPhone.",
@@ -106,13 +108,13 @@ describe("start", () => {
       isMetroRunning: async () => true,
       detectLanIp: async () => "10.0.0.7",
     });
-    await expect(start("/p", deps)).rejects.toThrow(ipMismatchMessage("192.168.1.5", "10.0.0.7"));
+    await expect(start("/p", {}, deps)).rejects.toThrow(ipMismatchMessage("192.168.1.5", "10.0.0.7"));
     expect(exec).not.toHaveBeenCalled();
   });
 
   it("rejects with the ip message when the LAN IP changed", async () => {
     const { deps, exec } = makeDeps({ detectLanIp: async () => "10.0.0.7" });
-    await expect(start("/p", deps)).rejects.toThrow(ipMismatchMessage("192.168.1.5", "10.0.0.7"));
+    await expect(start("/p", {}, deps)).rejects.toThrow(ipMismatchMessage("192.168.1.5", "10.0.0.7"));
     expect(exec).not.toHaveBeenCalled();
   });
 
@@ -122,15 +124,43 @@ describe("start", () => {
       loadConfig: async () => ({ lanIp: "192.168.1.5" }) as never,
       detectLanIp: detect,
     });
-    await start("/p", deps);
+    await start("/p", {}, deps);
     expect(detect).not.toHaveBeenCalled();
     expect(exec).toHaveBeenCalledOnce();
   });
 
   it("runs expo start with the baked port when ok", async () => {
     const { deps, exec } = makeDeps();
-    await start("/p", deps);
+    await start("/p", {}, deps);
     expect(exec).toHaveBeenCalledWith("npx", ["expo", "start", "--lan", "--port", "8081"], { cwd: "/p" });
+  });
+});
+
+describe("start and dependency changes", () => {
+  it("warns and passes --clear when the fingerprint differs", async () => {
+    const { deps, exec, log } = makeDeps({ depsFingerprint: async () => "other" });
+    await start("/p", {}, deps);
+    expect(exec).toHaveBeenCalledWith("npx", ["expo", "start", "--lan", "--port", "8081", "--clear"], { cwd: "/p" });
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("Dependencies changed since the last build"));
+  });
+  it("warns and clears when the state has no fingerprint", async () => {
+    const { depsFingerprint: _omit, ...old } = state;
+    const { deps, exec, log } = makeDeps({ readState: async () => old });
+    await start("/p", {}, deps);
+    expect(exec.mock.calls[0]?.[1]).toContain("--clear");
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("Dependencies changed"));
+  });
+  it("does not clear or warn when equal", async () => {
+    const { deps, exec, log } = makeDeps();
+    await start("/p", {}, deps);
+    expect(exec.mock.calls[0]?.[1]).not.toContain("--clear");
+    expect(log).not.toHaveBeenCalled();
+  });
+  it("--clear forces the flag without a warning", async () => {
+    const { deps, exec, log } = makeDeps();
+    await start("/p", { clear: true }, deps);
+    expect(exec.mock.calls[0]?.[1]).toContain("--clear");
+    expect(log).not.toHaveBeenCalled();
   });
 });
 

@@ -58,9 +58,10 @@ export function buildProgram(): Command {
   program
     .command("start")
     .description("Start Metro on the port and LAN IP the app was built for")
+    .option("--clear", "start Metro with --clear (reset its cache)")
     .action(
-      action(async () => {
-        await start(process.cwd());
+      action(async (o: { clear?: boolean }) => {
+        await start(process.cwd(), { clear: o.clear });
       }),
     );
   program
