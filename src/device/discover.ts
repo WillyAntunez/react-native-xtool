@@ -5,8 +5,13 @@ import { sameUdid } from "./usbmux.js";
 
 /** No paired iPhone answered anywhere on the subnet. Retryable: it is usually asleep. */
 export class DeviceNotFoundError extends Error {
-  constructor(subnet: string) {
-    super(`no paired iPhone answered on ${subnet} (port ${LOCKDOWN_PORT})`);
+  constructor(subnet: string, unpaired: { ip: string; udid: string }[] = []) {
+    super(
+      `no paired iPhone answered on ${subnet} (port ${LOCKDOWN_PORT})` +
+        (unpaired.length
+          ? `; unpaired: ${unpaired.map((c) => `${c.udid} at ${c.ip}`).join(", ")} — if one is yours, pair it over USB once (\`expo-xtool setup --wifi\`) or pass --pair-record <file> with --udid <udid>`
+          : ""),
+    );
     this.name = "DeviceNotFoundError";
   }
 }
@@ -118,20 +123,24 @@ export async function locateDevice(o: LocateOptions): Promise<Located> {
   if (o.lastIp) {
     try {
       const udid = await ident(o.lastIp);
-      if (wanted(udid) && (await o.paired(udid))) return { ip: o.lastIp, udid, scanned: false };
-      log(`Another device now answers at ${o.lastIp}; scanning ${subnet24(o.lanIp)}…`);
+      // A wanted --udid is returned even unpaired: loading its pair record then explains the fix.
+      if (wanted(udid) && (o.udid || (await o.paired(udid)))) return { ip: o.lastIp, udid, scanned: false };
+      log(`${wanted(udid) ? `iPhone ${udid} (not paired with this computer)` : "Another device"} answers at ${o.lastIp}; scanning ${subnet24(o.lanIp)}…`);
     } catch (e) {
       log(`iPhone not at ${o.lastIp} (${message(e)}); scanning ${subnet24(o.lanIp)}…`);
     }
   } else {
     log(`Looking for the iPhone on ${subnet24(o.lanIp)}…`);
   }
-  const found: { ip: string; udid: string }[] = [];
+  const candidates: { ip: string; udid: string }[] = [];
   for (const ip of await scan(o.lanIp)) {
     const udid = await ident(ip).catch(() => undefined);
-    if (udid && wanted(udid) && (await o.paired(udid))) found.push({ ip, udid });
+    if (udid && wanted(udid)) candidates.push({ ip, udid });
   }
-  if (found.length === 0) throw new DeviceNotFoundError(subnet24(o.lanIp));
+  const found = o.udid ? candidates : [];
+  if (!o.udid) for (const c of candidates) if (await o.paired(c.udid)) found.push(c);
+  // Unpaired answers may be someone else's iPhone while ours sleeps: still "not found" (retryable).
+  if (found.length === 0) throw new DeviceNotFoundError(subnet24(o.lanIp), candidates);
   if (found.length > 1) {
     throw new Error(
       `Several paired iPhones answer on the LAN (${found.map((f) => `${f.udid} at ${f.ip}`).join(", ")}): pass --udid <udid>.`,

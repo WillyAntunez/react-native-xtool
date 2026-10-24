@@ -109,6 +109,21 @@ describe("locateDevice", () => {
       locateDevice({ lanIp: "10.0.0.2", paired, identify: async () => "OTHER", scan: async () => ["10.0.0.7"] }),
     ).rejects.toBeInstanceOf(DeviceNotFoundError);
   });
+  it("returns the wanted iPhone even without a pair record, so loading it explains the fix", async () => {
+    const r = await locateDevice({ lastIp: "10.0.0.5", lanIp: "10.0.0.2", udid: "NEW", paired, identify: async () => "NEW" });
+    expect(r.udid).toBe("NEW");
+  });
+  it("names unpaired iPhones it saw, with the pairing hint, but stays retryable", async () => {
+    const err = await locateDevice({
+      lanIp: "10.0.0.2",
+      paired,
+      identify: async () => "NEW",
+      scan: async () => ["10.0.0.7"],
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DeviceNotFoundError);
+    expect((err as Error).message).toContain("NEW at 10.0.0.7");
+    expect((err as Error).message).toContain("setup --wifi");
+  });
   it("asks for --udid when several paired iPhones answer", async () => {
     await expect(
       locateDevice({
