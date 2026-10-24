@@ -418,6 +418,22 @@ a forwarding stub `rn-spm-react-headers/<name>` (`#import <React/<name>>`) and p
 header search path. Libraries without such includes (all the others in our matrix) are unchanged. In
 remote mode the React trees are not local, so nothing is emitted.
 
+## 12. `scripts/spm/spm-utils.js`: the per-app header farm is an umbrella module of C++ headers
+
+`buildPerAppHeaderTree` vends `build/generated/ios/ReactAppHeaders` (autolinking headers + codegen output)
+as the `ReactAppHeaders` target with `publicHeadersPath: "."` and no module map, so SwiftPM generates an
+umbrella-directory module over the whole farm. An Objective-C (`.m`, not `.mm`) file that imports one
+Objective-C header from it — expo-dev-launcher's `EXDevLauncherController.m` does
+`#import <ReactAppDependencyProvider/RCTAppDependencyProvider.h>` — makes clang build that module, i.e. every
+codegen/JSI C++ header, in Objective-C mode:
+`RCTRequired.h:8:10: 'utility' file not found` → `could not build module 'ReactAppHeaders'`.
+Objective-C++ consumers never noticed (the C++ headers compile there).
+
+Fix: write a header-less `module.modulemap` into the farm
+(`module ReactAppHeaders { export * }`). SwiftPM uses a module map it finds in the public headers
+directory instead of generating one, and the farm's headers are then included textually — as CocoaPods'
+header search paths include them. Nothing imports `ReactAppHeaders` as a module (Swift cannot: it is C++).
+Verified with the full reference app (all scaffolded and Expo modules still build) plus the dev client.
 
 ## Tests
 
