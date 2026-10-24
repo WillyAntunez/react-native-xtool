@@ -194,10 +194,10 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
       expect(manifest).toContain('publicHeadersPath: "."');
       expect(manifest).toContain('.define("RCT_NEW_ARCH_ENABLED", to: "1")');
       expect(manifest).toContain('.unsafeFlags(["-I", rnSpmSwiftHeadersDir])');
-      expect(manifest).toContain(`.unsafeFlags(["-I", "${path.join(dir, "swift-headers")}"])`);
+      expect(manifest).toContain(`.unsafeFlags(["-I", "${path.join(dir, "pod-headers")}"])`);
       expect(manifest).toContain('.unsafeFlags(["-std=c++20"])');
       expect(manifest).toContain(`"-import-objc-header", "${path.join(dir, "umbrella.h")}"`);
-      expect(read("swift-headers/MixMod/MixMod-Swift.h")).toBe("#import <MixMod-Swift.h>\n");
+      expect(read("pod-headers/MixMod/MixMod-Swift.h")).toBe("#import <MixMod-Swift.h>\n");
     });
 
     it("lists the module's Objective-C headers in the umbrella, minus the C++ ones", () => {
@@ -371,6 +371,71 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
       expect(patch).toContain("+function scanAppleOnlyResources(");
       expect(patch).toContain("+function renderDroppedResourceWarning(");
       expect(patch).toContain("...(sources.appleOnlyResources ?? [])");
+    });
+  });
+
+  describe("dev-client chain: CocoaPods module names, header_dir and sibling packages", () => {
+    it("names the module after module_name, else header_dir, as a C99 identifier", () => {
+      const byHeaderDir = moduleFixture("expo-dev-menu", { "ios/A.swift": "" }, `s.header_dir = 'EXDevMenu'\n  s.source_files = 'ios/**/*.{h,m,swift}'`);
+      const facts = podspec.readPodspecFacts({ podName: "expo-dev-menu", podspecDir: path.join(byHeaderDir, "ios"), moduleRoot: byHeaderDir });
+      expect(facts).toMatchObject({ headerDir: "EXDevMenu", moduleName: "EXDevMenu" });
+      const byModuleName = moduleFixture("my-pod", { "ios/A.swift": "" }, `s.header_dir = 'H'\n  s.module_name = 'my-mod'`);
+      expect(podspec.readPodspecFacts({ podName: "my-pod", podspecDir: path.join(byModuleName, "ios"), moduleRoot: byModuleName }).moduleName).toBe("my_mod");
+      const interpolated = moduleFixture("Interp", { "ios/A.swift": "" }, `s.header_dir = "#{s.name}"`);
+      expect(podspec.readPodspecFacts({ podName: "Interp", podspecDir: path.join(interpolated, "ios"), moduleRoot: interpolated }).moduleName).toBeNull();
+    });
+
+    it("reads subspec dependencies (expo-dev-menu's main.dependency)", () => {
+      const root = moduleFixture("EXDevMenu", { "ios/A.swift": "" }, `s.subspec 'Main' do |main|\n    main.dependency "EXManifests"\n  end\n  s.dependency 'expo-dev-menu-interface'`);
+      const facts = podspec.readPodspecFacts({ podName: "EXDevMenu", podspecDir: path.join(root, "ios"), moduleRoot: root });
+      expect(facts.dependencies).toEqual(expect.arrayContaining(["EXManifests", "expo-dev-menu-interface"]));
+    });
+
+    const launcher = moduleFixture("expo-dev-launcher", {
+      "ios/Launcher.swift": "",
+      "ios/EXDevLauncherController.h": "#import <Foundation/Foundation.h>\n",
+      "ios/EXDevLauncherController.m": '#import <EXDevLauncher/EXDevLauncherController.h>\n',
+      "ios/Manifest/EXDevLauncherManifestParser.h": "@import EXManifests;\n",
+    });
+    const deps: LocalDep[] = [
+      { podName: "EXManifests", name: "EXManifests", pkgDir: "/out/expo-source/EXManifests", hasSwift: true },
+      { podName: "EXJSONUtils", name: "EXJSONUtils", pkgDir: "/out/expo-source/EXJSONUtils", hasSwift: false },
+    ];
+
+    it("depends on sibling generated packages and searches their pod-headers and Swift module maps", () => {
+      const sources = classify.scanAppleSources(launcher);
+      const { manifest } = emit("EXDevLauncher", launcher, "mixed", sources, { headerDir: "EXDevLauncher", localDeps: deps });
+      expect(manifest).toContain('.package(name: "EXManifests", path: "/out/expo-source/EXManifests")');
+      expect(manifest).toContain('.product(name: "EXManifests", package: "EXManifests")');
+      expect(manifest).toContain('.unsafeFlags(["-I", "/out/expo-source/EXManifests/pod-headers"])');
+      expect(manifest).toContain('.unsafeFlags(["-fmodule-map-file=" + rnSpmSwiftHeadersDir + "/EXManifests.modulemap"])');
+      expect(manifest).not.toContain("EXJSONUtils.modulemap");
+      expect(manifest).toContain('.unsafeFlags(["-Xcc", "-I" + rnSpmSwiftHeadersDir])');
+      expect(manifest).toContain('.unsafeFlags(["-Xcc", "-fmodule-map-file=" + rnSpmSwiftHeadersDir + "/EXManifests.modulemap"])');
+    });
+
+    it("writes CocoaPods-style forwarders: Swift header, umbrella and flattened header_dir", () => {
+      const sources = classify.scanAppleSources(launcher);
+      const { dir, read } = emit("EXDevLauncher", launcher, "mixed", sources, { headerDir: "EXDevLauncher" });
+      expect(read("pod-headers/EXDevLauncher/EXDevLauncher-Swift.h")).toBe("#import <EXDevLauncher-Swift.h>\n");
+      expect(read("pod-headers/EXDevLauncher/EXDevLauncher-umbrella.h")).toBe(`#import "${path.join(dir, "umbrella.h")}"\n`);
+      expect(read("pod-headers/EXDevLauncher/EXDevLauncherManifestParser.h")).toBe(
+        `#import "${path.join(launcher, "ios/Manifest/EXDevLauncherManifestParser.h")}"\n`,
+      );
+    });
+
+    it("gives a pure-Swift package a Swift-header forwarder and its sibling dependencies", () => {
+      const root = moduleFixture("EXUpdatesInterface", { "ios/A.swift": "" });
+      const { manifest, read } = emit("EXUpdatesInterface", root, "pure-swift", classify.scanAppleSources(root), { localDeps: [deps[0]!] });
+      expect(read("pod-headers/EXUpdatesInterface/EXUpdatesInterface-Swift.h")).toBe("#import <EXUpdatesInterface-Swift.h>\n");
+      expect(manifest).toContain('.product(name: "EXManifests", package: "EXManifests")');
+    });
+
+    it("the committed patch carries module naming, sibling packages and pod-headers", () => {
+      const patch = readFileSync(COMMITTED_PATCH, "utf8");
+      expect(patch).toContain("+function generatedPackageIndex(");
+      expect(patch).toContain("+function writePodHeaders(");
+      expect(patch).toContain("+function c99Identifier(");
     });
   });
 });

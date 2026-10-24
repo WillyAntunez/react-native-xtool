@@ -189,7 +189,7 @@ index 0ac5e9e..035bf8d 100644
    renderPartlyProvidedPackageWarning,
    renderExtraPodsWarning,
 diff --git a/node_modules/expo/scripts/spm/manifests.js b/node_modules/expo/scripts/spm/manifests.js
-index b1454bc..57142c2 100644
+index b1454bc..eddf20d 100644
 --- a/node_modules/expo/scripts/spm/manifests.js
 +++ b/node_modules/expo/scripts/spm/manifests.js
 @@ -9,7 +9,7 @@
@@ -227,7 +227,7 @@ index b1454bc..57142c2 100644
 +  // experimental multi-language mode (Swift 6.4); SE-0541 makes it standard in tools-version 6.5.
 +  const toolsVersion = manifest.language === 'mixed' ? '6.4;(experimentalMultiLang)' : '6.0';
 +  const preamble =
-+    manifest.language === 'mixed'
++    manifest.language === 'mixed' || manifest.usesSwiftHeadersDir
 +      ? `
 +let rnSpmSwiftHeadersDir = Context.environment["RN_SPM_SWIFT_HEADERS_DIR"]
 +    ?? (Context.packageDirectory + "/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos")
@@ -244,7 +244,49 @@ index b1454bc..57142c2 100644
  let package = Package(
      name: "${manifest.name}",
      platforms: ${renderPlatforms(manifest.iosDeploymentTarget)},
-@@ -682,7 +698,13 @@ function escapeSwiftString(value) {
+@@ -645,6 +661,7 @@ function pureSwiftManifest({
+   iosDeploymentTarget = null,
+   hasPrivacyManifest = false,
+   packages = [],
++  localDeps = [],
+ }) {
+   const target = {
+     name: product,
+@@ -657,11 +674,15 @@ function pureSwiftManifest({
+     // .process may rename or transform what it puts in the bundle.
+     resources: hasPrivacyManifest ? [{ path: PRIVACY_MANIFEST, rule: { copy: {} } }] : [],
+     settings: [],
+-    dependencies: packages.map((pkg) => ({
+-      product: pkg.productName,
+-      package: pkg.identity,
+-      platforms: [],
+-    })),
++    dependencies: [
++      ...packages.map((pkg) => ({
++        product: pkg.productName,
++        package: pkg.identity,
++        platforms: [],
++      })),
++      // expo-xtool: sibling generated packages the podspec depends on.
++      ...localDeps.map((dep) => ({ product: dep.name, package: dep.name, platforms: [] })),
++    ],
+   };
+   return {
+     name: product,
+@@ -670,7 +691,11 @@ function pureSwiftManifest({
+     products: [{ name: product, targets: [product] }],
+     targets: [target],
+     packageDeps: packages,
+-    spmProductNames: packages.map((pkg) => pkg.productName),
++    localDeps,
++    spmProductNames: [
++      ...packages.map((pkg) => pkg.productName),
++      ...localDeps.map((dep) => dep.podName ?? dep.name),
++    ],
+   };
+ }
+ 
+@@ -682,7 +707,13 @@ function escapeSwiftString(value) {
   * A target's `*Settings:` arguments: Expo's binary-free interface tree first, then
   * whatever the module itself declared, in its own order.
   */
@@ -259,7 +301,7 @@ index b1454bc..57142c2 100644
    const unsafeFlags = (flags) =>
      `.unsafeFlags([${flags.map((f) => `"${escapeSwiftString(f)}"`).join(', ')}])`;
    const interfaceFlags = unsafeFlags(['-F', frameworkSearchPath]);
-@@ -701,7 +723,9 @@ function renderTargetSettings(frameworkSearchPath, settings, targetName, extraSw
+@@ -701,7 +732,9 @@ function renderTargetSettings(frameworkSearchPath, settings, targetName, extraSw
        .filter((s) => s.tool === tool)
        .map((s) => renderSetting(s, targetName));
      const injected = tool === 'swift' ? swiftInterfaceFlags : interfaceFlags;
@@ -270,7 +312,7 @@ index b1454bc..57142c2 100644
      return values.length ? `\n            ${label}: [${values.join(', ')}],` : '';
    }).join('');
  }
-@@ -848,6 +872,34 @@ function withoutSatisfiedProducts(manifest, satisfiedDependencies) {
+@@ -848,6 +881,70 @@ function withoutSatisfiedProducts(manifest, satisfiedDependencies) {
    return { manifest: { ...manifest, targets, packageDeps }, partlyProvidedPackages };
  }
  
@@ -293,6 +335,42 @@ index b1454bc..57142c2 100644
 +  });
 +}
 +
++/**
++ * expo-xtool: `<pkgDir>/pod-headers`, the include paths CocoaPods gives a pod and its dependents,
++ * as forwarding headers:
++ * - `<Pod>/<Pod>-Swift.h` → the flat `<Pod>-Swift.h` Swift Build writes (named after the target),
++ *   for every package with Swift;
++ * - `<Pod>/<Pod>-umbrella.h` → the generated umbrella, for a mixed package;
++ * - `<header_dir>/<Header>.h` → each of the module's headers wherever it sits under the source
++ *   directory, as CocoaPods' `header_dir` flattens them (`<EXDevLauncher/EXDevLauncherController.h>`).
++ * The package itself and every generated package that depends on it search this directory.
++ */
++function writePodHeaders(manifest, pkgDir) {
++  const root = path.join(pkgDir, 'pod-headers');
++  const write = (rel, text) => {
++    const file = path.join(root, rel);
++    fs.mkdirSync(path.dirname(file), { recursive: true });
++    writeIfChanged(file, text);
++  };
++  const written = new Set();
++  if (manifest.language !== 'clang') {
++    const rel = path.join(manifest.name, `${manifest.name}-Swift.h`);
++    write(rel, `#import <${manifest.name}-Swift.h>\n`);
++    written.add(rel);
++  }
++  if (manifest.language === 'mixed') {
++    const rel = path.join(manifest.name, `${manifest.name}-umbrella.h`);
++    write(rel, `#import "${path.join(pkgDir, 'umbrella.h')}"\n`);
++    written.add(rel);
++  }
++  for (const header of manifest.headerDirHeaders ?? []) {
++    const rel = path.join(manifest.headerDir, path.basename(header));
++    if (written.has(rel)) continue;
++    write(rel, `#import "${header}"\n`);
++    written.add(rel);
++  }
++}
++
 +/** Write only on change, to avoid mtime churn that would invalidate SwiftPM's build. */
 +function writeIfChanged(file, content) {
 +  let current = null;
@@ -305,7 +383,7 @@ index b1454bc..57142c2 100644
  /**
   * Render `manifest` against Expo's binary-free framework interface tree, with RN's
   * invariant React products injected and its floor raised to the minimum, and write it
-@@ -873,6 +925,33 @@ function emitPackage(
+@@ -873,18 +970,42 @@ function emitPackage(
      manifest,
      satisfiedDependencies
    );
@@ -329,18 +407,19 @@ index b1454bc..57142c2 100644
 +    writeIfChanged(umbrella, umbrellaSource);
 +    umbrellaFlags.push('-import-objc-header', umbrella);
 +  }
-+  if (mixed) {
-+    // `#import <Pod/Pod-Swift.h>` (the CocoaPods framework form) forwards to the flat
-+    // `<Pod>-Swift.h`, which Swift Build names after the target.
-+    const forwarder = path.join(pkgDir, 'swift-headers', manifest.name, `${manifest.name}-Swift.h`);
-+    fs.mkdirSync(path.dirname(forwarder), { recursive: true });
-+    writeIfChanged(forwarder, `#import <${manifest.name}-Swift.h>\n`);
++  if (manifest.pureSwift || manifest.language != null) {
++    writePodHeaders(manifest, pkgDir);
 +  }
++  const localPkgDeps = (manifest.localDeps ?? []).map(
++    (dep) => `.package(name: "${dep.name}", path: "${escapeSwiftString(dep.pkgDir)}")`
++  );
    const manifestSwift = renderSourceManifest({
      manifest: {
        ...linked,
-@@ -881,10 +960,8 @@ function emitPackage(
-     pkgDeps,
+       iosDeploymentTarget: raiseFloor(manifest.iosDeploymentTarget, minimumIosDeploymentTarget),
+     },
+-    pkgDeps,
++    pkgDeps: [...pkgDeps, ...localPkgDeps],
      injectedTargetDeps: targetDeps,
      frameworkSearchPath,
 -    extraSwiftFlags: macroFlags,
@@ -351,11 +430,19 @@ index b1454bc..57142c2 100644
    const rootLink = path.join(pkgDir, 'root');
    try {
      fs.rmSync(rootLink, { recursive: true, force: true });
-@@ -1018,7 +1095,117 @@ function emitPureSwiftSourcePackage(
+@@ -1011,14 +1132,159 @@ function emitPureSwiftSourcePackage(
+     iosDeploymentTarget = null,
+     spmPackages = [],
+     sources = scanAppleSources(moduleRoot),
++    localDeps = [],
+   },
+   emitContext
+ ) {
+   const srcDir = appleSourceDir(moduleRoot);
    const manifest = pureSwiftManifest({
-     product,
-     srcRel: path.relative(moduleRoot, srcDir),
--    excludes: sources.ignoredDirs,
++    localDeps,
++    product,
++    srcRel: path.relative(moduleRoot, srcDir),
 +    // expo-xtool: an empty placeholder `.m` would make SwiftPM see a mixed target, and an asset
 +    // catalog (or another Xcode-only resource) needs a compiler Linux does not have.
 +    excludes: [
@@ -411,28 +498,55 @@ index b1454bc..57142c2 100644
 +  language,
 +  hasCxx = false,
 +  umbrellaHeaders = [],
++  headerDir = null,
++  headerDirHeaders = [],
 +  pkgDir,
 +  ...options
 +}) {
 +  const base = pureSwiftManifest(options);
++  const localDeps = options.localDeps ?? [];
++  // Directories CocoaPods would put on the header search path: this pod's own `pod-headers`
++  // (Swift header, umbrella, header_dir) and each dependency's, and the flat `-Swift.h` directory.
++  const usesSwiftHeadersDir = language === 'mixed' || localDeps.length > 0;
++  const includeDirs = [
++    ...(language === 'mixed' || headerDir != null ? [path.join(pkgDir, 'pod-headers')] : []),
++    ...localDeps.map((dep) => path.join(dep.pkgDir, 'pod-headers')),
++  ];
++  // `@import Dep;` of a Swift dependency needs the module map Swift Build writes beside its
++  // `-Swift.h`; Swift Build hands it to the dependency's own consumers only.
++  const swiftDepModuleMaps = localDeps
++    .filter((dep) => dep.hasSwift)
++    .map((dep) => `"-fmodule-map-file=" + rnSpmSwiftHeadersDir + "/${escapeSwiftString(dep.name)}.modulemap"`);
 +  const clang = ['.define("RCT_NEW_ARCH_ENABLED", to: "1")'];
-+  if (language === 'mixed') {
-+    clang.push('.unsafeFlags(["-I", rnSpmSwiftHeadersDir])');
-+    clang.push(
-+      `.unsafeFlags(["-I", "${escapeSwiftString(path.join(pkgDir, 'swift-headers'))}"])`
-+    );
++  if (usesSwiftHeadersDir) clang.push('.unsafeFlags(["-I", rnSpmSwiftHeadersDir])');
++  for (const dir of includeDirs) {
++    clang.push(`.unsafeFlags(["-I", "${escapeSwiftString(dir)}"])`);
 +  }
++  for (const flag of swiftDepModuleMaps) clang.push(`.unsafeFlags([${flag}])`);
 +  // SwiftPM 6.4 does not apply `cxxLanguageStandard` to a mixed target's Objective-C++.
 +  const cxx = language === 'mixed' && hasCxx ? [...clang, '.unsafeFlags(["-std=c++20"])'] : clang;
++  // Swift reads the module's headers through the umbrella, so its Clang importer needs the
++  // same search paths.
++  const swift =
++    language === 'mixed'
++      ? [
++          '.unsafeFlags(["-Xcc", "-I" + rnSpmSwiftHeadersDir])',
++          ...includeDirs.map((dir) => `.unsafeFlags(["-Xcc", "-I${escapeSwiftString(dir)}"])`),
++          ...swiftDepModuleMaps.map((flag) => `.unsafeFlags(["-Xcc", ${flag}])`),
++        ]
++      : [];
 +  return {
 +    ...base,
 +    pureSwift: false,
 +    language,
++    usesSwiftHeadersDir,
 +    umbrellaHeaders: language === 'mixed' ? umbrellaHeaders : [],
++    headerDir,
++    headerDirHeaders: headerDir != null ? headerDirHeaders : [],
 +    targets: base.targets.map((t) => ({
 +      ...t,
 +      publicHeadersPath: '.',
-+      rawSettings: { c: clang, cxx },
++      rawSettings: { c: clang, cxx, swift },
 +    })),
 +  };
 +}
@@ -451,26 +565,33 @@ index b1454bc..57142c2 100644
 +    iosDeploymentTarget = null,
 +    spmPackages = [],
 +    sources = scanAppleSources(moduleRoot),
++    headerDir = null,
++    localDeps = [],
 +  },
 +  emitContext
 +) {
 +  const srcDir = appleSourceDir(moduleRoot);
 +  // The walk skips the directories classification ignores (tests), as the target excludes them.
-+  const umbrellaHeaders = walkSourceTree(srcDir)
-+    .files.filter((file) => file.endsWith('.h') && !isCxxHeader(fs.readFileSync(file, 'utf8')))
++  const headers = walkSourceTree(srcDir)
++    .files.filter((file) => file.endsWith('.h'))
 +    .sort();
++  const umbrellaHeaders = headers.filter((file) => !isCxxHeader(fs.readFileSync(file, 'utf8')));
 +  const manifest = generatedSourceManifest({
 +    language,
 +    hasCxx: sources.hasCxx,
 +    umbrellaHeaders,
++    headerDir,
++    headerDirHeaders: headers,
++    localDeps,
 +    pkgDir: path.join(emitContext.outDir, 'expo-source', product),
-+    product,
-+    srcRel: path.relative(moduleRoot, srcDir),
+     product,
+     srcRel: path.relative(moduleRoot, srcDir),
+-    excludes: sources.ignoredDirs,
 +    excludes: [...sources.ignoredDirs, ...(sources.appleOnlyResources ?? [])],
      iosDeploymentTarget,
      hasPrivacyManifest: fs.existsSync(path.join(srcDir, PRIVACY_MANIFEST)),
      packages: spmPackages.map(documentedPackage),
-@@ -1037,5 +1224,8 @@ module.exports = {
+@@ -1037,5 +1303,8 @@ module.exports = {
    raiseFloor,
    emitSourceManifestPackage,
    emitPureSwiftSourcePackage,
@@ -480,7 +601,7 @@ index b1454bc..57142c2 100644
    emitExpoModulesJSIHeadersPackage,
  };
 diff --git a/node_modules/expo/scripts/spm/plugin.js b/node_modules/expo/scripts/spm/plugin.js
-index 1141e7c..5ffb442 100644
+index 1141e7c..edea31d 100644
 --- a/node_modules/expo/scripts/spm/plugin.js
 +++ b/node_modules/expo/scripts/spm/plugin.js
 @@ -68,6 +68,7 @@ const {
@@ -510,7 +631,7 @@ index 1141e7c..5ffb442 100644
   */
  function podRecords(identities) {
    const records = new Map();
-@@ -382,12 +384,36 @@ function linkPrecompiledPods(identities, records, cacheDir) {
+@@ -382,22 +384,105 @@ function linkPrecompiledPods(identities, records, cacheDir) {
    return linked;
  }
  
@@ -548,10 +669,46 @@ index 1141e7c..5ffb442 100644
 + * (see `sourceLayout`). A module is refused when its podspec declares linkage,
 + * because the emitted package would link less than the podspec does. Returns null
 + * for a module with no sources: the pod's own `no-apple-sources` report covers it.
++ */
++/**
++ * expo-xtool: the Swift module a generated package builds for a pod — CocoaPods' module name
++ * (`module_name`, else `header_dir`, else the pod name), which is what its dependents import.
   */
- function emitSourceModule(identity, hasManifest, emitContext) {
+-function emitSourceModule(identity, hasManifest, emitContext) {
++function generatedModuleName(identity) {
++  return identity.podspec.moduleName ?? identity.podName;
++}
++
++/**
++ * expo-xtool: the pods `linkSourceModules` will emit as generated packages (no checked-in
++ * manifest, no linkage, not precompiled, a buildable layout), by pod name, with the package each
++ * one is written to. A generated package depends on the ones its podspec's `dependency`s name,
++ * as CocoaPods links a pod against its dependencies (expo-dev-launcher → expo-dev-menu).
++ */
++function generatedPackageIndex(modules, identities, records, outDir) {
++  const index = new Map();
++  for (const mod of modules) {
++    const pods = (mod.pods ?? []).map((pod) => identities.get(pod));
++    const [first] = pods;
++    if (first == null || pods.some((p) => records.get(p.podName)?.linkedAs != null)) continue;
++    if (fs.existsSync(path.join(first.moduleRoot, 'Package.swift'))) continue;
++    if (first.podspec.linkage != null) continue;
++    const layout = sourceLayout(first);
++    if (!['pure-swift', 'mixed', 'clang'].includes(layout)) continue;
++    const name = generatedModuleName(first);
++    index.set(first.podName, {
++      podName: first.podName,
++      name,
++      hasSwift: layout !== 'clang',
++      pkgDir: path.join(outDir, 'expo-source', name),
++    });
++  }
++  return index;
++}
++
++function emitSourceModule(identity, hasManifest, emitContext, generatedPackages = new Map()) {
    const { moduleRoot, podName, iosDeploymentTarget, spmPackages, sources, podspec } = identity;
-@@ -395,9 +421,19 @@ function emitSourceModule(identity, hasManifest, emitContext) {
+   if (hasManifest) return emitSourceManifestPackage(moduleRoot, emitContext);
    if (podspec.linkage != null) {
      return { refusal: { reason: 'needs-manifest-for-linkage', ...podspec.linkage } };
    }
@@ -563,18 +720,39 @@ index 1141e7c..5ffb442 100644
 +  if (layout === 'vendored') {
 +    return { refusal: { reason: 'vendored-sources', vendorSources: sources.vendorSources } };
 +  }
++  const product = generatedModuleName(identity);
++  const localDeps = [...new Set(podspec.dependencies.map((dep) => dep.split('/')[0]))]
++    .filter((dep) => dep !== podName)
++    .map((dep) => generatedPackages.get(dep))
++    .filter((dep) => dep != null);
 +  if (layout === 'pure-swift') {
 +    return emitPureSwiftSourcePackage(
-+      { moduleRoot, product: podName, iosDeploymentTarget, spmPackages, sources },
++      { moduleRoot, product, iosDeploymentTarget, spmPackages, sources, localDeps },
 +      emitContext
 +    );
 +  }
 +  return emitGeneratedSourcePackage(
-+    { moduleRoot, product: podName, iosDeploymentTarget, spmPackages, sources, language: layout },
++    {
++      moduleRoot,
++      product,
++      iosDeploymentTarget,
++      spmPackages,
++      sources,
++      language: layout,
++      headerDir: podspec.headerDir,
++      localDeps,
++    },
      emitContext
    );
  }
-@@ -427,11 +463,13 @@ function linkSourceModules(modules, identities, records, emitContext) {
+@@ -422,16 +507,20 @@ function linkSourceModules(modules, identities, records, emitContext) {
+     refusals.set(root, (refusals.get(root) ?? new Map()).set(reason, refusalFor));
+   const linkedAs = (identity) => records.get(identity.podName).linkedAs;
+   const manifestProductsByRoot = new Map();
++  // expo-xtool: emission order does not matter; every generated package's directory is known.
++  const generatedPackages = generatedPackageIndex(modules, identities, records, emitContext.outDir);
+   for (const mod of modules) {
+     const pods = (mod.pods ?? []).map((pod) => identities.get(pod));
      if (!pods.length || pods.every(linkedAs)) continue;
  
      const [first] = pods;
@@ -590,7 +768,7 @@ index 1141e7c..5ffb442 100644
        // Both source branches build the whole module, so emitting it would link
        // the precompiled pods a second time, from source.
        const siblings = {
-@@ -457,7 +495,11 @@ function linkSourceModules(modules, identities, records, emitContext) {
+@@ -457,16 +546,20 @@ function linkSourceModules(modules, identities, records, emitContext) {
        if (covered.some(linkedAs)) continue;
        // A module with no sources at all scans as pure Swift too, so it reaches
        // emitSourceModule for the podspec linkage check that outranks it.
@@ -601,9 +779,11 @@ index 1141e7c..5ffb442 100644
 +        continue;
 +      }
  
-       const emission = emitSourceModule(first, hasManifest, emitContext);
+-      const emission = emitSourceModule(first, hasManifest, emitContext);
++      const emission = emitSourceModule(first, hasManifest, emitContext, generatedPackages);
        if (emission == null) continue;
-@@ -466,7 +508,7 @@ function linkSourceModules(modules, identities, records, emitContext) {
+       const { refusal, ok } = emission;
+       if (refusal != null) {
          refuse(moduleRoot, refusal.reason, () => refusal);
          continue;
        }
@@ -612,7 +792,7 @@ index 1141e7c..5ffb442 100644
        emitted.push({ identity: first, linkedAs: kind, emission: ok });
        if (!hasManifest) {
          Object.assign(records.get(first.podName), { identity: first, linkedAs: kind });
-@@ -541,7 +583,9 @@ function summarizeRecords(
+@@ -541,7 +634,9 @@ function summarizeRecords(
      autolinkGate,
    }
  ) {
@@ -623,7 +803,7 @@ index 1141e7c..5ffb442 100644
    const refusalsFor = (identity) =>
      [...(refusals.get(identity.moduleRoot)?.values() ?? [])].map((refusalFor) =>
        refusalFor(identity)
-@@ -601,11 +645,24 @@ function summarizeRecords(
+@@ -601,11 +696,24 @@ function summarizeRecords(
        emission.partlyProvidedPackages.map((pkg) => ({ packageName, moduleRoot, ...pkg }))
      ),
      xcconfigLinkage,
@@ -649,7 +829,7 @@ index 1141e7c..5ffb442 100644
      reactWiredPods: podNames(reactWired),
    };
  }
-@@ -656,7 +713,11 @@ function macroPluginFlags(coreModuleRoot) {
+@@ -656,7 +764,11 @@ function macroPluginFlags(coreModuleRoot) {
        { cause: error }
      );
    }
@@ -662,7 +842,7 @@ index 1141e7c..5ffb442 100644
    if (!fs.existsSync(tool)) {
      throw pluginError(
        macroPluginFault(`The Expo Swift macro plugin is missing its executable at ${tool}.`, 'it')
-@@ -784,6 +845,9 @@ module.exports = function expoSpmPlugin(context) {
+@@ -784,6 +896,9 @@ module.exports = function expoSpmPlugin(context) {
    logListed('paired runtime frameworks', summary.precompiledPods);
    logListed('source via checked-in manifest', summary.manifestPackages);
    logListed('source pure-Swift', summary.pureSwiftPods);
@@ -672,7 +852,7 @@ index 1141e7c..5ffb442 100644
    logListed('React wired into', summary.reactWiredPods);
    logListed('gated off', summary.gatedOffProducts);
    logListed(
-@@ -799,6 +863,9 @@ module.exports = function expoSpmPlugin(context) {
+@@ -799,6 +914,9 @@ module.exports = function expoSpmPlugin(context) {
    if (summary.xcconfigLinkage.length > 0) {
      console.warn(renderXcconfigLinkerWarning(summary.xcconfigLinkage));
    }
@@ -682,16 +862,17 @@ index 1141e7c..5ffb442 100644
    if (summary.leftOutCompanions.length > 0) {
      console.warn(renderLeftOutCompanionWarning(summary.leftOutCompanions));
    }
-@@ -895,3 +962,4 @@ module.exports = function expoSpmPlugin(context) {
+@@ -895,3 +1013,5 @@ module.exports = function expoSpmPlugin(context) {
  module.exports.macroPluginFlags = macroPluginFlags;
  module.exports.resolvePodIdentities = resolvePodIdentities;
  module.exports.uncoveredPod = uncoveredPod;
 +module.exports.sourceLayout = sourceLayout;
++module.exports.generatedPackageIndex = generatedPackageIndex;
 diff --git a/node_modules/expo/scripts/spm/podspec.js b/node_modules/expo/scripts/spm/podspec.js
-index 44117ae..880c141 100644
+index 44117ae..cfa56fd 100644
 --- a/node_modules/expo/scripts/spm/podspec.js
 +++ b/node_modules/expo/scripts/spm/podspec.js
-@@ -132,6 +132,24 @@ function podspecDependencies(text) {
+@@ -132,6 +132,44 @@ function podspecDependencies(text) {
    return deps;
  }
  
@@ -703,20 +884,40 @@ index 44117ae..880c141 100644
 +const SOURCE_FILES_RX = /^\s*\w+\.(?:ios\.)?source_files\b/;
 +const VENDOR_PATH_RX = /['"/]vendor['"/]/;
 +
++// expo-xtool: CocoaPods names a pod's module `module_name`, else its `header_dir`, else its name
++// (each made a C99 identifier): expo-dev-menu is `EXDevMenu`, the name its dependents import.
++const HEADER_DIR_RX = /^\s*\w+\.header_dir\s*=\s*['"]([^'"]+)['"]/;
++const MODULE_NAME_RX = /^\s*\w+\.module_name\s*=\s*['"]([^'"]+)['"]/;
++
++/** CocoaPods' `c99ext_identifier`: every character outside [A-Za-z0-9_] becomes `_`. */
++function c99Identifier(name) {
++  const id = name.replace(/[^A-Za-z0-9_]/g, '_');
++  return /^[0-9]/.test(id) ? `_${id}` : id;
++}
++
 +function sourceFacts(text) {
 +  let declaresSourceFiles = false;
 +  let referencesVendor = false;
++  let headerDir = null;
++  let moduleName = null;
 +  for (const { text: line } of podspecBodyLines(text)) {
 +    if (SOURCE_FILES_RX.test(line)) declaresSourceFiles = true;
 +    if (VENDOR_PATH_RX.test(line)) referencesVendor = true;
++    // An interpolated value (`"#{s.name}"`) is Ruby this text scan cannot evaluate.
++    const literal = (rx) => {
++      const value = rx.exec(line)?.[1];
++      return value != null && !value.includes('#{') ? value : null;
++    };
++    headerDir ??= literal(HEADER_DIR_RX);
++    moduleName ??= literal(MODULE_NAME_RX);
 +  }
-+  return { declaresSourceFiles, referencesVendor };
++  return { declaresSourceFiles, referencesVendor, headerDir, moduleName };
 +}
 +
  // ---------------------------------------------------------------------------
  // I/O
  // ---------------------------------------------------------------------------
-@@ -216,7 +234,15 @@ function readPodspecFacts({ podName, podspecDir, moduleRoot }) {
+@@ -216,7 +254,22 @@ function readPodspecFacts({ podName, podspecDir, moduleRoot }) {
    const dependencies = new Set(
      podspecsIn(podspecDir).flatMap((file) => podspecDependencies(readText(file) ?? ''))
    );
@@ -729,13 +930,21 @@ index 44117ae..880c141 100644
 +    dependencies: [...dependencies],
 +    declaresSourceFiles: !texts.length || facts.some((f) => f.declaresSourceFiles),
 +    referencesVendor: facts.some((f) => f.referencesVendor),
++    headerDir: facts.find((f) => f.headerDir != null)?.headerDir ?? null,
++    moduleName: (() => {
++      const declared =
++        facts.find((f) => f.moduleName != null)?.moduleName ??
++        facts.find((f) => f.headerDir != null)?.headerDir;
++      return declared != null ? c99Identifier(declared) : null;
++    })(),
 +  };
  }
  
  module.exports = {
-@@ -226,4 +252,5 @@ module.exports = {
+@@ -226,4 +279,6 @@ module.exports = {
    xcconfigLinkerFlags,
    readPodspecs,
    readPodspecFacts,
 +  sourceFacts,
++  c99Identifier,
  };
