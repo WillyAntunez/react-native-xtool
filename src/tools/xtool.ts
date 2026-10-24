@@ -98,16 +98,19 @@ export function devEnv(iosXtoolDir: string): NodeJS.ProcessEnv {
   return toolEnv(swiftHeadersEnv(iosXtoolDir));
 }
 
-export async function devBuild(bin: string, iosXtoolDir: string): Promise<void> {
-  await run(bin, ["dev", "build", "--configuration", "debug"], {
+/** Runs a command to completion; `run` by default, injectable for tests. */
+export type DevRunner = typeof run;
+
+export async function devBuild(bin: string, iosXtoolDir: string, runner: DevRunner = run): Promise<void> {
+  await runner(bin, ["dev", "build", "--configuration", "debug"], {
     cwd: iosXtoolDir,
     nice: true,
     env: devEnv(iosXtoolDir),
   });
 }
 
-export async function devRun(bin: string, iosXtoolDir: string): Promise<void> {
-  await run(bin, ["dev", "run", "--configuration", "debug", "--usb"], {
+export async function devRun(bin: string, iosXtoolDir: string, runner: DevRunner = run): Promise<void> {
+  await runner(bin, ["dev", "run", "--configuration", "debug", "--usb"], {
     cwd: iosXtoolDir,
     nice: true,
     env: devEnv(iosXtoolDir),

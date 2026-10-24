@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   authStatus,
+  devBuild,
   devEnv,
+  devRun,
+  type DevRunner,
   installedBundleId,
   listDevices,
   parseAuthStatus,
@@ -106,5 +109,33 @@ describe("devEnv", () => {
     );
     expect(env.PATH).toContain(".local/share/swiftly/bin");
     expect(env.SDKROOT).toBeUndefined();
+  });
+});
+
+describe("devBuild / devRun", () => {
+  const SWIFT_HEADERS = "/app/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos";
+  const record = () => {
+    const calls: { args: string[]; opts: Parameters<DevRunner>[2] }[] = [];
+    const runner: DevRunner = async (_cmd, args, opts) => {
+      calls.push({ args, opts });
+    };
+    return { calls, runner };
+  };
+
+  it("devBuild passes RN_SPM_SWIFT_HEADERS_DIR to xtool dev build", async () => {
+    const { calls, runner } = record();
+    await devBuild("/bin/xtool", "/app/ios-xtool", runner);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.args.slice(0, 2)).toEqual(["dev", "build"]);
+    expect(calls[0]!.opts?.cwd).toBe("/app/ios-xtool");
+    expect(calls[0]!.opts?.env?.["RN_SPM_SWIFT_HEADERS_DIR"]).toBe(SWIFT_HEADERS);
+  });
+
+  it("devRun passes RN_SPM_SWIFT_HEADERS_DIR to xtool dev run", async () => {
+    const { calls, runner } = record();
+    await devRun("/bin/xtool", "/app/ios-xtool", runner);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.args.slice(0, 2)).toEqual(["dev", "run"]);
+    expect(calls[0]!.opts?.env?.["RN_SPM_SWIFT_HEADERS_DIR"]).toBe(SWIFT_HEADERS);
   });
 });

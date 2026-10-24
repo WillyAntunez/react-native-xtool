@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
@@ -15,6 +16,15 @@ const COMMITTED_PATCH = path.resolve(import.meta.dirname, "../patches/expo+58.0.
 // is opt-in: EXPO_XTOOL_E2E=1.
 const e2e = process.env["EXPO_XTOOL_E2E"] === "1";
 const available = existsSync(MANIFESTS) && existsSync(path.join(APP, "ios/build"));
+const hasPatchBinary = spawnSync("patch", ["--version"]).error === undefined;
+
+// Guards the committed patch against drift from the installed copy (the RN patch has the same guard).
+describe.skipIf(!existsSync(MANIFESTS) || !hasPatchBinary)("committed Expo patch", () => {
+  it("reverse-applies cleanly to the installed Expo files", async () => {
+    const r = await execa("patch", ["-R", "-p1", "-F0", "--dry-run", "-i", COMMITTED_PATCH], { cwd: APP, reject: false });
+    expect(r.exitCode, `${r.stdout}\n${r.stderr}`).toBe(0);
+  });
+});
 
 describe.skipIf(!available)("patched Expo SwiftPM plugin", () => {
   it("the committed patch carries the umbrella-header hunk", () => {
