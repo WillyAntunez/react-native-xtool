@@ -1619,3 +1619,24 @@ index cf7e587..9b08de5 100644
    }
  
    reportSwiftName(dep, spec.swiftName, model);
+diff --git a/node_modules/react-native/scripts/spm/spm-utils.js b/node_modules/react-native/scripts/spm/spm-utils.js
+index fc53136..dbeb2af 100644
+--- a/node_modules/react-native/scripts/spm/spm-utils.js
++++ b/node_modules/react-native/scripts/spm/spm-utils.js
+@@ -595,6 +595,16 @@ function buildPerAppHeaderTree(
+       '// satisfies SPM, which requires at least one source file per target.\n' +
+       'static int ReactAppHeadersStub __attribute__((unused)) = 0;\n',
+   );
++  // expo-xtool: an explicit, header-less module map. Without one SwiftPM makes the whole farm
++  // an umbrella-directory module, so an Objective-C (.m) file importing one Objective-C header
++  // from it (`<ReactAppDependencyProvider/RCTAppDependencyProvider.h>`) builds every C++
++  // codegen header in Objective-C mode and fails ("'utility' file not found"). With it, the
++  // farm's headers are included textually, as CocoaPods' header search paths include them.
++  fs.writeFileSync(
++    path.join(tmpDir, 'module.modulemap'),
++    '// ReactAppHeaders vends its headers textually (see spm-utils.js#buildPerAppHeaderTree).\n' +
++      'module ReactAppHeaders {\n  export *\n}\n',
++  );
+   fs.mkdirSync(path.dirname(outDir), {recursive: true});
+   fs.renameSync(tmpDir, outDir);
+ 

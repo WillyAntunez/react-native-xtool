@@ -90,6 +90,22 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
     it("scaffold-package-swift.js has the bare React header hunk", () => {
       expect(src("scaffold-package-swift.js")).toContain("function bareReactHeaders");
     });
+    it("spm-utils.js has the header-less ReactAppHeaders module map hunk", () => {
+      expect(src("spm-utils.js")).toContain("module ReactAppHeaders {");
+    });
+  });
+
+  it("gives the per-app header farm a header-less module map, so Objective-C imports it textually", () => {
+    const appRoot = tempDir();
+    const gen = path.join(appRoot, "build", "generated", "ios", "ReactAppDependencyProvider");
+    mkdirSync(gen, { recursive: true });
+    writeFileSync(path.join(gen, "RCTAppDependencyProvider.h"), "#import <Foundation/Foundation.h>\n");
+    const { buildPerAppHeaderTree } = load<{ buildPerAppHeaderTree(root: string): { path: string } }>("spm-utils.js");
+    const farm = buildPerAppHeaderTree(appRoot).path;
+    expect(existsSync(path.join(farm, "ReactAppDependencyProvider", "RCTAppDependencyProvider.h"))).toBe(true);
+    const map = readFileSync(path.join(farm, "module.modulemap"), "utf8");
+    expect(map).toContain("module ReactAppHeaders {\n  export *\n}\n");
+    expect(map).not.toMatch(/umbrella|header "/);
   });
 
   it.skipIf(!hasPatchBinary)("the committed patch reverse-applies cleanly to the installed RN files", async () => {
