@@ -191,6 +191,17 @@ describe("build previous port", () => {
   });
 });
 
+describe("build keeps the Wi‑Fi device", () => {
+  it("carries deviceIp and deviceUdid over from the previous state", async () => {
+    const t = setup();
+    const dir = join(t.root, "ios-xtool");
+    await writeState(dir, { version: 1, metroPort: 8081, lanIp: "x", bundleIdentifier: "b", builtAt: "t", deviceIp: "192.168.1.10", deviceUdid: "U" });
+    await build(t.root, {}, t.deps);
+    const s = await readState(dir);
+    expect([s?.deviceIp, s?.deviceUdid]).toEqual(["192.168.1.10", "U"]);
+  });
+});
+
 describe("build corrupt state", () => {
   it("warns, ignores the unreadable state, continues and rewrites it", async () => {
     const t = setup();

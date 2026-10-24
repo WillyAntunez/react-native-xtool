@@ -181,6 +181,7 @@ describe("run", () => {
       isPortFree: async () => true,
       isMetroRunning: async () => false,
       detectLanIp: async () => "192.168.1.5",
+      usbUdids: async () => [],
       log,
       ...over,
     };
@@ -191,6 +192,46 @@ describe("run", () => {
     const { calls, overrides } = fresh({ readState: async () => undefined });
     await runCommand("/p", { clean: true }, overrides);
     expect(calls).toEqual(["build:true", "install", "start"]);
+  });
+
+  it("reinstalls when a different iPhone is connected over USB", async () => {
+    const { calls, overrides } = fresh({
+      readState: async () => ({ ...state, installedUdid: "00008030-0000000000000001" }),
+      usbUdids: async () => ["00008030-0000000000000002"],
+    });
+    await runCommand("/p", {}, overrides);
+    expect(calls).toContain("install");
+  });
+
+  it("skips when the connected iPhone is the one installed on", async () => {
+    const { calls, overrides } = fresh({
+      readState: async () => ({ ...state, installedUdid: "00008030-0000000000000001" }),
+      usbUdids: async () => ["000080300000000000000001"], // dashless, as usbmuxd may report it
+    });
+    await runCommand("/p", {}, overrides);
+    expect(calls).toEqual(["start"]);
+  });
+
+  it("over Wi‑Fi, reinstalls when the remembered iPhone is not the one installed on", async () => {
+    const { calls, overrides } = fresh({
+      readState: async () => ({ ...state, installedUdid: "00008030-0000000000000001", deviceUdid: "00008030-0000000000000002" }),
+    });
+    await runCommand("/p", { network: true }, overrides);
+    expect(calls).toContain("install");
+    const same = fresh({
+      readState: async () => ({ ...state, installedUdid: "00008030-0000000000000002", deviceUdid: "00008030-0000000000000002" }),
+    });
+    await runCommand("/p", { network: true }, same.overrides);
+    expect(same.calls).toEqual(["start"]);
+  });
+
+  it("passes --network and its options through to install", async () => {
+    const install = vi.fn(async () => {});
+    const { overrides } = fresh({ readState: async () => undefined, install });
+    await runCommand("/p", { network: "192.168.1.10", udid: "U", pairRecord: "/r.plist" }, overrides);
+    expect(install).toHaveBeenCalledWith("/p", { network: "192.168.1.10", udid: "U", pairRecord: "/r.plist" });
+    await runCommand("/p", {}, overrides);
+    expect(install).toHaveBeenLastCalledWith("/p", { network: undefined, udid: undefined, pairRecord: undefined });
   });
 
   it("starts Metro with --clear after a rebuild, not after a skip", async () => {

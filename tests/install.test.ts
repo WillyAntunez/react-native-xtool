@@ -92,6 +92,7 @@ describe("install", () => {
         listDevices: async () => [{ name: "Phone", udid: "u", transport: "usb" }],
         readState: async () => ({ bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20" }),
         devRun,
+        writeState: async () => {},
       },
       log: (s) => logs.push(s),
     });
@@ -115,7 +116,11 @@ describe("install", () => {
       },
       log: () => {},
     });
-    expect(writeState).toHaveBeenCalledWith(expect.stringContaining("ios-xtool"), { ...st, installedFingerprint: "fp" });
+    expect(writeState).toHaveBeenCalledWith(expect.stringContaining("ios-xtool"), {
+      ...st,
+      installedUdid: "u",
+      installedFingerprint: "fp",
+    });
   });
   it("does not record it when devRun fails", async () => {
     const writeState = vi.fn(async () => {});
@@ -133,5 +138,257 @@ describe("install", () => {
       }),
     ).rejects.toThrow("nope");
     expect(writeState).not.toHaveBeenCalled();
+  });
+});
+
+describe("install --network", () => {
+  const UD = "00008030-0000000012345678";
+  const record = { HostID: "H", SystemBUID: "B", HostCertificate: Buffer.from("c"), HostPrivateKey: Buffer.from("k") };
+  const app = { CFBundleIdentifier: "XTL-TEAM.com.a.b", CFBundleShortVersionString: "1.0.0", CFBundleVersion: "1" };
+  const result = { app, bytes: 10, uploadMs: 1500, installMs: 2500 };
+  const deps = (over: { wifi?: NonNullable<Parameters<typeof install>[1]>["wifi"]; state?: object } = {}) => {
+    const logs: string[] = [];
+    const calls = {
+      devRun: vi.fn(),
+      listDevices: vi.fn(async () => []),
+      devBuildIpa: vi.fn(async () => "/p/ios-xtool/xtool/App.ipa"),
+      locate: vi.fn(async () => ({ ip: "192.168.1.10", udid: UD, scanned: false })),
+      installOverWifi: vi.fn(async () => result),
+      rememberDevice: vi.fn(async () => {}),
+      sleep: vi.fn(async () => {}),
+    };
+    const d = {
+      xtool: {
+        loadConfig: async () => ({}),
+        bin: () => "/bin/xtool",
+        authStatus: async () => ({ loggedIn: true, teamId: "TEAM", appleId: "a@b.c" }),
+        listDevices: calls.listDevices,
+        readState: async () => ({ bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20", ...over.state }),
+        devRun: calls.devRun,
+        devBuildIpa: calls.devBuildIpa,
+      },
+      wifi: {
+        lanRoute: async () => ({ ip: "192.168.1.20", dev: "wlp2s0" }),
+        locate: calls.locate,
+        loadPairRecord: async () => ({ record, source: "cache" }),
+        installOverWifi: calls.installOverWifi,
+        rememberDevice: calls.rememberDevice,
+        sleep: calls.sleep,
+        ...over.wifi,
+      },
+      log: (s: string) => logs.push(s),
+    };
+    return { d, logs, calls };
+  };
+
+  it("builds a signed ipa, installs it over Wi‑Fi without USB and remembers the iPhone", async () => {
+    const { d, logs, calls } = deps({ state: { deviceIp: "192.168.1.9", deviceUdid: UD } });
+    await install("/p", d, { network: true });
+    expect(calls.listDevices).not.toHaveBeenCalled();
+    expect(calls.devRun).not.toHaveBeenCalled();
+    expect(calls.devBuildIpa).toHaveBeenCalledWith("/bin/xtool", expect.stringMatching(/ios-xtool$/));
+    expect(calls.locate.mock.calls[0]![0]).toMatchObject({ lastIp: "192.168.1.9", preferredUdid: UD, lanIp: "192.168.1.20" });
+    expect(calls.locate.mock.calls[0]![0].udid).toBeUndefined();
+    expect(calls.installOverWifi.mock.calls[0]![0]).toMatchObject({
+      ip: "192.168.1.10",
+      udid: UD,
+      ipaPath: "/p/ios-xtool/xtool/App.ipa",
+      bundleId: "XTL-TEAM.com.a.b",
+      pairRecord: record,
+    });
+    expect(calls.rememberDevice).toHaveBeenCalledWith(expect.stringMatching(/ios-xtool$/), {
+      deviceIp: "192.168.1.10",
+      deviceUdid: UD,
+      installedUdid: UD,
+    });
+    const text = logs.join("\n");
+    expect(text).toContain("Installed XTL-TEAM.com.a.b 1.0.0 1 on iPhone 00008030-0000000012345678 over Wi‑Fi (192.168.1.10)");
+    expect(text).toContain("Metro URL for the dev launcher: http://192.168.1.20:8082");
+    expect(text).toContain("First-run checklist");
+  });
+
+  it("records the installed build's fingerprint together with the iPhone's address", async () => {
+    const { d, calls } = deps({ state: { depsFingerprint: "F1" } });
+    await install("/p", d, { network: true });
+    expect(calls.rememberDevice).toHaveBeenCalledWith(expect.stringMatching(/ios-xtool$/), {
+      deviceIp: "192.168.1.10",
+      deviceUdid: UD,
+      installedUdid: UD,
+      installedFingerprint: "F1",
+    });
+  });
+
+  it("scans the private LAN of the default route", async () => {
+    const { d, calls } = deps();
+    await install("/p", d, { network: true });
+    expect(calls.locate.mock.calls[0]![0]).toMatchObject({ lanIp: "192.168.1.20" });
+    expect(calls.locate.mock.calls[0]![0].scan).toBeUndefined();
+  });
+
+  it("prefers the configured lanIp for the scan", async () => {
+    const { d, calls } = deps();
+    d.xtool.loadConfig = async () => ({ lanIp: "10.0.0.4" });
+    await install("/p", d, { network: true });
+    expect(calls.locate.mock.calls[0]![0]).toMatchObject({ lanIp: "10.0.0.4" });
+  });
+
+  for (const [why, route] of [
+    ["a VPN/tunnel route", { ip: "10.8.0.2", dev: "tun0" }],
+    ["a non-private address", { ip: "203.0.113.5", dev: "eth0" }],
+    ["an unknown route", {}],
+  ] as const) {
+    it(`refuses to scan from ${why} and asks for the IP (not retried)`, async () => {
+      const { locateDevice } = await import("../src/device/discover.js");
+      // The real locator, with no remembered IP, goes straight to the (refused) scan.
+      const locate = vi.fn((o: Parameters<typeof locateDevice>[0]) =>
+        locateDevice({ ...o, identify: async () => { throw new Error("unused"); }, paired: async () => true }),
+      );
+      const { d, calls } = deps({ wifi: { locate, lanRoute: async () => route } });
+      await expect(install("/p", d, { network: true })).rejects.toThrow("Not scanning the network for the iPhone");
+      await expect(install("/p", d, { network: true })).rejects.toThrow("--network <ip>");
+      expect(calls.sleep).not.toHaveBeenCalled();
+    });
+  }
+
+  it("does not need a scan for an explicit IP from a VPN route", async () => {
+    const { d, calls } = deps({ wifi: { lanRoute: async () => ({ ip: "10.8.0.2", dev: "tun0" }) } });
+    await install("/p", d, { network: "192.168.1.10" });
+    expect(calls.installOverWifi).toHaveBeenCalledOnce();
+  });
+
+  it("passes an explicit IP and does not force the remembered UDID on it", async () => {
+    const { d, calls } = deps({ state: { deviceUdid: UD } });
+    await install("/p", d, { network: "10.0.0.5" });
+    expect(calls.locate.mock.calls[0]![0]).toMatchObject({ explicitIp: "10.0.0.5", udid: undefined, preferredUdid: undefined });
+  });
+
+  it("retries 3 × 10 s while the iPhone does not respond, with the wake-up message", async () => {
+    const { DeviceUnreachableError } = await import("../src/device/errors.js");
+    const locate = vi.fn(async () => {
+      throw new DeviceUnreachableError("192.168.1.10", 62078, "timeout");
+    });
+    const { d, logs, calls } = deps({ wifi: { locate } });
+    await expect(install("/p", d, { network: true })).rejects.toThrow("did not respond over Wi‑Fi after 4 tries");
+    expect(locate).toHaveBeenCalledTimes(4);
+    expect(calls.sleep.mock.calls).toEqual([[10_000], [10_000], [10_000]]);
+    expect(logs.filter((l) => l === "iPhone did not respond over Wi‑Fi — unlock it and keep it awake, retrying…")).toHaveLength(3);
+    expect(calls.installOverWifi).not.toHaveBeenCalled();
+  });
+
+  it("does not retry when other paired iPhones answer instead", async () => {
+    const { OtherIPhonesError } = await import("../src/device/discover.js");
+    const locate = vi.fn(async () => {
+      throw new OtherIPhonesError([{ ip: "10.0.0.7", udid: "A" }, { ip: "10.0.0.8", udid: "B" }]);
+    });
+    const { d, calls } = deps({ wifi: { locate } });
+    await expect(install("/p", d, { network: true })).rejects.toThrow("paired iPhone A at 10.0.0.7");
+    expect(locate).toHaveBeenCalledOnce();
+    expect(calls.sleep).not.toHaveBeenCalled();
+  });
+
+  it("retries an interrupted upload exactly once", async () => {
+    const { UploadInterruptedError } = await import("../src/device/wifiInstall.js");
+    const installOverWifi = vi.fn(async () => {
+      throw new UploadInterruptedError(new Error("EOF"));
+    });
+    const { d, logs } = deps({ wifi: { installOverWifi } });
+    await expect(install("/p", d, { network: true })).rejects.toThrow("upload to the iPhone was interrupted");
+    expect(installOverWifi).toHaveBeenCalledTimes(2);
+    expect(logs.some((l) => l.endsWith("retrying once…"))).toBe(true);
+  });
+
+  it("does not retry once installd's Install has started", async () => {
+    const { InstallInterruptedError } = await import("../src/device/wifiInstall.js");
+    const { DeviceTimeoutError } = await import("../src/device/errors.js");
+    const installOverWifi = vi.fn(async () => {
+      throw new InstallInterruptedError(new DeviceTimeoutError("installation_proxy", 600_000));
+    });
+    const { d, calls } = deps({ wifi: { installOverWifi } });
+    await expect(install("/p", d, { network: true })).rejects.toThrow("while it was installing the app");
+    expect(installOverWifi).toHaveBeenCalledOnce();
+    expect(calls.sleep).not.toHaveBeenCalled();
+  });
+
+  it("does not retry installd refusals", async () => {
+    const { InstallProxyError } = await import("../src/device/installproxy.js");
+    const installOverWifi = vi.fn(async () => {
+      throw new InstallProxyError("ApplicationVerificationFailed");
+    });
+    const { d } = deps({ wifi: { installOverWifi } });
+    await expect(install("/p", d, { network: true })).rejects.toThrow("Re-run `expo-xtool install --network`");
+    expect(installOverWifi).toHaveBeenCalledOnce();
+  });
+
+  it("needs a build first", async () => {
+    const { d, calls } = deps();
+    d.xtool.readState = async () => undefined as never;
+    await expect(install("/p", d, { network: true })).rejects.toThrow("No build found");
+    expect(calls.devBuildIpa).not.toHaveBeenCalled();
+  });
+});
+
+describe("progressLoggers", () => {
+  it("logs upload every 10% and installd status changes", async () => {
+    const { progressLoggers } = await import("../src/commands/install.js");
+    const logs: string[] = [];
+    const p = progressLoggers((s) => logs.push(s));
+    for (let sent = 0; sent <= 100; sent += 5) p.onUpload!(sent * 1024 * 1024, 100 * 1024 * 1024);
+    p.onInstall!(5, "CreatingStagingDirectory");
+    p.onInstall!(6, "CreatingStagingDirectory");
+    p.onInstall!(40, "VerifyingApplication");
+    expect(logs.filter((l) => l.includes("upload"))).toHaveLength(11);
+    expect(logs).toContain("  upload 50% of 100 MB");
+    expect(logs.slice(-2)).toEqual(["  installing: CreatingStagingDirectory (5%)", "  installing: VerifyingApplication (40%)"]);
+  });
+});
+
+describe("install --network against a fake iPhone", () => {
+  it("retries once after the heartbeat is lost mid-upload, then installs", async () => {
+    const { mkdtemp, rm, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { FakeDevice, pairRecord, UDID } = await import("./device/fakeDevice.js");
+    const { tcpConnector } = await import("../src/device/lockdown.js");
+    const { installOverWifi } = await import("../src/device/wifiInstall.js");
+    const dir = await mkdtemp(join(tmpdir(), "expo-xtool-net-"));
+    const ipa = join(dir, "App.ipa");
+    await writeFile(ipa, Buffer.alloc(10 * 1024 * 1024, 3));
+    const dev = await FakeDevice.start({ requireHeartbeat: true, bundleId: "XTL-TEAM.com.a.b", heartbeatDropOnWrite: 1 });
+    const logs: string[] = [];
+    const attempts = vi.fn();
+    try {
+      await install(
+        "/p",
+        {
+          xtool: {
+            loadConfig: async () => ({}),
+            bin: () => "/bin/xtool",
+            authStatus: async () => ({ loggedIn: true, teamId: "TEAM" }),
+            readState: async () => ({ bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20" }),
+            devBuildIpa: async () => ipa,
+          },
+          wifi: {
+            lanRoute: async () => ({ ip: "192.168.1.20", dev: "wlp2s0" }),
+            locate: async () => ({ ip: "127.0.0.1", udid: UDID, scanned: false }),
+            loadPairRecord: async () => ({ record: pairRecord(), source: "test" }),
+            installOverWifi: (o) => {
+              attempts();
+              return installOverWifi({ ...o, connect: tcpConnector("127.0.0.1", 1000), lockdownPort: dev.lockdownPort });
+            },
+            rememberDevice: async () => {},
+            sleep: async () => {},
+          },
+          log: (s) => logs.push(s),
+        },
+        { network: true },
+      );
+    } finally {
+      await dev.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+    expect(attempts).toHaveBeenCalledTimes(2);
+    expect(logs.some((l) => l.includes("Lost the Wi‑Fi heartbeat") && l.endsWith("retrying once…"))).toBe(true);
+    expect(dev.installs).toHaveLength(1);
+    expect(logs.join("\n")).toContain("Installed XTL-TEAM.com.a.b");
   });
 });

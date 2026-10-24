@@ -1,7 +1,7 @@
 import { homedir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { packageRoot, runArgv, toolEnv } from "../src/tools/exec.js";
+import { packageRoot, runArgv, runTee, toolEnv } from "../src/tools/exec.js";
 
 describe("toolEnv", () => {
   const saved = { ...process.env };
@@ -34,5 +34,13 @@ describe("runArgv", () => {
   });
   it("wraps with nice -n 15", () => {
     expect(runArgv("node", ["a"], true)).toEqual(["nice", ["-n", "15", "node", "a"]]);
+  });
+});
+
+describe("runTee", () => {
+  it("returns stdout and stderr while still running the command", async () => {
+    const out = await runTee("sh", ["-c", "echo Wrote to x/App.ipa; echo oops >&2"], { env: process.env, echo: false });
+    expect(out).toContain("Wrote to x/App.ipa");
+    expect(out).toContain("oops");
   });
 });

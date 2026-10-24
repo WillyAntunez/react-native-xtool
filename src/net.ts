@@ -32,7 +32,7 @@ export function isPrivateIpv4(ip: string): boolean {
 }
 
 export function looksLikeTunnel(dev?: string): boolean {
-  return dev !== undefined && /^(tun|tap|wg|tailscale|utun|ppp|zt)/.test(dev);
+  return dev !== undefined && /^(tun|tap|wg|tailscale|utun|ppp|zt|cscotun|gpd|nordlynx|proton|vpn)/.test(dev);
 }
 
 /** True when the detected address is unlikely to be reachable from the phone's Wi-Fi. */

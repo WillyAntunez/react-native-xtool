@@ -50,7 +50,8 @@ expo-xtool run
 ```
 
 `run` = `build` + `install` + `start`, but it skips the build and install when
-nothing changed since the last build. The cable is needed only when it reinstalls.
+nothing changed since the last build. The cable is needed only when it reinstalls, or never with
+[Wi‑Fi installs](#wi-fi-installs) (`install --network`).
 
 ## Daily loop
 
@@ -80,11 +81,13 @@ a Metro cache reset, and telling native dependencies apart reliably needs the au
 | Command | What it does |
 | --- | --- |
 | `setup [--xcode-xip <path>]` | Installs Swift via swiftly, the xtool AppImage and the Darwin SDK. Idempotent. |
-| `doctor` | Checks toolchain, SDK, login, connected device and project. Exits non-zero on problems. |
+| `setup --wifi [--yes] [--udid <udid>]` | One-time USB step for Wi‑Fi installs: caches the pair record and, with `--yes`, enables Wi‑Fi connections on the iPhone. |
+| `doctor` | Checks toolchain, SDK, login, connected device, Wi‑Fi install readiness and project. Exits non-zero on problems. |
 | `build [--clean]` | Prebuild if `ios/` is missing, patches, RN/Expo SwiftPM pipeline, ExpoModulesJSI, generates `ios-xtool/`, `xtool dev build`. `--clean` re-runs `expo prebuild --clean`. |
 | `install` | Signs and installs the app on the USB-connected iPhone, then prints the Metro URL (for the expo-dev-client launcher) and the first-run checklist. |
+| `install --network [ip] [--udid <udid>] [--pair-record <file>]` | Same, over Wi‑Fi without the cable (see below). |
 | `start [--clear]` | Starts Metro on the port and LAN IP the app was built for. Tells you to rebuild if either changed; clears the Metro cache when dependencies changed (or with `--clear`). |
-| `run [--clean] [--force]` | `build` and `install` when dependencies changed (or with `--force`), then `start`. |
+| `run [--clean] [--force] [--network [ip]]` | `build` and `install` when dependencies changed (or with `--force`), then `start`. `--network` installs over Wi‑Fi. |
 
 Reference timings on a warm cache: patches 3.6 s, RN SwiftPM 11.1 s, ExpoModulesJSI 12.7 s,
 xtool build 24.5 s. The resulting `App.app` is about 99 MB with 8 embedded frameworks.
@@ -150,6 +153,81 @@ must be CommonJS (`module.exports = {...}`) unless your project is ESM. Both are
 
 Details and file locations: [docs/recipe.md](docs/recipe.md). Design:
 [docs/superpowers/specs/2026-10-23-expo-xtool-design.md](docs/superpowers/specs/2026-10-23-expo-xtool-design.md).
+
+## Wi-Fi installs
+
+After pairing once over USB, `install --network` installs the app over Wi‑Fi with the cable unplugged.
+
+```sh
+# Once, with the iPhone plugged in, unlocked and trusted:
+expo-xtool install               # the first install must be over USB: it registers the iPhone with Apple
+expo-xtool setup --wifi          # caches the pair record, shows what it would change
+expo-xtool setup --wifi --yes    # enables "Wi‑Fi connections" on the iPhone
+
+# From then on, cable unplugged, iPhone unlocked on the same Wi‑Fi:
+expo-xtool install --network                 # finds the iPhone on your LAN by its UDID
+expo-xtool install --network 192.168.1.10    # or give its IP
+expo-xtool run --network                     # the daily loop, installing over Wi‑Fi when needed
+```
+
+The first install over USB matters: signing registers the connected iPhone's UDID with your Apple account, and
+later signatures only cover registered devices. An iPhone that never had a USB install from this account gets
+`ApplicationVerificationFailed` over Wi‑Fi.
+
+`install --network` builds a signed `.ipa` (`xtool dev build --sign --ipa`), then talks to the iPhone's lockdown
+service on TCP port 62078: it opens a TLS session with the pair record, keeps a `com.apple.mobile.heartbeat` session
+answered for the whole run (without it iOS drops every service connection over Wi‑Fi), uploads the `.ipa` to
+`/PublicStaging` over AFC, installs it with `installation_proxy` and checks the result with a lookup. No Python,
+no extra daemons, no root. The iPhone is authenticated: its TLS certificate must be the `DeviceCertificate` of the
+pair record, and its UDID is read only inside that session, so nothing is uploaded to another host on the address.
+It remembers the iPhone's address and UDID in `ios-xtool/.expo-xtool-state.json`; without an IP it tries that address
+first and otherwise scans your /24 for port 62078. The scan only runs from a private, non-VPN address (the
+configured `lanIp`, or your default route); otherwise pass the IP. If the remembered iPhone is gone and exactly one
+other paired iPhone answers, that one is used (and remembered); with several, pass `--udid`. The lockdown protocol
+sends the pairing's `HostID`/`SystemBUID` (identifiers, not secrets) in clear before TLS, so a scan shows them to every
+host answering on port 62078 in that /24; on networks you do not trust (hotspots, shared Wi‑Fi), pass the IP. A 139 MB app takes
+about a minute. Debugging and `launch` over the network are not supported: open the app by hand.
+
+Pair records are read from usbmuxd (it keeps them in `/var/lib/lockdown`, also with the cable unplugged) and cached
+in `~/.cache/expo-xtool/pair-records/<UDID>.plist` (mode 600: it holds this computer's private key for the iPhone).
+
+**WSL2:** WSL2 has no USB by default, and the phone is reached through Windows' network. Ways to get a pair record:
+
+- Attach the iPhone to WSL once with [usbipd-win](https://github.com/dorssel/usbipd-win) (`usbipd bind` /
+  `usbipd attach --wsl`), run `usbmuxd` and `expo-xtool setup --wifi`.
+- Reuse Windows' own record: if iTunes / Apple Devices ever trusted the iPhone on that PC, it is likely in
+  `C:\ProgramData\Apple\Lockdown\<UDID>.plist`, in the same format (believed, not verified yet). Copy it from
+  `/mnt/c/ProgramData/Apple/Lockdown/` (it may need an elevated copy on the Windows side).
+- Copy `/var/lib/lockdown/<UDID>.plist` from a Linux machine where the iPhone is paired. That directory may be
+  readable by root only: `sudo cp /var/lib/lockdown/<UDID>.plist ~/<UDID>.plist && sudo chown $USER ~/<UDID>.plist && chmod 600 ~/<UDID>.plist`.
+
+Put the file in `~/.cache/expo-xtool/pair-records/<UDID>.plist` (mode 600) or pass `--pair-record <file>`. Use
+`install --network <ip>`: WSL2's NAT usually hides your LAN from the /24 scan (mirrored networking does not), and
+its default route is not your Wi‑Fi address, so the scan is refused anyway unless `lanIp` is set.
+
+Troubleshooting:
+
+- **"iPhone did not respond over Wi‑Fi — unlock it and keep it awake, retrying…":** a locked or idle iPhone stops
+  answering on the network for minutes. Unlock it and keep the screen on; `install` retries 3 × 10 s, then stops.
+- **IP changed (DHCP):** run `install --network` without an IP; it rescans and saves the new address. An explicit IP
+  is never rescanned.
+- **Nothing found by the scan:** the phone is on another network or VLAN, a guest Wi‑Fi isolates clients, or a
+  firewall blocks outgoing TCP to port 62078. Pass the IP (Settings > Wi‑Fi > ⓘ) to rule out the scan.
+- **"no longer trusts this computer":** the pairing was reset on the iPhone (or belongs to another host). Plug it in,
+  tap Trust, and run `expo-xtool setup --wifi` again.
+- **Signature rejected (`ApplicationVerificationFailed`):** free-account signatures expire after 7 days; re-run
+  `install --network`, which re-signs. On an iPhone that never had a USB install from this Apple account, do that
+  first install over USB.
+- **"Not scanning the network":** your default route is a VPN/tunnel or not a private address. Pass the iPhone's IP,
+  or set `lanIp` in `expo-xtool.config.json` to your Wi‑Fi address.
+- **"Found paired iPhone … pass --udid":** the remembered iPhone did not answer but other paired iPhones did; pick one
+  with `--udid <udid>`.
+- **"is not the paired iPhone":** something else answers at that address with a different certificate. Check the
+  IP; nothing was uploaded to it.
+- **Connection lost during the install:** the result on the iPhone is unknown, so it is not retried automatically;
+  check the app and run the install again if needed.
+- `expo-xtool doctor` shows the `wifi` check: whether Wi‑Fi connections are on (iPhone plugged in) and whether the
+  last known address answers.
 
 ## Limits and non-goals
 

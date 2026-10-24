@@ -12,6 +12,11 @@ import { authStatus, listDevices, defaultXtoolPath, xtoolBin, xtoolUnrunnableErr
 import { XTOOL_VERSION, XTOOL_SHA256, SWIFT_VERSION } from "../versions.js";
 import { isExecutable, sdkBundle, swiftAtLeast, swiftMeetsMin, swiftVersionText } from "./setup.js";
 import { existsSync } from "node:fs";
+import { tcpProbe } from "../device/discover.js";
+import { LOCKDOWN_PORT, LockdownClient } from "../device/lockdown.js";
+import { parsePairRecord } from "../device/pairRecord.js";
+import { listUsbDevices, readPairRecordFromUsbmux, usbmuxConnector } from "../device/usbmux.js";
+import { wifiEnabled } from "./setupWifi.js";
 
 export interface DoctorCheck {
   name: string;
@@ -46,6 +51,17 @@ export interface DoctorProbes {
   buildState: (root: string) => Promise<{ metroPort: number; lanIp: string; depsFingerprint?: string } | undefined>;
   depsFingerprint: (root: string) => Promise<string>;
   portFree: (port: number) => Promise<boolean>;
+  /** Wi‑Fi install readiness; read-only (never caches or changes anything). */
+  wifi: (root?: string) => Promise<WifiProbe>;
+}
+
+export interface WifiProbe {
+  /** `EnableWifiConnections` on the USB-connected iPhone, when one is connected. */
+  usb?: { udid: string; enabled: boolean };
+  usbError?: string;
+  /** Last address the iPhone answered on (`install --network`). */
+  lastIp?: string;
+  reachable?: boolean;
 }
 
 const PROBE_TIMEOUT_MS = 15_000;
@@ -97,7 +113,62 @@ export function realProbes(config: ExpoXtoolConfig): DoctorProbes {
     buildState: (root) => readState(projectPaths(root).iosXtool),
     depsFingerprint: (root) => depsFingerprint(root),
     portFree: (port) => isPortFree(port),
+    wifi: (root) => probeWifi(root),
   };
+}
+
+async function probeWifi(root?: string): Promise<WifiProbe> {
+  const probe: WifiProbe = {};
+  const [device] = await listUsbDevices().catch(() => []);
+  if (device) {
+    try {
+      const bytes = await readPairRecordFromUsbmux(device.udid);
+      if (!bytes) throw new Error("usbmuxd has no pair record — tap Trust on the iPhone");
+      const lockdown = await LockdownClient.open(usbmuxConnector(device.deviceId), { timeoutMs: 5000 });
+      try {
+        await lockdown.startSession(parsePairRecord(bytes, "usbmuxd pair record"));
+        probe.usb = { udid: device.udid, enabled: await wifiEnabled(lockdown) };
+      } finally {
+        lockdown.close();
+      }
+    } catch (e) {
+      probe.usbError = message(e);
+    }
+  }
+  const state = root ? await readState(projectPaths(root).iosXtool).catch(() => undefined) : undefined;
+  if (state?.deviceIp) {
+    probe.lastIp = state.deviceIp;
+    probe.reachable = await tcpProbe(state.deviceIp, LOCKDOWN_PORT, 2000);
+  }
+  return probe;
+}
+
+/** Wi‑Fi installs are optional: this check warns at most. */
+export function wifiCheck(p: WifiProbe): Omit<DoctorCheck, "name"> {
+  const notes: string[] = [];
+  let status: DoctorCheck["status"] = "ok";
+  if (p.usb) {
+    if (p.usb.enabled) notes.push(`enabled on ${p.usb.udid}`);
+    else {
+      status = "warn";
+      notes.push(`Wi‑Fi connections are off on ${p.usb.udid} — run expo-xtool setup --wifi --yes`);
+    }
+  }
+  if (p.usbError) notes.push(`could not read the setting over USB (${p.usbError})`);
+  if (p.lastIp) {
+    if (p.reachable) notes.push(`iPhone answers at ${p.lastIp}:${LOCKDOWN_PORT}`);
+    else {
+      status = "warn";
+      notes.push(
+        `last known iPhone address ${p.lastIp} does not answer on port ${LOCKDOWN_PORT} (asleep or locked, another network, a firewall, or a new IP — install --network rescans)`,
+      );
+    }
+  }
+  if (!p.usb && !p.lastIp) {
+    if (!p.usbError) return { status: "info", detail: "not set up (optional) — see `expo-xtool setup --wifi`" };
+    status = "info";
+  }
+  return { status, detail: notes.join("; ") };
 }
 
 async function check(name: string, fn: () => Promise<Omit<DoctorCheck, "name">>): Promise<DoctorCheck> {
@@ -170,6 +241,13 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
     return d
       ? { status: "ok", detail: `${d.name} (${d.transport})` }
       : { status: "warn", detail: "no USB device found — connect and unlock your iPhone" };
+  });
+  await add("wifi", async () => {
+    try {
+      return wifiCheck(await p.wifi(root));
+    } catch (e) {
+      return { status: "warn", detail: message(e) };
+    }
   });
   const stateResult =
     root === undefined

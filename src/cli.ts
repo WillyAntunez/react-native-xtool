@@ -8,6 +8,7 @@ import { doctor, renderReport } from "./commands/doctor.js";
 import { install } from "./commands/install.js";
 import { run } from "./commands/run.js";
 import { setup } from "./commands/setup.js";
+import { setupWifi } from "./commands/setupWifi.js";
 import { start } from "./commands/start.js";
 
 const pkg = createRequire(import.meta.url)("../package.json") as { version: string };
@@ -32,18 +33,30 @@ export function buildProgram(): Command {
     .command("setup")
     .description("Install Swift, xtool and the Darwin SDK")
     .option("--xcode-xip <path>", "path to Xcode.xip (needed to install the Darwin SDK)")
+    .option("--wifi", "one-time USB step for Wi‑Fi installs: cache the pair record, enable Wi‑Fi connections on the iPhone")
+    .option("--yes", "with --wifi: confirm changing the iPhone's Wi‑Fi connections setting")
+    .option("--udid <udid>", "with --wifi: which USB iPhone to set up")
     .action(
-      action(async (o: { xcodeXip?: string }) => {
+      action(async (o: { xcodeXip?: string; wifi?: boolean; yes?: boolean; udid?: string }) => {
+        if (o.wifi) {
+          await setupWifi({ yes: o.yes, udid: o.udid });
+          return;
+        }
+        if (o.yes || o.udid) throw new Error("--yes and --udid only apply to setup --wifi");
         const config = await loadConfig(process.cwd());
         await setup({ xcodeXip: o.xcodeXip ?? config.xcodeXipPath, xtoolPath: config.xtoolPath });
       }),
     );
   program
     .command("install")
-    .description("Build, sign and install the app on a USB-connected iPhone")
+    .description("Build, sign and install the app on the iPhone (USB by default, Wi‑Fi with --network)")
+    .option("--network [ip]", "install over Wi‑Fi (finds the iPhone on the LAN when no IP is given)")
+    .option("--udid <udid>", "which paired iPhone to use over Wi‑Fi")
+    .option("--pair-record <file>", "pair record to use over Wi‑Fi (e.g. copied from /var/lib/lockdown on WSL2)")
     .action(
-      action(async () => {
-        await install(process.cwd());
+      action(async (o: { network?: boolean | string; udid?: string; pairRecord?: string }) => {
+        if (!o.network && (o.udid || o.pairRecord)) throw new Error("--udid and --pair-record need --network");
+        await install(process.cwd(), {}, o);
       }),
     );
   program
@@ -69,10 +82,16 @@ export function buildProgram(): Command {
     .description("Build and install when needed, then start Metro")
     .option("--clean", "re-run expo prebuild --clean (always rebuilds)")
     .option("--force", "always rebuild and reinstall")
+    .option("--network [ip]", "install over Wi‑Fi (see install --network)")
+    .option("--udid <udid>", "which paired iPhone to use over Wi‑Fi")
+    .option("--pair-record <file>", "pair record to use over Wi‑Fi")
     .action(
-      action(async (o: { clean?: boolean; force?: boolean }) => {
-        await run(process.cwd(), { clean: o.clean, force: o.force });
-      }),
+      action(
+        async (o: { clean?: boolean; force?: boolean; network?: boolean | string; udid?: string; pairRecord?: string }) => {
+          if (!o.network && (o.udid || o.pairRecord)) throw new Error("--udid and --pair-record need --network");
+          await run(process.cwd(), o);
+        },
+      ),
     );
   program
     .command("doctor")
