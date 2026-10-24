@@ -75,7 +75,7 @@ describe("readExpoProject", () => {
     await expect(readExpoProject(dir)).rejects.toThrow("Could not determine Expo SDK version");
   });
 
-  it.each(["58.0.17", "~58", ">=58.0.0 <59", "sdk-58.0.0", "npm:expo-next2@58"])(
+  it.each(["58.0.19", "~58", ">=58.0.0 <59", "sdk-58.0.0", "npm:expo-next2@58"])(
     "parses the major from expo range %s",
     async (range) => {
       const dir = await tempProject((_app, pkg) => {

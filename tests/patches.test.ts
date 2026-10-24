@@ -94,10 +94,10 @@ describe("patches", () => {
 
 describe("parsePatchFileName", () => {
   it("parses plain and scoped package patches", () => {
-    expect(parsePatchFileName("expo+58.0.17.patch")).toEqual({ pkg: "expo", version: "58.0.17" });
-    expect(parsePatchFileName("expo-modules-autolinking+58.0.14.patch")).toEqual({
+    expect(parsePatchFileName("expo+58.0.19.patch")).toEqual({ pkg: "expo", version: "58.0.19" });
+    expect(parsePatchFileName("expo-modules-autolinking+58.0.15.patch")).toEqual({
       pkg: "expo-modules-autolinking",
-      version: "58.0.14",
+      version: "58.0.15",
     });
     expect(parsePatchFileName("@expo+config+58.0.7.patch")).toEqual({ pkg: "@expo/config", version: "58.0.7" });
   });
@@ -113,14 +113,14 @@ describe("patchFailureMessage", () => {
     const msg = patchFailureMessage({
       pkg: "expo",
       installed: "58.0.20",
-      patchFile: "expo+58.0.17.patch",
-      patched: "58.0.17",
+      patchFile: "expo+58.0.19.patch",
+      patched: "58.0.19",
       output,
     });
     expect(msg.split("\n").slice(0, 4)).toEqual([
-      "expo-xtool could not patch expo@58.0.20 (patch file: expo+58.0.17.patch): the installed version differs from the one this release of expo-xtool patches (58.0.17).",
+      "expo-xtool could not patch expo@58.0.20 (patch file: expo+58.0.19.patch): the installed version differs from the one this release of expo-xtool patches (58.0.19).",
       "This is a known limitation of expo-xtool, not of your project.",
-      'Options: pin "expo" to 58.0.17 in package.json, or report the new version at https://github.com/WillyAntunez/expo-xtool/issues so the patch can be refreshed.',
+      'Options: pin "expo" to 58.0.19 in package.json, or report the new version at https://github.com/WillyAntunez/expo-xtool/issues so the patch can be refreshed.',
       "--- patch-package output ---",
     ]);
     expect(msg).toContain("line 50");
@@ -141,22 +141,22 @@ describe("findPatchMismatch", () => {
     for (const [n, v] of Object.entries(nested)) await put(path.join(root, "node_modules", "expo", "node_modules", n), v);
     const patchDir = path.join(root, "patches");
     await mkdir(patchDir);
-    await writeFile(path.join(patchDir, "expo+58.0.17.patch"), "");
-    await writeFile(path.join(patchDir, "expo-modules-autolinking+58.0.14.patch"), "");
+    await writeFile(path.join(patchDir, "expo+58.0.19.patch"), "");
+    await writeFile(path.join(patchDir, "expo-modules-autolinking+58.0.15.patch"), "");
     return { root, patchDir };
   }
 
   it("detects a version mismatch, including nested installs", async () => {
-    const { root, patchDir } = await fakeProject({ expo: "58.0.17" }, { "expo-modules-autolinking": "58.1.0" });
+    const { root, patchDir } = await fakeProject({ expo: "58.0.19" }, { "expo-modules-autolinking": "58.1.0" });
     expect(findPatchMismatch(root, patchDir)).toEqual({
       pkg: "expo-modules-autolinking",
       installed: "58.1.0",
-      patchFile: "expo-modules-autolinking+58.0.14.patch",
-      patched: "58.0.14",
+      patchFile: "expo-modules-autolinking+58.0.15.patch",
+      patched: "58.0.15",
     });
   });
   it("returns undefined when versions match or packages are missing", async () => {
-    const { root, patchDir } = await fakeProject({ expo: "58.0.17", "expo-modules-autolinking": "58.0.14" });
+    const { root, patchDir } = await fakeProject({ expo: "58.0.19", "expo-modules-autolinking": "58.0.15" });
     expect(findPatchMismatch(root, patchDir)).toBeUndefined();
     const bare = await fakeProject({});
     expect(findPatchMismatch(bare.root, bare.patchDir)).toBeUndefined();
@@ -175,7 +175,7 @@ describe("findPatchMismatch", () => {
     expect(findPatchMismatch(root, patchDir, both)?.pkg).toBe("expo-modules-autolinking");
   });
   it("matches the patch file prefix and the node_modules path", () => {
-    expect(outputNamesPackage("applying expo+58.0.17.patch", "expo")).toBe(true);
+    expect(outputNamesPackage("applying expo+58.0.19.patch", "expo")).toBe(true);
     expect(outputNamesPackage("at node_modules/expo/package.json", "expo")).toBe(true);
     expect(outputNamesPackage("applying @expo+config+1.0.0.patch", "@expo/config")).toBe(true);
     expect(outputNamesPackage("node_modules/@expo/config", "@expo/config")).toBe(true);
