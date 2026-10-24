@@ -51,7 +51,7 @@ expo-xtool run
 | `setup [--xcode-xip <path>]` | Installs Swift via swiftly, the xtool AppImage and the Darwin SDK. Idempotent. |
 | `doctor` | Checks toolchain, SDK, login, connected device and project. Exits non-zero on problems. |
 | `build [--clean]` | Prebuild if `ios/` is missing, patches, RN/Expo SwiftPM pipeline, ExpoModulesJSI, generates `ios-xtool/`, `xtool dev build`. `--clean` re-runs `expo prebuild --clean`. |
-| `install` | Signs and installs the app on the USB-connected iPhone, then prints the first-run checklist. |
+| `install` | Signs and installs the app on the USB-connected iPhone, then prints the Metro URL (for the expo-dev-client launcher) and the first-run checklist. |
 | `start` | Starts Metro on the port and LAN IP the app was built for. Tells you to rebuild if either changed. |
 | `run [--clean]` | `build`, `install`, `start`. |
 
@@ -123,7 +123,7 @@ Details and file locations: [docs/recipe.md](docs/recipe.md). Design:
 - Expo SDK 57 and older are out of scope. Production / App Store builds are out of scope (use EAS).
 - `expo-dev-client` builds and runs. Known gaps: the launcher's and dev menu's icons are missing (their asset catalogs
   need Xcode's `actool`, which does not exist on Linux), and when Metro is not on the default port 8081 you type the
-  URL in the launcher yourself. See [docs/libraries.md](docs/libraries.md).
+  URL in the launcher yourself (`install` prints it: `http://<lanIp>:<metroPort>`). See [docs/libraries.md](docs/libraries.md).
 - No iOS simulator (macOS only). macOS and native Windows are not supported; WSL is untested.
 - Free Apple ID: signature lasts 7 days, 3 apps at a time, no push notifications or special entitlements.
   A paid developer account lifts these.

@@ -17,7 +17,7 @@ export interface InstallDeps {
     bin?: (config: ExpoXtoolConfig) => string;
     authStatus?: (bin: string) => Promise<AuthStatus>;
     listDevices?: (bin: string) => Promise<Device[]>;
-    readState?: (iosXtoolDir: string) => Promise<Pick<BuildState, "bundleIdentifier"> | undefined>;
+    readState?: (iosXtoolDir: string) => Promise<Pick<BuildState, "bundleIdentifier" | "metroPort" | "lanIp"> | undefined>;
     devRun?: (bin: string, iosXtoolDir: string) => Promise<void>;
   };
   log?: (s: string) => void;
@@ -59,5 +59,6 @@ export async function install(root: string, deps: InstallDeps = {}): Promise<voi
   await (x.devRun ?? devRun)(bin, iosXtool);
   const id = installedBundleId(auth.teamId, state.bundleIdentifier);
   log(`Installed ${id} on ${devices[0]!.name}`);
+  log(`Metro URL for the dev launcher: http://${state.lanIp}:${state.metroPort}`);
   log(firstRunChecklist(auth.appleId));
 }
