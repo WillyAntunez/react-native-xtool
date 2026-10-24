@@ -5,7 +5,7 @@ Build, sign and install Expo (SDK 58+) iOS dev builds from Linux, with no Mac, u
 Then develop with Metro and Fast Refresh over Wi-Fi, as you would with Xcode.
 
 **Status:** early. Works end to end on a physical iPhone as of 2026-10-23. Expo SDK 58+ only.
-Version 0.x, not published to npm yet.
+Version 0.x, alpha (npm tag `alpha`).
 
 ## Requirements
 
@@ -18,16 +18,20 @@ Version 0.x, not published to npm yet.
 - An Apple ID (free or paid) and an iPhone connected over USB for the first install.
 - An Expo SDK 58+ project (React Native 0.88+).
 
-## Quick start
+## Install
 
-expo-xtool is not published yet, so install it from a clone:
+Linux only: x86_64 is the tested platform, and WSL2 (Ubuntu) on x86_64 is supported as Linux.
 
 ```sh
-git clone <repo-url> expo-xtool && cd expo-xtool
-npm ci && npm run build && npm link
+# From GitHub (builds on install through the `prepare` script)
+npm i -g github:WillyAntunez/expo-xtool
+
+# From npm (alpha tag), once published
+npx expo-xtool@alpha doctor
+npm i -g expo-xtool@alpha
 ```
 
-`npx expo-xtool` will work once it is published; until then use `expo-xtool` as below.
+## Quick start
 
 ```sh
 # Once per machine: Swift 6.4 (swiftly), xtool 1.23.0, Darwin SDK from your Xcode.xip
@@ -218,4 +222,4 @@ so it only runs with `EXPO_XTOOL_E2E=1` (it also needs Swift and the `shims/` di
 
 ## License
 
-TBD
+MIT, see [LICENSE](LICENSE).

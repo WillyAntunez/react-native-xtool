@@ -1,0 +1,32 @@
+# Releasing
+
+expo-xtool ships alpha builds under the npm `alpha` dist-tag. Supported platform: Linux x86_64, including WSL2 on
+x86_64. arm64 Linux is untested (the xtool checksum is pinned for it, but nothing else is verified).
+
+## Before releasing
+
+1. `npm ci && npm test && npm run lint` are green.
+2. `npm pack --dry-run` lists only `bin/`, `dist/`, `patches/`, `scripts/`, `shims/`, `README.md`, `LICENSE` and
+   `package.json`. No `tests/`, `docs/`, `src/` or `.superpowers/`.
+3. On a clean machine (or a fresh WSL2 distro) install the packed tarball and run `expo-xtool doctor`:
+   `npm pack && npm i -g ./expo-xtool-<version>.tgz && expo-xtool doctor`.
+4. Repo-public checklist:
+   - `LICENSE` is present and `package.json` says `MIT`.
+   - No private names or paths:
+     `grep -rniE "/home/|doktu|grescup|bella|\bTHS\b" --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist .`
+     must be empty, except documented defaults (`/home/me/...` examples in the README, and the
+     `EXPO_XTOOL_REF_APP` fallback in the opt-in tests).
+5. When `XTOOL_VERSION` changes, update `XTOOL_SHA256` in `src/versions.ts` for both architectures from the official
+   release assets (`gh release download <version> -R xtool-org/xtool -p 'xtool-*.AppImage'`, then `sha256sum`).
+
+## Release
+
+```sh
+npm login
+npm version prerelease --preid alpha        # bumps package.json, commits, tags
+npm publish --tag alpha --access public
+git push --follow-tags
+```
+
+Then create a GitHub release from the tag with the notes (what changed, known limits, tested xtool/Swift/Expo
+versions). Check the result: `npm view expo-xtool dist-tags` and `npx expo-xtool@alpha doctor`.
