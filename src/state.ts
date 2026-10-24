@@ -7,6 +7,8 @@ export interface BuildState {
   lanIp: string;
   bundleIdentifier: string;
   builtAt: string;
+  /** Hash of the installed dependencies at build time; absent in states written by older versions. */
+  depsFingerprint?: string;
 }
 
 const STATE_FILE = ".expo-xtool-state.json";

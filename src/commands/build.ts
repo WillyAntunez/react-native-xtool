@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { nativeDepsFingerprint } from "../deps.js";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
 import { readFlavoredFrameworks, stageFrameworks, type RuntimeFramework } from "../frameworks.js";
 import { writeIosXtool } from "../generate/iosXtool.js";
@@ -72,6 +73,7 @@ export interface BuildDeps {
   devBuild: (bin: string, iosXtoolDir: string) => Promise<void>;
   xtoolBin: (config: ExpoXtoolConfig) => string;
   readState: (iosXtoolDir: string) => Promise<BuildState | undefined>;
+  depsFingerprint: (root: string) => Promise<string>;
   log: (s: string) => void;
 }
 
@@ -98,6 +100,7 @@ const realDeps: BuildDeps = {
   devBuild,
   xtoolBin,
   readState,
+  depsFingerprint: nativeDepsFingerprint,
   log: (s) => console.log(s),
 };
 
@@ -158,6 +161,7 @@ export async function build(
     if (suspiciousLanRoute(route)) d.log(tunnelWarning(route));
   }
 
+  const depsFingerprint = await d.depsFingerprint(paths.root);
   await step("generate", async () => {
     await d.writeIosXtool({ project, paths, frameworks, metroPort, lanIp });
     await writeState(paths.iosXtool, {
@@ -166,6 +170,7 @@ export async function build(
       lanIp,
       bundleIdentifier: project.bundleIdentifier,
       builtAt: new Date().toISOString(),
+      depsFingerprint,
     });
   });
   await step("xtool-build", () => d.devBuild(d.xtoolBin(config), paths.iosXtool));
