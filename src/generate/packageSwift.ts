@@ -47,6 +47,10 @@ let package = Package(
             path: "Sources/App",
             swiftSettings: [
                 .define("DEBUG", .when(configuration: .debug)),
+                // CocoaPods sets these for the app; ExpoModulesProvider.swift registers debug-only
+                // modules (expo-dev-launcher, expo-dev-menu) under EXPO_CONFIGURATION_DEBUG.
+                .define("EXPO_CONFIGURATION_DEBUG", .when(configuration: .debug)),
+                .define("EXPO_CONFIGURATION_RELEASE", .when(configuration: .release)),
                 .unsafeFlags(["-F", ${lit(i.compileInterfacesDir)}]),
             ],
             linkerSettings: [

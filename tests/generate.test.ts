@@ -42,6 +42,10 @@ describe("renderPackageSwift", () => {
     expect(out).toContain('platforms: [.iOS("16.4")]');
     expect(out).toContain('.package(name: "ReactNative", path: "/p/ios/build/xcframeworks")');
   });
+  it("defines Expo's configuration conditions, which gate debug-only modules in ExpoModulesProvider", () => {
+    expect(out).toContain('.define("EXPO_CONFIGURATION_DEBUG", .when(configuration: .debug))');
+    expect(out).toContain('.define("EXPO_CONFIGURATION_RELEASE", .when(configuration: .release))');
+  });
   it("escapes quotes and backslashes", () => {
     const o = renderPackageSwift({ iosDir: '/p"x\\y', compileInterfacesDir: "/c", frameworks: [], iosMin: "16.4" });
     expect(o).toContain('/p\\"x\\\\y/build/xcframeworks');
