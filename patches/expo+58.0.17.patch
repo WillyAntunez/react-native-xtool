@@ -120,7 +120,7 @@ index 10d157f..7f01275 100644
 +  walkSourceTree,
  };
 diff --git a/node_modules/expo/scripts/spm/diagnostics.js b/node_modules/expo/scripts/spm/diagnostics.js
-index 0ac5e9e..035bf8d 100644
+index 0ac5e9e..ee17fdb 100644
 --- a/node_modules/expo/scripts/spm/diagnostics.js
 +++ b/node_modules/expo/scripts/spm/diagnostics.js
 @@ -214,6 +214,23 @@ function renderBlock(header, lines, moduleRoot) {
@@ -147,15 +147,17 @@ index 0ac5e9e..035bf8d 100644
  function renderMixedNoManifest({ podName, packageName, moduleRoot }) {
    return renderBlock(
      `error: Expo module "${packageName}" (pod ${podName}) mixes Swift and Objective-C/C++ sources but ships neither a Package.swift nor an spm.config.json, so it cannot be built with Swift Package Manager.`,
-@@ -629,6 +646,7 @@ const REFUSALS = new Map(
+@@ -627,6 +644,9 @@ const REFUSALS = new Map(
+   [
+     ['duplicate-pod-name', { render: renderDuplicatePodName }],
      ['partially-precompiled', { render: renderPartiallyPrecompiled }],
++    // expo-xtool: above prebuild-available, which an spm.config.json adds to every uncovered
++    // pod: a vendored-C module (expo-sqlite) needs a manifest, and only this report says so.
++    ['vendored-sources', { render: renderVendoredSources }],
      ['prebuild-available', { render: renderPrebuildAvailable }],
      ['needs-manifest-for-linkage', { render: renderNeedsManifestForLinkage }],
-+    ['vendored-sources', { render: renderVendoredSources }],
      ['unsupported-target-dependency', { render: renderUnsupportedTargetDependency }],
-     ['unsupported-package-dependency', { render: renderUnsupportedPackageDependency }],
-     ['unresolvable-target-path', { render: renderUnresolvableTargetPath }],
-@@ -703,6 +721,24 @@ function renderXcconfigLinkerWarning(entries) {
+@@ -703,6 +723,24 @@ function renderXcconfigLinkerWarning(entries) {
      .join('\n\n');
  }
  
@@ -180,7 +182,7 @@ index 0ac5e9e..035bf8d 100644
  /** The sync does not fail, so this warning is the only place the mismatch shows. */
  function renderRootConflictWarning(entries) {
    if (!entries.length) return '';
-@@ -816,6 +852,7 @@ module.exports = {
+@@ -816,6 +854,7 @@ module.exports = {
    renderUnmappedDependencyWarning,
    renderLeftOutCompanionWarning,
    renderXcconfigLinkerWarning,

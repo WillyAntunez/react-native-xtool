@@ -95,7 +95,11 @@ type Classify = { scanAppleSources(root: string): Sources };
 type Podspec = {
   readPodspecFacts(o: { podName: string; podspecDir: string; moduleRoot: string }): PodspecFacts;
 };
-type Plugin = { sourceLayout(i: { sources: Sources; podspec: PodspecFacts }): string | null };
+type Refusal = { reason: string; [k: string]: unknown };
+type Plugin = {
+  sourceLayout(i: { sources: Sources; podspec: PodspecFacts }): string | null;
+  uncoveredPod(identity: object, ...refusals: Refusal[]): { refusals: Refusal[] };
+};
 type EmitContext = { frameworkSearchPath: string; outDir: string; macroFlags: string[] };
 type LocalDep = { podName: string; name: string; pkgDir: string; hasSwift: boolean };
 type Emit = (
@@ -115,6 +119,7 @@ type Manifests = {
   isCxxHeader(text: string): boolean;
 };
 type Diagnostics = {
+  classifyUnsupported(o: { pending: object[]; coreAvailable: boolean }): Refusal[];
   renderUnsupportedReport(entries: object[]): string;
   renderDroppedResourceWarning(entries: object[]): string;
 };
@@ -317,6 +322,39 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
       { reason: "vendored-sources", podName: "ExpoSQLite", packageName: "expo-sqlite", moduleRoot: root, vendorSources: sources.vendorSources },
     ]);
     expect(report).toContain("builds C sources from its vendor/ directory (vendor/sqlite3/sqlite3.c)");
+  });
+
+  it("reports vendored-sources, not prebuild-available, for a module with spm.config.json and vendor/ (expo-sqlite)", () => {
+    const sqlitePodspec = `s.source_files = "**/*.{c,h,m,swift}"\n  s.prepare_command = "cp ../vendor/sqlite3/sqlite3.c ."`;
+    const root = moduleFixture(
+      "ExpoSQLite",
+      {
+        "spm.config.json": JSON.stringify({ products: [{ name: "ExpoSQLite", podName: "ExpoSQLite" }] }),
+        "ios/SQLiteModule.swift": "",
+        "vendor/sqlite3/sqlite3.c": "int x;\n",
+      },
+      sqlitePodspec,
+    );
+    const { layout, sources, facts } = layoutOf("ExpoSQLite", root);
+    expect(layout).toBe("vendored");
+    const { products } = JSON.parse(readFileSync(path.join(root, "spm.config.json"), "utf8")) as {
+      products: { name: string }[];
+    };
+    // What podIdentity builds from the prebuilt-metadata record an spm.config.json produces.
+    const identity = {
+      podName: "ExpoSQLite",
+      packageName: "expo-sqlite",
+      moduleRoot: root,
+      prebuildProduct: { name: products[0]!.name, sourceOnly: false },
+      sources,
+      podspec: facts,
+    };
+    const pending = plugin.uncoveredPod(identity, { reason: "vendored-sources", vendorSources: sources.vendorSources });
+    expect(pending.refusals.map((r) => r.reason)).toContain("prebuild-available");
+    const diagnostics = load<Diagnostics>("diagnostics.js");
+    const [entry] = diagnostics.classifyUnsupported({ pending: [pending], coreAvailable: true });
+    expect(entry!.reason).toBe("vendored-sources");
+    expect(diagnostics.renderUnsupportedReport([entry!])).toContain("builds C sources from its vendor/ directory");
   });
 
   it("ignores vendor/ when the podspec does not reference it", () => {
