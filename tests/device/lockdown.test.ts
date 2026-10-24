@@ -111,7 +111,7 @@ describe("LockdownClient", () => {
       services: {
         "com.example.echo": (sock) => {
           const ch = new PlistChannel(sock, "echo");
-          void ch.recv().then((m) => ch.send({ Echo: m.Say! }), () => {});
+          ch.recv().then((m) => ch.send({ Echo: m.Say! })).catch(() => {});
         },
       },
     });
