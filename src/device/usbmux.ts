@@ -4,6 +4,7 @@ import * as plist from "plist";
 import type { Connect } from "./lockdown.js";
 import { decodePlist, type PlistDict } from "./plistio.js";
 import { ByteReader, writeAll } from "./stream.js";
+import { normalizeUdid } from "./udid.js";
 
 export const USBMUXD_SOCKET = "/var/run/usbmuxd";
 
@@ -46,9 +47,7 @@ export interface MuxDevice {
   connectionType: string;
 }
 
-/** usbmuxd may report new-style UDIDs with or without the dash. */
-export const sameUdid = (a: string, b: string): boolean =>
-  a.replace(/-/g, "").toUpperCase() === b.replace(/-/g, "").toUpperCase();
+export { sameUdid } from "./udid.js";
 
 export class UsbmuxClient {
   private tag = 0;
@@ -98,8 +97,9 @@ export class UsbmuxClient {
     const list = Array.isArray(resp.DeviceList) ? resp.DeviceList : [];
     return list.flatMap((item) => {
       const p = (item as PlistDict).Properties as PlistDict | undefined;
-      if (!p || typeof p.SerialNumber !== "string") return [];
-      return [{ deviceId: Number(p.DeviceID ?? (item as PlistDict).DeviceID), udid: p.SerialNumber, connectionType: String(p.ConnectionType ?? "") }];
+      const udid = p && typeof p.SerialNumber === "string" ? normalizeUdid(p.SerialNumber) : undefined;
+      if (!udid) return [];
+      return [{ deviceId: Number(p!.DeviceID ?? (item as PlistDict).DeviceID), udid, connectionType: String(p!.ConnectionType ?? "") }];
     });
   }
 

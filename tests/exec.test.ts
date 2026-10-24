@@ -39,7 +39,7 @@ describe("runArgv", () => {
 
 describe("runTee", () => {
   it("returns stdout and stderr while still running the command", async () => {
-    const out = await runTee("sh", ["-c", "echo Wrote to x/App.ipa; echo oops >&2"], { env: process.env });
+    const out = await runTee("sh", ["-c", "echo Wrote to x/App.ipa; echo oops >&2"], { env: process.env, echo: false });
     expect(out).toContain("Wrote to x/App.ipa");
     expect(out).toContain("oops");
   });

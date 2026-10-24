@@ -85,6 +85,14 @@ describe("installOverWifi", () => {
     expect(dev!.installs).toEqual([]);
   });
 
+  it("reports a link lost after Install started as interrupted (not retryable)", async () => {
+    const { InstallInterruptedError } = await import("../../src/device/wifiInstall.js");
+    const err = await run({ installDrop: true }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(InstallInterruptedError);
+    expect((err as Error).message).toContain("Check the app on the iPhone");
+    expect(dev!.installs).toHaveLength(1);
+  });
+
   it("fails when the pairing is not accepted", async () => {
     await expect(run({ hostId: "SOMEONE-ELSE" })).rejects.toThrow("no longer trusts this computer");
   });

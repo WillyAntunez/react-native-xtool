@@ -49,6 +49,20 @@ describe("AFC packet codec", () => {
   });
 });
 
+describe("AfcClient reply guard", () => {
+  it("refuses a reply claiming more than 1 MiB", async () => {
+    const { Duplex } = await import("node:stream");
+    const peer = new Duplex({
+      read() {},
+      write(_chunk, _enc, cb) {
+        cb();
+        this.push(encodeAfcHeader({ entireLength: 40 + 64 * 1024 * 1024, thisLength: 40, packetNum: 0, op: AfcOp.Data }));
+      },
+    });
+    await expect(new AfcClient(peer, 500).makeDir("/x")).rejects.toThrow("bad reply length");
+  });
+});
+
 describe("AfcClient against a fake iPhone", () => {
   let dev: FakeDevice | undefined;
   let lockdown: LockdownClient | undefined;

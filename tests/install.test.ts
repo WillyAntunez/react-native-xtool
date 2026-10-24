@@ -287,6 +287,18 @@ describe("install --network", () => {
     expect(logs.some((l) => l.endsWith("retrying once…"))).toBe(true);
   });
 
+  it("does not retry once installd's Install has started", async () => {
+    const { InstallInterruptedError } = await import("../src/device/wifiInstall.js");
+    const { DeviceTimeoutError } = await import("../src/device/errors.js");
+    const installOverWifi = vi.fn(async () => {
+      throw new InstallInterruptedError(new DeviceTimeoutError("installation_proxy", 600_000));
+    });
+    const { d, calls } = deps({ wifi: { installOverWifi } });
+    await expect(install("/p", d, { network: true })).rejects.toThrow("while it was installing the app");
+    expect(installOverWifi).toHaveBeenCalledOnce();
+    expect(calls.sleep).not.toHaveBeenCalled();
+  });
+
   it("does not retry installd refusals", async () => {
     const { InstallProxyError } = await import("../src/device/installproxy.js");
     const installOverWifi = vi.fn(async () => {

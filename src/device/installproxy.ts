@@ -58,19 +58,21 @@ export class InstallProxyClient {
 
   constructor(
     stream: Duplex,
-    private readonly opts: { idleTimeoutMs?: number; timeoutMs?: number } = {},
+    private readonly opts: { deadlineMs?: number; timeoutMs?: number } = {},
   ) {
     this.ch = new PlistChannel(stream, "installation_proxy");
   }
 
   /**
    * Installs a package already staged over AFC. installd can go quiet for a while (signature
-   * checks, unzipping), so the timeout is per message, not for the whole install.
+   * checks, unzipping), so there is one deadline for the whole install (default 10 min) rather
+   * than a short per-message timeout.
    */
   async install(packagePath: string, onProgress?: InstallProgress, clientOptions: PlistDict = {}): Promise<void> {
+    const deadline = Date.now() + (this.opts.deadlineMs ?? 600_000);
     await this.ch.send({ Command: "Install", PackagePath: packagePath, ClientOptions: clientOptions });
     for (;;) {
-      const event = interpretInstallMessage(await this.ch.recv(this.opts.idleTimeoutMs ?? 300_000));
+      const event = interpretInstallMessage(await this.ch.recv(Math.max(1, deadline - Date.now())));
       if (event.kind === "error") throw event.error;
       if (event.kind === "done") return;
       onProgress?.(event.percent, event.status);

@@ -5,6 +5,7 @@ import tls from "node:tls";
 import { DeviceAuthenticationError, DeviceClosedError, DeviceTimeoutError, DeviceUnreachableError } from "./errors.js";
 import type { PairRecord } from "./pairRecord.js";
 import { PlistChannel, type PlistDict, type PlistValue } from "./plistio.js";
+import { checkUdid } from "./udid.js";
 
 export const LOCKDOWN_PORT = 62078;
 export const WIRELESS_LOCKDOWN_DOMAIN = "com.apple.mobile.wireless_lockdown";
@@ -111,6 +112,18 @@ export function upgradeToTls(
   });
 }
 
+/** The link dropped during the session's TLS handshake; retryable like any unreachable phone. */
+export class TlsHandshakeClosedError extends DeviceUnreachableError {
+  constructor(host: string, port: number) {
+    super(
+      host,
+      port,
+      "the connection closed during the TLS handshake; if this keeps happening, the iPhone may no longer trust this computer: re-pair over USB with `expo-xtool setup --wifi`",
+    );
+    this.name = "TlsHandshakeClosedError";
+  }
+}
+
 export class LockdownError extends Error {
   constructor(
     readonly request: string,
@@ -128,7 +141,6 @@ const REPAIR_HINT =
 export function lockdownErrorMessage(request: string, code: string, detail?: string): string {
   switch (code) {
     case "InvalidHostID":
-    case "PairingRejected":
       return `The iPhone no longer trusts this computer (its pairing was removed or belongs to another host). ${REPAIR_HINT}`;
     case "PasswordProtected":
       return "The iPhone is locked: unlock it and try again.";
@@ -203,7 +215,7 @@ export class LockdownClient {
   async udid(): Promise<string> {
     const id = await this.getValue("UniqueDeviceID");
     if (typeof id !== "string") throw new Error("lockdownd did not report UniqueDeviceID");
-    return id;
+    return checkUdid(id, "lockdownd");
   }
 
   async setValue(domain: string, key: string, value: PlistValue): Promise<void> {
@@ -224,7 +236,9 @@ export class LockdownClient {
         // The device drops the handshake when it no longer knows our host certificate.
         const code = (e as NodeJS.ErrnoException).code;
         if (e instanceof DeviceClosedError || code === "ECONNRESET" || code === "EPIPE") {
-          throw new LockdownError("StartSession", "PairingRejected");
+          // Usually a flaky link (retryable); a device that dropped our pairing answers
+          // InvalidHostID before TLS instead.
+          throw new TlsHandshakeClosedError(this.connect.host ?? "the iPhone", LOCKDOWN_PORT);
         }
         throw e;
       }

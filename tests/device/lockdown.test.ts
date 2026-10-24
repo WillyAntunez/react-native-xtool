@@ -6,6 +6,7 @@ import {
   LockdownError,
   lockdownErrorMessage,
   tcpConnector,
+  TlsHandshakeClosedError,
   WIRELESS_LOCKDOWN_DOMAIN,
 } from "../../src/device/lockdown.js";
 import { parsePairRecord } from "../../src/device/pairRecord.js";
@@ -124,11 +125,21 @@ describe("LockdownClient", () => {
     l.close();
   });
 
-  it("reports a TLS drop during StartSession as a rejected pairing", async () => {
+  it("treats a TLS drop during StartSession as a retryable unreachable phone, with the re-pair hint", async () => {
     dev = await FakeDevice.start();
     const l = await open(dev);
     const err = await l.startSession(foreignPairRecord()).catch((e: unknown) => e);
-    expect((err as LockdownError).code).toBe("PairingRejected");
+    expect(err).toBeInstanceOf(TlsHandshakeClosedError);
+    expect(err).toBeInstanceOf(DeviceUnreachableError);
+    expect((err as Error).message).toContain("setup --wifi");
+    l.close();
+  });
+
+  it("rejects a malformed UDID from the device", async () => {
+    dev = await FakeDevice.start({ udid: "../../etc/passwd" });
+    const l = await open(dev);
+    await l.startSession(pairRecord());
+    await expect(l.udid()).rejects.toThrow("invalid UDID");
     l.close();
   });
 

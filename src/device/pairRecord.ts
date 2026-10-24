@@ -1,7 +1,8 @@
-import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { cacheDir } from "../paths.js";
 import { decodePlist, type PlistValue } from "./plistio.js";
+import { checkUdid, UDID_PATTERN } from "./udid.js";
 
 /** The parts of a usbmuxd/lockdown pair record that a host needs to open a session. */
 export interface PairRecord {
@@ -104,9 +105,18 @@ async function readIfExists(file: string): Promise<Buffer | undefined> {
 /** The record holds the host private key: keep the cache private to the user. */
 export async function cachePairRecord(udid: string, bytes: Buffer, dir = pairRecordCacheDir()): Promise<string> {
   await mkdir(dir, { recursive: true, mode: 0o700 });
-  const file = pairRecordCachePath(udid, dir);
-  await writeFile(file, bytes, { mode: 0o600 });
-  await chmod(file, 0o600);
+  await chmod(dir, 0o700);
+  const file = pairRecordCachePath(checkUdid(udid, "pair record"), dir);
+  // Written private from the start, then renamed: never a readable or half-written record.
+  const tmp = `${file}.${process.pid}.tmp`;
+  try {
+    await writeFile(tmp, bytes, { mode: 0o600 });
+    await chmod(tmp, 0o600);
+    await rename(tmp, file);
+  } catch (e) {
+    await rm(tmp, { force: true });
+    throw e;
+  }
   return file;
 }
 
@@ -117,6 +127,7 @@ export async function cachePairRecord(udid: string, bytes: Buffer, dir = pairRec
  */
 export async function loadPairRecord(udid: string, src: PairRecordSources = {}): Promise<LoadedPairRecord> {
   const dir = src.cacheDir ?? pairRecordCacheDir();
+  if (!src.override) checkUdid(udid, "pair record lookup");
   if (src.override) {
     const bytes = await readIfExists(src.override);
     if (!bytes) throw new Error(`Pair record not found: ${src.override}`);
@@ -141,7 +152,7 @@ export async function loadPairRecord(udid: string, src: PairRecordSources = {}):
   throw new PairRecordMissingError(udid, cached);
 }
 
-const UDID_FILE = /^([0-9A-Fa-f]{8}-[0-9A-Fa-f]{16}|[0-9A-Fa-f]{40})\.plist$/;
+const UDID_FILE = new RegExp(`${UDID_PATTERN.source.slice(0, -1)}\\.plist$`);
 
 /** UDIDs we hold a pair record for (cache and usbmuxd's store). */
 export async function pairedUdids(src: PairRecordSources = {}): Promise<string[]> {

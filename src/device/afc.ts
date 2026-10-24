@@ -7,6 +7,7 @@ export const AFC_MAGIC = Buffer.from("CFA6LPAA", "latin1");
 /** magic + entire_length + this_length + packet_num + operation, each u64 little-endian. */
 export const AFC_HEADER_SIZE = 40;
 export const AFC_MAX_CHUNK = 4 * 1024 * 1024;
+export const AFC_MAX_REPLY = 1024 * 1024;
 
 export const AfcOp = {
   Status: 0x01,
@@ -130,7 +131,10 @@ export class AfcClient {
     const num = this.packetNum++;
     await writeAll(this.stream, afcPacket(op, num, args, data));
     const head = decodeAfcHeader(await this.reader.read(AFC_HEADER_SIZE, this.timeoutMs));
-    if (head.entireLength < AFC_HEADER_SIZE) throw new Error("AFC: bad reply length");
+    // Replies to these operations are tiny; a huge length means a desynced or hostile peer.
+    if (head.entireLength < AFC_HEADER_SIZE || head.entireLength - AFC_HEADER_SIZE > AFC_MAX_REPLY) {
+      throw new Error(`AFC: bad reply length ${head.entireLength}`);
+    }
     const body = await this.reader.read(head.entireLength - AFC_HEADER_SIZE, this.timeoutMs);
     if (head.packetNum !== num) throw new Error(`AFC: reply ${head.packetNum} to request ${num}`);
     if (head.op === AfcOp.Status) {

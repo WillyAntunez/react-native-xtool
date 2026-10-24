@@ -14,6 +14,20 @@ export function stagingPath(bundleId: string): string {
   return `${STAGING_DIR}/expo-xtool-${bundleId.replace(/[^A-Za-z0-9._-]/g, "_")}.ipa`;
 }
 
+/**
+ * The link died after installd's Install started: the outcome on the iPhone is unknown, so this
+ * is never retried automatically.
+ */
+export class InstallInterruptedError extends Error {
+  constructor(readonly reason: unknown) {
+    super(
+      `The connection to the iPhone was lost while it was installing the app (${message(reason)}). ` +
+        "Check the app on the iPhone; if it is missing or old, run the install again.",
+    );
+    this.name = "InstallInterruptedError";
+  }
+}
+
 /** The connection died while the .ipa was being staged; worth one more try. */
 export class UploadInterruptedError extends Error {
   constructor(readonly reason: unknown) {
@@ -36,6 +50,8 @@ export interface WifiInstallOptions {
   lockdownPort?: number;
   heartbeat?: HeartbeatOptions;
   connectTimeoutMs?: number;
+  /** Whole-install limit for installd (default 10 min). */
+  installDeadlineMs?: number;
 }
 
 export interface WifiInstallResult {
@@ -81,21 +97,26 @@ export async function installOverWifi(o: WifiInstallOptions): Promise<WifiInstal
       throw isConnectionFailure(e) ? new UploadInterruptedError(e) : e;
     }
     const t1 = Date.now();
+    let t2 = t1;
 
-    const installd = new InstallProxyClient(await hb.guard(lockdown.openService(INSTALL_PROXY_SERVICE)));
-    try {
-      await hb.guard(installd.install(remote, o.onInstall));
-    } finally {
-      installd.close();
-    }
-    const t2 = Date.now();
-
-    const lookup = new InstallProxyClient(await hb.guard(lockdown.openService(INSTALL_PROXY_SERVICE)));
+    const installd = new InstallProxyClient(await hb.guard(lockdown.openService(INSTALL_PROXY_SERVICE)), {
+      deadlineMs: o.installDeadlineMs,
+    });
     let apps: Record<string, PlistDict>;
     try {
-      apps = await hb.guard(lookup.lookup([o.bundleId]));
+      await hb.guard(installd.install(remote, o.onInstall));
+      t2 = Date.now();
+      const lookup = new InstallProxyClient(await hb.guard(lockdown.openService(INSTALL_PROXY_SERVICE)));
+      try {
+        apps = await hb.guard(lookup.lookup([o.bundleId]));
+      } finally {
+        lookup.close();
+      }
+    } catch (e) {
+      // Install was sent: whatever happened next, retrying blindly could double-install.
+      throw isConnectionFailure(e) ? new InstallInterruptedError(e) : e;
     } finally {
-      lookup.close();
+      installd.close();
     }
     const app = apps[o.bundleId];
     if (!app) throw new Error(`installd reported success, but ${o.bundleId} is not installed on the iPhone`);

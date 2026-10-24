@@ -62,6 +62,8 @@ async function fakeUsbmuxd(opts: { record?: Buffer; lockdownPort?: number; seen?
               DeviceList: [
                 { DeviceID: 7, MessageType: "Attached", Properties: { ConnectionType: "USB", DeviceID: 7, SerialNumber: UDID } },
                 { DeviceID: 9, MessageType: "Attached", Properties: { ConnectionType: "Network", DeviceID: 9, SerialNumber: "x" } },
+                { DeviceID: 10, MessageType: "Attached", Properties: { ConnectionType: "USB", DeviceID: 10, SerialNumber: "0000803000000000CAFEF00D" } },
+                { DeviceID: 11, MessageType: "Attached", Properties: { ConnectionType: "USB", DeviceID: 11, SerialNumber: "../evil" } },
               ],
             });
             break;
@@ -126,7 +128,10 @@ describe("usbmuxd client", () => {
   });
   it("lists only USB devices", async () => {
     const path = await fakeUsbmuxd({});
-    expect(await listUsbDevices({ path })).toEqual([{ deviceId: 7, udid: UDID, connectionType: "USB" }]);
+    expect(await listUsbDevices({ path })).toEqual([
+      { deviceId: 7, udid: UDID, connectionType: "USB" },
+      { deviceId: 10, udid: "00008030-00000000CAFEF00D", connectionType: "USB" },
+    ]);
     expect(await listUsbDevices({ path: join(dir, "missing.sock") })).toEqual([]);
   });
   it("tunnels lockdown over Connect with the port byte-swapped", async () => {
@@ -169,6 +174,18 @@ describe("loadPairRecord", () => {
     expect(err).toBeInstanceOf(PairRecordMissingError);
     expect((err as Error).message).toContain("setup --wifi");
     expect((err as Error).message).toContain("--pair-record");
+  });
+  it("refuses a UDID that is not one before touching any path", async () => {
+    await expect(loadPairRecord("../../etc/passwd", { cacheDir: cacheDir(), lockdownDir: dir })).rejects.toThrow(
+      "invalid UDID",
+    );
+  });
+  it("makes an existing cache dir private and leaves no temp file", async () => {
+    const { mkdir, readdir } = await import("node:fs/promises");
+    await mkdir(cacheDir(), { mode: 0o755 });
+    await loadPairRecord(UDID, { cacheDir: cacheDir(), lockdownDir: dir, fromUsbmux: async () => RECORD });
+    expect((await stat(cacheDir())).mode & 0o777).toBe(0o700);
+    expect(await readdir(cacheDir())).toEqual([`${UDID}.plist`]);
   });
   it("lists paired UDIDs from the cache and the store", async () => {
     await writeFile(join(dir, `${UDID}.plist`), RECORD);

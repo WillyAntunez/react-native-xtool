@@ -70,6 +70,10 @@ export interface FakeDeviceOptions {
   bundleId?: string;
   /** installd: fail Install with this reply. */
   installError?: PlistDict;
+  /** installd: after the first progress message, drop every connection (Wi‑Fi lost mid-install). */
+  installDrop?: boolean;
+  /** installd: after the first progress message, go silent. */
+  installStall?: boolean;
 }
 
 const fingerprint = (pem: Buffer): string => new X509Certificate(pem).fingerprint256;
@@ -349,6 +353,11 @@ export class FakeDevice {
         }
         for (const [status, pct] of [["CreatingStagingDirectory", 5], ["ExtractingPackage", 15], ["VerifyingApplication", 40], ["GeneratingApplicationMap", 90]] as const) {
           await ch.send({ Status: status, PercentComplete: pct });
+          if (this.opts.installDrop) {
+            this.dropAll();
+            return;
+          }
+          if (this.opts.installStall) return;
         }
         const id = this.opts.bundleId ?? "com.example.app";
         this.apps[id] = { CFBundleIdentifier: id, CFBundleShortVersionString: "1.0.0", CFBundleVersion: "1" };

@@ -62,7 +62,7 @@ describe("InstallProxyClient against a fake iPhone", () => {
     lockdown = await LockdownClient.open(tcpConnector("127.0.0.1", 2000), { port: dev.lockdownPort, timeoutMs: 2000 });
     await lockdown.startSession(pairRecord());
     hb = await Heartbeat.start(lockdown);
-    return new InstallProxyClient(await lockdown.openService(INSTALL_PROXY_SERVICE), { idleTimeoutMs: 2000 });
+    return new InstallProxyClient(await lockdown.openService(INSTALL_PROXY_SERVICE), { deadlineMs: 2000 });
   }
 
   it("installs a staged package, reporting progress until Complete, then finds it via Lookup", async () => {
@@ -74,6 +74,17 @@ describe("InstallProxyClient against a fake iPhone", () => {
     const apps = await c.lookup(["XTL-T.com.a.b", "com.other"]);
     expect(Object.keys(apps)).toEqual(["XTL-T.com.a.b"]);
     expect(apps["XTL-T.com.a.b"]!.CFBundleVersion).toBe("1");
+    c.close();
+  });
+
+  it("gives up at the overall deadline when installd goes silent", async () => {
+    const c = await installd({ installStall: true });
+    dev!.files.set("/PublicStaging/x.ipa", Buffer.from("zip"));
+    const quick = new InstallProxyClient(await lockdown!.openService(INSTALL_PROXY_SERVICE), { deadlineMs: 150 });
+    const t0 = Date.now();
+    await expect(quick.install("/PublicStaging/x.ipa")).rejects.toThrow("no answer from the iPhone");
+    expect(Date.now() - t0).toBeLessThan(1500);
+    quick.close();
     c.close();
   });
 

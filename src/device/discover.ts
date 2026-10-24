@@ -1,6 +1,6 @@
 import net from "node:net";
 import { DeviceAuthenticationError, DeviceTimeoutError, DeviceUnreachableError, message } from "./errors.js";
-import { LOCKDOWN_PORT, LockdownClient, LockdownError, tcpConnector } from "./lockdown.js";
+import { LOCKDOWN_PORT, LockdownClient, LockdownError, TlsHandshakeClosedError, tcpConnector } from "./lockdown.js";
 import type { LoadedPairRecord, PairRecord } from "./pairRecord.js";
 import { sameUdid } from "./usbmux.js";
 
@@ -119,6 +119,7 @@ export async function identify(
   const timeoutMs = opts.timeoutMs ?? 5000;
   const open = (): Promise<LockdownClient> =>
     LockdownClient.open(tcpConnector(ip, timeoutMs), { port: opts.port ?? LOCKDOWN_PORT, timeoutMs });
+  let dropped: TlsHandshakeClosedError | undefined;
   for (const c of (await opts.candidates?.()) ?? []) {
     const l = await open();
     try {
@@ -126,12 +127,14 @@ export async function identify(
       return await l.udid();
     } catch (e) {
       // Not this record's iPhone (refused, or not authenticated): try the next record.
-      if (!(e instanceof LockdownError || e instanceof DeviceAuthenticationError)) throw e;
+      if (e instanceof TlsHandshakeClosedError) dropped = e;
+      else if (!(e instanceof LockdownError || e instanceof DeviceAuthenticationError)) throw e;
     } finally {
       l.close();
     }
   }
-  throw new UnknownDeviceError(ip);
+  // A dropped handshake is a flaky link, not proof the device is someone else's: stay retryable.
+  throw dropped ?? new UnknownDeviceError(ip);
 }
 
 export interface LocateOptions {
