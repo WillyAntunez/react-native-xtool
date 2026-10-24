@@ -5,12 +5,12 @@ import { detectLanIp, isMetroRunning, isPortFree } from "../net.js";
 import { projectPaths } from "../paths.js";
 import { readState, type BuildState } from "../state.js";
 import { build } from "./build.js";
-import { install } from "./install.js";
+import { install, type InstallOptions } from "./install.js";
 import { start, startDecision } from "./start.js";
 
 export interface RunDeps {
   build: (root: string, opts: { clean?: boolean }) => Promise<void>;
-  install: (root: string) => Promise<void>;
+  install: (root: string, opts: InstallOptions) => Promise<void>;
   start: (root: string, opts: { clear?: boolean }) => Promise<void>;
   readState: (iosXtoolDir: string) => Promise<BuildState | undefined>;
   depsFingerprint: (root: string) => Promise<string>;
@@ -24,7 +24,7 @@ export interface RunDeps {
 
 const realDeps: RunDeps = {
   build,
-  install,
+  install: (root, opts) => install(root, {}, opts),
   start,
   readState,
   depsFingerprint: depsFingerprint,
@@ -38,7 +38,7 @@ const realDeps: RunDeps = {
 
 export async function run(
   root: string,
-  opts: { clean?: boolean; force?: boolean },
+  opts: { clean?: boolean; force?: boolean } & InstallOptions,
   overrides: Partial<RunDeps> = {},
 ): Promise<void> {
   const d: RunDeps = { ...realDeps, ...overrides };
@@ -48,7 +48,8 @@ export async function run(
     d.log("Native app is up to date (no dependency changes); skipping build and install.");
   } else {
     await d.build(root, { clean: opts.clean });
-    await d.install(root);
+    // `--network [ip]` (and its --udid / --pair-record) go straight to install.
+    await d.install(root, { network: opts.network, udid: opts.udid, pairRecord: opts.pairRecord });
   }
   // A rebuild means dependencies changed: Metro needs a fresh cache for new plugins and modules.
   await d.start(root, rebuilt ? { clear: true } : {});

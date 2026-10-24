@@ -23,4 +23,9 @@ describe("buildProgram", () => {
     const setupCmd = buildProgram().commands.find((c) => c.name() === "setup")!;
     expect(setupCmd.options.map((o) => o.flags)).toEqual(["--xcode-xip <path>", "--wifi", "--yes", "--udid <udid>"]);
   });
+
+  it("offers run --network", () => {
+    const runCmd = buildProgram().commands.find((c) => c.name() === "run")!;
+    expect(runCmd.options.map((o) => o.flags)).toContain("--network [ip]");
+  });
 });

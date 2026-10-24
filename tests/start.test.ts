@@ -193,6 +193,15 @@ describe("run", () => {
     expect(calls).toEqual(["build:true", "install", "start"]);
   });
 
+  it("passes --network and its options through to install", async () => {
+    const install = vi.fn(async () => {});
+    const { overrides } = fresh({ readState: async () => undefined, install });
+    await runCommand("/p", { network: "192.168.1.10", udid: "U", pairRecord: "/r.plist" }, overrides);
+    expect(install).toHaveBeenCalledWith("/p", { network: "192.168.1.10", udid: "U", pairRecord: "/r.plist" });
+    await runCommand("/p", {}, overrides);
+    expect(install).toHaveBeenLastCalledWith("/p", { network: undefined, udid: undefined, pairRecord: undefined });
+  });
+
   it("starts Metro with --clear after a rebuild, not after a skip", async () => {
     const built = fresh({ readState: async () => undefined });
     const start = vi.fn(async () => {});

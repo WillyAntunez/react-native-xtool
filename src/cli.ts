@@ -82,10 +82,16 @@ export function buildProgram(): Command {
     .description("Build and install when needed, then start Metro")
     .option("--clean", "re-run expo prebuild --clean (always rebuilds)")
     .option("--force", "always rebuild and reinstall")
+    .option("--network [ip]", "install over Wi‑Fi (see install --network)")
+    .option("--udid <udid>", "which paired iPhone to use over Wi‑Fi")
+    .option("--pair-record <file>", "pair record to use over Wi‑Fi")
     .action(
-      action(async (o: { clean?: boolean; force?: boolean }) => {
-        await run(process.cwd(), { clean: o.clean, force: o.force });
-      }),
+      action(
+        async (o: { clean?: boolean; force?: boolean; network?: boolean | string; udid?: string; pairRecord?: string }) => {
+          if (!o.network && (o.udid || o.pairRecord)) throw new Error("--udid and --pair-record need --network");
+          await run(process.cwd(), o);
+        },
+      ),
     );
   program
     .command("doctor")
