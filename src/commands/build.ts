@@ -162,16 +162,18 @@ export async function build(
   }
 
   const depsFingerprint = await d.depsFingerprint(paths.root);
+  // Written without the fingerprint first: a failed xtool-build must not look up to date.
+  const state: BuildState = {
+    version: 1,
+    metroPort,
+    lanIp,
+    bundleIdentifier: project.bundleIdentifier,
+    builtAt: new Date().toISOString(),
+  };
   await step("generate", async () => {
     await d.writeIosXtool({ project, paths, frameworks, metroPort, lanIp });
-    await writeState(paths.iosXtool, {
-      version: 1,
-      metroPort,
-      lanIp,
-      bundleIdentifier: project.bundleIdentifier,
-      builtAt: new Date().toISOString(),
-      depsFingerprint,
-    });
+    await writeState(paths.iosXtool, state);
   });
   await step("xtool-build", () => d.devBuild(d.xtoolBin(config), paths.iosXtool));
+  await writeState(paths.iosXtool, { ...state, depsFingerprint });
 }
