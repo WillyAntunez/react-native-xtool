@@ -1,18 +1,51 @@
 {
   "name": "expo-xtool",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.1",
   "description": "Build Expo iOS dev builds on Linux via xtool",
+  "keywords": [
+    "expo",
+    "ios",
+    "linux",
+    "xtool",
+    "react-native",
+    "swiftpm",
+    "cli"
+  ],
+  "homepage": "https://github.com/WillyAntunez/expo-xtool",
+  "bugs": {
+    "url": "https://github.com/WillyAntunez/expo-xtool/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/WillyAntunez/expo-xtool.git"
+  },
+  "license": "MIT",
+  "author": "Willy Antunez",
   "type": "module",
   "bin": {
     "expo-xtool": "bin/expo-xtool.js"
   },
+  "files": [
+    "bin",
+    "dist",
+    "patches",
+    "scripts",
+    "shims",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=20"
   },
+  "os": [
+    "linux"
+  ],
   "scripts": {
-    "build": "tsc -p .",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p .",
+    "prepare": "npm run build",
     "test": "vitest run",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "scan:private": "bash scripts/scan-private.sh"
   },
   "dependencies": {
     "@expo/config": "^58.0.7",

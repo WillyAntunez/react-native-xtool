@@ -30,7 +30,7 @@ async function tempProject(
 describe("readExpoProject", () => {
   it("reads the fixture project", async () => {
     const p = await readExpoProject(fixture);
-    expect(p.bundleIdentifier).toBe("com.willyantuneztowerhouse.app");
+    expect(p.bundleIdentifier).toBe("com.example.app");
     expect(p.iosTargetName).toBe("app");
     expect(p.iosTargetDir).toBe(path.join(fixture, "ios", "app"));
     expect(p.sdkVersion).toBe(58);
@@ -98,7 +98,7 @@ describe("buildVars", () => {
     const p = await readExpoProject(fixture);
     expect(buildVars(p)).toEqual({
       PRODUCT_NAME: "app",
-      PRODUCT_BUNDLE_IDENTIFIER: "com.willyantuneztowerhouse.app",
+      PRODUCT_BUNDLE_IDENTIFIER: "com.example.app",
       MARKETING_VERSION: "1.0.0",
       CURRENT_PROJECT_VERSION: "1",
       PRODUCT_MODULE_NAME: "App",

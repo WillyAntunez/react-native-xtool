@@ -1,4 +1,5 @@
-import { createWriteStream } from "node:fs";
+import { createHash } from "node:crypto";
+import { createReadStream, createWriteStream } from "node:fs";
 import { chmod, mkdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -6,11 +7,20 @@ import { pipeline } from "node:stream/promises";
 
 const DOWNLOAD_TIMEOUT_MS = 15 * 60_000;
 
+class ChecksumError extends Error {}
+
+/** Hex sha256 of a file, streamed. */
+export async function sha256File(file: string): Promise<string> {
+  const hash = createHash("sha256");
+  await pipeline(createReadStream(file), hash);
+  return hash.digest("hex");
+}
+
 /** Streams `url` to `dest` via a temp file; verifies size and retries once. */
 export async function downloadFile(
   url: string,
   dest: string,
-  opts: { minBytes?: number; mode?: number } = {},
+  opts: { minBytes?: number; mode?: number; sha256?: string } = {},
 ): Promise<void> {
   const minBytes = opts.minBytes ?? 1024 * 1024;
   await mkdir(path.dirname(dest), { recursive: true });
@@ -23,12 +33,19 @@ export async function downloadFile(
       await pipeline(Readable.fromWeb(res.body as never), createWriteStream(tmp));
       const { size } = await stat(tmp);
       if (size <= minBytes) throw new Error(`downloaded file too small (${size} bytes)`);
+      if (opts.sha256) {
+        const actual = await sha256File(tmp);
+        if (actual !== opts.sha256.toLowerCase()) {
+          throw new ChecksumError(`checksum mismatch for ${url}: expected sha256 ${opts.sha256}, got ${actual}. If the upstream asset changed, report it at https://github.com/WillyAntunez/expo-xtool/issues; the pin lives in src/versions.ts.`);
+        }
+      }
       if (opts.mode !== undefined) await chmod(tmp, opts.mode);
       await rename(tmp, dest);
       return;
     } catch (err) {
-      lastErr = err;
       await rm(tmp, { force: true });
+      if (err instanceof ChecksumError) throw err;
+      lastErr = err;
     }
   }
   console.error(`Download failed: ${url}`);

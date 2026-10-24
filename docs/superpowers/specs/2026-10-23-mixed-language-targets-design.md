@@ -18,7 +18,7 @@ Fecha: 2026-10-23. Decisión de Willy: ir por el target mixto único de SwiftPM.
 
 `expo-xtool build` compila librerías mixtas (A, B y circulares) con un único target SwiftPM mixto, sin
 adaptación por librería. Éxito: expo-notifications (vía expo-application) compila, instala y dispara una
-notificación local en el iPhone de Willy.
+notificación local en el the test iPhone.
 
 ## No objetivos (paso 1)
 

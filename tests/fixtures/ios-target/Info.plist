@@ -27,7 +27,7 @@
       <dict>
         <key>CFBundleURLSchemes</key>
         <array>
-          <string>com.willyantuneztowerhouse.app</string>
+          <string>com.example.app</string>
         </array>
       </dict>
     </array>

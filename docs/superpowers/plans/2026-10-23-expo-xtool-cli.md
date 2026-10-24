@@ -19,7 +19,7 @@
 - The SwiftPM app target/module/executable is always named `App`; display name, bundle ID and versions come from `app.json`.
 - The installed bundle ID is `XTL-<TEAM_ID>.<bundleIdentifier>` (xtool behaviour); the CLI must print it.
 - Free Apple ID limits (7-day signing, 3 apps, no push/entitlements) are surfaced, never hidden.
-- Repo rules: `feature/<slug>` branches, Conventional Commits in English, one logical change per commit, PR to `main`, push as `WillyAntunez`.
+- Repo rules: `feature/<slug>` branches, Conventional Commits in English, one logical change per commit, PR to `main`, push as the repo owner.
 - All messages to the user in English (CLI is for everyone); docs in English.
 
 ## Review Focus
@@ -156,7 +156,7 @@ export function buildVars(p: ExpoProject): BuildVars   // PRODUCT_NAME=p.name, P
 ```
 Target dir: `<root>/ios/<iosTargetName>`; use `@expo/config-plugins` `IOSConfig.XcodeUtils.sanitizedName` for `iosTargetName` (verify export at implementation; fallback: regex `[^a-zA-Z0-9]` → "").
 
-- [ ] **Step 1:** Tests: fixture → `bundleIdentifier === "com.willyantuneztowerhouse.app"`, `iosTargetName === "app"`, `buildVars().PRODUCT_MODULE_NAME === "App"`; `rejects sdk below 58` (fixture with `expo: "~57.0.0"`) error mentions `58`; missing bundleIdentifier throws.
+- [ ] **Step 1:** Tests: fixture → `bundleIdentifier === "com.example.app"`, `iosTargetName === "app"`, `buildVars().PRODUCT_MODULE_NAME === "App"`; `rejects sdk below 58` (fixture with `expo: "~57.0.0"`) error mentions `58`; missing bundleIdentifier throws.
 - [ ] **Step 2:** FAIL. **Step 3:** Implement. **Step 4:** PASS.
 - [ ] **Step 5:** Commit `feat: read Expo project config and derive build variables`.
 
@@ -250,7 +250,7 @@ export async function install(root: string): Promise<void>
 ```
 `install`: config → bin → `authStatus` (fail: "Not logged in. Run: <bin> auth login") → `listDevices` (empty: "No iPhone found over USB. Connect it, tap Trust, and enable Developer Mode.") → `devRun` → print installed bundle ID and first-run checklist (Developer Mode, trust certificate under Settings → General → VPN & Device Management, local-network permission, 7-day expiry for free accounts).
 
-- [ ] **Step 1:** Tests: `authStatus` parser on the two real outputs (`Logged out` / `Logged in.\n- Apple ID: x\n- Team ID: G7T6C5W9ZU`); `installedBundleId("G7T6C5W9ZU","com.a.b") === "XTL-G7T6C5W9ZU.com.a.b"`; `listDevices times out` using a fake bin (`sleep 60`) with `timeoutMs: 200` → `[]` within 1 s; parser on `iPhone de Willy [usb]: 00008030-001645A61EBB802E`.
+- [ ] **Step 1:** Tests: `authStatus` parser on the two real outputs (`Logged out` / `Logged in.\n- Apple ID: x\n- Team ID: <TEAM_ID>`); `installedBundleId("<TEAM_ID>","com.a.b") === "XTL-<TEAM_ID>.com.a.b"`; `listDevices times out` using a fake bin (`sleep 60`) with `timeoutMs: 200` → `[]` within 1 s; parser on `Test iPhone [usb]: 00008030-000000000000000E`.
 - [ ] **Step 2:** FAIL. **Step 3:** Implement. **Step 4:** PASS.
 - [ ] **Step 5:** Commit `feat: wrap xtool and add install command`.
 
@@ -300,10 +300,10 @@ Checks: node ≥ 20; `swift --version` ≥ 6.4; xtool AppImage present and `--ve
 
 - [ ] **Step 1:** `npm run build && npm link`; in `expo-ios-linux/app`: `rm -rf ios-xtool && expo-xtool doctor` → all ✔ except device if unplugged.
 - [ ] **Step 2:** `expo-xtool build` → prints steps, ends with `Build complete`; `diff <(sort ios-xtool/Package.swift) <(sort ../app/ios-xtool.bak/Package.swift)` differs only in the JSI path; `grep -c '\$(' ios-xtool/Info.plist` → 0. (Ask Willy before: ~3 min CPU.)
-- [ ] **Step 3:** iPhone on USB: `expo-xtool install` → ends with installed bundle ID `XTL-G7T6C5W9ZU.com.willyantuneztowerhouse.app` and checklist.
+- [ ] **Step 3:** iPhone on USB: `expo-xtool install` → ends with installed bundle ID `XTL-<TEAM_ID>.com.example.app` and checklist.
 - [ ] **Step 4:** `expo-xtool start` → Metro on the baked port; open the app → Metro logs `iOS Bundled`; edit `App.tsx` → Fast Refresh. Willy confirms visually.
 - [ ] **Step 5:** Write README/docs; commit `docs: document usage, requirements and troubleshooting`.
-- [ ] **Step 6:** Open PR `feature/cli-scaffold` → `main` (gh as WillyAntunez), summary of tasks; merge after review.
+- [ ] **Step 6:** Open PR `feature/cli-scaffold` → `main` (gh as the repo owner), summary of tasks; merge after review.
 
 ### Task 15: Library validation matrix (spike, after Task 14)
 

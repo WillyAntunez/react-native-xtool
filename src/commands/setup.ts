@@ -7,7 +7,7 @@ import { cacheDir } from "../paths.js";
 import { downloadFile } from "../tools/download.js";
 import { run, toolEnv } from "../tools/exec.js";
 import { authStatus, defaultXtoolPath } from "../tools/xtool.js";
-import { SWIFT_VERSION, XTOOL_VERSION } from "../versions.js";
+import { SWIFT_VERSION, XTOOL_SHA256, XTOOL_VERSION } from "../versions.js";
 
 export type SetupAction = "install-swift" | "download-xtool" | "install-sdk" | "login-hint";
 export interface SetupState {
@@ -171,9 +171,11 @@ export async function setup(
         await step(`Swift ${SWIFT_VERSION} via swiftly`, log, installSwift);
         break;
       case "download-xtool":
-        await step(`xtool ${XTOOL_VERSION}`, log, () =>
-          downloadFile(xtoolDownloadUrl(), bin, { mode: 0o755 }),
-        );
+        await step(`xtool ${XTOOL_VERSION}`, log, () => {
+          const sha256 = XTOOL_SHA256[linuxArch()];
+          if (!sha256) log(`⚠ no pinned checksum for xtool on ${linuxArch()}; the download is not verified`);
+          return downloadFile(xtoolDownloadUrl(), bin, { mode: 0o755, sha256 });
+        });
         break;
       case "install-sdk":
         await step("Darwin SDK", log, () => installSdk(bin, opts.xcodeXip!, log));

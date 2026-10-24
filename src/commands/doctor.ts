@@ -6,9 +6,10 @@ import { projectPaths } from "../paths.js";
 import { readExpoProject } from "../project.js";
 import { readState } from "../state.js";
 import { NO_FINGERPRINT_WARNING } from "./start.js";
+import { sha256File } from "../tools/download.js";
 import { toolEnv } from "../tools/exec.js";
 import { authStatus, listDevices, defaultXtoolPath, xtoolBin, xtoolUnrunnableError, type AuthStatus, type Device } from "../tools/xtool.js";
-import { XTOOL_VERSION, SWIFT_VERSION } from "../versions.js";
+import { XTOOL_VERSION, XTOOL_SHA256, SWIFT_VERSION } from "../versions.js";
 import { isExecutable, sdkBundle, swiftAtLeast, swiftMeetsMin, swiftVersionText } from "./setup.js";
 import { existsSync } from "node:fs";
 
@@ -30,6 +31,8 @@ export interface DoctorProbes {
   xtoolPath: () => string;
   xtoolInstalled: () => boolean;
   xtoolVersion: () => Promise<string>;
+  /** sha256 of the default-path xtool binary; undefined when not checkable (custom xtoolPath, unreadable). */
+  xtoolSha256: () => Promise<string | undefined>;
   sdkInstalled: () => boolean;
   authStatus: () => Promise<AuthStatus>;
   devices: () => Promise<Device[]>;
@@ -62,6 +65,14 @@ export function realProbes(config: ExpoXtoolConfig): DoctorProbes {
     swiftVersion: () => swiftVersionText(PROBE_TIMEOUT_MS),
     xtoolPath: () => config.xtoolPath ?? defaultXtoolPath(),
     xtoolInstalled: () => isExecutable(config.xtoolPath ?? defaultXtoolPath()),
+    xtoolSha256: async () => {
+      if (config.xtoolPath) return undefined;
+      try {
+        return await sha256File(defaultXtoolPath());
+      } catch {
+        return undefined;
+      }
+    },
     xtoolVersion: async () => {
       const r = await execa(bin(), ["--version"], {
         env: toolEnv(),
@@ -126,9 +137,15 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
   await add("xtool", async () => {
     if (!p.xtoolInstalled()) return { status: "fail", detail: "not found — run expo-xtool setup" };
     const v = await p.xtoolVersion();
-    return v.includes(XTOOL_VERSION)
-      ? { status: "ok", detail: XTOOL_VERSION }
-      : { status: "warn", detail: `expected ${XTOOL_VERSION}, got ${v || "unknown"}` };
+    if (!v.includes(XTOOL_VERSION)) {
+      return { status: "warn", detail: `expected ${XTOOL_VERSION}, got ${v || "unknown"}` };
+    }
+    const pinned = XTOOL_SHA256[process.arch === "arm64" ? "aarch64" : "x86_64"];
+    const actual = pinned ? await p.xtoolSha256() : undefined;
+    if (pinned && actual && actual !== pinned) {
+      return { status: "warn", detail: `${XTOOL_VERSION}, but sha256 ${actual} differs from the pinned ${pinned} — delete ${p.xtoolPath()} and run expo-xtool setup` };
+    }
+    return { status: "ok", detail: XTOOL_VERSION };
   });
   await add("darwin-sdk", async () =>
     p.sdkInstalled()
