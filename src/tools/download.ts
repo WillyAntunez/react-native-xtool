@@ -36,7 +36,7 @@ export async function downloadFile(
       if (opts.sha256) {
         const actual = await sha256File(tmp);
         if (actual !== opts.sha256.toLowerCase()) {
-          throw new ChecksumError(`checksum mismatch for ${url}: expected sha256 ${opts.sha256}, got ${actual}`);
+          throw new ChecksumError(`checksum mismatch for ${url}: expected sha256 ${opts.sha256}, got ${actual}. If the upstream asset changed, report it at https://github.com/WillyAntunez/expo-xtool/issues; the pin lives in src/versions.ts.`);
         }
       }
       if (opts.mode !== undefined) await chmod(tmp, opts.mode);

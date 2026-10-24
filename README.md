@@ -23,7 +23,7 @@ Version 0.x, alpha (npm tag `alpha`).
 Linux only: x86_64 is the tested platform, and WSL2 (Ubuntu) on x86_64 is supported as Linux.
 
 ```sh
-# 1. From npm (alpha tag), once published
+# 1. From npm (alpha tag), after the first publish
 npx expo-xtool@alpha doctor
 npm i -g expo-xtool@alpha
 
