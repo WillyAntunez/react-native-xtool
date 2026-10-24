@@ -54,6 +54,10 @@ export interface FakeDeviceOptions {
   afcDropOnWrite?: number;
   /** AFC: answer FileWrite with this status (e.g. 18 NoSpaceLeft). */
   afcWriteStatus?: number;
+  /** installd: bundle id an installed package registers as. */
+  bundleId?: string;
+  /** installd: fail Install with this reply. */
+  installError?: PlistDict;
 }
 
 const fingerprint = (pem: Buffer): string => new X509Certificate(pem).fingerprint256;
@@ -71,6 +75,9 @@ export class FakeDevice {
   readonly dirs = new Set<string>();
   readonly afcOps: string[] = [];
   maxAfcWrite = 0;
+  /** installd: PackagePaths given to Install, and the apps it registered. */
+  readonly installs: string[] = [];
+  readonly apps: Record<string, PlistDict> = {};
   private servers: net.Server[] = [];
   private sockets = new Set<net.Socket>();
   private heartbeatTimers: NodeJS.Timeout[] = [];
@@ -204,6 +211,9 @@ export class FakeDevice {
   private handlerFor(service: string): ServiceHandler | undefined {
     if (this.opts.services?.[service]) return this.gate(this.opts.services[service]!);
     if (service === "com.apple.mobile.heartbeat") return (s) => this.serveHeartbeat(s);
+    if (service === "com.apple.mobile.installation_proxy") {
+      return this.gate((s) => void this.serveInstallProxy(s).catch(() => s.destroy()));
+    }
     if (service === "com.apple.afc") return this.gate((s) => void this.serveAfc(s).catch(() => s.destroy()));
     return undefined;
   }
@@ -294,6 +304,39 @@ export class FakeDevice {
         }
         default:
           status(15);
+      }
+    }
+  }
+
+  private async serveInstallProxy(sock: Duplex): Promise<void> {
+    const ch = new PlistChannel(sock, "fake installd");
+    for (;;) {
+      const req = await ch.recv();
+      if (req.Command === "Install") {
+        const path = String(req.PackagePath);
+        this.installs.push(path);
+        if (this.opts.installError) {
+          await ch.send({ Status: "VerifyingApplication", PercentComplete: 40 });
+          await ch.send(this.opts.installError);
+          continue;
+        }
+        if (!this.files.has(path)) {
+          await ch.send({ Error: "PackageInspectionFailed", ErrorDescription: `no package at ${path}` });
+          continue;
+        }
+        for (const [status, pct] of [["CreatingStagingDirectory", 5], ["ExtractingPackage", 15], ["VerifyingApplication", 40], ["GeneratingApplicationMap", 90]] as const) {
+          await ch.send({ Status: status, PercentComplete: pct });
+        }
+        const id = this.opts.bundleId ?? "com.example.app";
+        this.apps[id] = { CFBundleIdentifier: id, CFBundleShortVersionString: "1.0.0", CFBundleVersion: "1" };
+        await ch.send({ Status: "Complete" });
+      } else if (req.Command === "Lookup") {
+        const ids = ((req.ClientOptions as PlistDict | undefined)?.BundleIDs as string[] | undefined) ?? Object.keys(this.apps);
+        const result: PlistDict = {};
+        for (const id of ids) if (this.apps[id]) result[id] = this.apps[id]!;
+        await ch.send({ LookupResult: result, Status: "Complete" });
+      } else {
+        await ch.send({ Error: "UnknownCommand" });
       }
     }
   }
