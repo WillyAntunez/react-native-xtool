@@ -10,7 +10,9 @@ import { join } from "node:path";
 import type { Duplex } from "node:stream";
 import tls from "node:tls";
 import { X509Certificate } from "node:crypto";
+import { AFC_HEADER_SIZE, AfcOp, afcPacket, decodeAfcHeader, u64 } from "../../src/device/afc.js";
 import { PlistChannel, type PlistDict } from "../../src/device/plistio.js";
+import { ByteReader } from "../../src/device/stream.js";
 import type { PairRecord } from "../../src/device/pairRecord.js";
 
 const FIX = join(import.meta.dirname, "..", "fixtures", "device");
@@ -48,6 +50,10 @@ export interface FakeDeviceOptions {
   services?: Record<string, ServiceHandler>;
   /** Accept the TCP connection but never answer (asleep phone). */
   silent?: boolean;
+  /** AFC: kill the connection when this write (1-based) arrives, like a Wi‑Fi drop. */
+  afcDropOnWrite?: number;
+  /** AFC: answer FileWrite with this status (e.g. 18 NoSpaceLeft). */
+  afcWriteStatus?: number;
 }
 
 const fingerprint = (pem: Buffer): string => new X509Certificate(pem).fingerprint256;
@@ -60,6 +66,11 @@ export class FakeDevice {
   readonly requests: string[] = [];
   readonly values: Record<string, PlistDict>;
   readonly udid: string;
+  /** AFC filesystem: closed files by path. */
+  readonly files = new Map<string, Buffer>();
+  readonly dirs = new Set<string>();
+  readonly afcOps: string[] = [];
+  maxAfcWrite = 0;
   private servers: net.Server[] = [];
   private sockets = new Set<net.Socket>();
   private heartbeatTimers: NodeJS.Timeout[] = [];
@@ -193,6 +204,7 @@ export class FakeDevice {
   private handlerFor(service: string): ServiceHandler | undefined {
     if (this.opts.services?.[service]) return this.gate(this.opts.services[service]!);
     if (service === "com.apple.mobile.heartbeat") return (s) => this.serveHeartbeat(s);
+    if (service === "com.apple.afc") return this.gate((s) => void this.serveAfc(s).catch(() => s.destroy()));
     return undefined;
   }
 
@@ -227,6 +239,62 @@ export class FakeDevice {
       this.polos++;
       this.heartbeatActive = true;
       await new Promise<void>((r) => this.heartbeatTimers.push(setTimeout(r, interval * 1000)));
+    }
+  }
+
+  private async serveAfc(sock: Duplex): Promise<void> {
+    const r = new ByteReader(sock, "fake afc");
+    const open = new Map<bigint, { path: string; chunks: Buffer[] }>();
+    let nextHandle = 1n;
+    let writes = 0;
+    const cstr = (b: Buffer): string => b.subarray(0, b.indexOf(0)).toString("utf8");
+    for (;;) {
+      const h = decodeAfcHeader(await r.read(AFC_HEADER_SIZE));
+      const rest = await r.read(h.entireLength - AFC_HEADER_SIZE);
+      const args = rest.subarray(0, h.thisLength - AFC_HEADER_SIZE);
+      const data = rest.subarray(h.thisLength - AFC_HEADER_SIZE);
+      const status = (n: number): boolean => sock.write(Buffer.concat(afcPacket(AfcOp.Status, h.packetNum, u64(n))));
+      switch (h.op) {
+        case AfcOp.MakeDir:
+          this.afcOps.push(`MakeDir ${cstr(args)}`);
+          this.dirs.add(cstr(args));
+          status(0);
+          break;
+        case AfcOp.RemovePath: {
+          const path = cstr(args);
+          this.afcOps.push(`RemovePath ${path}`);
+          status(this.files.delete(path) ? 0 : 8);
+          break;
+        }
+        case AfcOp.FileOpen: {
+          const path = cstr(args.subarray(8));
+          this.afcOps.push(`FileOpen ${path} mode ${args.readBigUInt64LE(0)}`);
+          const handle = nextHandle++;
+          open.set(handle, { path, chunks: [] });
+          sock.write(Buffer.concat(afcPacket(AfcOp.FileOpenResult, h.packetNum, u64(handle))));
+          break;
+        }
+        case AfcOp.FileWrite: {
+          writes++;
+          if (this.opts.afcDropOnWrite === writes) {
+            this.dropAll();
+            return;
+          }
+          this.maxAfcWrite = Math.max(this.maxAfcWrite, data.length);
+          open.get(args.readBigUInt64LE(0))!.chunks.push(Buffer.from(data));
+          status(this.opts.afcWriteStatus ?? 0);
+          break;
+        }
+        case AfcOp.FileClose: {
+          const f = open.get(args.readBigUInt64LE(0))!;
+          this.afcOps.push(`FileClose ${f.path}`);
+          this.files.set(f.path, Buffer.concat(f.chunks));
+          status(0);
+          break;
+        }
+        default:
+          status(15);
+      }
     }
   }
 
