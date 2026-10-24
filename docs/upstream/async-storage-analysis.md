@@ -44,16 +44,18 @@ Net: a generic mixed emitter would unblock essentially nothing in the current ap
 - expo-application 58.1.2: spm.config.json = objc target `ExpoApplication_ios_objc` (ios/ExpoApplication/EXProvisioningProfile.{h,m}) + swift target `ExpoApplication` (ApplicationModule.swift, ApplicationExceptions.swift). The single .m is `EXProvisioningProfile`: reads `embedded.mobileprovision` from the main bundle, parses the plist from the CMS blob, exposes `appReleaseType` (simulator/enterprise/dev/adhoc/appstore), `notificationServiceEnvironment`, `expirationDate`. Could be Swift (string search for `<?xml`...`</plist>` + PropertyListSerialization; no ObjC-only API). Upstream-PR candidate but low value since Expo already supports the split.
 
 ## Recommendation
-Do NOT build generic mixed-target support for async-storage: its coupling is ObjC -> Swift (wrong direction for SwiftPM), Expo already ships split manifests for its own mixed modules, and the scan shows ~no other community lib it would unblock. Use instead, in priority order:
-1. `expo-sqlite/kv-store` (drop-in import swap; already SPM-supported in SDK 58; one extra vendored sqlite C target to compile).
-2. Pin `@react-native-async-storage/async-storage@2.x` (pure ObjC; scaffoldable; verify with scaffolder, unverified here).
-Optional small scaffolder improvement: change the skip message to detect `*-Swift.h` imports and say "ObjC->Swift coupling: unsupported; use expo-sqlite/kv-store".
+Do NOT build generic mixed-target support for async-storage: its coupling is ObjC -> Swift (wrong direction for SwiftPM), Expo already ships split manifests for its own mixed modules, and the scan shows ~no other community lib it would unblock.
+
+Current status:
+1. `expo-sqlite/kv-store` is refused for now: expo-sqlite has vendored sources (the sqlite C target), which are not accepted in this setup.
+2. Interim: pin `@react-native-async-storage/async-storage@2.x` (pure ObjC; scaffoldable by the patched scaffolder).
+Optional small scaffolder improvement: change the skip message to detect `*-Swift.h` imports and say "ObjC->Swift coupling: unsupported; pin async-storage 2.x".
 
 ## Effort
 - Generic Swift->Clang split emitter (per-file source partition, two targets, include shims, one product, tests): ~2-3 days, benefit currently ~0 libs.
 - Plus `.binaryTarget` for static vendored xcframeworks from `vendored_frameworks` (platform-scoped parsing needed): +0.5-1 day.
 - Making async-storage v3 itself build: needs a library fork (move bridge to Swift) or unsafeFlags hack; not recommended (>1 week with maintenance cost).
-- kv-store swap in the app: hours (plus a build check of expo-sqlite via the Expo plugin).
+- kv-store swap in the app: not pursued (expo-sqlite refused, see Recommendation).
 
 ## Unblock list (generic mixed emission)
 Realistically none of the current libs. Candidates only: react-native-compressor (Swift+1 oc, direction unverified), @stripe/stripe-react-native (probably bidirectional). async-storage v3: NOT unblocked (ObjC->Swift).

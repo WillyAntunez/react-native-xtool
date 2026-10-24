@@ -172,7 +172,10 @@ Swift does not reference their own Objective-C, or keep refusing.
 ## Limits
 
 - **Swift 6.5**: SE-0541 drops the `experimentalMultiLang` suffix. The manifest should then be emitted with
-  `// swift-tools-version: 6.5` (or a `Package@swift-6.5.swift` beside it). Not done: no 6.5 toolchain here.
+  `// swift-tools-version: 6.5` (or a `Package@swift-6.5.swift` beside it). The `Package@swift-6.5.swift` form is
+  emitted but unverified.
+  **Deferred:** Swift 6.5 behaviour of mixed manifests (possible double import via `-import-objc-header` plus
+  the SE-0541 underlying module) is unverified; needs a 6.5 toolchain.
 - **Swift header path**: outside expo-xtool, `RN_SPM_SWIFT_HEADERS_DIR` is unset and the fallback points into
   the generated package's own `.build`, which is wrong for an app build; an Objective-C file importing
   `<Pod>-Swift.h` then fails with "file not found". Upstream, the plugin could pass the path the build will use.

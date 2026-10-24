@@ -341,6 +341,8 @@ Fix: when a library mixes languages, emit one mixed-language target instead of s
   experimental flag. SwiftPM 6.5+ picks the versioned manifest (6.5 does not read `experimentalMultiLang`),
   6.4 ignores it. The scaffolder never takes it as a source and removes its own copy when a library stops
   being mixed. Untested on a 6.5 toolchain (none installed here): it still carries the 6.4 unsafe flags.
+  **Deferred:** Swift 6.5 behaviour of mixed manifests (possible double import via `-import-objc-header` plus
+  the SE-0541 underlying module) is unverified; needs a 6.5 toolchain.
 - `sources` lists both the Swift and the C-family files; `publicHeadersPath`, the `include/` shims and the
   header search paths are computed as before.
 - **Swift → Objective-C.** SwiftPM 6.4.x does not give Swift the target's own headers (6.5 does, via the
