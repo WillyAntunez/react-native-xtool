@@ -90,6 +90,9 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
     it("scaffold-package-swift.js has the bare React header hunk", () => {
       expect(src("scaffold-package-swift.js")).toContain("function bareReactHeaders");
     });
+    it("scaffold-package-swift.js has the pod→SwiftPM map hunk", () => {
+      expect(src("scaffold-package-swift.js")).toContain("const KNOWN_POD_SPM_PACKAGES");
+    });
     it("spm-utils.js has the header-less ReactAppHeaders module map hunk", () => {
       expect(src("spm-utils.js")).toContain("module ReactAppHeaders {");
     });
@@ -922,6 +925,69 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       ).translatePodspecToSpmTarget(model, dep);
       expect(none.reactBareHeaders).toEqual([]);
       expect(none.headerSearchPaths).not.toContain("rn-spm-react-headers");
+    });
+  });
+
+  describe("CocoaPods dependencies mapped to SwiftPM packages", () => {
+    type ExtSpec = Spec & { externalPackages: { pod: string; url: string; from: string; product: string; package: string }[] };
+    function lib(deps: string): string {
+      const root = tempDir();
+      mkdirSync(path.join(root, "ios"), { recursive: true });
+      writeFileSync(path.join(root, "ios/Foo.h"), "#import <Foundation/Foundation.h>\n");
+      writeFileSync(path.join(root, "ios/Foo.m"), '#import "Foo.h"\n');
+      writeFileSync(
+        path.join(root, "Foo.podspec"),
+        `Pod::Spec.new do |s|\n  s.name = "Foo"\n  s.source_files = "ios/**/*.{h,m}"\n${deps}\nend\n`,
+      );
+      return root;
+    }
+    const translate = (root: string) =>
+      load<{ translatePodspecToSpmTarget(...a: unknown[]): ExtSpec }>("scaffold-package-swift.js").translatePodspecToSpmTarget(
+        load<ReadPodspec>("read-podspec.js").readPodspecCached(path.join(root, "Foo.podspec")),
+        { name: "foo", root, swiftName: "Foo", platforms: { ios: {} } },
+      );
+    const UNMAPPED = (pod: string) =>
+      `Dependency "${pod}" is a CocoaPods pod with no known SwiftPM equivalent; the scaffolded package may fail to build — add it to the pod→SwiftPM map in scaffold-package-swift.js`;
+
+    it("maps SwiftUIIntrospect (react-native-pager-view's `~> 1.0`) to its SwiftPM package", () => {
+      const spec = translate(lib(`  s.dependency "SwiftUIIntrospect", '~> 1.0'`));
+      expect(spec.externalPackages).toEqual([
+        {
+          pod: "SwiftUIIntrospect",
+          url: "https://github.com/siteline/swiftui-introspect",
+          from: "1.0.0",
+          product: "SwiftUIIntrospect",
+          package: "swiftui-introspect",
+        },
+      ]);
+      expect(spec.warnings.filter((w) => w.includes("SwiftUIIntrospect"))).toEqual([]);
+    });
+
+    it("emits the .package(url:from:) and the .product dependency", () => {
+      const root = lib(`  s.dependency "SwiftUIIntrospect", '~> 1.0'`);
+      const dep = { name: "foo", root, swiftName: "Foo", swiftNameSource: "podspec", platforms: { ios: { podspecPath: path.join(root, "Foo.podspec") } } };
+      const ctx = { appRoot: root, projectRoot: root, reactNativeRoot: root, force: true, dryRun: false, cacheSlotLabel: null, remote: null };
+      const res = load<{ scaffoldPackageSwiftForDep(d: object, c: object): { status: string } }>(
+        "scaffold-package-swift.js",
+      ).scaffoldPackageSwiftForDep(dep, ctx);
+      expect(res.status).toBe("written");
+      const pkg = readFileSync(path.join(root, "Package.swift"), "utf8");
+      expect(pkg).toContain('.package(url: "https://github.com/siteline/swiftui-introspect", from: "1.0.0")');
+      expect(pkg).toContain('.product(name: "SwiftUIIntrospect", package: "swiftui-introspect")');
+    });
+
+    it("warns loudly about an unmapped external pod, once per pod (subspecs included)", () => {
+      const spec = translate(lib(`  s.dependency "MMKV", '>= 1.3'\n  s.dependency "Firebase/Core"\n  s.dependency "Firebase/Messaging"`));
+      expect(spec.externalPackages).toEqual([]);
+      expect(spec.warnings).toContain(UNMAPPED("MMKV"));
+      expect(spec.warnings.filter((w) => w === UNMAPPED("Firebase"))).toHaveLength(1);
+    });
+
+    it("does not call an Expo module a CocoaPods pod", () => {
+      const spec = translate(lib(`  s.dependency "ExpoModulesCore"`));
+      expect(spec.externalPackages).toEqual([]);
+      expect(spec.warnings.some((w) => w.includes("no known SwiftPM equivalent"))).toBe(false);
+      expect(spec.warnings.some((w) => w.includes('"ExpoModulesCore"'))).toBe(true);
     });
   });
 });

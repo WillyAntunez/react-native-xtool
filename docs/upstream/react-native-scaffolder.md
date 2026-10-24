@@ -401,7 +401,7 @@ it for the `rn-spm` runs and for `xtool dev build` / `dev run`). Verified on fix
 directions and the circular case (compiled with Swift 6.4.1 and the swiftbuild backend for
 `arm64-apple-ios16.4`; the products hold both the Objective-C and the Swift classes) and on
 react-native-pager-view 9.0.7 in the reference app (direction B: builds and links; it also needed fix 11
-and a hand-wired SwiftUIIntrospect package, see `docs/libraries.md`).
+and the SwiftUIIntrospect package, wired by fix 13; see `docs/libraries.md`).
 
 ## 11. `scripts/spm/scaffold-package-swift.js`: bare imports of React headers do not resolve
 
@@ -440,6 +440,24 @@ textually by every consumer, as CocoaPods' header search paths include them. Ver
 set only (screens, gesture-handler, svg, webview, datetimepicker, pager-view, reanimated/worklets, the Expo
 modules and the dev client). A library that does `@import ReactAppHeaders;`, or whose codegen header is not
 include-guarded, would break; none in that set does.
+
+## 13. `scripts/spm/scaffold-package-swift.js`: CocoaPods pod dependencies are dropped
+
+A podspec `s.dependency "X"` that names neither a React Native / Expo module nor an autolinked sibling is a
+CocoaPods pod (react-native-pager-view 9.x: `s.dependency "SwiftUIIntrospect", '~> 1.0'`). The scaffolder
+dropped it with "Unknown dependency ... Edit manually if needed", so the scaffolded package failed with
+`unable to resolve module dependency: 'SwiftUIIntrospect'` and had to be edited by hand.
+
+Fix: a small built-in map `KNOWN_POD_SPM_PACKAGES` (pod → `{ url, from, product }`) turns a known pod into
+`.package(url: "<url>", from: "<from>")` + `.product(name: "<product>", package: "<identity>")` (identity =
+the URL's last path component). Today it holds one entry,
+`SwiftUIIntrospect → https://github.com/siteline/swiftui-introspect from "1.0.0"` (CocoaPods `~> 1.0` is
+SwiftPM's up-to-next-major from 1.0.0). An unmapped pod gets one warning per pod (subspecs collapse to the
+root pod): `Dependency "<pod>" is a CocoaPods pod with no known SwiftPM equivalent; the scaffolded package
+may fail to build — add it to the pod→SwiftPM map in scaffold-package-swift.js`. Expo-named pods
+(`expo-*`, `Expo*`, `EX*`) keep the old "Unknown dependency" warning. A remote package makes the first build
+of a clean `.build` need network (SwiftPM clones it). Verified on react-native-pager-view 9.0.7: re-scaffolded
+from scratch, it builds with no hand edit.
 
 ## Known limitation (deferred): pure-Swift packages importing a mixed Expo module
 

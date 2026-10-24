@@ -92,10 +92,10 @@ must be CommonJS (`module.exports = {...}`) unless your project is ESM. Both are
      meta pods (no sources) and placeholder files; links generated packages to their podspec `dependency` pods; excludes
      resources only Xcode's tools compile (asset catalogs, storyboards); refuses modules built from vendored C sources
      such as expo-sqlite ([docs/upstream/expo-spm-plugin-mixed-modules.md](docs/upstream/expo-spm-plugin-mixed-modules.md)).
-   - **React Native** (`patches/react-native+0.88.0.patch`, about 1.6k lines across 3 files under
-     `react-native/scripts/spm/`: `read-podspec.js`, `scaffold-package-swift.js`, `spm-utils.js`): 11 generic fixes
+   - **React Native** (`patches/react-native+0.88.0.patch`, about 1.7k lines across 3 files under
+     `react-native/scripts/spm/`: `read-podspec.js`, `scaffold-package-swift.js`, `spm-utils.js`): 12 generic fixes
      to the `spm scaffold` podspec reader and `Package.swift` generator, including mixed Swift + Objective-C/C++
-     targets, plus one to the per-app header farm
+     targets and known CocoaPods dependencies mapped to SwiftPM packages, plus one to the per-app header farm
      ([docs/upstream/react-native-scaffolder.md](docs/upstream/react-native-scaffolder.md)).
 2. Runs React Native 0.88's SwiftPM pipeline and Expo's SPM plugin, with Linux shims for `plutil` and `otool`.
 3. Builds ExpoModulesJSI with the Darwin SDK and stages the runtime frameworks.
