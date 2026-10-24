@@ -11,6 +11,10 @@ export interface BuildState {
   depsFingerprint?: string;
   /** depsFingerprint of the build that `install` last put on the device. */
   installedFingerprint?: string;
+  /** Last address the iPhone answered on over Wi‑Fi (`install --network`). */
+  deviceIp?: string;
+  /** UDID of the iPhone last installed over Wi‑Fi. */
+  deviceUdid?: string;
 }
 
 const STATE_FILE = ".expo-xtool-state.json";
@@ -39,4 +43,13 @@ export async function readState(iosXtoolDir: string): Promise<BuildState | undef
     throw new Error(`Unsupported state version ${String(parsed.version)} in ${file}; expected 1. Run expo-xtool build.`);
   }
   return parsed as BuildState;
+}
+
+/** Records where the iPhone answered over Wi‑Fi; a no-op before the first build. */
+export async function rememberDevice(
+  iosXtoolDir: string,
+  device: { deviceIp: string; deviceUdid: string },
+): Promise<void> {
+  const state = await readState(iosXtoolDir);
+  if (state) await writeState(iosXtoolDir, { ...state, ...device });
 }

@@ -169,6 +169,8 @@ export async function build(
     lanIp,
     bundleIdentifier: project.bundleIdentifier,
     builtAt: new Date().toISOString(),
+    ...(previousState?.deviceIp && { deviceIp: previousState.deviceIp }),
+    ...(previousState?.deviceUdid && { deviceUdid: previousState.deviceUdid }),
   };
   await step("generate", async () => {
     await d.writeIosXtool({ project, paths, frameworks, metroPort, lanIp });

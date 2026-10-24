@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { readState, writeState } from "../src/state.js";
+import { readState, rememberDevice, writeState } from "../src/state.js";
 
 const state = {
   version: 1 as const,
@@ -38,5 +38,16 @@ describe("state", () => {
     const dir = mkdtempSync(join(tmpdir(), "state-"));
     writeFileSync(join(dir, ".expo-xtool-state.json"), JSON.stringify({ ...state, version: 2 }));
     await expect(readState(dir)).rejects.toThrow("version");
+  });
+  it("remembers the Wi‑Fi device without touching the rest", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "state-"));
+    await writeState(dir, state);
+    await rememberDevice(dir, { deviceIp: "192.168.1.10", deviceUdid: "U" });
+    expect(await readState(dir)).toEqual({ ...state, deviceIp: "192.168.1.10", deviceUdid: "U" });
+  });
+  it("does nothing to remember without a build", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "state-"));
+    await rememberDevice(dir, { deviceIp: "192.168.1.10", deviceUdid: "U" });
+    expect(await readState(dir)).toBeUndefined();
   });
 });
