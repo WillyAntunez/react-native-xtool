@@ -44,7 +44,8 @@
     "build": "tsc -p .",
     "prepare": "tsc -p .",
     "test": "vitest run",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "scan:private": "bash scripts/scan-private.sh"
   },
   "dependencies": {
     "@expo/config": "^58.0.7",

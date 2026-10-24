@@ -22,7 +22,7 @@ que esto es viable sin reimplementar CocoaPods.
 - Dos comandos: `expo-xtool setup` (una vez por máquina) y `expo-xtool run` (build + firma +
   instalación + Metro). Todo lo demás son subcomandos de apoyo.
 - Soportar el conjunto de librerías que usan las apps de referencia (ver "Librerías objetivo").
-- Éxito del paso 1: una app nueva en SDK 58 con esas librerías corre en el iPhone de Willy con
+- Éxito del paso 1: una app nueva en SDK 58 con esas librerías corre en el the test iPhone con
   Fast Refresh, instalada desde Ubuntu.
 
 ## No objetivos (paso 1)
