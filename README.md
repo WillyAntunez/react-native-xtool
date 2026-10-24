@@ -183,7 +183,9 @@ pair record, and its UDID is read only inside that session, so nothing is upload
 It remembers the iPhone's address and UDID in `ios-xtool/.expo-xtool-state.json`; without an IP it tries that address
 first and otherwise scans your /24 for port 62078. The scan only runs from a private, non-VPN address (the
 configured `lanIp`, or your default route); otherwise pass the IP. If the remembered iPhone is gone and exactly one
-other paired iPhone answers, that one is used (and remembered); with several, pass `--udid`. A 139 MB app takes
+other paired iPhone answers, that one is used (and remembered); with several, pass `--udid`. The lockdown protocol
+sends the pairing's `HostID`/`SystemBUID` (identifiers, not secrets) in clear before TLS, so a scan shows them to every
+host answering on port 62078 in that /24; on networks you do not trust (hotspots, shared Wi‑Fi), pass the IP. A 139 MB app takes
 about a minute. Debugging and `launch` over the network are not supported: open the app by hand.
 
 Pair records are read from usbmuxd (it keeps them in `/var/lib/lockdown`, also with the cable unplugged) and cached

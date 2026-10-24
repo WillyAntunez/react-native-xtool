@@ -152,6 +152,8 @@ export interface LocateOptions {
   paired: (udid: string) => Promise<boolean>;
   identify?: (ip: string) => Promise<string>;
   scan?: (lanIp: string) => Promise<string[]>;
+  /** Why the LAN must not be scanned: thrown (after any lastIp attempt) instead of scanning. */
+  scanRefusal?: string;
   log?: (s: string) => void;
 }
 
@@ -189,17 +191,23 @@ export async function locateDevice(o: LocateOptions): Promise<Located> {
     return { ip: o.explicitIp, udid, scanned: false };
   }
   if (o.lastIp) {
+    let why: string;
     try {
       const udid = await ident(o.lastIp);
       // A wanted --udid is returned even unpaired: loading its pair record then explains the fix.
       if (o.udid ? isStrict(udid) : (!o.preferredUdid || isPreferred(udid)) && (await o.paired(udid))) {
         return { ip: o.lastIp, udid, scanned: false };
       }
-      log(`iPhone ${udid} answers at ${o.lastIp}, not the one expected; scanning ${subnet24(o.lanIp)}…`);
+      why = `iPhone ${udid} answers at ${o.lastIp}, not the one expected`;
     } catch (e) {
-      log(`iPhone not at ${o.lastIp} (${message(e)}); scanning ${subnet24(o.lanIp)}…`);
+      // Asleep at its usual address: let the caller's retry wait for it even if we may not scan.
+      if (o.scanRefusal && isUnreachable(e)) throw e;
+      why = `iPhone not at ${o.lastIp} (${message(e)})`;
     }
+    if (o.scanRefusal) throw new Error(`${why}. ${o.scanRefusal}`);
+    log(`${why}; scanning ${subnet24(o.lanIp)}…`);
   } else {
+    if (o.scanRefusal) throw new Error(o.scanRefusal);
     log(`Looking for the iPhone on ${subnet24(o.lanIp)}…`);
   }
   const answered: { ip: string; udid: string }[] = [];

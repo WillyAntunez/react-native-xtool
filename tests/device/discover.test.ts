@@ -212,6 +212,30 @@ describe("locateDevice", () => {
     expect(err).toBeInstanceOf(OtherIPhonesError);
     expect((err as Error).message).toContain("but not iPhone WANTED");
   });
+  it("does not announce a scan it is not allowed to run", async () => {
+    const logs: string[] = [];
+    const scan = vi.fn();
+    const err = await locateDevice({
+      lastIp: "10.0.0.5",
+      lanIp: "10.0.0.2",
+      preferredUdid: UDID,
+      paired,
+      identify: async () => "00008030-0000000000000009",
+      scan,
+      scanRefusal: "Not scanning the network for the iPhone: VPN.",
+      log: (s) => logs.push(s),
+    }).catch((e: unknown) => e);
+    expect((err as Error).message).toBe(
+      "iPhone 00008030-0000000000000009 answers at 10.0.0.5, not the one expected. Not scanning the network for the iPhone: VPN.",
+    );
+    expect(logs.some((l) => l.includes("scanning"))).toBe(false);
+    expect(scan).not.toHaveBeenCalled();
+  });
+  it("keeps an asleep remembered iPhone retryable when the scan is refused", async () => {
+    await expect(
+      locateDevice({ lastIp: "10.0.0.5", lanIp: "10.0.0.2", paired, identify: unreachable, scanRefusal: "no scan" }),
+    ).rejects.toBeInstanceOf(DeviceUnreachableError);
+  });
   it("asks for --udid when several paired iPhones answer", async () => {
     await expect(
       locateDevice({

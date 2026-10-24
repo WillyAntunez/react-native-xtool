@@ -121,6 +121,15 @@ describe("installOverWifi", () => {
     });
   }
 
+  it("says the install completed when only the Lookup afterwards fails", async () => {
+    const { VerifyFailedError } = await import("../../src/device/wifiInstall.js");
+    const err = await run({ lookupDrop: true }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(VerifyFailedError);
+    expect((err as Error).message).toContain("reported the install as complete");
+    expect((err as Error).message).not.toContain("while it was installing");
+    expect(dev!.installs).toHaveLength(1);
+  });
+
   it("fails when the pairing is not accepted", async () => {
     await expect(run({ hostId: "SOMEONE-ELSE" })).rejects.toThrow("no longer trusts this computer");
   });

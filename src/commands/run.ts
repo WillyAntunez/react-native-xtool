@@ -1,6 +1,8 @@
 import { existsSync } from "node:fs";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
 import { depsFingerprint } from "../deps.js";
+import { listUsbDevices } from "../device/usbmux.js";
+import { sameUdid } from "../device/udid.js";
 import { detectLanIp, isMetroRunning, isPortFree } from "../net.js";
 import { projectPaths } from "../paths.js";
 import { readState, type BuildState } from "../state.js";
@@ -19,6 +21,8 @@ export interface RunDeps {
   isPortFree: (port: number) => Promise<boolean>;
   isMetroRunning: (port: number) => Promise<boolean>;
   detectLanIp: () => Promise<string>;
+  /** UDIDs of iPhones connected over USB now (empty when none or usbmuxd is down). */
+  usbUdids: () => Promise<string[]>;
   log: (s: string) => void;
 }
 
@@ -33,6 +37,7 @@ const realDeps: RunDeps = {
   isPortFree: (p) => isPortFree(p),
   isMetroRunning: (p) => isMetroRunning(p),
   detectLanIp: () => detectLanIp(),
+  usbUdids: async () => (await listUsbDevices().catch(() => [])).map((d) => d.udid),
   log: (s) => console.log(s),
 };
 
@@ -43,7 +48,7 @@ export async function run(
 ): Promise<void> {
   const d: RunDeps = { ...realDeps, ...overrides };
   let rebuilt = true;
-  if (opts.force !== true && opts.clean !== true && (await upToDate(root, d))) {
+  if (opts.force !== true && opts.clean !== true && (await upToDate(root, d, opts))) {
     rebuilt = false;
     d.log("Native app is up to date (no dependency changes); skipping build and install.");
   } else {
@@ -56,12 +61,15 @@ export async function run(
 }
 
 /** Up to date = built and installed for the current dependencies, and `start` would accept the baked port and IP. */
-async function upToDate(root: string, d: RunDeps): Promise<boolean> {
+async function upToDate(root: string, d: RunDeps, opts: InstallOptions): Promise<boolean> {
   const paths = projectPaths(root);
   const state = await d.readState(paths.iosXtool).catch(() => undefined);
   if (!state?.depsFingerprint || !d.exists(paths.appBundle)) return false;
   const current = await d.depsFingerprint(root);
   if (state.depsFingerprint !== current || state.installedFingerprint !== current) return false;
+  // Installed, but on which iPhone? Another target counts as not installed.
+  const target = opts.network ? (opts.udid ?? state.deviceUdid) : (await d.usbUdids())[0];
+  if (target && !(state.installedUdid && sameUdid(state.installedUdid, target))) return false;
   try {
     const portFree = await d.isPortFree(state.metroPort);
     const metroRunning = portFree ? false : await d.isMetroRunning(state.metroPort);

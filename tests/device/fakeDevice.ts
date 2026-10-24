@@ -82,6 +82,8 @@ export interface FakeDeviceOptions {
   heartbeatDropOnWrite?: number;
   /** installd: after the first progress message, the heartbeat announces SleepyTime. */
   installSleepy?: boolean;
+  /** installd: the iPhone drops off the network when Lookup arrives (after a successful Install). */
+  lookupDrop?: boolean;
 }
 
 const fingerprint = (pem: Buffer): string => new X509Certificate(pem).fingerprint256;
@@ -389,6 +391,10 @@ export class FakeDevice {
         this.apps[id] = { CFBundleIdentifier: id, CFBundleShortVersionString: "1.0.0", CFBundleVersion: "1" };
         await ch.send({ Status: "Complete" });
       } else if (req.Command === "Lookup") {
+        if (this.opts.lookupDrop) {
+          this.dropAll();
+          return;
+        }
         const ids = ((req.ClientOptions as PlistDict | undefined)?.BundleIDs as string[] | undefined) ?? Object.keys(this.apps);
         const result: PlistDict = {};
         for (const id of ids) if (this.apps[id]) result[id] = this.apps[id]!;

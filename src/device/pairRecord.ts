@@ -1,4 +1,5 @@
 import { chmod, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { createPrivateKey, X509Certificate } from "node:crypto";
 import { join } from "node:path";
 import { cacheDir } from "../paths.js";
 import { decodePlist, type PlistValue } from "./plistio.js";
@@ -50,6 +51,18 @@ export function parsePairRecord(bytes: Buffer, source: string): PairRecord {
   };
   const root = asBuffer(dict.RootCertificate);
   const escrow = asBuffer(dict.EscrowBag);
+  // Unreadable credentials fail here, before anything (HostID included) is sent to a device.
+  const unreadable = (name: string, check: () => unknown): void => {
+    try {
+      check();
+    } catch (e) {
+      throw new Error(`${source} has an unreadable ${name}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+  unreadable("HostCertificate", () => new X509Certificate(cert!));
+  unreadable("HostPrivateKey", () => createPrivateKey(key!));
+  unreadable("DeviceCertificate", () => new X509Certificate(device!));
+  if (root) unreadable("RootCertificate", () => new X509Certificate(root));
   if (root) record.RootCertificate = root;
   if (escrow) record.EscrowBag = escrow;
   if (typeof dict.WiFiMACAddress === "string") record.WiFiMACAddress = dict.WiFiMACAddress;

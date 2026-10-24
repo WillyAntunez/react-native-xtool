@@ -28,6 +28,17 @@ export class InstallInterruptedError extends Error {
   }
 }
 
+/** installd reported Complete, but confirming it with Lookup failed. */
+export class VerifyFailedError extends Error {
+  constructor(readonly reason: unknown) {
+    super(
+      `installd reported the install as complete, but checking it afterwards failed (${message(reason)}). ` +
+        "Open the app on the iPhone to confirm; run the install again only if it is missing or old.",
+    );
+    this.name = "VerifyFailedError";
+  }
+}
+
 /** The connection died while the .ipa was being staged; worth one more try. */
 export class UploadInterruptedError extends Error {
   constructor(readonly reason: unknown) {
@@ -97,15 +108,22 @@ export async function installOverWifi(o: WifiInstallOptions): Promise<WifiInstal
       throw isConnectionFailure(e) ? new UploadInterruptedError(e) : e;
     }
     const t1 = Date.now();
-    let t2 = t1;
 
     const installd = new InstallProxyClient(await hb.guard(lockdown.openService(INSTALL_PROXY_SERVICE)), {
       deadlineMs: o.installDeadlineMs,
     });
-    let apps: Record<string, PlistDict>;
     try {
       await hb.guard(installd.install(remote, o.onInstall));
-      t2 = Date.now();
+    } catch (e) {
+      // Install was sent: whatever happened next, retrying blindly could double-install.
+      throw isConnectionFailure(e) ? new InstallInterruptedError(e) : e;
+    } finally {
+      installd.close();
+    }
+    const t2 = Date.now();
+
+    let apps: Record<string, PlistDict>;
+    try {
       const lookup = new InstallProxyClient(await hb.guard(lockdown.openService(INSTALL_PROXY_SERVICE)));
       try {
         apps = await hb.guard(lookup.lookup([o.bundleId]));
@@ -113,10 +131,7 @@ export async function installOverWifi(o: WifiInstallOptions): Promise<WifiInstal
         lookup.close();
       }
     } catch (e) {
-      // Install was sent: whatever happened next, retrying blindly could double-install.
-      throw isConnectionFailure(e) ? new InstallInterruptedError(e) : e;
-    } finally {
-      installd.close();
+      throw new VerifyFailedError(e);
     }
     const app = apps[o.bundleId];
     if (!app) throw new Error(`installd reported success, but ${o.bundleId} is not installed on the iPhone`);

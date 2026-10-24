@@ -151,7 +151,7 @@ describe("isPrivateIpv4", () => {
 });
 
 describe("looksLikeTunnel", () => {
-  it.each(["tun0", "tap1", "wg0", "tailscale0", "utun3", "ppp0", "zt0abc"])("%s is a tunnel", (dev) => {
+  it.each(["tun0", "tap1", "wg0", "tailscale0", "utun3", "ppp0", "zt0abc", "cscotun0", "gpd0", "nordlynx", "proton0", "vpn0"])("%s is a tunnel", (dev) => {
     expect(looksLikeTunnel(dev)).toBe(true);
   });
   it.each(["eth0", "wlp2s0", "enp4s0", undefined])("%s is not a tunnel", (dev) => {

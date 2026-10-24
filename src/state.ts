@@ -11,6 +11,8 @@ export interface BuildState {
   depsFingerprint?: string;
   /** depsFingerprint of the build that `install` last put on the device. */
   installedFingerprint?: string;
+  /** UDID of the iPhone that `install` last installed on (USB or Wi‑Fi). */
+  installedUdid?: string;
   /** Last address the iPhone answered on over Wi‑Fi (`install --network`). */
   deviceIp?: string;
   /** UDID of the iPhone last installed over Wi‑Fi. */
@@ -51,7 +53,7 @@ export async function readState(iosXtoolDir: string): Promise<BuildState | undef
  */
 export async function rememberDevice(
   iosXtoolDir: string,
-  device: { deviceIp: string; deviceUdid: string; installedFingerprint?: string },
+  device: { deviceIp: string; deviceUdid: string; installedUdid?: string; installedFingerprint?: string },
 ): Promise<void> {
   const state = await readState(iosXtoolDir);
   if (state) await writeState(iosXtoolDir, { ...state, ...device });

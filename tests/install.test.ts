@@ -92,6 +92,7 @@ describe("install", () => {
         listDevices: async () => [{ name: "Phone", udid: "u", transport: "usb" }],
         readState: async () => ({ bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20" }),
         devRun,
+        writeState: async () => {},
       },
       log: (s) => logs.push(s),
     });
@@ -115,7 +116,11 @@ describe("install", () => {
       },
       log: () => {},
     });
-    expect(writeState).toHaveBeenCalledWith(expect.stringContaining("ios-xtool"), { ...st, installedFingerprint: "fp" });
+    expect(writeState).toHaveBeenCalledWith(expect.stringContaining("ios-xtool"), {
+      ...st,
+      installedUdid: "u",
+      installedFingerprint: "fp",
+    });
   });
   it("does not record it when devRun fails", async () => {
     const writeState = vi.fn(async () => {});
@@ -191,7 +196,11 @@ describe("install --network", () => {
       bundleId: "XTL-TEAM.com.a.b",
       pairRecord: record,
     });
-    expect(calls.rememberDevice).toHaveBeenCalledWith(expect.stringMatching(/ios-xtool$/), { deviceIp: "192.168.1.10", deviceUdid: UD });
+    expect(calls.rememberDevice).toHaveBeenCalledWith(expect.stringMatching(/ios-xtool$/), {
+      deviceIp: "192.168.1.10",
+      deviceUdid: UD,
+      installedUdid: UD,
+    });
     const text = logs.join("\n");
     expect(text).toContain("Installed XTL-TEAM.com.a.b 1.0.0 1 on iPhone 00008030-0000000012345678 over Wi‑Fi (192.168.1.10)");
     expect(text).toContain("Metro URL for the dev launcher: http://192.168.1.20:8082");
@@ -204,6 +213,7 @@ describe("install --network", () => {
     expect(calls.rememberDevice).toHaveBeenCalledWith(expect.stringMatching(/ios-xtool$/), {
       deviceIp: "192.168.1.10",
       deviceUdid: UD,
+      installedUdid: UD,
       installedFingerprint: "F1",
     });
   });

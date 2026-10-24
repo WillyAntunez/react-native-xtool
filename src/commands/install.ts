@@ -54,7 +54,7 @@ export interface InstallDeps {
     installOverWifi?: (o: WifiInstallOptions) => Promise<WifiInstallResult>;
     rememberDevice?: (
       iosXtoolDir: string,
-      device: { deviceIp: string; deviceUdid: string; installedFingerprint?: string },
+      device: { deviceIp: string; deviceUdid: string; installedUdid?: string; installedFingerprint?: string },
     ) => Promise<void>;
     sleep?: (ms: number) => Promise<void>;
   };
@@ -147,9 +147,10 @@ export async function install(root: string, deps: InstallDeps = {}, opts: Instal
   const state = await (x.readState ?? readState)(iosXtool).catch(() => undefined);
   if (!state) throw new Error("No build found. Run `expo-xtool build` first.");
   await (x.devRun ?? devRun)(bin, iosXtool);
-  if (state.depsFingerprint !== undefined) {
-    await (x.writeState ?? writeState)(iosXtool, { ...(state as BuildState), installedFingerprint: state.depsFingerprint });
-  }
+  // Which iPhone got this build: `run` must not skip the install for a different one.
+  const installed: Partial<BuildState> = { installedUdid: devices[0]!.udid };
+  if (state.depsFingerprint !== undefined) installed.installedFingerprint = state.depsFingerprint;
+  await (x.writeState ?? writeState)(iosXtool, { ...(state as BuildState), ...installed });
   const id = installedBundleId(auth.teamId, state.bundleIdentifier);
   log(`Installed ${id} on ${devices[0]!.name}`);
   log(`Metro URL for the dev launcher: http://${state.lanIp}:${state.metroPort}`);
@@ -171,13 +172,9 @@ async function installNetwork(root: string, deps: InstallDeps, opts: InstallOpti
     ? { ip: config.lanIp }
     : await (w.lanRoute ?? (() => detectLanRoute()))().catch((): LanRoute => ({}));
   const refusal = scanRefusal(route);
-  const scan = refusal
-    ? async (): Promise<string[]> => {
-        throw new Error(
-          `Not scanning the network for the iPhone: ${refusal}. Pass its IP: \`expo-xtool install --network <ip>\` ` +
-            '(on the iPhone: Settings → Wi‑Fi → ⓘ), or set "lanIp" in expo-xtool.config.json to your Wi‑Fi address.',
-        );
-      }
+  const refusalMessage = refusal
+    ? `Not scanning the network for the iPhone: ${refusal}. Pass its IP: \`expo-xtool install --network <ip>\` ` +
+      '(on the iPhone: Settings → Wi‑Fi → ⓘ), or set "lanIp" in expo-xtool.config.json to your Wi‑Fi address.'
     : undefined;
   const sources: PairRecordSources = {
     override: opts.pairRecord,
@@ -203,7 +200,7 @@ async function installNetwork(root: string, deps: InstallDeps, opts: InstallOpti
       udid: opts.udid,
       preferredUdid: explicitIp ? undefined : state.deviceUdid,
       lanIp: route.ip ?? state.lanIp,
-      ...(scan && { scan }),
+      ...(refusalMessage && { scanRefusal: refusalMessage }),
       paired: (udid) => load(udid, sources).then(() => true, () => false),
       identify: (ip) => identify(ip, { candidates: pairs }),
       log,
@@ -225,6 +222,7 @@ async function installNetwork(root: string, deps: InstallDeps, opts: InstallOpti
   const installed = {
     deviceIp: where.ip,
     deviceUdid: where.udid,
+    installedUdid: where.udid,
     ...(state.depsFingerprint !== undefined && { installedFingerprint: state.depsFingerprint }),
   };
   await (w.rememberDevice ?? rememberDevice)(iosXtool, installed).catch((e: unknown) =>

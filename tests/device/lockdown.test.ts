@@ -57,6 +57,16 @@ describe("parsePairRecord", () => {
     });
     expect(parsePairRecord(Buffer.from(bin), "x").SystemBUID).toBe("B");
   });
+  it("fails on an unreadable certificate before any device is contacted", () => {
+    const xml = plist.build({
+      HostID: "H",
+      SystemBUID: "B",
+      HostCertificate: HOST_CERT,
+      HostPrivateKey: HOST_KEY,
+      DeviceCertificate: Buffer.from("-----BEGIN CERTIFICATE-----\ngarbage\n-----END CERTIFICATE-----\n"),
+    });
+    expect(() => parsePairRecord(Buffer.from(xml), "rec.plist")).toThrow("rec.plist has an unreadable DeviceCertificate");
+  });
   it("names the missing keys", () => {
     expect(() => parsePairRecord(Buffer.from(plist.build({ HostID: "H" })), "rec.plist")).toThrow(
       "rec.plist is not a usable pair record (missing SystemBUID, HostCertificate, HostPrivateKey, DeviceCertificate)",

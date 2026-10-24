@@ -64,3 +64,4 @@ cubierto documentando el emparejamiento único (usbipd-win o copia del registro)
 | Cambio de iPhone (el recordado no responde, otro emparejado sí) | handle: si responde exactamente uno emparejado se usa y se recuerda; si hay varios, error que los nombra y pide `--udid` (sin reintentos) |
 | VPN o ruta no privada (el escaneo sondearía otra red) | handle: no escanear si la ruta no es privada o es un túnel; pedir `--network <ip>` o `lanIp` |
 | Primera instalación por Wi‑Fi (UDID no registrado en Apple) | handle (doc + pista): README pide la primera instalación por USB; `ApplicationVerificationFailed` lo menciona |
+| Escaneo en un hotspot con direcciones privadas: `StartSession` envía `HostID`/`SystemBUID` en claro a los hosts que respondan en 62078 | accept: documentado; el escaneo se limita a una /24 privada sin VPN y el certificado del iPhone se comprueba antes de enviar nada más (sesión y servicios solo por TLS autenticado) |
