@@ -1,4 +1,4 @@
-# React Native SwiftPM scaffolder: five generic fixes (0.88.0)
+# React Native SwiftPM scaffolder: generic fixes (0.88.0)
 
 These bugs make `react-native spm scaffold` emit an invalid or incomplete `Package.swift` for
 CocoaPods-only libraries such as `react-native-gesture-handler`. The fixes live in
@@ -319,6 +319,105 @@ else: `error: argument 'resources' must precede argument 'publicHeadersPath'`. A
 
 Fix: emit `resources` before `publicHeadersPath` (`exclude` stays right after `path`). Verified with
 `swift package dump-package` on the generated manifest.
+
+## 10. `scripts/spm/scaffold-package-swift.js`: mixed-language libraries are skipped although SwiftPM ≥ 6.4 supports mixed targets
+
+`scaffoldPackageSwiftForDep` returned `skipped-mixed-language` for every podspec whose sources mix Swift
+and C-family files ("SPM cannot compile mixed-language sources in one target"), and the autolinker
+(`generate-spm-autolinking.js`, `hasMixedLanguageSources` / `reportMissingManifests`) prints the same claim
+with "opt it out or use an xcframework". That is no longer true: SwiftPM 6.4 builds one target holding
+Swift and C/Objective-C sources behind the tools-version feature
+`// swift-tools-version: 6.4;(experimentalMultiLang)` (swiftbuild backend only), and SE-0541 (accepted,
+implemented on SwiftPM `main`) makes it standard, without the flag, in tools-version 6.5. CocoaPods and
+Xcode compile such a pod as ONE module, which is what react-native-pager-view, async-storage,
+expo-application and others rely on (an `.mm` file imports `<Module>-Swift.h`, Swift uses the pod's
+Objective-C classes, often both).
+
+Fix: when a library mixes languages, emit one mixed-language target instead of skipping it.
+
+- First line `// swift-tools-version: 6.4;(experimentalMultiLang)`; single-language libraries keep
+  `// swift-tools-version: 6.0` and their output is unchanged.
+- `sources` lists both the Swift and the C-family files; `publicHeadersPath`, the `include/` shims and the
+  header search paths are computed as before.
+- **Swift → Objective-C.** SwiftPM 6.4.x does not give Swift the target's own headers (6.5 does, via the
+  `publicHeadersPath` underlying module or `.bridgingHeader`). The scaffolder writes
+  `rn-spm-swift/umbrella.h` (Foundation, UIKit and the module's headers) and passes it with
+  `swiftSettings: [.unsafeFlags(["-import-objc-header", Context.packageDirectory + "/rn-spm-swift/umbrella.h"])]`.
+  The bridging header is parsed as Objective-C, so headers that reach C++ are left out (with a
+  warning): a header is C++ when, after dropping `#if(def) __cplusplus` branches, it has C++ syntax
+  (`namespace … {`, `template <`, `std::`, `class X :`, `<memory>`-style includes) or includes a header
+  that is C++ (looked up in the module's header dirs and in the local React header trees under
+  `build/xcframeworks`); an include that cannot be resolved counts as C++ only under a C++-only root
+  (`react/`, `folly/`, `jsi/`, `yoga/`, …). A podspec that sets `SWIFT_OBJC_BRIDGING_HEADER` in an xcconfig
+  keeps its own header instead.
+- **Objective-C → Swift.** Swift Build writes the generated header, named after the TARGET
+  (`react-native-pager-view-Swift.h`, not the c99 module name `react_native_pager_view`), to
+  `<scratch>/out/Intermediates.noindex/GeneratedModuleMaps-<platform>/`, a flat directory shared by
+  every Swift module of the build (a per-target copy also sits under
+  `<Target>.build/<Config>-<platform>/<Target>-t.build/Objects-normal/<arch>/`). That directory
+  belongs to the ROOT build, not to the library. The manifest reads it from the environment so the
+  persisted (patch-package) manifest holds no absolute path:
+
+  ```swift
+  let rnSpmSwiftHeadersDir = Context.environment["RN_SPM_SWIFT_HEADERS_DIR"]
+      ?? (Context.packageDirectory + "/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos")
+  // cSettings and cxxSettings:
+  .unsafeFlags(["-I", rnSpmSwiftHeadersDir])
+  ```
+
+  The fallback is only right when the package is built on its own; the scaffolder warns when the
+  variable is unset at scaffold time. (`$(GENERATED_MODULEMAP_DIR)` would be the clean spelling, but
+  SwiftPM rejects build-setting macros inside `unsafeFlags`; SE-0541 adds that search path itself.)
+- **Header spellings.** Sources written for CocoaPods spell the header after the pod's module
+  (`module_name`, else `header_dir`, else the pod name, in c99 form): `#import "<PodModule>-Swift.h"` or
+  `#import <PodModule/PodModule-Swift.h>` (use_frameworks). `rn-spm-swift/<PodModule>/<PodModule>-Swift.h`
+  always forwards to `<Target>-Swift.h`, and a flat `rn-spm-swift/<PodModule>-Swift.h` is added when the
+  two names differ (react-native-pager-view: `react_native_pager_view-Swift.h` →
+  `react-native-pager-view-Swift.h`). The forwarders use angle brackets so the lookup skips their own
+  directory. `rn-spm-swift/` is on the header search path and never part of the
+  public headers or the sources.
+- `@import <Module>;` works from OTHER modules (SwiftPM gives every Swift target a module map), but
+  inside the mixed module itself it is a no-op (clang builds that module with `-fmodule-name=<Module>`),
+  exactly as in an Xcode framework target; such sources must use `#import "<Module>-Swift.h"`.
+- **C++ standard.** SwiftPM 6.4's swiftbuild backend does not apply the package's
+  `cxxLanguageStandard: .cxx20` to a mixed target: its `.mm`/`.cpp` files compiled with the clang
+  default and failed on React's C++20 headers (`unknown type name 'concept'`, `no type named 'identity'
+  in namespace 'std'`). Mixed targets get `cxxSettings: .unsafeFlags(["-std=c++20"])`.
+- No `-all_load`: the products stay static/automatic and the app links with `-ObjC`. A `.dynamic`
+  product would hit Swift Build's eager-linking `tapi` step, which does not exist on Linux.
+
+Upstream, the clean version is: emit `Package.swift` with tools-version 6.5, `.bridgingHeader(...)` and
+no unsafe flags, plus a `Package@swift-6.4.swift` with the form above while 6.4 toolchains are
+supported; and drop or reword the "cannot compile mixed-language sources" error in
+`generate-spm-autolinking.js`. Note that `experimentalMultiLang` is gone on SwiftPM `main` and unknown
+features are ignored silently there, so the 6.4 form must not be the only manifest once 6.5 ships.
+
+The autolinker still prints its "has mixed Swift + Objective-C/C++ sources" error for a mixed library
+that has no manifest yet; expo-xtool treats that message like "Package.swift is missing" and runs
+`scaffold`, which now writes the manifest.
+
+Builders must export `RN_SPM_SWIFT_HEADERS_DIR` wherever SwiftPM evaluates the manifest (expo-xtool sets
+it for the `rn-spm` runs and for `xtool dev build` / `dev run`). Verified on fixtures for both
+directions and the circular case (compiled with Swift 6.4.1 and the swiftbuild backend for
+`arm64-apple-ios16.4`; the products hold both the Objective-C and the Swift classes) and on
+react-native-pager-view 9.0.7 in the reference app (direction B: builds and links; it also needed fix 11
+and a hand-wired SwiftUIIntrospect package, see `docs/libraries.md`).
+
+## 11. `scripts/spm/scaffold-package-swift.js`: bare imports of React headers do not resolve
+
+CocoaPods' header map resolves a bare `#import "RCTFoo.h"` against the public headers of the pod's
+dependencies, and create-react-native-library's Fabric template writes exactly that:
+`#import "RCTFabricComponentsPlugins.h"` (react-native-pager-view). Under SwiftPM, React's headers are
+only reachable as `<React/RCTFoo.h>` (the `ReactHeaders` product), so the build fails with
+`'RCTFabricComponentsPlugins.h' file not found`.
+
+Fix: for React Native libraries, the scaffolder scans the C-family sources and headers for bare quoted
+includes that match no header of the library itself but exist as `React/<name>` in the local React
+header trees (`build/xcframeworks/ReactHeadersTarget/include`, `*.xcframework/ios-arm64/Headers`), writes
+a forwarding stub `rn-spm-react-headers/<name>` (`#import <React/<name>>`) and puts that directory on the
+header search path. Libraries without such includes (all the others in our matrix) are unchanged. In
+remote mode the React trees are not local, so nothing is emitted.
+
 
 ## Tests
 
