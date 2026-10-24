@@ -149,7 +149,8 @@ describe("start and dependency changes", () => {
     const { deps, exec, log } = makeDeps({ readState: async () => old });
     await start("/p", {}, deps);
     expect(exec.mock.calls[0]?.[1]).toContain("--clear");
-    expect(log).toHaveBeenCalledWith(expect.stringContaining("Dependencies changed"));
+    expect(log).toHaveBeenCalledWith("⚠ No dependency fingerprint recorded; run expo-xtool build to enable change detection.");
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("Dependencies changed"));
   });
   it("does not clear or warn when equal", async () => {
     const { deps, exec, log } = makeDeps();

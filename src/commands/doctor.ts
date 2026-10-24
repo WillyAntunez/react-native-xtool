@@ -5,6 +5,7 @@ import { detectLanRoute, isPortFree, suspiciousLanRoute, tunnelWarning, type Lan
 import { projectPaths } from "../paths.js";
 import { readExpoProject } from "../project.js";
 import { readState } from "../state.js";
+import { NO_FINGERPRINT_WARNING } from "./start.js";
 import { toolEnv } from "../tools/exec.js";
 import { authStatus, listDevices, defaultXtoolPath, xtoolBin, xtoolUnrunnableError, type AuthStatus, type Device } from "../tools/xtool.js";
 import { XTOOL_VERSION, SWIFT_VERSION } from "../versions.js";
@@ -204,11 +205,12 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
     });
     if ("state" in stateResult && stateResult.state) {
       const { metroPort, depsFingerprint } = stateResult.state;
-      await add("deps", async () =>
-        depsFingerprint !== undefined && depsFingerprint === (await p.depsFingerprint(root))
+      await add("deps", async () => {
+        if (depsFingerprint === undefined) return { status: "warn", detail: NO_FINGERPRINT_WARNING };
+        return depsFingerprint === (await p.depsFingerprint(root))
           ? { status: "ok", detail: "unchanged since last build" }
-          : { status: "warn", detail: "dependencies changed since last build — run expo-xtool build && expo-xtool install" },
-      );
+          : { status: "warn", detail: "dependencies changed since last build — run expo-xtool build && expo-xtool install" };
+      });
       await add("metro-port", async () =>
         (await p.portFree(metroPort))
           ? { status: "ok", detail: `port ${metroPort} is free` }

@@ -244,6 +244,7 @@ describe("deps check", () => {
   it("warns when the state has no fingerprint", async () => {
     const r = await doctorWithProbes({ ...good, buildState: async () => ({ metroPort: 8081, lanIp: "1.2.3.4" }) }, "/p");
     expect(find(r)?.status).toBe("warn");
+    expect(find(r)?.detail).toContain("No dependency fingerprint recorded");
   });
   it("is skipped without a build state", async () => {
     expect(find(await doctorWithProbes({ ...good, buildState: async () => undefined }, "/p"))).toBeUndefined();
