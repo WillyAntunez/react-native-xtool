@@ -101,4 +101,37 @@ describe("install", () => {
     expect(logs[1]).toBe("Metro URL for the dev launcher: http://192.168.1.20:8082");
     expect(logs.join("\n")).toContain("7 days");
   });
+  it("records installedFingerprint after devRun succeeds", async () => {
+    const writeState = vi.fn(async () => {});
+    const st = { version: 1, bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "1.2.3.4", builtAt: "t", depsFingerprint: "fp" };
+    await install("/p", {
+      xtool: {
+        ...base,
+        authStatus: async () => ({ loggedIn: true, teamId: "T" }),
+        listDevices: async () => [{ name: "P", udid: "u", transport: "usb" }],
+        readState: async () => st,
+        devRun: async () => {},
+        writeState,
+      },
+      log: () => {},
+    });
+    expect(writeState).toHaveBeenCalledWith(expect.stringContaining("ios-xtool"), { ...st, installedFingerprint: "fp" });
+  });
+  it("does not record it when devRun fails", async () => {
+    const writeState = vi.fn(async () => {});
+    await expect(
+      install("/p", {
+        xtool: {
+          ...base,
+          authStatus: async () => ({ loggedIn: true, teamId: "T" }),
+          listDevices: async () => [{ name: "P", udid: "u", transport: "usb" }],
+          readState: async () => ({ bundleIdentifier: "a", metroPort: 1, lanIp: "x", depsFingerprint: "fp" }),
+          devRun: async () => { throw new Error("nope"); },
+          writeState,
+        },
+        log: () => {},
+      }),
+    ).rejects.toThrow("nope");
+    expect(writeState).not.toHaveBeenCalled();
+  });
 });

@@ -16,6 +16,7 @@ const state = {
   bundleIdentifier: "com.example.app",
   builtAt: "2026-01-01T00:00:00.000Z",
   depsFingerprint: "fp",
+  installedFingerprint: "fp",
 };
 
 function makeDeps(over: Partial<StartDeps> = {}) {
@@ -175,6 +176,10 @@ describe("run", () => {
       readState: async () => state,
       depsFingerprint: async () => "fp",
       exists: () => true,
+      loadConfig: async () => ({}) as never,
+      isPortFree: async () => true,
+      isMetroRunning: async () => false,
+      detectLanIp: async () => "192.168.1.5",
       log,
       ...over,
     };
@@ -210,6 +215,10 @@ describe("run", () => {
     ["App.app is missing", { exists: () => false }, {}],
     ["no state exists", { readState: async () => undefined }, {}],
     ["state has no fingerprint", { readState: async () => ({ ...state, depsFingerprint: undefined }) }, {}],
+    ["the installed fingerprint differs", { readState: async () => ({ ...state, installedFingerprint: "old" }) }, {}],
+    ["nothing was installed yet", { readState: async () => ({ ...state, installedFingerprint: undefined }) }, {}],
+    ["the LAN IP changed", { detectLanIp: async () => "10.0.0.7" }, {}],
+    ["the baked port is taken by something else", { isPortFree: async () => false }, {}],
     ["--force", {}, { force: true }],
     ["--clean", {}, { clean: true }],
   ])("builds and installs when %s", async (_n, over, opts) => {
@@ -217,6 +226,12 @@ describe("run", () => {
     await runCommand("/p", opts, overrides);
     expect(calls.slice(1)).toEqual(["install", "start"]);
     expect(calls[0]).toMatch(/^build/);
+  });
+
+  it("skips when the baked port is held by Metro", async () => {
+    const { calls, overrides } = fresh({ isPortFree: async () => false, isMetroRunning: async () => true });
+    await runCommand("/p", {}, overrides);
+    expect(calls).toEqual(["start"]);
   });
 
   it("aborts when build rejects", async () => {

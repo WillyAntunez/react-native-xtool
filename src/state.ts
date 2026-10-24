@@ -9,6 +9,8 @@ export interface BuildState {
   builtAt: string;
   /** Hash of the installed dependencies at build time; absent in states written by older versions. */
   depsFingerprint?: string;
+  /** depsFingerprint of the build that `install` last put on the device. */
+  installedFingerprint?: string;
 }
 
 const STATE_FILE = ".expo-xtool-state.json";
