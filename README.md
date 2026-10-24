@@ -23,12 +23,16 @@ Version 0.x, alpha (npm tag `alpha`).
 Linux only: x86_64 is the tested platform, and WSL2 (Ubuntu) on x86_64 is supported as Linux.
 
 ```sh
-# From GitHub (builds on install through the `prepare` script)
-npm i -g github:WillyAntunez/expo-xtool
-
-# From npm (alpha tag), once published
+# 1. From npm (alpha tag), once published
 npx expo-xtool@alpha doctor
 npm i -g expo-xtool@alpha
+
+# 2. From GitHub (builds on install through the `prepare` script)
+npm i -g github:WillyAntunez/expo-xtool
+
+# 3. From a clone, for contributors
+git clone https://github.com/WillyAntunez/expo-xtool && cd expo-xtool
+npm ci && npm run build && npm link
 ```
 
 ## Quick start
