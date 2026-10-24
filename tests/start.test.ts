@@ -165,26 +165,54 @@ describe("start and dependency changes", () => {
 });
 
 describe("run", () => {
-  it("runs build, install, start in order", async () => {
+  const fresh = (over: Partial<Parameters<typeof runCommand>[2]> & object = {}) => {
     const calls: string[] = [];
-    await runCommand(
-      "/p",
-      { clean: true },
-      {
-        build: async (_r, o) => void calls.push(`build:${o.clean}`),
-        install: async () => void calls.push("install"),
-        start: async () => void calls.push("start"),
-      },
-    );
+    const log = vi.fn();
+    const overrides = {
+      build: async (_r: string, o: { clean?: boolean }) => void calls.push(`build:${o.clean}`),
+      install: async () => void calls.push("install"),
+      start: async () => void calls.push("start"),
+      readState: async () => state,
+      depsFingerprint: async () => "fp",
+      exists: () => true,
+      log,
+      ...over,
+    };
+    return { calls, log, overrides };
+  };
+
+  it("runs build, install, start in order", async () => {
+    const { calls, overrides } = fresh({ readState: async () => undefined });
+    await runCommand("/p", { clean: true }, overrides);
     expect(calls).toEqual(["build:true", "install", "start"]);
+  });
+
+  it("skips build and install when up to date", async () => {
+    const { calls, log, overrides } = fresh();
+    await runCommand("/p", {}, overrides);
+    expect(calls).toEqual(["start"]);
+    expect(log).toHaveBeenCalledWith("Native app is up to date (no dependency changes); skipping build and install.");
+  });
+
+  it.each([
+    ["fingerprints differ", { depsFingerprint: async () => "other" }, {}],
+    ["App.app is missing", { exists: () => false }, {}],
+    ["no state exists", { readState: async () => undefined }, {}],
+    ["state has no fingerprint", { readState: async () => ({ ...state, depsFingerprint: undefined }) }, {}],
+    ["--force", {}, { force: true }],
+    ["--clean", {}, { clean: true }],
+  ])("builds and installs when %s", async (_n, over, opts) => {
+    const { calls, overrides } = fresh(over);
+    await runCommand("/p", opts, overrides);
+    expect(calls.slice(1)).toEqual(["install", "start"]);
+    expect(calls[0]).toMatch(/^build/);
   });
 
   it("aborts when build rejects", async () => {
     const install = vi.fn(async () => {});
     const start = vi.fn(async () => {});
-    await expect(
-      runCommand("/p", {}, { build: async () => { throw new Error("boom"); }, install, start }),
-    ).rejects.toThrow("boom");
+    const { overrides } = fresh({ build: async () => { throw new Error("boom"); }, install, start, readState: async () => undefined });
+    await expect(runCommand("/p", {}, overrides)).rejects.toThrow("boom");
     expect(install).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled();
   });

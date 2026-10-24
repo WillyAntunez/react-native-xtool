@@ -66,11 +66,13 @@ export function buildProgram(): Command {
     );
   program
     .command("run")
-    .description("Build, install and start Metro")
-    .option("--clean", "re-run expo prebuild --clean")
+    .description("Build and install when needed, then start Metro")
+    .option("--clean", "re-run expo prebuild --clean (always rebuilds)")
+    .option("--if-needed", "skip build and install when dependencies are unchanged (default)")
+    .option("--force", "always rebuild and reinstall")
     .action(
-      action(async (o: { clean?: boolean }) => {
-        await run(process.cwd(), { clean: o.clean });
+      action(async (o: { clean?: boolean; force?: boolean }) => {
+        await run(process.cwd(), { clean: o.clean, force: o.force });
       }),
     );
   program
