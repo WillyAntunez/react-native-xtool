@@ -38,6 +38,24 @@ export function projectPaths(root: string): ProjectPaths {
   };
 }
 
+/**
+ * Where Swift Build writes every Swift module's generated `<Module>-Swift.h` (with its module map)
+ * for the app build: one flat directory per platform under xtool's scratch path (`ios-xtool/.build`).
+ * Per-target copies also exist under `<Target>.build/.../Objects-normal/arm64/`, but this one is
+ * shared by all modules, so a single `-I` covers any of them.
+ */
+export function swiftHeadersDir(iosXtool: string): string {
+  return join(iosXtool, ".build", "out", "Intermediates.noindex", "GeneratedModuleMaps-iphoneos");
+}
+
+/** Read by the RN scaffolder's mixed Swift + Objective-C manifests (patches/react-native+0.88.0.patch). */
+export const SWIFT_HEADERS_DIR_ENV = "RN_SPM_SWIFT_HEADERS_DIR";
+
+/** Env that lets scaffolded mixed-language manifests find `<Module>-Swift.h`; needed wherever SwiftPM evaluates them. */
+export function swiftHeadersEnv(iosXtool: string): Record<string, string> {
+  return { [SWIFT_HEADERS_DIR_ENV]: swiftHeadersDir(iosXtool) };
+}
+
 export function cacheDir(): string {
   const xdg = process.env.XDG_CACHE_HOME;
   return join(xdg ? xdg : join(homedir(), ".cache"), "expo-xtool");

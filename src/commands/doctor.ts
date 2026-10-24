@@ -7,12 +7,13 @@ import { readState } from "../state.js";
 import { toolEnv } from "../tools/exec.js";
 import { authStatus, listDevices, defaultXtoolPath, xtoolBin, xtoolUnrunnableError, type AuthStatus, type Device } from "../tools/xtool.js";
 import { XTOOL_VERSION, SWIFT_VERSION } from "../versions.js";
-import { isExecutable, sdkBundle, swiftMeetsMin, swiftVersionText } from "./setup.js";
+import { isExecutable, sdkBundle, swiftAtLeast, swiftMeetsMin, swiftVersionText } from "./setup.js";
 import { existsSync } from "node:fs";
 
 export interface DoctorCheck {
   name: string;
-  status: "ok" | "fail" | "warn";
+  /** `info` is a note, never a problem. */
+  status: "ok" | "fail" | "warn" | "info";
   detail: string;
 }
 export interface DoctorReport {
@@ -43,7 +44,7 @@ export interface DoctorProbes {
 
 const PROBE_TIMEOUT_MS = 15_000;
 
-const SYMBOL = { ok: "✔", fail: "✖", warn: "⚠" } as const;
+const SYMBOL = { ok: "✔", fail: "✖", warn: "⚠", info: "ℹ" } as const;
 
 export function renderReport(checks: DoctorCheck[]): string {
   return checks.map((c) => `${SYMBOL[c.status]} ${c.name} — ${c.detail}`).join("\n");
@@ -109,6 +110,15 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
       ? { status: "ok", detail: v }
       : { status: "fail", detail: `${v} (need ${SWIFT_VERSION}+) — run expo-xtool setup` };
   });
+  const swiftCheck = checks.find((c) => c.name === "swift");
+  if (swiftCheck?.status === "ok" && swiftAtLeast(swiftCheck.detail, "6.5")) {
+    checks.push({
+      name: "swift-manifests",
+      status: "info",
+      detail:
+        "Swift 6.5+: mixed Swift + Objective-C packages use the 6.5 manifest form (untested): Package@swift-6.5.swift, SE-0541, no experimentalMultiLang flag",
+    });
+  }
   await add("xtool", async () => {
     if (!p.xtoolInstalled()) return { status: "fail", detail: "not found — run expo-xtool setup" };
     const v = await p.xtoolVersion();

@@ -90,13 +90,15 @@ describe("install", () => {
         ...base,
         authStatus: async () => ({ loggedIn: true, teamId: "TEAM", appleId: "a@b.c" }),
         listDevices: async () => [{ name: "Phone", udid: "u", transport: "usb" }],
-        readState: async () => ({ bundleIdentifier: "com.a.b" }),
+        readState: async () => ({ bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20" }),
         devRun,
       },
       log: (s) => logs.push(s),
     });
     expect(devRun).toHaveBeenCalledOnce();
     expect(logs.join("\n")).toContain("Installed XTL-TEAM.com.a.b on Phone");
+    // Right after the installed-bundle line: what a dev-client user types in the launcher.
+    expect(logs[1]).toBe("Metro URL for the dev launcher: http://192.168.1.20:8082");
     expect(logs.join("\n")).toContain("7 days");
   });
 });

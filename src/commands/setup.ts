@@ -68,11 +68,16 @@ export async function swiftVersionText(timeoutMs?: number): Promise<string | und
   }
 }
 
+/** True when `version` (e.g. "6.4.1") is at least `min` (e.g. "6.5"), compared on major.minor. */
+export function swiftAtLeast(version: string, min: string): boolean {
+  const [major = 0, minor = 0] = version.split(".").map(Number);
+  const [reqMajor = 0, reqMinor = 0] = min.split(".").map(Number);
+  return major > reqMajor || (major === reqMajor && minor >= reqMinor);
+}
+
 /** True when `version` (e.g. "6.4.1") is at least the pinned SWIFT_VERSION. */
 export function swiftMeetsMin(version: string): boolean {
-  const [major = 0, minor = 0] = version.split(".").map(Number);
-  const [reqMajor = 0, reqMinor = 0] = SWIFT_VERSION.split(".").map(Number);
-  return major > reqMajor || (major === reqMajor && minor >= reqMinor);
+  return swiftAtLeast(version, SWIFT_VERSION);
 }
 
 async function swiftOk(): Promise<boolean> {

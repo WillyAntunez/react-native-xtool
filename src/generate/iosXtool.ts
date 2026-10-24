@@ -1,10 +1,11 @@
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import type { RuntimeFramework } from "../frameworks.js";
-import type { ProjectPaths } from "../paths.js";
+import { swiftHeadersDir, type ProjectPaths } from "../paths.js";
 import { transformInfoPlist } from "../plist.js";
 import { buildVars, type ExpoProject } from "../project.js";
 import { IOS_MIN } from "../versions.js";
+import { expoClangImporterInputs } from "./expoImporter.js";
 import { renderPackageSwift } from "./packageSwift.js";
 import { renderXtoolYml } from "./xtoolYml.js";
 
@@ -65,6 +66,7 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
       compileInterfacesDir: join(paths.expoDir, "compile-interfaces"),
       frameworks: ctx.frameworks,
       iosMin: IOS_MIN,
+      clangImporter: await expoClangImporterInputs(dirname(paths.expoDir), swiftHeadersDir(paths.iosXtool)),
     }),
   );
   await writeFile(join(paths.iosXtool, ".gitignore"), "*\n");

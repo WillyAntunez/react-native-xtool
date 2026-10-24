@@ -81,6 +81,34 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       expect(src("scaffold-package-swift.js")).toContain("headerDirShims");
       expect(src("read-podspec.js")).toContain("function headerDirScopes");
     });
+    it("scaffold-package-swift.js has the mixed-language target hunk", () => {
+      const f = src("scaffold-package-swift.js");
+      expect(f).toContain("MIXED_TOOLS_VERSION_LINE");
+      expect(f).toContain("function writeMixedLanguageSupport");
+      expect(f).not.toContain("status: 'skipped-mixed-language'");
+    });
+    it("scaffold-package-swift.js has the bare React header hunk", () => {
+      expect(src("scaffold-package-swift.js")).toContain("function bareReactHeaders");
+    });
+    it("scaffold-package-swift.js has the pod→SwiftPM map hunk", () => {
+      expect(src("scaffold-package-swift.js")).toContain("const KNOWN_POD_SPM_PACKAGES");
+    });
+    it("spm-utils.js has the header-less ReactAppHeaders module map hunk", () => {
+      expect(src("spm-utils.js")).toContain("module ReactAppHeaders {");
+    });
+  });
+
+  it("gives the per-app header farm a header-less module map, so Objective-C imports it textually", () => {
+    const appRoot = tempDir();
+    const gen = path.join(appRoot, "build", "generated", "ios", "ReactAppDependencyProvider");
+    mkdirSync(gen, { recursive: true });
+    writeFileSync(path.join(gen, "RCTAppDependencyProvider.h"), "#import <Foundation/Foundation.h>\n");
+    const { buildPerAppHeaderTree } = load<{ buildPerAppHeaderTree(root: string): { path: string } }>("spm-utils.js");
+    const farm = buildPerAppHeaderTree(appRoot).path;
+    expect(existsSync(path.join(farm, "ReactAppDependencyProvider", "RCTAppDependencyProvider.h"))).toBe(true);
+    const map = readFileSync(path.join(farm, "module.modulemap"), "utf8");
+    expect(map).toContain("module ReactAppHeaders {\n  export *\n}\n");
+    expect(map).not.toMatch(/umbrella|header "/);
   });
 
   it.skipIf(!hasPatchBinary)("the committed patch reverse-applies cleanly to the installed RN files", async () => {
@@ -683,6 +711,350 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       expect(stub("Dup.h")).toContain('#import "../../common/cpp/Dup.h"');
       expect(existsSync(path.join(root, "include/ns/A.h"))).toBe(false);
       expect(readFileSync(path.join(root, "Package.swift"), "utf8")).toContain('.headerSearchPath("include")');
+    });
+  });
+
+  describe("mixed Swift + Objective-C targets", () => {
+    const GREETER_H = "#import <Foundation/Foundation.h>\n@interface FooGreeter : NSObject\n- (NSString *)greet:(NSString *)name;\n@end\n";
+    const GREETER_M = '#import "FooGreeter.h"\n@implementation FooGreeter\n- (NSString *)greet:(NSString *)name { return name; }\n@end\n';
+    // A header the Swift sources never use: it must stay out of the Swift umbrella.
+    const VIEW_H = "#import <UIKit/UIKit.h>\n@interface FooView : UIView\n@end\n";
+    const VIEW_M = '#import "FooView.h"\n@implementation FooView\n@end\n';
+    const SWIFT_A = "import Foundation\npublic final class FooUser {\n  public func hi() -> String { FooGreeter().greet(\"swift\") }\n}\n";
+    const SWIFT_B = "import Foundation\n@objc public final class FooSwift: NSObject {\n  @objc public func hello() -> String { \"hello\" }\n}\n";
+    const SWIFT_AB = "import Foundation\n@objc public final class FooSwift: NSObject {\n  @objc public func hello() -> String { FooGreeter().greet(\"swift\") }\n}\n";
+    const BRIDGE_MM = '#import <Foundation/Foundation.h>\n#import "Foo-Swift.h"\nNSString *FooBridgeHello(void) { return [[FooSwift new] hello]; }\n';
+    const FIXTURES: Record<string, Record<string, string>> = {
+      // Swift uses an Objective-C class.
+      A: { "ios/FooGreeter.h": GREETER_H, "ios/FooGreeter.m": GREETER_M, "ios/FooView.h": VIEW_H, "ios/FooView.m": VIEW_M, "ios/Foo.swift": SWIFT_A },
+      // Objective-C++ imports the generated Foo-Swift.h.
+      B: { "ios/Foo.swift": SWIFT_B, "ios/FooBridge.h": "NSString *FooBridgeHello(void);\n", "ios/FooBridge.mm": BRIDGE_MM },
+      // Both directions in one module.
+      circular: { "ios/FooGreeter.h": GREETER_H, "ios/FooGreeter.m": GREETER_M, "ios/Foo.swift": SWIFT_AB, "ios/FooBridge.h": "NSString *FooBridgeHello(void);\n", "ios/FooBridge.mm": BRIDGE_MM },
+    };
+    function mixedLib(files: Record<string, string>, podBody = '  s.source_files = "ios/**/*.{h,m,mm,swift}"'): string {
+      const root = tempDir();
+      for (const [f, text] of Object.entries(files)) {
+        mkdirSync(path.dirname(path.join(root, f)), { recursive: true });
+        writeFileSync(path.join(root, f), text);
+      }
+      writeFileSync(path.join(root, "Foo.podspec"), `Pod::Spec.new do |s|\n  s.name = "Foo"\n${podBody}\nend\n`);
+      return root;
+    }
+    function scaffoldMixed(root: string): { status: string; pkg: string; warnings: string[] } {
+      const dep = { name: "foo", root, swiftName: "Foo", swiftNameSource: "podspec", platforms: { ios: { podspecPath: path.join(root, "Foo.podspec") } } };
+      const ctx = { appRoot: root, projectRoot: root, reactNativeRoot: root, force: true, dryRun: false, cacheSlotLabel: null, remote: null };
+      const res = load<{ scaffoldPackageSwiftForDep(d: object, c: object): { status: string; warnings?: string[] } }>(
+        "scaffold-package-swift.js",
+      ).scaffoldPackageSwiftForDep(dep, ctx);
+      const pkgFile = path.join(root, "Package.swift");
+      return { status: res.status, pkg: existsSync(pkgFile) ? readFileSync(pkgFile, "utf8") : "", warnings: res.warnings ?? [] };
+    }
+    const settings = (pkg: string, key: string) => pkg.split("\n").find((l) => l.trim().startsWith(`${key}:`)) ?? "";
+
+    for (const [shape, files] of Object.entries(FIXTURES)) {
+      it(`emits one mixed-language target for direction ${shape}`, () => {
+        const root = mixedLib(files);
+        const { status, pkg } = scaffoldMixed(root);
+        expect(status).toBe("written");
+        expect(pkg.split("\n")[0]).toBe("// swift-tools-version: 6.4;(experimentalMultiLang)");
+        expect(pkg).toContain('"ios/Foo.swift"');
+        expect(pkg).toMatch(/"ios\/Foo(Greeter\.m|Bridge\.mm)"/);
+        expect(pkg.match(/\.target\(/g)).toHaveLength(1);
+        expect(pkg).toContain('let rnSpmSwiftHeadersDir = Context.environment["RN_SPM_SWIFT_HEADERS_DIR"]');
+        expect(pkg).toContain('let rnSpmBridgingHeader = Context.packageDirectory + "/rn-spm-swift/umbrella.h"');
+        expect(settings(pkg, "swiftSettings")).toContain('.unsafeFlags(["-import-objc-header", rnSpmBridgingHeader])');
+        for (const key of ["cSettings", "cxxSettings"]) {
+          expect(settings(pkg, key)).toContain('.unsafeFlags(["-I", rnSpmSwiftHeadersDir])');
+          expect(settings(pkg, key)).toContain('.headerSearchPath("rn-spm-swift")');
+        }
+        // SwiftPM 6.4 drops cxxLanguageStandard for mixed targets: React's C++20 headers need it.
+        expect(settings(pkg, "cxxSettings")).toContain('.unsafeFlags(["-std=c++20"])');
+        expect(settings(pkg, "cSettings")).not.toContain("-std=");
+        // The committed manifest must not bake in a machine path.
+        expect(pkg).not.toContain(root);
+        expect(readFileSync(path.join(root, "rn-spm-swift/Foo/Foo-Swift.h"), "utf8")).toContain("#import <Foo-Swift.h>");
+        expect(existsSync(path.join(root, "rn-spm-swift/Foo-Swift.h"))).toBe(false);
+      });
+    }
+
+    it("also writes Package@swift-6.5.swift: identical, tools-version 6.5, no experimental flag", () => {
+      const root = mixedLib(FIXTURES["B"]!);
+      const { pkg } = scaffoldMixed(root);
+      const v65 = readFileSync(path.join(root, "Package@swift-6.5.swift"), "utf8");
+      expect(v65.split("\n")[0]).toBe("// swift-tools-version: 6.5");
+      expect(v65).not.toContain("experimentalMultiLang");
+      expect(v65.split("\n").slice(1)).toEqual(pkg.split("\n").slice(1));
+    });
+
+    it("puts the module headers in the umbrella, minus the C++ ones", () => {
+      const root = mixedLib({
+        ...FIXTURES["A"]!,
+        // Fabric-style: an unresolved <react/...> include is C++.
+        "ios/FooCxx.h": "#import <UIKit/UIKit.h>\n#import <react/renderer/core/Props.h>\n@interface FooCxx : UIView\n@end\n",
+        // C++ in the header itself, and a header that only reaches C++ through it.
+        "ios/FooNs.h": "namespace foo {\nint bar();\n}\n",
+        "ios/FooIndirect.h": '#import "FooNs.h"\n',
+        // C++ behind #ifdef __cplusplus is invisible to Swift: the header stays.
+        "ios/FooGuarded.h": "#import <UIKit/UIKit.h>\n#ifdef __cplusplus\n#import <react/renderer/core/Props.h>\n@interface FooGuarded : UIView\n@end\n#endif\n",
+      });
+      const { warnings } = scaffoldMixed(root);
+      const umbrella = readFileSync(path.join(root, "rn-spm-swift/umbrella.h"), "utf8");
+      expect(umbrella).toContain("#import <Foundation/Foundation.h>");
+      expect(umbrella).toContain("#import <UIKit/UIKit.h>");
+      for (const h of ["FooGreeter.h", "FooView.h", "FooGuarded.h"]) expect(umbrella).toContain(`#import "../ios/${h}"`);
+      for (const h of ["FooCxx.h", "FooNs.h", "FooIndirect.h"]) expect(umbrella).not.toContain(h);
+      expect(warnings.some((w) => w.includes("C++ header(s) out of the Swift umbrella") && w.includes("ios/FooIndirect.h"))).toBe(true);
+    });
+
+    it("follows includes into the React header trees to find C++", () => {
+      const reactRoot = tempDir();
+      mkdirSync(path.join(reactRoot, "React"), { recursive: true });
+      writeFileSync(path.join(reactRoot, "React/RCTCxxBase.h"), "#import <UIKit/UIKit.h>\nnamespace facebook {}\n@interface RCTCxxBase : UIView\n@end\n");
+      writeFileSync(path.join(reactRoot, "React/RCTObjcBase.h"), "#import <UIKit/UIKit.h>\n@interface RCTObjcBase : UIView\n@end\n");
+      const root = mixedLib({
+        ...FIXTURES["B"]!,
+        "ios/FooFabric.h": "#import <React/RCTCxxBase.h>\n@interface FooFabric : RCTCxxBase\n@end\n",
+        "ios/FooPaper.h": "#import <React/RCTObjcBase.h>\n@interface FooPaper : RCTObjcBase\n@end\n",
+      });
+      const model = load<ReadPodspec>("read-podspec.js").readPodspecCached(path.join(root, "Foo.podspec"));
+      const dep: Dep = { name: "foo", root, swiftName: "Foo", platforms: { ios: {} } };
+      const translate = load<{ translatePodspecToSpmTarget(...a: unknown[]): { mixedLanguage: { umbrellaHeaders: string[] } } }>(
+        "scaffold-package-swift.js",
+      ).translatePodspecToSpmTarget;
+      expect(translate(model, dep, new Map(), new Map(), [reactRoot]).mixedLanguage.umbrellaHeaders).toEqual([
+        "ios/FooBridge.h",
+        "ios/FooPaper.h",
+      ]);
+      // Without the React trees the include is unresolved and not a C++-only root: kept.
+      expect(translate(model, dep).mixedLanguage.umbrellaHeaders).toContain("ios/FooFabric.h");
+    });
+
+    it("forwards the CocoaPods module's -Swift.h spelling when module_name differs", () => {
+      const root = mixedLib(FIXTURES["B"]!, '  s.source_files = "ios/**/*.{h,m,mm,swift}"\n  s.module_name = "FooKit"');
+      scaffoldMixed(root);
+      expect(readFileSync(path.join(root, "rn-spm-swift/FooKit-Swift.h"), "utf8")).toContain("#import <Foo-Swift.h>");
+      expect(readFileSync(path.join(root, "rn-spm-swift/FooKit/FooKit-Swift.h"), "utf8")).toContain("#import <Foo-Swift.h>");
+    });
+
+    it("forwards the c99 spelling to the target-named header Swift Build writes", () => {
+      // Swift Build names the header after the target ("react-foo-Swift.h"), CocoaPods sources
+      // spell the c99 module ("react_foo-Swift.h"), as react-native-pager-view does.
+      const root = mixedLib(FIXTURES["B"]!);
+      writeFileSync(path.join(root, "Foo.podspec"), 'Pod::Spec.new do |s|\n  s.name = "react-foo"\n  s.source_files = "ios/**/*.{h,m,mm,swift}"\nend\n');
+      const dep = { name: "react-foo", root, swiftName: "react-foo", swiftNameSource: "podspec", platforms: { ios: { podspecPath: path.join(root, "Foo.podspec") } } };
+      const ctx = { appRoot: root, projectRoot: root, reactNativeRoot: root, force: true, dryRun: false, cacheSlotLabel: null, remote: null };
+      load<{ scaffoldPackageSwiftForDep(d: object, c: object): unknown }>("scaffold-package-swift.js").scaffoldPackageSwiftForDep(dep, ctx);
+      expect(readFileSync(path.join(root, "rn-spm-swift/react_foo-Swift.h"), "utf8")).toContain("#import <react-foo-Swift.h>");
+      expect(readFileSync(path.join(root, "rn-spm-swift/react_foo/react_foo-Swift.h"), "utf8")).toContain("#import <react-foo-Swift.h>");
+    });
+
+    it("uses the podspec's SWIFT_OBJC_BRIDGING_HEADER instead of the umbrella", () => {
+      const root = mixedLib(
+        { ...FIXTURES["A"]!, "ios/Foo-Bridging-Header.h": '#import "FooGreeter.h"\n' },
+        '  s.source_files = "ios/**/*.{h,m,mm,swift}"\n  s.pod_target_xcconfig = { "SWIFT_OBJC_BRIDGING_HEADER" => "$(PODS_TARGET_SRCROOT)/ios/Foo-Bridging-Header.h" }',
+      );
+      const { pkg } = scaffoldMixed(root);
+      expect(pkg).toContain('let rnSpmBridgingHeader = Context.packageDirectory + "/ios/Foo-Bridging-Header.h"');
+      expect(existsSync(path.join(root, "rn-spm-swift/umbrella.h"))).toBe(false);
+    });
+
+    it("warns at scaffold time when RN_SPM_SWIFT_HEADERS_DIR is unset, and not when it is set", () => {
+      const saved = process.env["RN_SPM_SWIFT_HEADERS_DIR"];
+      try {
+        delete process.env["RN_SPM_SWIFT_HEADERS_DIR"];
+        expect(scaffoldMixed(mixedLib(FIXTURES["B"]!)).warnings.some((w) => w.includes("RN_SPM_SWIFT_HEADERS_DIR"))).toBe(true);
+        process.env["RN_SPM_SWIFT_HEADERS_DIR"] = "/build/GeneratedModuleMaps-iphoneos";
+        expect(scaffoldMixed(mixedLib(FIXTURES["B"]!)).warnings.some((w) => w.includes("RN_SPM_SWIFT_HEADERS_DIR"))).toBe(false);
+      } finally {
+        if (saved === undefined) delete process.env["RN_SPM_SWIFT_HEADERS_DIR"];
+        else process.env["RN_SPM_SWIFT_HEADERS_DIR"] = saved;
+      }
+    });
+
+    it("keeps the 6.0 header and no mixed settings for a single-language library", () => {
+      const root = mixedLib({ "ios/FooGreeter.h": GREETER_H, "ios/FooGreeter.m": GREETER_M });
+      const { status, pkg } = scaffoldMixed(root);
+      expect(status).toBe("written");
+      expect(pkg.split("\n")[0]).toBe("// swift-tools-version: 6.0");
+      expect(pkg).not.toContain("rnSpm");
+      expect(pkg).not.toContain("swiftSettings");
+      expect(pkg).not.toContain('"-std=c++20"');
+      expect(existsSync(path.join(root, "rn-spm-swift"))).toBe(false);
+      expect(existsSync(path.join(root, "Package@swift-6.5.swift"))).toBe(false);
+    });
+
+    it("removes its own stale Package@swift-6.5.swift when the library is no longer mixed", () => {
+      const root = mixedLib({ "ios/FooGreeter.h": GREETER_H, "ios/FooGreeter.m": GREETER_M });
+      writeFileSync(path.join(root, "Package@swift-6.5.swift"), "// swift-tools-version: 6.5\n// AUTO-SCAFFOLDED by react-native spm scaffold — safe to edit & commit via patch-package.\n");
+      scaffoldMixed(root);
+      expect(existsSync(path.join(root, "Package@swift-6.5.swift"))).toBe(false);
+    });
+
+    it("never feeds its own support files back into sources on a re-scaffold", () => {
+      const root = mixedLib(FIXTURES["circular"]!, '  s.source_files = "**/*.{h,m,mm,swift}"');
+      scaffoldMixed(root);
+      const { pkg } = scaffoldMixed(root);
+      expect(pkg).not.toContain('"rn-spm-swift/');
+      expect(pkg).not.toContain('"Package.swift"');
+      expect(pkg).not.toContain("Package@swift-6.5.swift");
+    });
+
+    it("emits a manifest SwiftPM accepts (a 6.4 toolchain ignores the 6.5 one)", async () => {
+      const lib = mixedLib(FIXTURES["circular"]!);
+      const { pkg } = scaffoldMixed(lib);
+      const root = tempDir();
+      writeFileSync(path.join(root, "Package.swift"), pkg);
+      writeFileSync(path.join(root, "Package@swift-6.5.swift"), readFileSync(path.join(lib, "Package@swift-6.5.swift"), "utf8"));
+      const swift = await execa("swift", ["package", "dump-package"], {
+        cwd: root,
+        reject: false,
+        env: { PATH: `${process.env["HOME"]}/.local/share/swiftly/bin:${process.env["PATH"]}` },
+      });
+      if (swift.failed && /ENOENT/.test(String(swift.code ?? swift.message))) return;
+      expect(swift.exitCode, swift.stderr).toBe(0);
+      expect(JSON.parse(swift.stdout).toolsVersion._version).toBe("6.4.0");
+    });
+  });
+
+  describe("bare React header imports", () => {
+    it("forwards a bare quoted import of a React header (CocoaPods header map) to <React/...>", () => {
+      const reactRoot = tempDir();
+      mkdirSync(path.join(reactRoot, "React"), { recursive: true });
+      writeFileSync(path.join(reactRoot, "React/RCTFabricComponentsPlugins.h"), "");
+      const root = tempDir();
+      mkdirSync(path.join(root, "ios"), { recursive: true });
+      writeFileSync(path.join(root, "ios/Foo.h"), "");
+      writeFileSync(
+        path.join(root, "ios/Foo.mm"),
+        '#import "Foo.h"\n#import "RCTFabricComponentsPlugins.h"\n#import "Missing.h"\n#import "React/RCTBridge.h"\n',
+      );
+      writeFileSync(
+        path.join(root, "Foo.podspec"),
+        'Pod::Spec.new do |s|\n  s.name = "Foo"\n  s.source_files = "ios/**/*.{h,mm}"\n  s.dependency "React-Core"\nend\n',
+      );
+      const model = load<ReadPodspec>("read-podspec.js").readPodspecCached(path.join(root, "Foo.podspec"));
+      const dep: Dep = { name: "foo", root, swiftName: "Foo", platforms: { ios: {} } };
+      const spec = load<{ translatePodspecToSpmTarget(...a: unknown[]): { reactBareHeaders: string[]; headerSearchPaths: string[] } }>(
+        "scaffold-package-swift.js",
+      ).translatePodspecToSpmTarget(model, dep, new Map(), new Map(), [reactRoot]);
+      expect(spec.reactBareHeaders).toEqual(["RCTFabricComponentsPlugins.h"]);
+      expect(spec.headerSearchPaths).toContain("rn-spm-react-headers");
+      const none = load<{ translatePodspecToSpmTarget(...a: unknown[]): { reactBareHeaders: string[]; headerSearchPaths: string[] } }>(
+        "scaffold-package-swift.js",
+      ).translatePodspecToSpmTarget(model, dep);
+      expect(none.reactBareHeaders).toEqual([]);
+      expect(none.headerSearchPaths).not.toContain("rn-spm-react-headers");
+    });
+  });
+
+  describe("CocoaPods dependencies mapped to SwiftPM packages", () => {
+    type ExtSpec = Spec & { externalPackages: { pod: string; url: string; from: string; product: string; package: string }[] };
+    function lib(deps: string): string {
+      const root = tempDir();
+      mkdirSync(path.join(root, "ios"), { recursive: true });
+      writeFileSync(path.join(root, "ios/Foo.h"), "#import <Foundation/Foundation.h>\n");
+      writeFileSync(path.join(root, "ios/Foo.m"), '#import "Foo.h"\n');
+      writeFileSync(
+        path.join(root, "Foo.podspec"),
+        `Pod::Spec.new do |s|\n  s.name = "Foo"\n  s.source_files = "ios/**/*.{h,m}"\n${deps}\nend\n`,
+      );
+      return root;
+    }
+    const translate = (root: string) =>
+      load<{ translatePodspecToSpmTarget(...a: unknown[]): ExtSpec }>("scaffold-package-swift.js").translatePodspecToSpmTarget(
+        load<ReadPodspec>("read-podspec.js").readPodspecCached(path.join(root, "Foo.podspec")),
+        { name: "foo", root, swiftName: "Foo", platforms: { ios: {} } },
+      );
+    const UNMAPPED = (pod: string) =>
+      `Dependency "${pod}" is a CocoaPods pod with no known SwiftPM equivalent; the scaffolded package may fail to build — add it to the pod→SwiftPM map in scaffold-package-swift.js`;
+
+    it("maps SwiftUIIntrospect (react-native-pager-view's `~> 1.0`) to its SwiftPM package", () => {
+      const spec = translate(lib(`  s.dependency "SwiftUIIntrospect", '~> 1.0'`));
+      expect(spec.externalPackages).toEqual([
+        {
+          pod: "SwiftUIIntrospect",
+          url: "https://github.com/siteline/swiftui-introspect",
+          exact: "1.5.0",
+          product: "SwiftUIIntrospect",
+          package: "swiftui-introspect",
+        },
+      ]);
+      expect(spec.warnings.filter((w) => w.includes("SwiftUIIntrospect"))).toEqual([]);
+    });
+
+    it("emits the .package(url:exact:) and the .product dependency", () => {
+      const root = lib(`  s.dependency "SwiftUIIntrospect", '~> 1.0'`);
+      const dep = { name: "foo", root, swiftName: "Foo", swiftNameSource: "podspec", platforms: { ios: { podspecPath: path.join(root, "Foo.podspec") } } };
+      const ctx = { appRoot: root, projectRoot: root, reactNativeRoot: root, force: true, dryRun: false, cacheSlotLabel: null, remote: null };
+      const res = load<{ scaffoldPackageSwiftForDep(d: object, c: object): { status: string } }>(
+        "scaffold-package-swift.js",
+      ).scaffoldPackageSwiftForDep(dep, ctx);
+      expect(res.status).toBe("written");
+      const pkg = readFileSync(path.join(root, "Package.swift"), "utf8");
+      expect(pkg).toContain('.package(url: "https://github.com/siteline/swiftui-introspect", exact: "1.5.0")');
+      expect(pkg).toContain('.product(name: "SwiftUIIntrospect", package: "swiftui-introspect")');
+    });
+
+    describe("scaffold revision marker", () => {
+      const scaffoldAgain = (root: string) => {
+        const dep = { name: "foo", root, swiftName: "Foo", swiftNameSource: "podspec", platforms: { ios: { podspecPath: path.join(root, "Foo.podspec") } } };
+        const ctx = { appRoot: root, projectRoot: root, reactNativeRoot: root, force: false, dryRun: false, cacheSlotLabel: null, remote: null };
+        return load<{ scaffoldPackageSwiftForDep(d: object, c: object): { status: string } }>(
+          "scaffold-package-swift.js",
+        ).scaffoldPackageSwiftForDep(dep, ctx).status;
+      };
+      const fresh = () => {
+        const root = lib(`  s.dependency "SwiftUIIntrospect", '~> 1.0'`);
+        expect(scaffoldAgain(root)).toBe("written");
+        return root;
+      };
+
+      it("emits the expo-xtool-scaffold-revision marker next to AUTO-SCAFFOLDED-VERSION", () => {
+        const pkg = readFileSync(path.join(fresh(), "Package.swift"), "utf8");
+        expect(pkg).toMatch(/^\/\/ AUTO-SCAFFOLDED-VERSION: \d+\n\/\/ expo-xtool-scaffold-revision: 1$/m);
+      });
+
+      it("keeps a scaffold that carries the current marker", () => {
+        expect(scaffoldAgain(fresh())).toBe("skipped-scaffolder-marker");
+      });
+
+      it("regenerates a scaffold from an older revision (marker missing)", () => {
+        const root = fresh();
+        const file = path.join(root, "Package.swift");
+        writeFileSync(file, readFileSync(file, "utf8").replace(/^\/\/ expo-xtool-scaffold-revision: \d+\n/m, "").replace("exact:", "from:"));
+        expect(scaffoldAgain(root)).toBe("written");
+        const pkg = readFileSync(file, "utf8");
+        expect(pkg).toContain("expo-xtool-scaffold-revision: 1");
+        expect(pkg).toContain('exact: "1.5.0"');
+      });
+
+      it("regenerates a scaffold whose marker is lower than the current revision", () => {
+        const root = fresh();
+        const file = path.join(root, "Package.swift");
+        writeFileSync(file, readFileSync(file, "utf8").replace("revision: 1", "revision: 0"));
+        expect(scaffoldAgain(root)).toBe("written");
+      });
+    });
+
+    it("treats `React` and `ReactAppDependencyProvider` as core: no unmapped-pod warning", () => {
+      const spec = translate(lib(`  s.dependency "React"\n  s.dependency "ReactAppDependencyProvider"`));
+      expect(spec.warnings.filter((w) => w.includes("no known SwiftPM equivalent"))).toEqual([]);
+      expect(spec.externalPackages ?? []).toEqual([]);
+    });
+
+    it("warns loudly about an unmapped external pod, once per pod (subspecs included)", () => {
+      const spec = translate(lib(`  s.dependency "MMKV", '>= 1.3'\n  s.dependency "Firebase/Core"\n  s.dependency "Firebase/Messaging"`));
+      expect(spec.externalPackages).toEqual([]);
+      expect(spec.warnings).toContain(UNMAPPED("MMKV"));
+      expect(spec.warnings.filter((w) => w === UNMAPPED("Firebase"))).toHaveLength(1);
+    });
+
+    it("does not call an Expo module a CocoaPods pod", () => {
+      const spec = translate(lib(`  s.dependency "ExpoModulesCore"`));
+      expect(spec.externalPackages).toEqual([]);
+      expect(spec.warnings.some((w) => w.includes("no known SwiftPM equivalent"))).toBe(false);
+      expect(spec.warnings.some((w) => w.includes('"ExpoModulesCore"'))).toBe(true);
     });
   });
 });
