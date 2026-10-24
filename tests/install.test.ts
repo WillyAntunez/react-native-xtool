@@ -163,7 +163,7 @@ describe("install --network", () => {
         devBuildIpa: calls.devBuildIpa,
       },
       wifi: {
-        lanIp: async () => "192.168.1.20",
+        lanRoute: async () => ({ ip: "192.168.1.20", dev: "wlp2s0" }),
         locate: calls.locate,
         loadPairRecord: async () => ({ record, source: "cache" }),
         installOverWifi: calls.installOverWifi,
@@ -205,6 +205,44 @@ describe("install --network", () => {
       deviceUdid: UD,
       installedFingerprint: "F1",
     });
+  });
+
+  it("scans the private LAN of the default route", async () => {
+    const { d, calls } = deps();
+    await install("/p", d, { network: true });
+    expect(calls.locate.mock.calls[0]![0]).toMatchObject({ lanIp: "192.168.1.20" });
+    expect(calls.locate.mock.calls[0]![0].scan).toBeUndefined();
+  });
+
+  it("prefers the configured lanIp for the scan", async () => {
+    const { d, calls } = deps();
+    d.xtool.loadConfig = async () => ({ lanIp: "10.0.0.4" });
+    await install("/p", d, { network: true });
+    expect(calls.locate.mock.calls[0]![0]).toMatchObject({ lanIp: "10.0.0.4" });
+  });
+
+  for (const [why, route] of [
+    ["a VPN/tunnel route", { ip: "10.8.0.2", dev: "tun0" }],
+    ["a non-private address", { ip: "203.0.113.5", dev: "eth0" }],
+    ["an unknown route", {}],
+  ] as const) {
+    it(`refuses to scan from ${why} and asks for the IP (not retried)`, async () => {
+      const { locateDevice } = await import("../src/device/discover.js");
+      // The real locator, with no remembered IP, goes straight to the (refused) scan.
+      const locate = vi.fn((o: Parameters<typeof locateDevice>[0]) =>
+        locateDevice({ ...o, identify: async () => { throw new Error("unused"); }, paired: async () => true }),
+      );
+      const { d, calls } = deps({ wifi: { locate, lanRoute: async () => route } });
+      await expect(install("/p", d, { network: true })).rejects.toThrow("Not scanning the network for the iPhone");
+      await expect(install("/p", d, { network: true })).rejects.toThrow("--network <ip>");
+      expect(calls.sleep).not.toHaveBeenCalled();
+    });
+  }
+
+  it("does not need a scan for an explicit IP from a VPN route", async () => {
+    const { d, calls } = deps({ wifi: { lanRoute: async () => ({ ip: "10.8.0.2", dev: "tun0" }) } });
+    await install("/p", d, { network: "192.168.1.10" });
+    expect(calls.installOverWifi).toHaveBeenCalledOnce();
   });
 
   it("passes an explicit IP and does not force the remembered UDID on it", async () => {

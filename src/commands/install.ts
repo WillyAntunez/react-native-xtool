@@ -18,7 +18,7 @@ import {
   type WifiInstallOptions,
   type WifiInstallResult,
 } from "../device/wifiInstall.js";
-import { detectLanIp } from "../net.js";
+import { detectLanRoute, isPrivateIpv4, looksLikeTunnel, type LanRoute } from "../net.js";
 import { projectPaths } from "../paths.js";
 import { readState, rememberDevice, writeState, type BuildState } from "../state.js";
 import {
@@ -46,7 +46,8 @@ export interface InstallDeps {
     devBuildIpa?: (bin: string, iosXtoolDir: string) => Promise<string>;
   };
   wifi?: {
-    lanIp?: () => Promise<string>;
+    /** This computer's default route (address + interface), unless `lanIp` is configured. */
+    lanRoute?: () => Promise<LanRoute>;
     locate?: (o: LocateOptions) => Promise<Located>;
     loadPairRecord?: (udid: string, src: PairRecordSources) => Promise<LoadedPairRecord>;
     pairedUdids?: () => Promise<string[]>;
@@ -102,10 +103,21 @@ export function progressLoggers(log: (s: string) => void): Pick<WifiInstallOptio
   };
 }
 
+/**
+ * Why the /24 scan must not run from this route (it would probe a VPN's or a public network's
+ * hosts with our pair records), or undefined when it may.
+ */
+export function scanRefusal(route: LanRoute): string | undefined {
+  if (!route.ip) return "this computer's LAN address is unknown";
+  if (!isPrivateIpv4(route.ip)) return `this computer's address ${route.ip} is not on a private LAN`;
+  if (looksLikeTunnel(route.dev)) return `this computer's route goes through ${route.dev} (a VPN or tunnel)`;
+  return undefined;
+}
+
 async function authenticated(
   x: NonNullable<InstallDeps["xtool"]>,
   root: string,
-): Promise<{ bin: string; auth: AuthStatus & { teamId: string } }> {
+): Promise<{ config: ExpoXtoolConfig; bin: string; auth: AuthStatus & { teamId: string } }> {
   const config = await (x.loadConfig ?? loadConfig)(root);
   const bin = (x.bin ?? xtoolBin)(config);
   const auth = await (x.authStatus ?? authStatus)(bin);
@@ -117,7 +129,7 @@ async function authenticated(
       `Could not determine the Apple Team ID from \`xtool auth status\`; run \`${bin} auth login\` again.`,
     );
   }
-  return { bin, auth: auth as AuthStatus & { teamId: string } };
+  return { config, bin, auth: auth as AuthStatus & { teamId: string } };
 }
 
 export async function install(root: string, deps: InstallDeps = {}, opts: InstallOptions = {}): Promise<void> {
@@ -148,14 +160,25 @@ async function installNetwork(root: string, deps: InstallDeps, opts: InstallOpti
   const x = deps.xtool ?? {};
   const w = deps.wifi ?? {};
   const log = deps.log ?? ((s: string) => console.log(s));
-  const { bin, auth } = await authenticated(x, root);
+  const { config, bin, auth } = await authenticated(x, root);
   const iosXtool = projectPaths(root).iosXtool;
   const state = await (x.readState ?? readState)(iosXtool).catch(() => undefined);
   if (!state) throw new Error("No build found. Run `expo-xtool build` first.");
 
   const ipa = await (x.devBuildIpa ?? devBuildIpa)(bin, iosXtool);
   const bundleId = installedBundleId(auth.teamId, state.bundleIdentifier);
-  const lanIp = await (w.lanIp ?? (() => detectLanIp()))().catch(() => state.lanIp);
+  const route: LanRoute = config.lanIp
+    ? { ip: config.lanIp }
+    : await (w.lanRoute ?? (() => detectLanRoute()))().catch((): LanRoute => ({}));
+  const refusal = scanRefusal(route);
+  const scan = refusal
+    ? async (): Promise<string[]> => {
+        throw new Error(
+          `Not scanning the network for the iPhone: ${refusal}. Pass its IP: \`expo-xtool install --network <ip>\` ` +
+            '(on the iPhone: Settings → Wi‑Fi → ⓘ), or set "lanIp" in expo-xtool.config.json to your Wi‑Fi address.',
+        );
+      }
+    : undefined;
   const sources: PairRecordSources = {
     override: opts.pairRecord,
     fromUsbmux: (udid) => readPairRecordFromUsbmux(udid),
@@ -178,7 +201,8 @@ async function installNetwork(root: string, deps: InstallDeps, opts: InstallOpti
       explicitIp,
       lastIp: state.deviceIp,
       udid: opts.udid ?? (explicitIp ? undefined : state.deviceUdid),
-      lanIp,
+      lanIp: route.ip ?? state.lanIp,
+      ...(scan && { scan }),
       paired: (udid) => load(udid, sources).then(() => true, () => false),
       identify: (ip) => identify(ip, { candidates: pairs }),
       log,
