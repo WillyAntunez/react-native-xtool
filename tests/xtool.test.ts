@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   authStatus,
   devBuild,
+  devBuildIpa,
   devEnv,
   devRun,
   type DevRunner,
@@ -12,6 +13,7 @@ import {
   listDevices,
   parseAuthStatus,
   parseDevices,
+  parseIpaPath,
   xtoolBin,
 } from "../src/tools/xtool.js";
 
@@ -137,5 +139,32 @@ describe("devBuild / devRun", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]!.args.slice(0, 2)).toEqual(["dev", "run"]);
     expect(calls[0]!.opts?.env?.["RN_SPM_SWIFT_HEADERS_DIR"]).toBe(SWIFT_HEADERS);
+  });
+});
+
+describe("parseIpaPath", () => {
+  it("takes the path from xtool's last `Wrote to` line, relative to the project dir", () => {
+    expect(parseIpaPath("Building…\nWrote to xtool/App.ipa\n", "/app/ios-xtool")).toBe("/app/ios-xtool/xtool/App.ipa");
+    expect(parseIpaPath("Wrote to /abs/App.ipa  \n", "/x")).toBe("/abs/App.ipa");
+  });
+  it("is undefined without that line", () => {
+    expect(parseIpaPath("Build complete", "/x")).toBeUndefined();
+  });
+});
+
+describe("devBuildIpa", () => {
+  it("builds, signs and packages an ipa with the Swift headers env and returns its path", async () => {
+    const calls: { args: string[]; opts: Parameters<DevRunner>[2] }[] = [];
+    const path = await devBuildIpa("/bin/xtool", "/app/ios-xtool", async (_cmd, args, opts) => {
+      calls.push({ args, opts });
+      return "Wrote to xtool/App.ipa";
+    });
+    expect(path).toBe("/app/ios-xtool/xtool/App.ipa");
+    expect(calls[0]!.args).toEqual(["dev", "build", "--configuration", "debug", "--sign", "--ipa"]);
+    expect(calls[0]!.opts?.cwd).toBe("/app/ios-xtool");
+    expect(calls[0]!.opts?.env?.["RN_SPM_SWIFT_HEADERS_DIR"]).toContain("GeneratedModuleMaps-iphoneos");
+  });
+  it("fails clearly when xtool does not say where the ipa is", async () => {
+    await expect(devBuildIpa("/bin/xtool", "/app", async () => "done")).rejects.toThrow("did not report the .ipa path");
   });
 });

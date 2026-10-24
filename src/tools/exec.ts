@@ -50,3 +50,21 @@ export async function run(
     extendEnv: false,
   });
 }
+
+/** Like `run`, but also returns the combined output (still shown live on the terminal). */
+export async function runTee(
+  cmd: string,
+  args: string[],
+  opts: { cwd?: string; env?: NodeJS.ProcessEnv; nice?: boolean } = {},
+): Promise<string> {
+  const [bin, argv] = runArgv(cmd, args, opts.nice === true);
+  const r = await execa(bin, argv, {
+    stdin: "inherit",
+    stdout: ["inherit", "pipe"],
+    stderr: ["inherit", "pipe"],
+    cwd: opts.cwd,
+    env: opts.env ?? toolEnv(),
+    extendEnv: false,
+  });
+  return `${r.stdout}\n${r.stderr}`;
+}

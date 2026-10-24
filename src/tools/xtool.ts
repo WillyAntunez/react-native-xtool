@@ -1,10 +1,10 @@
 import { execa } from "execa";
 import { accessSync, constants } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { ExpoXtoolConfig } from "../config.js";
 import { cacheDir, swiftHeadersEnv } from "../paths.js";
 import { XTOOL_VERSION } from "../versions.js";
-import { run, toolEnv } from "./exec.js";
+import { run, runTee, toolEnv } from "./exec.js";
 
 export interface AuthStatus {
   loggedIn: boolean;
@@ -115,4 +115,26 @@ export async function devRun(bin: string, iosXtoolDir: string, runner: DevRunner
     nice: true,
     env: devEnv(iosXtoolDir),
   });
+}
+
+/** Runs a command to completion and returns its output; `runTee` by default. */
+export type CaptureRunner = (...args: Parameters<typeof runTee>) => Promise<string>;
+
+/** The .ipa path from xtool's `Wrote to <path>` line (relative paths are against `cwd`). */
+export function parseIpaPath(output: string, cwd: string): string | undefined {
+  const matches = [...output.matchAll(/^Wrote to (.+?)\s*$/gm)];
+  const last = matches.at(-1)?.[1];
+  return last ? resolve(cwd, last) : undefined;
+}
+
+/** `xtool dev build --sign --ipa`: a signed .ipa to install without `dev run` (Wi‑Fi path). */
+export async function devBuildIpa(bin: string, iosXtoolDir: string, runner: CaptureRunner = runTee): Promise<string> {
+  const out = await runner(bin, ["dev", "build", "--configuration", "debug", "--sign", "--ipa"], {
+    cwd: iosXtoolDir,
+    nice: true,
+    env: devEnv(iosXtoolDir),
+  });
+  const ipa = parseIpaPath(out, iosXtoolDir);
+  if (!ipa) throw new Error("`xtool dev build --ipa` did not report the .ipa path (no `Wrote to` line)");
+  return ipa;
 }
