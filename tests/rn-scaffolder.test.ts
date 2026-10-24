@@ -975,7 +975,7 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
         {
           pod: "SwiftUIIntrospect",
           url: "https://github.com/siteline/swiftui-introspect",
-          from: "1.0.0",
+          exact: "1.5.0",
           product: "SwiftUIIntrospect",
           package: "swiftui-introspect",
         },
@@ -983,7 +983,7 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       expect(spec.warnings.filter((w) => w.includes("SwiftUIIntrospect"))).toEqual([]);
     });
 
-    it("emits the .package(url:from:) and the .product dependency", () => {
+    it("emits the .package(url:exact:) and the .product dependency", () => {
       const root = lib(`  s.dependency "SwiftUIIntrospect", '~> 1.0'`);
       const dep = { name: "foo", root, swiftName: "Foo", swiftNameSource: "podspec", platforms: { ios: { podspecPath: path.join(root, "Foo.podspec") } } };
       const ctx = { appRoot: root, projectRoot: root, reactNativeRoot: root, force: true, dryRun: false, cacheSlotLabel: null, remote: null };
@@ -992,7 +992,7 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       ).scaffoldPackageSwiftForDep(dep, ctx);
       expect(res.status).toBe("written");
       const pkg = readFileSync(path.join(root, "Package.swift"), "utf8");
-      expect(pkg).toContain('.package(url: "https://github.com/siteline/swiftui-introspect", from: "1.0.0")');
+      expect(pkg).toContain('.package(url: "https://github.com/siteline/swiftui-introspect", exact: "1.5.0")');
       expect(pkg).toContain('.product(name: "SwiftUIIntrospect", package: "swiftui-introspect")');
     });
 

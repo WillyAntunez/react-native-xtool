@@ -107,7 +107,9 @@ must be CommonJS (`module.exports = {...}`) unless your project is ESM. Both are
    artifact; do not edit it by hand.
 5. CocoaPods-only libraries (no `Package.swift`) get one generated automatically by React Native's `spm scaffold`.
    expo-xtool persists it in your project's `patches/` with patch-package: commit those files. The React Native
-   patch above is what makes that scaffolder work for real-world podspecs.
+   patch above is what makes that scaffolder work for real-world podspecs. Mapped external dependencies
+   (for example SwiftUIIntrospect, pinned to an exact version) are fetched from GitHub on the first clean build;
+   offline builds with `rnArtifactsDir` need them already cached in `ios-xtool/.build`.
    On every build the `patches` step applies expo-xtool's own patches and then your project's `patches/` (when
    present), so a fresh `node_modules` gets those Package.swift files back. To also restore them on a plain
    `npm install`, add `"postinstall": "patch-package"` to your `package.json` scripts and `patch-package` to your

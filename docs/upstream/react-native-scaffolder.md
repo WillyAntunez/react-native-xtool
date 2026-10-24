@@ -452,11 +452,11 @@ CocoaPods pod (react-native-pager-view 9.x: `s.dependency "SwiftUIIntrospect", '
 dropped it with "Unknown dependency ... Edit manually if needed", so the scaffolded package failed with
 `unable to resolve module dependency: 'SwiftUIIntrospect'` and had to be edited by hand.
 
-Fix: a small built-in map `KNOWN_POD_SPM_PACKAGES` (pod → `{ url, from, product }`) turns a known pod into
-`.package(url: "<url>", from: "<from>")` + `.product(name: "<product>", package: "<identity>")` (identity =
+Fix: a small built-in map `KNOWN_POD_SPM_PACKAGES` (pod → `{ url, exact, product }`) turns a known pod into
+`.package(url: "<url>", exact: "<exact>")` + `.product(name: "<product>", package: "<identity>")` (identity =
 the URL's last path component). Today it holds one entry,
-`SwiftUIIntrospect → https://github.com/siteline/swiftui-introspect from "1.0.0"` (CocoaPods `~> 1.0` is
-SwiftPM's up-to-next-major from 1.0.0). An unmapped pod gets one warning per pod (subspecs collapse to the
+`SwiftUIIntrospect → https://github.com/siteline/swiftui-introspect exact "1.5.0"` (the newest 1.x, within the
+podspec's `~> 1.0`; pinned because `ios-xtool/` has no committed Package.resolved, so a range would drift). An unmapped pod gets one warning per pod (subspecs collapse to the
 root pod): `Dependency "<pod>" is a CocoaPods pod with no known SwiftPM equivalent; the scaffolded package
 may fail to build — add it to the pod→SwiftPM map in scaffold-package-swift.js`. Expo-named pods
 (`expo-*`, `Expo*`, `EX*`) keep the old "Unknown dependency" warning. A remote package makes the first build
