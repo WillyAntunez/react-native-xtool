@@ -15,7 +15,7 @@ export class InstallProxyError extends Error {
 
 const HINTS: Record<string, string> = {
   ApplicationVerificationFailed:
-    "The iPhone rejected the app's signature: it is invalid or expired (free Apple ID signatures last 7 days), or the provisioning profile does not include this iPhone. Re-run `expo-xtool install --network` to re-sign.",
+    "The iPhone rejected the app's signature: it is invalid or expired (free Apple ID signatures last 7 days), or the provisioning profile does not include this iPhone. Re-run `expo-xtool install --network` to re-sign. If this iPhone never had an install from this Apple account, do the first one over USB (`expo-xtool install`): that registers its UDID with Apple so later signatures cover it.",
   DeviceOSVersionTooLow:
     "The app needs a newer iOS than this iPhone runs: update the iPhone or lower the deployment target.",
   InstallProhibited:

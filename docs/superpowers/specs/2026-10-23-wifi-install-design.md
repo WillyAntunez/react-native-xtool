@@ -61,3 +61,6 @@ cubierto documentando el emparejamiento único (usbipd-win o copia del registro)
 | Subida interrumpida (Wi‑Fi cae) | handle: limpiar `PublicStaging`, reintentar una vez |
 | Firma caducada (7 días, cuenta gratuita) | handle: mapear `ApplicationVerificationFailed` a "vuelve a ejecutar install (re-firma)" |
 | Otro dispositivo Apple responde en 62078 | handle: comprobar UDID antes de instalar |
+| Cambio de iPhone (el recordado no responde, otro emparejado sí) | handle: si responde exactamente uno emparejado se usa y se recuerda; si hay varios, error que los nombra y pide `--udid` (sin reintentos) |
+| VPN o ruta no privada (el escaneo sondearía otra red) | handle: no escanear si la ruta no es privada o es un túnel; pedir `--network <ip>` o `lanIp` |
+| Primera instalación por Wi‑Fi (UDID no registrado en Apple) | handle (doc + pista): README pide la primera instalación por USB; `ApplicationVerificationFailed` lo menciona |
