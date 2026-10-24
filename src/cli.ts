@@ -8,6 +8,7 @@ import { doctor, renderReport } from "./commands/doctor.js";
 import { install } from "./commands/install.js";
 import { run } from "./commands/run.js";
 import { setup } from "./commands/setup.js";
+import { setupWifi } from "./commands/setupWifi.js";
 import { start } from "./commands/start.js";
 
 const pkg = createRequire(import.meta.url)("../package.json") as { version: string };
@@ -32,8 +33,16 @@ export function buildProgram(): Command {
     .command("setup")
     .description("Install Swift, xtool and the Darwin SDK")
     .option("--xcode-xip <path>", "path to Xcode.xip (needed to install the Darwin SDK)")
+    .option("--wifi", "one-time USB step for Wi‑Fi installs: cache the pair record, enable Wi‑Fi connections on the iPhone")
+    .option("--yes", "with --wifi: confirm changing the iPhone's Wi‑Fi connections setting")
+    .option("--udid <udid>", "with --wifi: which USB iPhone to set up")
     .action(
-      action(async (o: { xcodeXip?: string }) => {
+      action(async (o: { xcodeXip?: string; wifi?: boolean; yes?: boolean; udid?: string }) => {
+        if (o.wifi) {
+          await setupWifi({ yes: o.yes, udid: o.udid });
+          return;
+        }
+        if (o.yes || o.udid) throw new Error("--yes and --udid only apply to setup --wifi");
         const config = await loadConfig(process.cwd());
         await setup({ xcodeXip: o.xcodeXip ?? config.xcodeXipPath, xtoolPath: config.xtoolPath });
       }),
