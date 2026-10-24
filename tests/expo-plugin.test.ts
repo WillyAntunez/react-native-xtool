@@ -79,8 +79,9 @@ type Sources = {
   hasClang: boolean;
   hasCxx: boolean;
   ignoredDirs: string[];
+  placeholderFiles: string[];
 };
-type PodspecFacts = { linkage: object | null };
+type PodspecFacts = { linkage: object | null; declaresSourceFiles: boolean };
 type Classify = { scanAppleSources(root: string): Sources };
 type Podspec = {
   readPodspecFacts(o: { podName: string; podspecDir: string; moduleRoot: string }): PodspecFacts;
@@ -237,5 +238,41 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
     expect(manifest).not.toContain("RCT_NEW_ARCH_ENABLED");
   });
 
+  it("takes a module whose only Objective-C file is an empty placeholder for pure Swift", () => {
+    const root = moduleFixture("EXUpdatesInterface", {
+      "ios/EXUpdatesInterface/UpdatesInterface.swift": "",
+      "ios/EXUpdatesInterface/noop-file.m": "// noop file for cocoapods to generate modulemap file\n",
+      "ios/EXUpdatesInterface/blank.c": "/* nothing */\n\n",
+    });
+    const { layout, sources } = layoutOf("EXUpdatesInterface", root);
+    expect(layout).toBe("pure-swift");
+    expect(sources.placeholderFiles).toEqual(["EXUpdatesInterface/blank.c", "EXUpdatesInterface/noop-file.m"]);
+    const { manifest } = emit("EXUpdatesInterface", root, "pure-swift", sources);
+    expect(manifest).toContain('exclude: ["EXUpdatesInterface/blank.c", "EXUpdatesInterface/noop-file.m"]');
+    expect(manifest.split("\n")[0]).toBe("// swift-tools-version: 6.0");
+  });
+
+  it("still counts an Objective-C file with code as a source", () => {
+    const root = moduleFixture("Real", { "ios/A.swift": "", "ios/Real/R.m": "// c\nint r(void) { return 1; }\n" });
+    expect(layoutOf("Real", root).layout).toBe("mixed");
+  });
+
+  it("treats a meta pod (no sources, no source_files) as nothing to build", () => {
+    const root = moduleFixture("expo-dev-client", {}, "s.dependency 'expo-dev-launcher'");
+    const { layout, facts } = layoutOf("expo-dev-client", root);
+    expect(facts.declaresSourceFiles).toBe(false);
+    expect(layout).toBe("meta");
+  });
+
+  it("does not take a module whose podspec declares source_files but ships none for a meta pod", () => {
+    const root = moduleFixture("Partial", {});
+    expect(layoutOf("Partial", root).layout).toBe("pure-swift");
+  });
+
+  it("the committed patch carries the placeholder and meta-pod rules", () => {
+    const patch = readFileSync(COMMITTED_PATCH, "utf8");
+    expect(patch).toContain("+function isPlaceholderSource(");
+    expect(patch).toContain("linkedAs: 'meta'");
+  });
 
 });

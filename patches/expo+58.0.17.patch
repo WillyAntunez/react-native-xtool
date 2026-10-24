@@ -1,16 +1,31 @@
 diff --git a/node_modules/expo/scripts/spm/classify.js b/node_modules/expo/scripts/spm/classify.js
-index 10d157f..2b1c0d0 100644
+index 10d157f..efff6b4 100644
 --- a/node_modules/expo/scripts/spm/classify.js
 +++ b/node_modules/expo/scripts/spm/classify.js
-@@ -102,6 +102,7 @@ function walkSourceTree(dir) {
+@@ -102,6 +102,22 @@ function walkSourceTree(dir) {
  
  const REACT_SCANNED_RX = /\.(swift|m|mm|c|h|hpp|cpp|cc)$/;
  const NON_SWIFT_SOURCE_RX = /\.(m|mm|c|cpp|cc)$/;
 +const CXX_SOURCE_RX = /\.(mm|cpp|cc)$/;
++
++/**
++ * expo-xtool: whether a C-family file compiles to nothing — empty or comments only. CocoaPods
++ * static frameworks need one non-Swift file to generate a module map, so some pure-Swift
++ * modules ship a placeholder (expo-updates-interface's `noop-file.m`); it must not make the
++ * module count as mixed.
++ */
++function isPlaceholderSource(file) {
++  try {
++    const text = fs.readFileSync(file, 'utf8');
++    return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '').trim() === '';
++  } catch {
++    return false;
++  }
++}
  
  function fileImportsReact(file) {
    try {
-@@ -124,16 +125,32 @@ function scanAppleSources(moduleRoot) {
+@@ -124,16 +140,38 @@ function scanAppleSources(moduleRoot) {
    let pureSwift = true;
    let importsReact = false;
    let ignoredDirs = [];
@@ -18,6 +33,7 @@ index 10d157f..2b1c0d0 100644
 +  // be emitted as a Swift, mixed Swift + Objective-C, or Clang-only target.
 +  let hasSwift = false;
 +  let hasCxx = false;
++  const placeholderFiles = [];
    for (const sub of [...APPLE_SOURCE_DIRS, 'common']) {
      const dir = path.join(moduleRoot, sub);
      const tree = walkSourceTree(dir);
@@ -25,8 +41,12 @@ index 10d157f..2b1c0d0 100644
      for (const file of tree.files) {
 -      if (sub !== 'common' && NON_SWIFT_SOURCE_RX.test(file)) pureSwift = false;
 +      if (sub !== 'common' && NON_SWIFT_SOURCE_RX.test(file)) {
-+        pureSwift = false;
-+        if (CXX_SOURCE_RX.test(file)) hasCxx = true;
++        if (dir === sourceDir && isPlaceholderSource(file)) {
++          placeholderFiles.push(path.relative(sourceDir, file));
++        } else {
++          pureSwift = false;
++          if (CXX_SOURCE_RX.test(file)) hasCxx = true;
++        }
 +      }
 +      if (dir === sourceDir && file.endsWith('.swift')) hasSwift = true;
        if (!importsReact && REACT_SCANNED_RX.test(file)) importsReact = fileImportsReact(file);
@@ -41,18 +61,20 @@ index 10d157f..2b1c0d0 100644
 +    hasSwift,
 +    hasClang: !pureSwift,
 +    hasCxx,
++    placeholderFiles: placeholderFiles.sort(),
 +  };
  }
  
  /**
-@@ -157,4 +174,5 @@ module.exports = {
+@@ -157,4 +195,6 @@ module.exports = {
    findModuleRoot,
    moduleNeedsReact,
    scanAppleSources,
++  isPlaceholderSource,
 +  walkSourceTree,
  };
 diff --git a/node_modules/expo/scripts/spm/manifests.js b/node_modules/expo/scripts/spm/manifests.js
-index b1454bc..196e191 100644
+index b1454bc..dcad376 100644
 --- a/node_modules/expo/scripts/spm/manifests.js
 +++ b/node_modules/expo/scripts/spm/manifests.js
 @@ -9,7 +9,7 @@
@@ -214,10 +236,21 @@ index b1454bc..196e191 100644
    const rootLink = path.join(pkgDir, 'root');
    try {
      fs.rmSync(rootLink, { recursive: true, force: true });
-@@ -1026,6 +1103,110 @@ function emitPureSwiftSourcePackage(
-   return emitPackage(manifest, moduleRoot, emitContext);
- }
- 
+@@ -1016,6 +1093,111 @@ function emitPureSwiftSourcePackage(
+ ) {
+   const srcDir = appleSourceDir(moduleRoot);
+   const manifest = pureSwiftManifest({
++    product,
++    srcRel: path.relative(moduleRoot, srcDir),
++    // expo-xtool: an empty placeholder `.m` would make SwiftPM see a mixed target.
++    excludes: [...sources.ignoredDirs, ...(sources.placeholderFiles ?? [])],
++    iosDeploymentTarget,
++    hasPrivacyManifest: fs.existsSync(path.join(srcDir, PRIVACY_MANIFEST)),
++    packages: spmPackages.map(documentedPackage),
++  });
++  return emitPackage(manifest, moduleRoot, emitContext);
++}
++
 +// ---------------------------------------------------------------------------
 +// expo-xtool: mixed Swift + Objective-C and Objective-C-only modules without a Package.swift
 +// ---------------------------------------------------------------------------
@@ -312,20 +345,10 @@ index b1454bc..196e191 100644
 +    hasCxx: sources.hasCxx,
 +    umbrellaHeaders,
 +    pkgDir: path.join(emitContext.outDir, 'expo-source', product),
-+    product,
-+    srcRel: path.relative(moduleRoot, srcDir),
-+    excludes: sources.ignoredDirs,
-+    iosDeploymentTarget,
-+    hasPrivacyManifest: fs.existsSync(path.join(srcDir, PRIVACY_MANIFEST)),
-+    packages: spmPackages.map(documentedPackage),
-+  });
-+  return emitPackage(manifest, moduleRoot, emitContext);
-+}
-+
- module.exports = {
-   parseDumpedManifest,
-   resolveTargetPaths,
-@@ -1037,5 +1218,8 @@ module.exports = {
+     product,
+     srcRel: path.relative(moduleRoot, srcDir),
+     excludes: sources.ignoredDirs,
+@@ -1037,5 +1219,8 @@ module.exports = {
    raiseFloor,
    emitSourceManifestPackage,
    emitPureSwiftSourcePackage,
@@ -335,7 +358,7 @@ index b1454bc..196e191 100644
    emitExpoModulesJSIHeadersPackage,
  };
 diff --git a/node_modules/expo/scripts/spm/plugin.js b/node_modules/expo/scripts/spm/plugin.js
-index 1141e7c..0790163 100644
+index 1141e7c..95502a0 100644
 --- a/node_modules/expo/scripts/spm/plugin.js
 +++ b/node_modules/expo/scripts/spm/plugin.js
 @@ -84,6 +84,7 @@ const {
@@ -352,28 +375,32 @@ index 1141e7c..0790163 100644
   * unique, so a name two packages list is one pod. `linkedAs` is `'build-phase'`,
 - * `'precompiled'`, `'manifest'`, `'pure-swift'` or null. A precompiled record carries its
 - * `framework`.
-+ * `'precompiled'`, `'manifest'`, `'pure-swift'`, `'mixed'`, `'clang'` (the last two from
++ * `'precompiled'`, `'manifest'`, `'pure-swift'`, `'mixed'`, `'clang'`, `'meta'` (the last three from
 + * expo-xtool) or null. A precompiled record carries its `framework`.
   */
  function podRecords(identities) {
    const records = new Map();
-@@ -382,12 +383,29 @@ function linkPrecompiledPods(identities, records, cacheDir) {
+@@ -382,12 +383,33 @@ function linkPrecompiledPods(identities, records, cacheDir) {
    return linked;
  }
  
 +/**
 + * expo-xtool: how a module without a checked-in Package.swift is built from its sources.
 + *
-+ * - `'pure-swift'`: Swift only — one Swift target.
++ * - `'pure-swift'`: Swift only (an empty placeholder `.m` does not count) — one Swift target.
 + * - `'mixed'`: Swift and Objective-C/C/C++ — one mixed-language target. SwiftPM builds those
 + *   since Swift 6.4 (`experimentalMultiLang`; SE-0541 makes it standard in tools-version 6.5),
 + *   the way CocoaPods builds a mixed pod as one framework.
 + * - `'clang'`: Objective-C/C/C++ only — one Clang target.
++ * - `'meta'`: no source of its own and a podspec without `source_files` (expo-dev-client):
++ *   CocoaPods compiles nothing for it either, so nothing is emitted and nothing is refused.
 + * - null: no source directory at all — the pod's `no-apple-sources` report covers it.
 + */
-+function sourceLayout({ sources }) {
++function sourceLayout({ sources, podspec }) {
 +  if (sources.hasSwift && sources.hasClang) return 'mixed';
 +  if (sources.hasClang) return 'clang';
++  if (sources.hasSwift) return 'pure-swift';
++  if (!podspec.declaresSourceFiles) return 'meta';
 +  // A module with no sources at all scans as pure Swift, as before this change.
 +  return sources.hasSources ? 'pure-swift' : null;
 +}
@@ -391,7 +418,7 @@ index 1141e7c..0790163 100644
   */
  function emitSourceModule(identity, hasManifest, emitContext) {
    const { moduleRoot, podName, iosDeploymentTarget, spmPackages, sources, podspec } = identity;
-@@ -395,9 +413,16 @@ function emitSourceModule(identity, hasManifest, emitContext) {
+@@ -395,9 +417,16 @@ function emitSourceModule(identity, hasManifest, emitContext) {
    if (podspec.linkage != null) {
      return { refusal: { reason: 'needs-manifest-for-linkage', ...podspec.linkage } };
    }
@@ -411,7 +438,7 @@ index 1141e7c..0790163 100644
      emitContext
    );
  }
-@@ -427,11 +452,13 @@ function linkSourceModules(modules, identities, records, emitContext) {
+@@ -427,11 +456,13 @@ function linkSourceModules(modules, identities, records, emitContext) {
      if (!pods.length || pods.every(linkedAs)) continue;
  
      const [first] = pods;
@@ -427,15 +454,20 @@ index 1141e7c..0790163 100644
        // Both source branches build the whole module, so emitting it would link
        // the precompiled pods a second time, from source.
        const siblings = {
-@@ -457,7 +484,6 @@ function linkSourceModules(modules, identities, records, emitContext) {
+@@ -457,7 +488,11 @@ function linkSourceModules(modules, identities, records, emitContext) {
        if (covered.some(linkedAs)) continue;
        // A module with no sources at all scans as pure Swift too, so it reaches
        // emitSourceModule for the podspec linkage check that outranks it.
 -      if (!hasManifest && !sources.pureSwift) continue;
++      // expo-xtool: a meta pod (no sources, no `source_files`) links as nothing at all.
++      if (layout === 'meta' && first.podspec.linkage == null) {
++        Object.assign(records.get(first.podName), { identity: first, linkedAs: 'meta' });
++        continue;
++      }
  
        const emission = emitSourceModule(first, hasManifest, emitContext);
        if (emission == null) continue;
-@@ -466,7 +492,7 @@ function linkSourceModules(modules, identities, records, emitContext) {
+@@ -466,7 +501,7 @@ function linkSourceModules(modules, identities, records, emitContext) {
          refuse(moduleRoot, refusal.reason, () => refusal);
          continue;
        }
@@ -444,7 +476,7 @@ index 1141e7c..0790163 100644
        emitted.push({ identity: first, linkedAs: kind, emission: ok });
        if (!hasManifest) {
          Object.assign(records.get(first.podName), { identity: first, linkedAs: kind });
-@@ -541,7 +567,9 @@ function summarizeRecords(
+@@ -541,7 +576,9 @@ function summarizeRecords(
      autolinkGate,
    }
  ) {
@@ -455,7 +487,7 @@ index 1141e7c..0790163 100644
    const refusalsFor = (identity) =>
      [...(refusals.get(identity.moduleRoot)?.values() ?? [])].map((refusalFor) =>
        refusalFor(identity)
-@@ -605,7 +633,9 @@ function summarizeRecords(
+@@ -605,7 +642,12 @@ function summarizeRecords(
      manifestPackages: emitted
        .filter((r) => r.linkedAs === 'manifest')
        .map((r) => r.identity.packageName),
@@ -463,10 +495,13 @@ index 1141e7c..0790163 100644
 +    pureSwiftPods: podNames(pureSwift.filter((r) => r.linkedAs === 'pure-swift')),
 +    mixedPods: podNames(pureSwift.filter((r) => r.linkedAs === 'mixed')),
 +    clangPods: podNames(pureSwift.filter((r) => r.linkedAs === 'clang')),
++    metaPods: [...records.values()]
++      .filter((r) => r.linkedAs === 'meta')
++      .map((r) => r.identity.podName),
      reactWiredPods: podNames(reactWired),
    };
  }
-@@ -656,7 +686,11 @@ function macroPluginFlags(coreModuleRoot) {
+@@ -656,7 +698,11 @@ function macroPluginFlags(coreModuleRoot) {
        { cause: error }
      );
    }
@@ -479,17 +514,65 @@ index 1141e7c..0790163 100644
    if (!fs.existsSync(tool)) {
      throw pluginError(
        macroPluginFault(`The Expo Swift macro plugin is missing its executable at ${tool}.`, 'it')
-@@ -784,6 +818,8 @@ module.exports = function expoSpmPlugin(context) {
+@@ -784,6 +830,9 @@ module.exports = function expoSpmPlugin(context) {
    logListed('paired runtime frameworks', summary.precompiledPods);
    logListed('source via checked-in manifest', summary.manifestPackages);
    logListed('source pure-Swift', summary.pureSwiftPods);
 +  logListed('source mixed Swift + Objective-C', summary.mixedPods);
 +  logListed('source Objective-C', summary.clangPods);
++  logListed('no sources of their own (meta pods)', summary.metaPods);
    logListed('React wired into', summary.reactWiredPods);
    logListed('gated off', summary.gatedOffProducts);
    logListed(
-@@ -895,3 +931,4 @@ module.exports = function expoSpmPlugin(context) {
+@@ -895,3 +944,4 @@ module.exports = function expoSpmPlugin(context) {
  module.exports.macroPluginFlags = macroPluginFlags;
  module.exports.resolvePodIdentities = resolvePodIdentities;
  module.exports.uncoveredPod = uncoveredPod;
 +module.exports.sourceLayout = sourceLayout;
+diff --git a/node_modules/expo/scripts/spm/podspec.js b/node_modules/expo/scripts/spm/podspec.js
+index 44117ae..7166238 100644
+--- a/node_modules/expo/scripts/spm/podspec.js
++++ b/node_modules/expo/scripts/spm/podspec.js
+@@ -132,6 +132,20 @@ function podspecDependencies(text) {
+   return deps;
+ }
+ 
++/**
++ * expo-xtool: whether a podspec compiles anything of its own (`source_files`). Text-only, like
++ * the rest.
++ */
++const SOURCE_FILES_RX = /^\s*\w+\.(?:ios\.)?source_files\b/;
++
++function sourceFacts(text) {
++  let declaresSourceFiles = false;
++  for (const { text: line } of podspecBodyLines(text)) {
++    if (SOURCE_FILES_RX.test(line)) declaresSourceFiles = true;
++  }
++  return { declaresSourceFiles };
++}
++
+ // ---------------------------------------------------------------------------
+ // I/O
+ // ---------------------------------------------------------------------------
+@@ -216,7 +230,14 @@ function readPodspecFacts({ podName, podspecDir, moduleRoot }) {
+   const dependencies = new Set(
+     podspecsIn(podspecDir).flatMap((file) => podspecDependencies(readText(file) ?? ''))
+   );
+-  return { ...readPodspecs(podName, dirs), dependencies: [...dependencies] };
++  // expo-xtool: no podspec found counts as declaring sources, so nothing is taken for a meta pod.
++  const texts = podspecFiles(podName, dirs).map((file) => readText(file) ?? '');
++  const facts = texts.map(sourceFacts);
++  return {
++    ...readPodspecs(podName, dirs),
++    dependencies: [...dependencies],
++    declaresSourceFiles: !texts.length || facts.some((f) => f.declaresSourceFiles),
++  };
+ }
+ 
+ module.exports = {
+@@ -226,4 +247,5 @@ module.exports = {
+   xcconfigLinkerFlags,
+   readPodspecs,
+   readPodspecFacts,
++  sourceFacts,
+ };
