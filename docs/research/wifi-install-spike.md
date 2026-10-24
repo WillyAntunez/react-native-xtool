@@ -1,7 +1,7 @@
-# Wi-Fi install spike (pymobiledevice3 11.43.1, iPhone 00008030-001645A61EBB802E, iOS 26.5)
+# Wi-Fi install spike (pymobiledevice3 11.43.1, iPhone <UDID>, iOS 26.5)
 
 Date: 2026-10-23. No repo was modified. The only device change was reinstalling our own app
-(`XTL-G7T6C5W9ZU.com.willyantuneztowerhouse.app`). No settings were changed, nothing was
+(`XTL-<TEAM>.<bundle-id>`). No settings were changed, nothing was
 unpaired, no tunnel was started and no developer image was mounted.
 
 ## TL;DR
@@ -10,7 +10,7 @@ unpaired, no tunnel was started and no developer image was mounted.
   usbmuxd was inactive). A 139 MB `App.ipa` was installed over plain lockdown TCP to
   `192.168.1.10:62078` in **70.8 s** (71.2 s wall clock including Python startup).
   `installation_proxy` confirmed it afterwards: version 1.0.0 (1), signed by
-  `Apple Development: willyantunezg@gmail.com (ZDK9NF3T6Z)`.
+  `Apple Development: <Apple ID> (<cert>)`.
 - **Root cause of the AFC drop: no heartbeat.** Over Wi-Fi, iOS closes every lockdown
   service connection right after the TLS handshake, on the first request, unless the host
   keeps a `com.apple.mobile.heartbeat` connection open and answers each `Marco` with
@@ -41,7 +41,7 @@ pair record keys: ['DeviceCertificate','EscrowBag','HostCertificate','HostID','H
                    'RootCertificate','RootPrivateKey','SystemBUID','WiFiMACAddress']
 WiFiMACAddress in record: 14:7d:da:ed:7d:8c
 device WiFiAddress:       14:7d:da:ed:7d:8c        <- matches (the ARP MAC ce:0a:c5:… is the private Wi-Fi MAC; irrelevant)
-paired True udid 00008030-001645A61EBB802E session 5FD218B6-…
+paired True udid <UDID> session 5FD218B6-…
 lockdown session TLS: TLSv1.2
 com.apple.afc                       -> {'EnableServiceSSL': True, 'Port': 50294, ...}
 com.apple.mobile.installation_proxy -> {'EnableServiceSSL': True, 'Port': 50295, ...}
@@ -71,7 +71,7 @@ These results show the following:
 ```
 heartbeat first msg after 0.0s: {'Command': 'Marco', 'Interval': 10, 'SupportsSleepyTime': True}
 afc listdir: ['Podcasts', 'Downloads', 'CloudAssets', 'Books', 'Photos', 'Deferred', 'Music', 'PhotoStreamsData']
-get_apps OK: [... 'XTL-G7T6C5W9ZU.com.willyantuneztowerhouse.app', ...]
+get_apps OK: [... 'XTL-<TEAM>.<bundle-id>', ...]
 ```
 
 The only change from the failing probes was these two lines, run before any other
@@ -84,14 +84,14 @@ The script is at
 `<path>`.
 
 ```
-$ /usr/bin/time -v .../pmd3/bin/python wifi_install.py 192.168.1.10 00008030-001645A61EBB802E \
-    <path> XTL-G7T6C5W9ZU.com.willyantuneztowerhouse.app
+$ /usr/bin/time -v .../pmd3/bin/python wifi_install.py 192.168.1.10 <UDID> \
+    <path> XTL-<TEAM>.<bundle-id>
 open at 21:58:43; usb: 0
 heartbeat up after 0.9s
 progress 100%
 install done in 69.9s (total 70.8s)
-verify: XTL-G7T6C5W9ZU.com.willyantuneztowerhouse.app installed {'CFBundleShortVersionString': '1.0.0',
-        'CFBundleVersion': '1', 'SignerIdentity': 'Apple Development: willyantunezg@gmail.com (ZDK9NF3T6Z)'}
+verify: XTL-<TEAM>.<bundle-id> installed {'CFBundleShortVersionString': '1.0.0',
+        'CFBundleVersion': '1', 'SignerIdentity': 'Apple Development: <Apple ID> (<cert>)'}
 Elapsed (wall clock) time: 1:11.22
 Maximum resident set size: 782644 kB    <- pymobiledevice3 reads the whole ipa into memory (and copies it)
 ```
@@ -178,9 +178,9 @@ already works over Wi-Fi with only `node:net`, `node:tls` and `plist` (Node 24, 
 ```
 QueryType com.apple.mobile.lockdown
 StartSession EnableSessionSSL true
-lockdown TLS TLSv1.2 UDID 00008030-001645A61EBB802E
+lockdown TLS TLSv1.2 UDID <UDID>
 heartbeat: { Command: 'Marco', Interval: 10, SupportsSleepyTime: true }
-Lookup: {"XTL-G7T6C5W9ZU.com.willyantuneztowerhouse.app":{"CFBundleVersion":"1",...}} (639 ms)
+Lookup: {"XTL-<TEAM>.<bundle-id>":{"CFBundleVersion":"1",...}} (639 ms)
 ```
 
 Implementation notes from the probe:
