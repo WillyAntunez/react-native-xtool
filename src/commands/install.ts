@@ -1,6 +1,6 @@
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
 import { projectPaths } from "../paths.js";
-import { readState, type BuildState } from "../state.js";
+import { readState, writeState, type BuildState } from "../state.js";
 import {
   authStatus,
   devRun,
@@ -17,7 +17,8 @@ export interface InstallDeps {
     bin?: (config: ExpoXtoolConfig) => string;
     authStatus?: (bin: string) => Promise<AuthStatus>;
     listDevices?: (bin: string) => Promise<Device[]>;
-    readState?: (iosXtoolDir: string) => Promise<Pick<BuildState, "bundleIdentifier" | "metroPort" | "lanIp"> | undefined>;
+    readState?: (iosXtoolDir: string) => Promise<(Pick<BuildState, "bundleIdentifier" | "metroPort" | "lanIp"> & Partial<BuildState>) | undefined>;
+    writeState?: (iosXtoolDir: string, state: BuildState) => Promise<void>;
     devRun?: (bin: string, iosXtoolDir: string) => Promise<void>;
   };
   log?: (s: string) => void;
@@ -57,6 +58,9 @@ export async function install(root: string, deps: InstallDeps = {}): Promise<voi
   const state = await (x.readState ?? readState)(iosXtool).catch(() => undefined);
   if (!state) throw new Error("No build found. Run `expo-xtool build` first.");
   await (x.devRun ?? devRun)(bin, iosXtool);
+  if (state.depsFingerprint !== undefined) {
+    await (x.writeState ?? writeState)(iosXtool, { ...(state as BuildState), installedFingerprint: state.depsFingerprint });
+  }
   const id = installedBundleId(auth.teamId, state.bundleIdentifier);
   log(`Installed ${id} on ${devices[0]!.name}`);
   log(`Metro URL for the dev launcher: http://${state.lanIp}:${state.metroPort}`);

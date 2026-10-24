@@ -58,18 +58,20 @@ export function buildProgram(): Command {
   program
     .command("start")
     .description("Start Metro on the port and LAN IP the app was built for")
+    .option("--clear", "start Metro with --clear (reset its cache)")
     .action(
-      action(async () => {
-        await start(process.cwd());
+      action(async (o: { clear?: boolean }) => {
+        await start(process.cwd(), { clear: o.clear });
       }),
     );
   program
     .command("run")
-    .description("Build, install and start Metro")
-    .option("--clean", "re-run expo prebuild --clean")
+    .description("Build and install when needed, then start Metro")
+    .option("--clean", "re-run expo prebuild --clean (always rebuilds)")
+    .option("--force", "always rebuild and reinstall")
     .action(
-      action(async (o: { clean?: boolean }) => {
-        await run(process.cwd(), { clean: o.clean });
+      action(async (o: { clean?: boolean; force?: boolean }) => {
+        await run(process.cwd(), { clean: o.clean, force: o.force });
       }),
     );
   program

@@ -18,6 +18,14 @@ describe("state", () => {
     await writeState(dir, state);
     expect(await readState(dir)).toEqual(state);
   });
+  it("round-trips the deps fingerprint; states without it still load", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "state-"));
+    await writeState(dir, { ...state, depsFingerprint: "abc" });
+    expect((await readState(dir))?.depsFingerprint).toBe("abc");
+    const old = mkdtempSync(join(tmpdir(), "state-"));
+    await writeState(old, state);
+    expect((await readState(old))?.depsFingerprint).toBeUndefined();
+  });
   it("returns undefined when missing", async () => {
     expect(await readState(mkdtempSync(join(tmpdir(), "state-")))).toBeUndefined();
   });

@@ -56,12 +56,30 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
     devBuild: rec("xtool-build"),
     xtoolBin: () => "/bin/xtool",
     readState,
+    depsFingerprint: async () => "fp-test",
     log: (s) => logs.push(s),
   };
   return { root, calls, logs, deps, writeIosXtool };
 }
 
 describe("build", () => {
+  it("leaves no fingerprint in the state when xtool-build fails", async () => {
+    const t = setup();
+    const devBuild = async () => {
+      throw new Error("xtool failed");
+    };
+    await expect(build(t.root, {}, { ...t.deps, devBuild })).rejects.toThrow("xtool failed");
+    const state = await readState(join(t.root, "ios-xtool"));
+    expect(state?.metroPort).toBe(8081);
+    expect(state?.depsFingerprint).toBeUndefined();
+  });
+
+  it("records the dependency fingerprint in the state", async () => {
+    const t = setup();
+    await build(t.root, {}, t.deps);
+    expect((await readState(join(t.root, "ios-xtool")))?.depsFingerprint).toBe("fp-test");
+  });
+
   it("runs steps in order, passes port/ip and writes state", async () => {
     const t = setup();
     await build(t.root, {}, t.deps);
