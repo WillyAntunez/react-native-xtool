@@ -1,15 +1,17 @@
 import net from "node:net";
 import { DeviceTimeoutError, DeviceUnreachableError, message } from "./errors.js";
-import { LOCKDOWN_PORT, LockdownClient, tcpConnector } from "./lockdown.js";
+import { LOCKDOWN_PORT, LockdownClient, LockdownError, tcpConnector } from "./lockdown.js";
+import type { LoadedPairRecord, PairRecord } from "./pairRecord.js";
 import { sameUdid } from "./usbmux.js";
 
 /** No paired iPhone answered anywhere on the subnet. Retryable: it is usually asleep. */
 export class DeviceNotFoundError extends Error {
-  constructor(subnet: string, unpaired: { ip: string; udid: string }[] = []) {
+  /** `unpaired`: descriptions of lockdown hosts that answered but accept none of our pair records. */
+  constructor(subnet: string, unpaired: string[] = []) {
     super(
       `no paired iPhone answered on ${subnet} (port ${LOCKDOWN_PORT})` +
         (unpaired.length
-          ? `; unpaired: ${unpaired.map((c) => `${c.udid} at ${c.ip}`).join(", ")} — if one is yours, pair it over USB once (\`expo-xtool setup --wifi\`) or pass --pair-record <file> with --udid <udid>`
+          ? `; not paired with this computer: ${unpaired.join(", ")} — if one is yours, pair it over USB once (\`expo-xtool setup --wifi\`) or pass --pair-record <file>`
           : ""),
     );
     this.name = "DeviceNotFoundError";
@@ -72,15 +74,70 @@ export async function scanPort(hosts: string[], opts: ScanOptions = {}): Promise
   return open.sort((a, b) => hosts.indexOf(a) - hosts.indexOf(b));
 }
 
-/** UDID of the iPhone answering lockdown at `ip` (no pair record needed). */
-export async function identify(ip: string, opts: { port?: number; timeoutMs?: number } = {}): Promise<string> {
-  const timeoutMs = opts.timeoutMs ?? 5000;
-  const l = await LockdownClient.open(tcpConnector(ip, timeoutMs), { port: opts.port ?? LOCKDOWN_PORT, timeoutMs });
-  try {
-    return await l.udid();
-  } finally {
-    l.close();
+/** Answers lockdown, but none of our pair records opens a session on it. */
+export class UnknownDeviceError extends Error {
+  constructor(readonly ip: string) {
+    super(
+      `${ip} answers as an iPhone but accepts none of this computer's pair records (not paired with it, or its pairing was reset). ` +
+        "Pair it once over USB (`expo-xtool setup --wifi`), or pass --pair-record <file>.",
+    );
+    this.name = "UnknownDeviceError";
   }
+}
+
+/** A pair record to try when identifying a device. */
+export interface PairCandidate {
+  record: PairRecord;
+}
+
+/** Pair records for `udids` (in order, duplicates and unloadable ones skipped). */
+export async function pairCandidates(
+  udids: (string | undefined)[],
+  load: (udid: string) => Promise<LoadedPairRecord>,
+): Promise<PairCandidate[]> {
+  const out: PairCandidate[] = [];
+  const seen = new Set<string>();
+  for (const u of udids) {
+    if (!u || seen.has(u.toUpperCase())) continue;
+    seen.add(u.toUpperCase());
+    const loaded = await load(u).catch(() => undefined);
+    if (loaded) out.push({ record: loaded.record });
+  }
+  return out;
+}
+
+/**
+ * UDID of the iPhone answering lockdown at `ip`. Over Wi‑Fi iOS refuses UniqueDeviceID before a
+ * session (GetProhibited), so each candidate pair record is tried: only the iPhone it belongs to
+ * accepts the session, and inside it the UDID is readable.
+ */
+export async function identify(
+  ip: string,
+  opts: { port?: number; timeoutMs?: number; candidates?: () => Promise<PairCandidate[]> } = {},
+): Promise<string> {
+  const timeoutMs = opts.timeoutMs ?? 5000;
+  const open = (): Promise<LockdownClient> =>
+    LockdownClient.open(tcpConnector(ip, timeoutMs), { port: opts.port ?? LOCKDOWN_PORT, timeoutMs });
+  const first = await open();
+  try {
+    return await first.udid();
+  } catch (e) {
+    if (!(e instanceof LockdownError)) throw e;
+  } finally {
+    first.close();
+  }
+  for (const c of (await opts.candidates?.()) ?? []) {
+    const l = await open();
+    try {
+      await l.startSession(c.record);
+      return await l.udid();
+    } catch (e) {
+      if (!(e instanceof LockdownError)) throw e;
+    } finally {
+      l.close();
+    }
+  }
+  throw new UnknownDeviceError(ip);
 }
 
 export interface LocateOptions {
@@ -133,14 +190,25 @@ export async function locateDevice(o: LocateOptions): Promise<Located> {
     log(`Looking for the iPhone on ${subnet24(o.lanIp)}…`);
   }
   const candidates: { ip: string; udid: string }[] = [];
+  const unknown: string[] = [];
   for (const ip of await scan(o.lanIp)) {
-    const udid = await ident(ip).catch(() => undefined);
-    if (udid && wanted(udid)) candidates.push({ ip, udid });
+    try {
+      const udid = await ident(ip);
+      if (wanted(udid)) candidates.push({ ip, udid });
+    } catch (e) {
+      if (e instanceof UnknownDeviceError) unknown.push(`a device at ${ip}`);
+    }
   }
   const found = o.udid ? candidates : [];
-  if (!o.udid) for (const c of candidates) if (await o.paired(c.udid)) found.push(c);
+  const unpaired: string[] = [];
+  if (!o.udid) {
+    for (const c of candidates) {
+      if (await o.paired(c.udid)) found.push(c);
+      else unpaired.push(`${c.udid} at ${c.ip}`);
+    }
+  }
   // Unpaired answers may be someone else's iPhone while ours sleeps: still "not found" (retryable).
-  if (found.length === 0) throw new DeviceNotFoundError(subnet24(o.lanIp), candidates);
+  if (found.length === 0) throw new DeviceNotFoundError(subnet24(o.lanIp), [...unpaired, ...unknown]);
   if (found.length > 1) {
     throw new Error(
       `Several paired iPhones answer on the LAN (${found.map((f) => `${f.udid} at ${f.ip}`).join(", ")}): pass --udid <udid>.`,

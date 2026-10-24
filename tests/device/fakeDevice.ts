@@ -50,6 +50,11 @@ export interface FakeDeviceOptions {
   services?: Record<string, ServiceHandler>;
   /** Accept the TCP connection but never answer (asleep phone). */
   silent?: boolean;
+  /**
+   * Answer UniqueDeviceID before a session (USB-style). By default the fake behaves like iOS 26
+   * over Wi‑Fi: GetProhibited, and the session-less dictionary has no UniqueDeviceID.
+   */
+  udidBeforeSession?: boolean;
   /** AFC: kill the connection when this write (1-based) arrives, like a Wi‑Fi drop. */
   afcDropOnWrite?: number;
   /** AFC: answer FileWrite with this status (e.g. 18 NoSpaceLeft). */
@@ -158,8 +163,16 @@ export class FakeDevice {
             await reply({ Error: "InvalidSession" });
             break;
           }
-          const dict = this.values[domain] ?? {};
+          let dict = this.values[domain] ?? {};
           const key = typeof req.Key === "string" ? req.Key : undefined;
+          if (!session && !this.opts.udidBeforeSession) {
+            if (key === "UniqueDeviceID") {
+              await reply({ Error: "GetProhibited", Key: key });
+              break;
+            }
+            const { UniqueDeviceID: _hidden, ...rest } = dict;
+            dict = rest;
+          }
           if (key && dict[key] === undefined) await reply({ Error: "MissingValue" });
           else await reply({ Value: key ? dict[key]! : dict });
           break;

@@ -1,8 +1,16 @@
 import { basename } from "node:path";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
-import { locateDevice, retryWhileUnreachable, type Located, type LocateOptions } from "../device/discover.js";
+import {
+  identify,
+  locateDevice,
+  pairCandidates,
+  retryWhileUnreachable,
+  type Located,
+  type LocateOptions,
+  type PairCandidate,
+} from "../device/discover.js";
 import { message } from "../device/errors.js";
-import { loadPairRecord, type LoadedPairRecord, type PairRecordSources } from "../device/pairRecord.js";
+import { loadPairRecord, pairedUdids, type LoadedPairRecord, type PairRecordSources } from "../device/pairRecord.js";
 import { readPairRecordFromUsbmux } from "../device/usbmux.js";
 import {
   installOverWifi,
@@ -41,6 +49,7 @@ export interface InstallDeps {
     lanIp?: () => Promise<string>;
     locate?: (o: LocateOptions) => Promise<Located>;
     loadPairRecord?: (udid: string, src: PairRecordSources) => Promise<LoadedPairRecord>;
+    pairedUdids?: () => Promise<string[]>;
     installOverWifi?: (o: WifiInstallOptions) => Promise<WifiInstallResult>;
     rememberDevice?: (
       iosXtoolDir: string,
@@ -154,6 +163,15 @@ async function installNetwork(root: string, deps: InstallDeps, opts: InstallOpti
   const load = w.loadPairRecord ?? loadPairRecord;
   const doInstall = w.installOverWifi ?? installOverWifi;
   const explicitIp = typeof opts.network === "string" ? opts.network : undefined;
+  // Over Wi‑Fi the UDID is only readable inside a session, so identifying a device means trying
+  // our pair records on it: the given/remembered iPhone's first, then every other one we hold.
+  let candidates: Promise<PairCandidate[]> | undefined;
+  const pairs = (): Promise<PairCandidate[]> =>
+    (candidates ??= opts.pairRecord
+      ? load("", sources).then(({ record }) => [{ record }])
+      : (w.pairedUdids ?? (() => pairedUdids()))().then((all) =>
+          pairCandidates([opts.udid, state.deviceUdid, ...all], (u) => load(u, sources)),
+        ));
 
   const attempt = async (): Promise<{ where: Located; result: WifiInstallResult }> => {
     const where = await (w.locate ?? locateDevice)({
@@ -162,6 +180,7 @@ async function installNetwork(root: string, deps: InstallDeps, opts: InstallOpti
       udid: opts.udid ?? (explicitIp ? undefined : state.deviceUdid),
       lanIp,
       paired: (udid) => load(udid, sources).then(() => true, () => false),
+      identify: (ip) => identify(ip, { candidates: pairs }),
       log,
     });
     const { record } = await load(where.udid, sources);

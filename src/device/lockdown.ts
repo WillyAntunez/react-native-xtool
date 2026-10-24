@@ -166,10 +166,12 @@ export class LockdownClient {
     return (await this.request("GetValue", extra, [domain, key].filter(Boolean).join(" "))).Value;
   }
 
-  /** UDID as reported before (or after) a session; works without a pair record. */
+  /**
+   * The device's UDID. Over Wi‑Fi iOS answers GetProhibited before StartSession (USB allows it),
+   * so call it after `startSession` unless the connection goes through usbmuxd.
+   */
   async udid(): Promise<string> {
-    const all = await this.getValue();
-    const id = all && typeof all === "object" ? (all as PlistDict).UniqueDeviceID : undefined;
+    const id = await this.getValue("UniqueDeviceID");
     if (typeof id !== "string") throw new Error("lockdownd did not report UniqueDeviceID");
     return id;
   }

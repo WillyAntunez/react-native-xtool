@@ -64,9 +64,19 @@ describe("tcpConnector", () => {
 });
 
 describe("LockdownClient", () => {
-  it("answers QueryType and the UDID before any session", async () => {
+  it("reads the UDID before a session where the device allows it (USB)", async () => {
+    dev = await FakeDevice.start({ udidBeforeSession: true });
+    const l = await open(dev);
+    expect(await l.udid()).toBe(UDID);
+    l.close();
+  });
+
+  it("gets GetProhibited for the UDID before a session over Wi‑Fi, and the UDID inside one", async () => {
     dev = await FakeDevice.start();
     const l = await open(dev);
+    const err = await l.udid().catch((e: unknown) => e);
+    expect((err as LockdownError).code).toBe("GetProhibited");
+    await l.startSession(pairRecord());
     expect(await l.udid()).toBe(UDID);
     l.close();
   });

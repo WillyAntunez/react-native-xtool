@@ -62,9 +62,11 @@ export async function installOverWifi(o: WifiInstallOptions): Promise<WifiInstal
   let afc: AfcClient | undefined;
   let staged = false;
   try {
+    // The pair record only opens a session on the iPhone it belongs to; the UDID (readable only
+    // inside a session over Wi‑Fi) confirms it.
+    await lockdown.startSession(o.pairRecord);
     const udid = await lockdown.udid();
     if (!sameUdid(udid, o.udid)) throw new Error(`${o.ip} is iPhone ${udid}, not ${o.udid}`);
-    await lockdown.startSession(o.pairRecord);
     // Must be answering before any other service connection is used.
     hb = await Heartbeat.start(lockdown, o.heartbeat);
 

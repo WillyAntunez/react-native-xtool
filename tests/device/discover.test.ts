@@ -9,9 +9,11 @@ import {
   scanPort,
   subnet24Hosts,
   tcpProbe,
+  UnknownDeviceError,
+  pairCandidates,
 } from "../../src/device/discover.js";
 import { DeviceUnreachableError } from "../../src/device/errors.js";
-import { FakeDevice, UDID } from "./fakeDevice.js";
+import { FakeDevice, foreignPairRecord, pairRecord, UDID } from "./fakeDevice.js";
 
 describe("subnet24Hosts", () => {
   it("lists .1–.254 without our own address", () => {
@@ -58,9 +60,24 @@ describe("tcpProbe and identify", () => {
     server.close();
     expect(await tcpProbe("127.0.0.1", 1, 500)).toBe(false);
   });
-  it("identifies the UDID behind a lockdown port", async () => {
-    dev = await FakeDevice.start();
+  it("identifies the UDID before a session when the device allows it", async () => {
+    dev = await FakeDevice.start({ udidBeforeSession: true });
     expect(await identify("127.0.0.1", { port: dev.lockdownPort, timeoutMs: 1000 })).toBe(UDID);
+  });
+  it("over Wi‑Fi, tries pair records until one opens a session, then reads the UDID", async () => {
+    dev = await FakeDevice.start();
+    const candidates = async () => [{ record: foreignPairRecord() }, { record: pairRecord({ HostID: "NOPE" }) }, { record: pairRecord() }];
+    expect(await identify("127.0.0.1", { port: dev.lockdownPort, timeoutMs: 1000, candidates })).toBe(UDID);
+  });
+  it("reports an iPhone that accepts none of our pair records", async () => {
+    dev = await FakeDevice.start();
+    const err = await identify("127.0.0.1", {
+      port: dev.lockdownPort,
+      timeoutMs: 1000,
+      candidates: async () => [{ record: pairRecord({ HostID: "NOPE" }) }],
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UnknownDeviceError);
+    expect((err as Error).message).toContain("setup --wifi");
   });
 });
 
@@ -133,6 +150,34 @@ describe("locateDevice", () => {
         scan: async () => ["10.0.0.7", "10.0.0.8"],
       }),
     ).rejects.toThrow("pass --udid");
+  });
+});
+
+describe("pairCandidates", () => {
+  it("loads each UDID once, in order, skipping missing records", async () => {
+    const loaded: string[] = [];
+    const out = await pairCandidates(["A", undefined, "B", "a", "C"], async (u) => {
+      loaded.push(u);
+      if (u === "B") throw new Error("missing");
+      return { record: pairRecord({ HostID: u }), source: "x" };
+    });
+    expect(loaded).toEqual(["A", "B", "C"]);
+    expect(out.map((c) => c.record.HostID)).toEqual(["A", "C"]);
+  });
+});
+
+describe("locateDevice with unknown devices", () => {
+  it("lists hosts that accept none of our records in the not-found error", async () => {
+    const err = await locateDevice({
+      lanIp: "10.0.0.2",
+      paired: async () => true,
+      identify: async (ip) => {
+        throw new UnknownDeviceError(ip);
+      },
+      scan: async () => ["10.0.0.7"],
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DeviceNotFoundError);
+    expect((err as Error).message).toContain("a device at 10.0.0.7");
   });
 });
 

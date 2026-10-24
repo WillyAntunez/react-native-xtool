@@ -9,8 +9,8 @@
  * connections enabled. An asleep phone fails after the bounded 3 × 10 s retry; it never hangs.
  */
 import { describe, expect, it } from "vitest";
-import { identify, retryWhileUnreachable } from "../src/device/discover.js";
-import { loadPairRecord } from "../src/device/pairRecord.js";
+import { identify, pairCandidates, retryWhileUnreachable } from "../src/device/discover.js";
+import { loadPairRecord, pairedUdids } from "../src/device/pairRecord.js";
 import { readPairRecordFromUsbmux } from "../src/device/usbmux.js";
 import { installOverWifi } from "../src/device/wifiInstall.js";
 
@@ -28,8 +28,11 @@ describe.skipIf(!enabled)("Wi‑Fi install on a real iPhone", () => {
     const t0 = Date.now();
     const result = await retryWhileUnreachable(
       async () => {
-        const udid = env.EXPO_XTOOL_E2E_WIFI_UDID ?? (await identify(ip));
-        const { record, source } = await loadPairRecord(udid, { fromUsbmux: (u) => readPairRecordFromUsbmux(u) });
+        const load = (u: string) => loadPairRecord(u, { fromUsbmux: (x) => readPairRecordFromUsbmux(x) });
+        const udid =
+          env.EXPO_XTOOL_E2E_WIFI_UDID ??
+          (await identify(ip, { candidates: async () => pairCandidates(await pairedUdids(), load) }));
+        const { record, source } = await load(udid);
         console.log(`iPhone ${udid} at ${ip}, pair record from ${source}`);
         let lastTenth = -1;
         return installOverWifi({

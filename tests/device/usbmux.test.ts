@@ -124,7 +124,7 @@ describe("usbmuxd client", () => {
     expect(await listUsbDevices({ path: join(dir, "missing.sock") })).toEqual([]);
   });
   it("tunnels lockdown over Connect with the port byte-swapped", async () => {
-    dev = await FakeDevice.start();
+    dev = await FakeDevice.start({ udidBeforeSession: true });
     const path = await fakeUsbmuxd({ lockdownPort: dev.lockdownPort });
     const l = await LockdownClient.open(usbmuxConnector(7, { path }), { timeoutMs: 2000 });
     expect(await l.udid()).toBe(UDID);
