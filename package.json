@@ -41,8 +41,8 @@
     "linux"
   ],
   "scripts": {
-    "build": "tsc -p .",
-    "prepare": "tsc -p .",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p .",
+    "prepare": "npm run build",
     "test": "vitest run",
     "lint": "tsc --noEmit",
     "scan:private": "bash scripts/scan-private.sh"
