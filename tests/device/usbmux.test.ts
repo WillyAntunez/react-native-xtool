@@ -104,7 +104,7 @@ describe("encodeMuxPacket", () => {
 
 describe("sameUdid", () => {
   it("ignores the dash usbmuxd may drop", () => {
-    expect(sameUdid("00008030-001645A61EBB802E", "00008030001645a61ebb802e")).toBe(true);
+    expect(sameUdid("00008030-00000000DEADBEEF", "0000803000000000deadbeef")).toBe(true);
   });
 });
 

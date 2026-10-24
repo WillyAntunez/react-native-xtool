@@ -137,7 +137,7 @@ describe("install", () => {
 });
 
 describe("install --network", () => {
-  const UD = "00008030-001645A61EBB802E";
+  const UD = "00008030-0000000012345678";
   const record = { HostID: "H", SystemBUID: "B", HostCertificate: Buffer.from("c"), HostPrivateKey: Buffer.from("k") };
   const app = { CFBundleIdentifier: "XTL-TEAM.com.a.b", CFBundleShortVersionString: "1.0.0", CFBundleVersion: "1" };
   const result = { app, bytes: 10, uploadMs: 1500, installMs: 2500 };
@@ -192,7 +192,7 @@ describe("install --network", () => {
     });
     expect(calls.rememberDevice).toHaveBeenCalledWith(expect.stringMatching(/ios-xtool$/), { deviceIp: "192.168.1.10", deviceUdid: UD });
     const text = logs.join("\n");
-    expect(text).toContain("Installed XTL-TEAM.com.a.b 1.0.0 1 on iPhone 00008030-001645A61EBB802E over Wi‑Fi (192.168.1.10)");
+    expect(text).toContain("Installed XTL-TEAM.com.a.b 1.0.0 1 on iPhone 00008030-0000000012345678 over Wi‑Fi (192.168.1.10)");
     expect(text).toContain("Metro URL for the dev launcher: http://192.168.1.20:8082");
     expect(text).toContain("First-run checklist");
   });
