@@ -81,16 +81,32 @@ type Sources = {
   ignoredDirs: string[];
   placeholderFiles: string[];
   vendorSources: string[];
+  appleOnlyResources?: string[];
 };
-type PodspecFacts = { linkage: object | null; declaresSourceFiles: boolean; referencesVendor: boolean };
+type PodspecFacts = {
+  linkage: object | null;
+  declaresSourceFiles: boolean;
+  referencesVendor: boolean;
+  headerDir?: string | null;
+  moduleName?: string | null;
+  dependencies?: string[];
+};
 type Classify = { scanAppleSources(root: string): Sources };
 type Podspec = {
   readPodspecFacts(o: { podName: string; podspecDir: string; moduleRoot: string }): PodspecFacts;
 };
 type Plugin = { sourceLayout(i: { sources: Sources; podspec: PodspecFacts }): string | null };
 type EmitContext = { frameworkSearchPath: string; outDir: string; macroFlags: string[] };
+type LocalDep = { podName: string; name: string; pkgDir: string; hasSwift: boolean };
 type Emit = (
-  o: { moduleRoot: string; product: string; language?: string; sources: Sources },
+  o: {
+    moduleRoot: string;
+    product: string;
+    language?: string;
+    sources: Sources;
+    headerDir?: string | null;
+    localDeps?: LocalDep[];
+  },
   ctx: EmitContext,
 ) => { ok: { packageDep: { path: string } } };
 type Manifests = {
@@ -98,7 +114,10 @@ type Manifests = {
   emitGeneratedSourcePackage: Emit;
   isCxxHeader(text: string): boolean;
 };
-type Diagnostics = { renderUnsupportedReport(entries: object[]): string };
+type Diagnostics = {
+  renderUnsupportedReport(entries: object[]): string;
+  renderDroppedResourceWarning(entries: object[]): string;
+};
 
 const spmAvailable = existsSync(path.join(SPM, "classify.js"));
 const tmp: string[] = [];
@@ -133,12 +152,18 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
     return { sources, facts, layout: plugin.sourceLayout({ sources, podspec: facts }) };
   }
 
-  function emit(pod: string, root: string, language: string, sources: Sources) {
+  function emit(
+    pod: string,
+    root: string,
+    language: string,
+    sources: Sources,
+    extra: { headerDir?: string | null; localDeps?: LocalDep[] } = {},
+  ) {
     const outDir = mkdtempSync(path.join(tmpdir(), "xtool-expo-out-"));
     tmp.push(outDir);
     const ctx = { frameworkSearchPath: "/fw", outDir, macroFlags: [] };
     const fn = language === "pure-swift" ? manifests.emitPureSwiftSourcePackage : manifests.emitGeneratedSourcePackage;
-    const dir = fn({ moduleRoot: root, product: pod, language, sources }, ctx).ok.packageDep.path;
+    const dir = fn({ moduleRoot: root, product: pod, language, sources, ...extra }, ctx).ok.packageDep.path;
     const read = (f: string) => readFileSync(path.join(dir, f), "utf8");
     return { dir, read, manifest: read("Package.swift") };
   }
@@ -302,5 +327,50 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
   it("the committed patch carries the vendored-sources refusal", () => {
     const patch = readFileSync(COMMITTED_PATCH, "utf8");
     expect(patch).toContain("['vendored-sources', { render: renderVendoredSources }]");
+  });
+
+  describe("resources only Xcode's tools compile (expo-dev-launcher's Assets.xcassets)", () => {
+    const root = moduleFixture("EXDevLauncher", {
+      "ios/Launcher.swift": "",
+      "ios/EXDevLauncher.m": "int l(void) { return 1; }\n",
+      "ios/Assets.xcassets/Contents.json": "{}",
+      "ios/Assets.xcassets/icon.imageset/icon.png": "png",
+      "ios/Views/Main.storyboard": "<xml/>",
+      "ios/Tests/Fixtures.xcassets/Contents.json": "{}",
+      "ios/Resources/keep.json": "{}",
+    });
+
+    it("lists them without descending into them or into ignored directories", () => {
+      expect(classify.scanAppleSources(root).appleOnlyResources).toEqual(["Assets.xcassets", "Views/Main.storyboard"]);
+    });
+
+    it("excludes them from a generated mixed target", () => {
+      const sources = classify.scanAppleSources(root);
+      expect(emit("EXDevLauncher", root, "mixed", sources).manifest).toContain(
+        'exclude: ["Tests", "Assets.xcassets", "Views/Main.storyboard"]',
+      );
+    });
+
+    it("excludes them from a pure-Swift target too", () => {
+      const swifty = moduleFixture("SwiftAssets", { "ios/A.swift": "", "ios/Media.xcassets/Contents.json": "{}" });
+      const sources = classify.scanAppleSources(swifty);
+      expect(emit("SwiftAssets", swifty, "pure-swift", sources).manifest).toContain('exclude: ["Media.xcassets"]');
+    });
+
+    it("warns about what is left out", () => {
+      const warning = load<Diagnostics>("diagnostics.js").renderDroppedResourceWarning([
+        { packageName: "expo-dev-launcher", podName: "EXDevLauncher", resources: ["Assets.xcassets"] },
+      ]);
+      expect(warning).toContain('warning: Expo module "expo-dev-launcher" (pod EXDevLauncher) ships resources that only Xcode');
+      expect(warning).toContain("      Assets.xcassets");
+      expect(warning).toContain("missing at runtime");
+    });
+
+    it("the committed patch carries the exclusion and the warning", () => {
+      const patch = readFileSync(COMMITTED_PATCH, "utf8");
+      expect(patch).toContain("+function scanAppleOnlyResources(");
+      expect(patch).toContain("+function renderDroppedResourceWarning(");
+      expect(patch).toContain("...(sources.appleOnlyResources ?? [])");
+    });
   });
 });

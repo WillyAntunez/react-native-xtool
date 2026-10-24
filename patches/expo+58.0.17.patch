@@ -1,8 +1,8 @@
 diff --git a/node_modules/expo/scripts/spm/classify.js b/node_modules/expo/scripts/spm/classify.js
-index 10d157f..3de3ebe 100644
+index 10d157f..7f01275 100644
 --- a/node_modules/expo/scripts/spm/classify.js
 +++ b/node_modules/expo/scripts/spm/classify.js
-@@ -102,6 +102,35 @@ function walkSourceTree(dir) {
+@@ -102,6 +102,65 @@ function walkSourceTree(dir) {
  
  const REACT_SCANNED_RX = /\.(swift|m|mm|c|h|hpp|cpp|cc)$/;
  const NON_SWIFT_SOURCE_RX = /\.(m|mm|c|cpp|cc)$/;
@@ -35,10 +35,40 @@ index 10d157f..3de3ebe 100644
 +    .map((file) => path.relative(moduleRoot, file))
 +    .sort();
 +}
++
++// expo-xtool: resources SwiftPM processes on its own when they sit in a target's directory, with
++// compilers that only ship with Xcode (actool, ibtool, momc, metal, coremlc). Swift Build cannot
++// run them on Linux, so the build fails at planning ("actool is not an executable file").
++const APPLE_ONLY_RESOURCE_RX =
++  /\.(xcassets|xib|storyboard|xcdatamodel|xcdatamodeld|xcmappingmodel|metal|mlmodel|mlpackage)$/;
++
++/**
++ * expo-xtool: the resources under `dir` that only Xcode's tools can compile, relative to `dir`,
++ * sorted. Outside the ignored directories (their excludes already cover them) and not descended
++ * into (an asset catalog is one resource).
++ */
++function scanAppleOnlyResources(dir) {
++  const found = [];
++  const visit = (current, prefix) => {
++    let entries = [];
++    try {
++      entries = fs.readdirSync(current, { withFileTypes: true });
++    } catch {
++      return;
++    }
++    for (const e of entries) {
++      const rel = prefix ? `${prefix}/${e.name}` : e.name;
++      if (APPLE_ONLY_RESOURCE_RX.test(e.name)) found.push(rel);
++      else if (e.isDirectory() && !IGNORED_DIR_RX.test(e.name)) visit(path.join(current, e.name), rel);
++    }
++  };
++  if (dir != null) visit(dir, '');
++  return found.sort();
++}
  
  function fileImportsReact(file) {
    try {
-@@ -124,16 +153,39 @@ function scanAppleSources(moduleRoot) {
+@@ -124,16 +183,40 @@ function scanAppleSources(moduleRoot) {
    let pureSwift = true;
    let importsReact = false;
    let ignoredDirs = [];
@@ -76,19 +106,21 @@ index 10d157f..3de3ebe 100644
 +    hasCxx,
 +    placeholderFiles: placeholderFiles.sort(),
 +    vendorSources: scanVendorSources(moduleRoot),
++    appleOnlyResources: scanAppleOnlyResources(sourceDir),
 +  };
  }
  
  /**
-@@ -157,4 +209,6 @@ module.exports = {
+@@ -157,4 +240,7 @@ module.exports = {
    findModuleRoot,
    moduleNeedsReact,
    scanAppleSources,
 +  isPlaceholderSource,
++  scanAppleOnlyResources,
 +  walkSourceTree,
  };
 diff --git a/node_modules/expo/scripts/spm/diagnostics.js b/node_modules/expo/scripts/spm/diagnostics.js
-index 0ac5e9e..2542a50 100644
+index 0ac5e9e..035bf8d 100644
 --- a/node_modules/expo/scripts/spm/diagnostics.js
 +++ b/node_modules/expo/scripts/spm/diagnostics.js
 @@ -214,6 +214,23 @@ function renderBlock(header, lines, moduleRoot) {
@@ -123,8 +155,41 @@ index 0ac5e9e..2542a50 100644
      ['unsupported-target-dependency', { render: renderUnsupportedTargetDependency }],
      ['unsupported-package-dependency', { render: renderUnsupportedPackageDependency }],
      ['unresolvable-target-path', { render: renderUnresolvableTargetPath }],
+@@ -703,6 +721,24 @@ function renderXcconfigLinkerWarning(entries) {
+     .join('\n\n');
+ }
+ 
++/**
++ * expo-xtool: resources a generated target leaves out because only Xcode's tools compile them.
++ * The build succeeds; what reads them at runtime finds nothing, so this warning is the only trace.
++ */
++function renderDroppedResourceWarning(entries) {
++  if (!entries.length) return '';
++  return entries
++    .map(({ packageName, podName, resources }) =>
++      [
++        `warning: Expo module "${packageName}" (pod ${podName}) ships resources that only Xcode's tools compile; they are left out of its generated package:`,
++        ...resources.map((r) => `      ${r}`),
++        `  Asset catalogs, Interface Builder files, Core Data models, Metal shaders and Core ML models need actool, ibtool, momc, metal or coremlc, which do not exist outside macOS, and Swift Package Manager processes them on its own when they sit in a target's directory.`,
++        `  The module builds; images, colors, views or models it loads from them are missing at runtime (CocoaPods would have compiled them into the pod's resource bundle).`,
++      ].join('\n')
++    )
++    .join('\n\n');
++}
++
+ /** The sync does not fail, so this warning is the only place the mismatch shows. */
+ function renderRootConflictWarning(entries) {
+   if (!entries.length) return '';
+@@ -816,6 +852,7 @@ module.exports = {
+   renderUnmappedDependencyWarning,
+   renderLeftOutCompanionWarning,
+   renderXcconfigLinkerWarning,
++  renderDroppedResourceWarning,
+   renderRootConflictWarning,
+   renderPartlyProvidedPackageWarning,
+   renderExtraPodsWarning,
 diff --git a/node_modules/expo/scripts/spm/manifests.js b/node_modules/expo/scripts/spm/manifests.js
-index b1454bc..dcad376 100644
+index b1454bc..57142c2 100644
 --- a/node_modules/expo/scripts/spm/manifests.js
 +++ b/node_modules/expo/scripts/spm/manifests.js
 @@ -9,7 +9,7 @@
@@ -286,14 +351,18 @@ index b1454bc..dcad376 100644
    const rootLink = path.join(pkgDir, 'root');
    try {
      fs.rmSync(rootLink, { recursive: true, force: true });
-@@ -1016,6 +1093,111 @@ function emitPureSwiftSourcePackage(
- ) {
-   const srcDir = appleSourceDir(moduleRoot);
+@@ -1018,7 +1095,117 @@ function emitPureSwiftSourcePackage(
    const manifest = pureSwiftManifest({
-+    product,
-+    srcRel: path.relative(moduleRoot, srcDir),
-+    // expo-xtool: an empty placeholder `.m` would make SwiftPM see a mixed target.
-+    excludes: [...sources.ignoredDirs, ...(sources.placeholderFiles ?? [])],
+     product,
+     srcRel: path.relative(moduleRoot, srcDir),
+-    excludes: sources.ignoredDirs,
++    // expo-xtool: an empty placeholder `.m` would make SwiftPM see a mixed target, and an asset
++    // catalog (or another Xcode-only resource) needs a compiler Linux does not have.
++    excludes: [
++      ...sources.ignoredDirs,
++      ...(sources.placeholderFiles ?? []),
++      ...(sources.appleOnlyResources ?? []),
++    ],
 +    iosDeploymentTarget,
 +    hasPrivacyManifest: fs.existsSync(path.join(srcDir, PRIVACY_MANIFEST)),
 +    packages: spmPackages.map(documentedPackage),
@@ -395,10 +464,13 @@ index b1454bc..dcad376 100644
 +    hasCxx: sources.hasCxx,
 +    umbrellaHeaders,
 +    pkgDir: path.join(emitContext.outDir, 'expo-source', product),
-     product,
-     srcRel: path.relative(moduleRoot, srcDir),
-     excludes: sources.ignoredDirs,
-@@ -1037,5 +1219,8 @@ module.exports = {
++    product,
++    srcRel: path.relative(moduleRoot, srcDir),
++    excludes: [...sources.ignoredDirs, ...(sources.appleOnlyResources ?? [])],
+     iosDeploymentTarget,
+     hasPrivacyManifest: fs.existsSync(path.join(srcDir, PRIVACY_MANIFEST)),
+     packages: spmPackages.map(documentedPackage),
+@@ -1037,5 +1224,8 @@ module.exports = {
    raiseFloor,
    emitSourceManifestPackage,
    emitPureSwiftSourcePackage,
@@ -408,10 +480,18 @@ index b1454bc..dcad376 100644
    emitExpoModulesJSIHeadersPackage,
  };
 diff --git a/node_modules/expo/scripts/spm/plugin.js b/node_modules/expo/scripts/spm/plugin.js
-index 1141e7c..d1fa182 100644
+index 1141e7c..5ffb442 100644
 --- a/node_modules/expo/scripts/spm/plugin.js
 +++ b/node_modules/expo/scripts/spm/plugin.js
-@@ -84,6 +84,7 @@ const {
+@@ -68,6 +68,7 @@ const {
+   renderRootConflictWarning,
+   renderUnmappedDependencyWarning,
+   renderXcconfigLinkerWarning,
++  renderDroppedResourceWarning,
+   reportUnsupported,
+   unmappedPodDependencies,
+ } = require('./diagnostics');
+@@ -84,6 +85,7 @@ const {
  } = require('./flavored-frameworks');
  const {
    emitExpoModulesJSIHeadersPackage,
@@ -419,7 +499,7 @@ index 1141e7c..d1fa182 100644
    emitPureSwiftSourcePackage,
    emitSourceManifestPackage,
  } = require('./manifests');
-@@ -298,8 +299,8 @@ function uncoveredPod(identity, ...refusals) {
+@@ -298,8 +300,8 @@ function uncoveredPod(identity, ...refusals) {
  /**
   * What the passes decided for each pod, keyed by pod name: CocoaPods pod names are
   * unique, so a name two packages list is one pod. `linkedAs` is `'build-phase'`,
@@ -430,7 +510,7 @@ index 1141e7c..d1fa182 100644
   */
  function podRecords(identities) {
    const records = new Map();
-@@ -382,12 +383,36 @@ function linkPrecompiledPods(identities, records, cacheDir) {
+@@ -382,12 +384,36 @@ function linkPrecompiledPods(identities, records, cacheDir) {
    return linked;
  }
  
@@ -471,7 +551,7 @@ index 1141e7c..d1fa182 100644
   */
  function emitSourceModule(identity, hasManifest, emitContext) {
    const { moduleRoot, podName, iosDeploymentTarget, spmPackages, sources, podspec } = identity;
-@@ -395,9 +420,19 @@ function emitSourceModule(identity, hasManifest, emitContext) {
+@@ -395,9 +421,19 @@ function emitSourceModule(identity, hasManifest, emitContext) {
    if (podspec.linkage != null) {
      return { refusal: { reason: 'needs-manifest-for-linkage', ...podspec.linkage } };
    }
@@ -494,7 +574,7 @@ index 1141e7c..d1fa182 100644
      emitContext
    );
  }
-@@ -427,11 +462,13 @@ function linkSourceModules(modules, identities, records, emitContext) {
+@@ -427,11 +463,13 @@ function linkSourceModules(modules, identities, records, emitContext) {
      if (!pods.length || pods.every(linkedAs)) continue;
  
      const [first] = pods;
@@ -510,7 +590,7 @@ index 1141e7c..d1fa182 100644
        // Both source branches build the whole module, so emitting it would link
        // the precompiled pods a second time, from source.
        const siblings = {
-@@ -457,7 +494,11 @@ function linkSourceModules(modules, identities, records, emitContext) {
+@@ -457,7 +495,11 @@ function linkSourceModules(modules, identities, records, emitContext) {
        if (covered.some(linkedAs)) continue;
        // A module with no sources at all scans as pure Swift too, so it reaches
        // emitSourceModule for the podspec linkage check that outranks it.
@@ -523,7 +603,7 @@ index 1141e7c..d1fa182 100644
  
        const emission = emitSourceModule(first, hasManifest, emitContext);
        if (emission == null) continue;
-@@ -466,7 +507,7 @@ function linkSourceModules(modules, identities, records, emitContext) {
+@@ -466,7 +508,7 @@ function linkSourceModules(modules, identities, records, emitContext) {
          refuse(moduleRoot, refusal.reason, () => refusal);
          continue;
        }
@@ -532,7 +612,7 @@ index 1141e7c..d1fa182 100644
        emitted.push({ identity: first, linkedAs: kind, emission: ok });
        if (!hasManifest) {
          Object.assign(records.get(first.podName), { identity: first, linkedAs: kind });
-@@ -541,7 +582,9 @@ function summarizeRecords(
+@@ -541,7 +583,9 @@ function summarizeRecords(
      autolinkGate,
    }
  ) {
@@ -543,7 +623,19 @@ index 1141e7c..d1fa182 100644
    const refusalsFor = (identity) =>
      [...(refusals.get(identity.moduleRoot)?.values() ?? [])].map((refusalFor) =>
        refusalFor(identity)
-@@ -605,7 +648,12 @@ function summarizeRecords(
+@@ -601,11 +645,24 @@ function summarizeRecords(
+       emission.partlyProvidedPackages.map((pkg) => ({ packageName, moduleRoot, ...pkg }))
+     ),
+     xcconfigLinkage,
++    // expo-xtool: Xcode-only resources the generated targets exclude.
++    droppedResources: pureSwift
++      .filter(({ identity }) => (identity.sources.appleOnlyResources ?? []).length > 0)
++      .map(({ identity }) => ({
++        packageName: identity.packageName,
++        podName: identity.podName,
++        resources: identity.sources.appleOnlyResources,
++      })),
+     precompiledPods: podNames(precompiled),
      manifestPackages: emitted
        .filter((r) => r.linkedAs === 'manifest')
        .map((r) => r.identity.packageName),
@@ -557,7 +649,7 @@ index 1141e7c..d1fa182 100644
      reactWiredPods: podNames(reactWired),
    };
  }
-@@ -656,7 +704,11 @@ function macroPluginFlags(coreModuleRoot) {
+@@ -656,7 +713,11 @@ function macroPluginFlags(coreModuleRoot) {
        { cause: error }
      );
    }
@@ -570,7 +662,7 @@ index 1141e7c..d1fa182 100644
    if (!fs.existsSync(tool)) {
      throw pluginError(
        macroPluginFault(`The Expo Swift macro plugin is missing its executable at ${tool}.`, 'it')
-@@ -784,6 +836,9 @@ module.exports = function expoSpmPlugin(context) {
+@@ -784,6 +845,9 @@ module.exports = function expoSpmPlugin(context) {
    logListed('paired runtime frameworks', summary.precompiledPods);
    logListed('source via checked-in manifest', summary.manifestPackages);
    logListed('source pure-Swift', summary.pureSwiftPods);
@@ -580,7 +672,17 @@ index 1141e7c..d1fa182 100644
    logListed('React wired into', summary.reactWiredPods);
    logListed('gated off', summary.gatedOffProducts);
    logListed(
-@@ -895,3 +950,4 @@ module.exports = function expoSpmPlugin(context) {
+@@ -799,6 +863,9 @@ module.exports = function expoSpmPlugin(context) {
+   if (summary.xcconfigLinkage.length > 0) {
+     console.warn(renderXcconfigLinkerWarning(summary.xcconfigLinkage));
+   }
++  if (summary.droppedResources.length > 0) {
++    console.warn(renderDroppedResourceWarning(summary.droppedResources));
++  }
+   if (summary.leftOutCompanions.length > 0) {
+     console.warn(renderLeftOutCompanionWarning(summary.leftOutCompanions));
+   }
+@@ -895,3 +962,4 @@ module.exports = function expoSpmPlugin(context) {
  module.exports.macroPluginFlags = macroPluginFlags;
  module.exports.resolvePodIdentities = resolvePodIdentities;
  module.exports.uncoveredPod = uncoveredPod;
