@@ -829,7 +829,7 @@ index 8fcf04b..09247b7 100644
    const name = field('name');
    const moduleName = field('module_name');
 diff --git a/node_modules/react-native/scripts/spm/scaffold-package-swift.js b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
-index cf7e587..11e557e 100644
+index cf7e587..9b08de5 100644
 --- a/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 +++ b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 @@ -54,6 +54,7 @@ const {
@@ -840,7 +840,7 @@ index cf7e587..11e557e 100644
  } = require('./spm-utils');
  const {readSwiftpmConfig, writeSwiftpmName} = require('./swiftpm-config');
  const fs = require('node:fs');
-@@ -145,6 +146,157 @@ const SCAFFOLD_PREFIX_HEADER_CONTENTS = `// AUTO-SCAFFOLDED by react-native spm
+@@ -145,6 +146,197 @@ const SCAFFOLD_PREFIX_HEADER_CONTENTS = `// AUTO-SCAFFOLDED by react-native spm
  #endif
  `;
  
@@ -977,6 +977,46 @@ index cf7e587..11e557e 100644
 +  return {safe, cxx};
 +}
 +
++// CocoaPods' header map also resolves a bare `#import "RCTFoo.h"` against the
++// PUBLIC headers of the pod's dependencies — create-react-native-library's
++// Fabric template writes `#import "RCTFabricComponentsPlugins.h"`, a React
++// header. SwiftPM only exposes `<React/RCTFoo.h>`, so bare includes that match
++// no local header but a React one get a forwarding stub here.
++const REACT_BARE_HEADERS_DIR = 'rn-spm-react-headers';
++
++function bareReactHeaders(
++  depRoot /*: string */,
++  files /*: Array<string> */,
++  headerSearchPaths /*: Array<string> */,
++  includeRoots /*: Array<string> */,
++) /*: Array<string> */ {
++  if (includeRoots.length === 0) return [];
++  const localDirs = headerSearchPaths.map(p => path.join(depRoot, p));
++  const found /*: Set<string> */ = new Set();
++  for (const f of files) {
++    let text = '';
++    try {
++      text = fs.readFileSync(path.join(depRoot, f), 'utf8');
++    } catch {
++      continue;
++    }
++    for (const m of text.matchAll(INCLUDE_RE)) {
++      const [, delim, inc] = m;
++      if (delim !== '"' || inc.includes('/') || found.has(inc)) continue;
++      const local = [path.dirname(path.join(depRoot, f)), ...localDirs].some(d =>
++        fs.existsSync(path.join(d, inc)),
++      );
++      if (
++        !local &&
++        includeRoots.some(r => fs.existsSync(path.join(r, 'React', inc)))
++      ) {
++        found.add(inc);
++      }
++    }
++  }
++  return [...found].sort();
++}
++
 +// A podspec's own Swift bridging header (pod_target_xcconfig
 +// SWIFT_OBJC_BRIDGING_HEADER), dep-root relative. `undefined` when the podspec
 +// sets none, null when it sets one we cannot resolve.
@@ -998,7 +1038,7 @@ index cf7e587..11e557e 100644
  // Names of deps the scaffolder always refuses to touch — `react-native`
  // itself is handled by the xcframework subpackage, never as an autolinked
  // target.
-@@ -248,6 +400,10 @@ function translatePodspecToSpmTarget(
+@@ -248,6 +440,10 @@ function translatePodspecToSpmTarget(
    // npm name → resolved Swift name for every autolinked dep, so a sibling
    // reference honors that sibling's `spm.name` instead of re-deriving it.
    swiftNameByNpm /*: Map<string, string> */ = new Map(),
@@ -1009,13 +1049,14 @@ index cf7e587..11e557e 100644
  ) /*: SpmScaffoldSpec */ {
    const warnings = [...model.warnings];
  
-@@ -427,15 +583,53 @@ function translatePodspecToSpmTarget(
+@@ -427,15 +623,54 @@ function translatePodspecToSpmTarget(
      f =>
        f !== SCAFFOLD_PREFIX_HEADER &&
        f !== 'Package.swift' &&
 -      !f.startsWith('include/'),
 +      !f.startsWith('include/') &&
-+      !f.startsWith(`${MIXED_SUPPORT_DIR}/`),
++      !f.startsWith(`${MIXED_SUPPORT_DIR}/`) &&
++      !f.startsWith(`${REACT_BARE_HEADERS_DIR}/`),
    );
  
 +  // Metal shaders: SwiftPM compiles every `.metal` file under the target path
@@ -1065,7 +1106,7 @@ index cf7e587..11e557e 100644
    try {
      for (const f of expandSpmSourceGlobs(dep.root, model.publicHeaderFiles)) {
        if (/\.(h|hh|hpp)$/i.test(f)) headerFiles.push(f);
-@@ -497,6 +691,40 @@ function translatePodspecToSpmTarget(
+@@ -497,6 +732,40 @@ function translatePodspecToSpmTarget(
      }
    }
    let namespacedShimHeaders /*: Array<string> */ = [];
@@ -1106,7 +1147,7 @@ index cf7e587..11e557e 100644
    if (publicHeadersPath == null) {
      // Root-level podspecs (`s.source_files = "*.{h,m,mm}"`) keep their
      // headers in the package root. CocoaPods exposes them to dependents as
-@@ -518,6 +746,78 @@ function translatePodspecToSpmTarget(
+@@ -518,6 +787,78 @@ function translatePodspecToSpmTarget(
      );
    }
  
@@ -1185,7 +1226,7 @@ index cf7e587..11e557e 100644
    const siblingSwiftNames /*: {[npmName: string]: string} */ = {};
    for (const npmName of siblingNames) {
      const resolved = swiftNameByNpm.get(npmName);
-@@ -526,11 +826,113 @@ function translatePodspecToSpmTarget(
+@@ -526,11 +867,129 @@ function translatePodspecToSpmTarget(
      }
    }
  
@@ -1216,6 +1257,21 @@ index cf7e587..11e557e 100644
 +      value: '1',
 +      config: null,
 +    });
++  }
++
++  const reactBareHeaders = coreReactNative
++    ? bareReactHeaders(
++        dep.root,
++        expandedSources.filter(f => isClangSource(f) || isHeader(f)),
++        headerSearchPaths,
++        includeRoots,
++      )
++    : [];
++  if (
++    reactBareHeaders.length > 0 &&
++    !headerSearchPaths.includes(REACT_BARE_HEADERS_DIR)
++  ) {
++    headerSearchPaths.push(REACT_BARE_HEADERS_DIR);
 +  }
 +
 +  // Mixed Swift + C-family sources → one mixed-language target (see
@@ -1293,6 +1349,7 @@ index cf7e587..11e557e 100644
    return {
      swiftName,
 +    mixedLanguage,
++    reactBareHeaders,
      sources: expandedSources,
      headerSearchPaths,
 -    preprocessorDefines: model.preprocessorDefines,
@@ -1300,7 +1357,7 @@ index cf7e587..11e557e 100644
      needsObjCPrefix,
      coreReactNative,
      siblingNames,
-@@ -540,7 +942,9 @@ function translatePodspecToSpmTarget(
+@@ -540,7 +999,9 @@ function translatePodspecToSpmTarget(
      compilerFlags: model.compilerFlags,
      publicHeadersPath,
      namespacedShimHeaders,
@@ -1311,7 +1368,7 @@ index cf7e587..11e557e 100644
      warnings,
    };
  }
-@@ -629,10 +1033,25 @@ function emitScaffoldedPackageSwift(
+@@ -629,10 +1090,25 @@ function emitScaffoldedPackageSwift(
    const prefixFlag = spec.needsObjCPrefix
      ? `.unsafeFlags(["-include", "${SCAFFOLD_PREFIX_HEADER}"])`
      : '';
@@ -1338,7 +1395,7 @@ index cf7e587..11e557e 100644
        ...(customFlagsCxx.length > 0
          ? [`.unsafeFlags([${customFlagsCxx.join(', ')}])`]
          : []),
-@@ -740,6 +1159,11 @@ function emitScaffoldedPackageSwift(
+@@ -740,6 +1216,11 @@ function emitScaffoldedPackageSwift(
        ? `\n            publicHeadersPath: "${spec.publicHeadersPath}",`
        : '';
  
@@ -1350,7 +1407,7 @@ index cf7e587..11e557e 100644
    const resourcesLine =
      spec.resources.length > 0
        ? `\n            resources: [${spec.resources.map(r => `.copy("${r}")`).join(', ')}],`
-@@ -755,7 +1179,27 @@ function emitScaffoldedPackageSwift(
+@@ -755,7 +1236,27 @@ function emitScaffoldedPackageSwift(
        ? `\n            dependencies: [${targetDeps.join(', ')}],`
        : '';
  
@@ -1379,7 +1436,7 @@ index cf7e587..11e557e 100644
  ${SCAFFOLDER_MARKER}
  // AUTO-SCAFFOLDED-VERSION: ${SCAFFOLDER_VERSION}${slotComment}
  // Edit the contents below if needed and re-run \`npx patch-package <dep-name>\`
-@@ -768,7 +1212,7 @@ ${SCAFFOLDER_MARKER}
+@@ -768,7 +1269,7 @@ ${SCAFFOLDER_MARKER}
  // (dropping the file) anyway.
  
  import PackageDescription
@@ -1388,7 +1445,7 @@ index cf7e587..11e557e 100644
  let package = Package(
      name: "${spec.swiftName}",
      platforms: [.iOS("${iosDeploymentTarget}")],
-@@ -778,9 +1222,9 @@ let package = Package(
+@@ -778,9 +1279,9 @@ let package = Package(
  ${packageDepsBlock}    targets: [
          .target(
              name: "${spec.swiftName}",${targetDepsLine}
@@ -1400,7 +1457,7 @@ index cf7e587..11e557e 100644
              linkerSettings: [${linkerEntries.join(', ')}]
          ),
      ],
-@@ -844,6 +1288,65 @@ function reportSwiftName(
+@@ -844,6 +1345,65 @@ function reportSwiftName(
    }
  }
  
@@ -1466,7 +1523,7 @@ index cf7e587..11e557e 100644
  // ---------------------------------------------------------------------------
  // Per-dep orchestrator
  // ---------------------------------------------------------------------------
-@@ -1014,33 +1517,13 @@ function scaffoldPackageSwiftForDep(
+@@ -1014,33 +1574,13 @@ function scaffoldPackageSwiftForDep(
      dep,
      ctx.podToNpm ?? new Map(),
      ctx.swiftNameByNpm ?? new Map(),
@@ -1505,7 +1562,7 @@ index cf7e587..11e557e 100644
  
    // Relative paths into the app, embedded in the scaffolded Package.swift.
    //
-@@ -1099,16 +1582,38 @@ function scaffoldPackageSwiftForDep(
+@@ -1099,16 +1639,54 @@ function scaffoldPackageSwiftForDep(
        const shimDir = path.join(dep.root, 'include', spec.swiftName);
        fs.mkdirSync(shimDir, {recursive: true});
        for (const header of spec.namespacedShimHeaders) {
@@ -1543,6 +1600,22 @@ index cf7e587..11e557e 100644
 +
 +  if (!ctx.dryRun && spec.mixedLanguage != null) {
 +    writeMixedLanguageSupport(dep.root, spec.mixedLanguage);
++  }
++  if (!ctx.dryRun) {
++    const bareDir = path.join(dep.root, REACT_BARE_HEADERS_DIR);
++    fs.rmSync(bareDir, {recursive: true, force: true});
++    if (spec.reactBareHeaders.length > 0) {
++      fs.mkdirSync(bareDir, {recursive: true});
++      for (const name of spec.reactBareHeaders) {
++        fs.writeFileSync(
++          path.join(bareDir, name),
++          `// AUTO-SCAFFOLDED by react-native spm scaffold — the bare "${name}"\n` +
++            `// spelling CocoaPods' header map resolves to React's public header.\n` +
++            `#import <React/${name}>\n`,
++          'utf8',
++        );
++      }
++    }
    }
  
    reportSwiftName(dep, spec.swiftName, model);

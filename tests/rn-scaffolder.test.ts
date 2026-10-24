@@ -87,6 +87,9 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       expect(f).toContain("function writeMixedLanguageSupport");
       expect(f).not.toContain("status: 'skipped-mixed-language'");
     });
+    it("scaffold-package-swift.js has the bare React header hunk", () => {
+      expect(src("scaffold-package-swift.js")).toContain("function bareReactHeaders");
+    });
   });
 
   it.skipIf(!hasPatchBinary)("the committed patch reverse-applies cleanly to the installed RN files", async () => {
@@ -872,6 +875,37 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       if (swift.failed && /ENOENT/.test(String(swift.code ?? swift.message))) return;
       expect(swift.exitCode, swift.stderr).toBe(0);
       expect(JSON.parse(swift.stdout).toolsVersion._version).toBe("6.4.0");
+    });
+  });
+
+  describe("bare React header imports", () => {
+    it("forwards a bare quoted import of a React header (CocoaPods header map) to <React/...>", () => {
+      const reactRoot = tempDir();
+      mkdirSync(path.join(reactRoot, "React"), { recursive: true });
+      writeFileSync(path.join(reactRoot, "React/RCTFabricComponentsPlugins.h"), "");
+      const root = tempDir();
+      mkdirSync(path.join(root, "ios"), { recursive: true });
+      writeFileSync(path.join(root, "ios/Foo.h"), "");
+      writeFileSync(
+        path.join(root, "ios/Foo.mm"),
+        '#import "Foo.h"\n#import "RCTFabricComponentsPlugins.h"\n#import "Missing.h"\n#import "React/RCTBridge.h"\n',
+      );
+      writeFileSync(
+        path.join(root, "Foo.podspec"),
+        'Pod::Spec.new do |s|\n  s.name = "Foo"\n  s.source_files = "ios/**/*.{h,mm}"\n  s.dependency "React-Core"\nend\n',
+      );
+      const model = load<ReadPodspec>("read-podspec.js").readPodspecCached(path.join(root, "Foo.podspec"));
+      const dep: Dep = { name: "foo", root, swiftName: "Foo", platforms: { ios: {} } };
+      const spec = load<{ translatePodspecToSpmTarget(...a: unknown[]): { reactBareHeaders: string[]; headerSearchPaths: string[] } }>(
+        "scaffold-package-swift.js",
+      ).translatePodspecToSpmTarget(model, dep, new Map(), new Map(), [reactRoot]);
+      expect(spec.reactBareHeaders).toEqual(["RCTFabricComponentsPlugins.h"]);
+      expect(spec.headerSearchPaths).toContain("rn-spm-react-headers");
+      const none = load<{ translatePodspecToSpmTarget(...a: unknown[]): { reactBareHeaders: string[]; headerSearchPaths: string[] } }>(
+        "scaffold-package-swift.js",
+      ).translatePodspecToSpmTarget(model, dep);
+      expect(none.reactBareHeaders).toEqual([]);
+      expect(none.headerSearchPaths).not.toContain("rn-spm-react-headers");
     });
   });
 });
