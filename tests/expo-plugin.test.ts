@@ -80,8 +80,9 @@ type Sources = {
   hasCxx: boolean;
   ignoredDirs: string[];
   placeholderFiles: string[];
+  vendorSources: string[];
 };
-type PodspecFacts = { linkage: object | null; declaresSourceFiles: boolean };
+type PodspecFacts = { linkage: object | null; declaresSourceFiles: boolean; referencesVendor: boolean };
 type Classify = { scanAppleSources(root: string): Sources };
 type Podspec = {
   readPodspecFacts(o: { podName: string; podspecDir: string; moduleRoot: string }): PodspecFacts;
@@ -97,6 +98,7 @@ type Manifests = {
   emitGeneratedSourcePackage: Emit;
   isCxxHeader(text: string): boolean;
 };
+type Diagnostics = { renderUnsupportedReport(entries: object[]): string };
 
 const spmAvailable = existsSync(path.join(SPM, "classify.js"));
 const tmp: string[] = [];
@@ -275,4 +277,30 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
     expect(patch).toContain("linkedAs: 'meta'");
   });
 
+  it("counts vendor/ C sources the podspec references and refuses the module (expo-sqlite)", () => {
+    const sqlitePodspec = `def s.vendor_sqlite_src!\n    FileUtils.cp(File.join(__dir__, '..', 'vendor', 'sqlite3', 'sqlite3.c'), __dir__)\n  end\n  s.source_files = "**/*.{c,h,m,swift}"`;
+    const root = moduleFixture(
+      "ExpoSQLite",
+      { "ios/SQLiteModule.swift": "", "vendor/sqlite3/sqlite3.c": "int x;\n", "vendor/sqlite3/sqlite3.h": "" },
+      sqlitePodspec,
+    );
+    const { layout, sources, facts } = layoutOf("ExpoSQLite", root);
+    expect(facts.referencesVendor).toBe(true);
+    expect(sources.vendorSources).toEqual(["vendor/sqlite3/sqlite3.c"]);
+    expect(layout).toBe("vendored");
+    const report = load<Diagnostics>("diagnostics.js").renderUnsupportedReport([
+      { reason: "vendored-sources", podName: "ExpoSQLite", packageName: "expo-sqlite", moduleRoot: root, vendorSources: sources.vendorSources },
+    ]);
+    expect(report).toContain("builds C sources from its vendor/ directory (vendor/sqlite3/sqlite3.c)");
+  });
+
+  it("ignores vendor/ when the podspec does not reference it", () => {
+    const root = moduleFixture("Swifty2", { "ios/A.swift": "", "vendor/x/x.c": "int x;\n" });
+    expect(layoutOf("Swifty2", root).layout).toBe("pure-swift");
+  });
+
+  it("the committed patch carries the vendored-sources refusal", () => {
+    const patch = readFileSync(COMMITTED_PATCH, "utf8");
+    expect(patch).toContain("['vendored-sources', { render: renderVendoredSources }]");
+  });
 });
