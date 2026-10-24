@@ -32,13 +32,16 @@ export async function run(
   overrides: Partial<RunDeps> = {},
 ): Promise<void> {
   const d: RunDeps = { ...realDeps, ...overrides };
+  let rebuilt = true;
   if (opts.force !== true && opts.clean !== true && (await upToDate(root, d))) {
+    rebuilt = false;
     d.log("Native app is up to date (no dependency changes); skipping build and install.");
   } else {
     await d.build(root, { clean: opts.clean });
     await d.install(root);
   }
-  await d.start(root, {});
+  // A rebuild means dependencies changed: Metro needs a fresh cache for new plugins and modules.
+  await d.start(root, rebuilt ? { clear: true } : {});
 }
 
 async function upToDate(root: string, d: RunDeps): Promise<boolean> {

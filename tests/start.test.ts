@@ -187,6 +187,17 @@ describe("run", () => {
     expect(calls).toEqual(["build:true", "install", "start"]);
   });
 
+  it("starts Metro with --clear after a rebuild, not after a skip", async () => {
+    const built = fresh({ readState: async () => undefined });
+    const start = vi.fn(async () => {});
+    await runCommand("/p", {}, { ...built.overrides, start });
+    expect(start).toHaveBeenLastCalledWith("/p", { clear: true });
+    const skipped = fresh();
+    const start2 = vi.fn(async () => {});
+    await runCommand("/p", {}, { ...skipped.overrides, start: start2 });
+    expect(start2).toHaveBeenLastCalledWith("/p", {});
+  });
+
   it("skips build and install when up to date", async () => {
     const { calls, log, overrides } = fresh();
     await runCommand("/p", {}, overrides);
