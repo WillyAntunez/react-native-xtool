@@ -26,7 +26,9 @@ targets". That was true until Swift 6.4.
 
 SwiftPM 6.4 builds a target that mixes Swift and C-family sources in experimental multi-language mode
 (`// swift-tools-version: 6.4;(experimentalMultiLang)`); SE-0541 (accepted) makes it standard in
-tools-version 6.5. One mixed target is what CocoaPods builds for a mixed pod (one framework), so the plugin
+tools-version 6.5, where the flag is not read: so each mixed package also gets a `Package@swift-6.5.swift`
+(identical, `// swift-tools-version: 6.5`), which SwiftPM 6.5+ picks and 6.4 ignores (untested on 6.5).
+One mixed target is what CocoaPods builds for a mixed pod (one framework), so the plugin
 needs no knowledge of which language depends on which. It works in both directions:
 
 - Swift → Objective-C of the same module: a CocoaPods framework's Swift sees the pod's umbrella header. The

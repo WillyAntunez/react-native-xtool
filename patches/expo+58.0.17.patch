@@ -191,7 +191,7 @@ index 0ac5e9e..ee17fdb 100644
    renderPartlyProvidedPackageWarning,
    renderExtraPodsWarning,
 diff --git a/node_modules/expo/scripts/spm/manifests.js b/node_modules/expo/scripts/spm/manifests.js
-index b1454bc..eddf20d 100644
+index b1454bc..16fac63 100644
 --- a/node_modules/expo/scripts/spm/manifests.js
 +++ b/node_modules/expo/scripts/spm/manifests.js
 @@ -9,7 +9,7 @@
@@ -385,7 +385,7 @@ index b1454bc..eddf20d 100644
  /**
   * Render `manifest` against Expo's binary-free framework interface tree, with RN's
   * invariant React products injected and its floor raised to the minimum, and write it
-@@ -873,18 +970,42 @@ function emitPackage(
+@@ -873,24 +970,63 @@ function emitPackage(
      manifest,
      satisfiedDependencies
    );
@@ -432,7 +432,28 @@ index b1454bc..eddf20d 100644
    const rootLink = path.join(pkgDir, 'root');
    try {
      fs.rmSync(rootLink, { recursive: true, force: true });
-@@ -1011,14 +1132,159 @@ function emitPureSwiftSourcePackage(
+   } catch {}
+   fs.symlinkSync(moduleRoot, rootLink);
+   fs.writeFileSync(path.join(pkgDir, 'Package.swift'), manifestSwift);
++  // expo-xtool: SE-0541 makes mixed-language targets standard in tools-version 6.5, which does
++  // not read the experimental flag. SwiftPM 6.5+ picks this versioned manifest, older ones
++  // ignore it; a package that is no longer mixed drops it.
++  const manifest65 = path.join(pkgDir, 'Package@swift-6.5.swift');
++  if (manifest.language === 'mixed') {
++    fs.writeFileSync(
++      manifest65,
++      manifestSwift.replace(
++        '// swift-tools-version: 6.4;(experimentalMultiLang)',
++        '// swift-tools-version: 6.5'
++      )
++    );
++  } else {
++    fs.rmSync(manifest65, { force: true });
++  }
+   return {
+     ok: {
+       packageDep: { name: manifest.name, path: pkgDir },
+@@ -1011,14 +1147,159 @@ function emitPureSwiftSourcePackage(
      iosDeploymentTarget = null,
      spmPackages = [],
      sources = scanAppleSources(moduleRoot),
@@ -593,7 +614,7 @@ index b1454bc..eddf20d 100644
      iosDeploymentTarget,
      hasPrivacyManifest: fs.existsSync(path.join(srcDir, PRIVACY_MANIFEST)),
      packages: spmPackages.map(documentedPackage),
-@@ -1037,5 +1303,8 @@ module.exports = {
+@@ -1037,5 +1318,8 @@ module.exports = {
    raiseFloor,
    emitSourceManifestPackage,
    emitPureSwiftSourcePackage,

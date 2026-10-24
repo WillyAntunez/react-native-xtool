@@ -337,6 +337,10 @@ Fix: when a library mixes languages, emit one mixed-language target instead of s
 
 - First line `// swift-tools-version: 6.4;(experimentalMultiLang)`; single-language libraries keep
   `// swift-tools-version: 6.0` and their output is unchanged.
+- Next to it, `Package@swift-6.5.swift`: the same manifest with `// swift-tools-version: 6.5` and no
+  experimental flag. SwiftPM 6.5+ picks the versioned manifest (6.5 does not read `experimentalMultiLang`),
+  6.4 ignores it. The scaffolder never takes it as a source and removes its own copy when a library stops
+  being mixed. Untested on a 6.5 toolchain (none installed here): it still carries the 6.4 unsafe flags.
 - `sources` lists both the Swift and the C-family files; `publicHeadersPath`, the `include/` shims and the
   header search paths are computed as before.
 - **Swift → Objective-C.** SwiftPM 6.4.x does not give Swift the target's own headers (6.5 does, via the

@@ -778,6 +778,15 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       });
     }
 
+    it("also writes Package@swift-6.5.swift: identical, tools-version 6.5, no experimental flag", () => {
+      const root = mixedLib(FIXTURES["B"]!);
+      const { pkg } = scaffoldMixed(root);
+      const v65 = readFileSync(path.join(root, "Package@swift-6.5.swift"), "utf8");
+      expect(v65.split("\n")[0]).toBe("// swift-tools-version: 6.5");
+      expect(v65).not.toContain("experimentalMultiLang");
+      expect(v65.split("\n").slice(1)).toEqual(pkg.split("\n").slice(1));
+    });
+
     it("puts the module headers in the umbrella, minus the C++ ones", () => {
       const root = mixedLib({
         ...FIXTURES["A"]!,
@@ -872,6 +881,14 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       expect(pkg).not.toContain("swiftSettings");
       expect(pkg).not.toContain('"-std=c++20"');
       expect(existsSync(path.join(root, "rn-spm-swift"))).toBe(false);
+      expect(existsSync(path.join(root, "Package@swift-6.5.swift"))).toBe(false);
+    });
+
+    it("removes its own stale Package@swift-6.5.swift when the library is no longer mixed", () => {
+      const root = mixedLib({ "ios/FooGreeter.h": GREETER_H, "ios/FooGreeter.m": GREETER_M });
+      writeFileSync(path.join(root, "Package@swift-6.5.swift"), "// swift-tools-version: 6.5\n// AUTO-SCAFFOLDED by react-native spm scaffold — safe to edit & commit via patch-package.\n");
+      scaffoldMixed(root);
+      expect(existsSync(path.join(root, "Package@swift-6.5.swift"))).toBe(false);
     });
 
     it("never feeds its own support files back into sources on a re-scaffold", () => {
@@ -880,12 +897,15 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       const { pkg } = scaffoldMixed(root);
       expect(pkg).not.toContain('"rn-spm-swift/');
       expect(pkg).not.toContain('"Package.swift"');
+      expect(pkg).not.toContain("Package@swift-6.5.swift");
     });
 
-    it("emits a manifest SwiftPM accepts", async () => {
-      const { pkg } = scaffoldMixed(mixedLib(FIXTURES["circular"]!));
+    it("emits a manifest SwiftPM accepts (a 6.4 toolchain ignores the 6.5 one)", async () => {
+      const lib = mixedLib(FIXTURES["circular"]!);
+      const { pkg } = scaffoldMixed(lib);
       const root = tempDir();
       writeFileSync(path.join(root, "Package.swift"), pkg);
+      writeFileSync(path.join(root, "Package@swift-6.5.swift"), readFileSync(path.join(lib, "Package@swift-6.5.swift"), "utf8"));
       const swift = await execa("swift", ["package", "dump-package"], {
         cwd: root,
         reject: false,

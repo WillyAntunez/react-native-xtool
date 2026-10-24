@@ -33,6 +33,21 @@ describe("renderReport", () => {
   });
 });
 
+describe("swift 6.5 manifests", () => {
+  it("adds an info line (not a failure) on Swift 6.5+", async () => {
+    const r = await doctorWithProbes({ ...good, swiftVersion: async () => "6.5.0" });
+    expect(r.ok).toBe(true);
+    const info = r.checks.find((c) => c.name === "swift-manifests");
+    expect(info?.status).toBe("info");
+    expect(info?.detail).toContain("Package@swift-6.5.swift");
+    expect(renderReport([info!])).toMatch(/^ℹ swift-manifests — /);
+  });
+  it("says nothing on Swift 6.4", async () => {
+    const r = await doctorWithProbes(good);
+    expect(r.checks.some((c) => c.name === "swift-manifests")).toBe(false);
+  });
+});
+
 describe("doctorWithProbes", () => {
   it("passes when every probe is healthy and skips project checks without a root", async () => {
     const r = await doctorWithProbes(good);

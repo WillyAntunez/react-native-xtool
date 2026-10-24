@@ -12,7 +12,8 @@ import { existsSync } from "node:fs";
 
 export interface DoctorCheck {
   name: string;
-  status: "ok" | "fail" | "warn";
+  /** `info` is a note, never a problem. */
+  status: "ok" | "fail" | "warn" | "info";
   detail: string;
 }
 export interface DoctorReport {
@@ -43,7 +44,13 @@ export interface DoctorProbes {
 
 const PROBE_TIMEOUT_MS = 15_000;
 
-const SYMBOL = { ok: "✔", fail: "✖", warn: "⚠" } as const;
+const SYMBOL = { ok: "✔", fail: "✖", warn: "⚠", info: "ℹ" } as const;
+
+/** True when `version` (e.g. "6.5.0") is Swift 6.5 or newer, where SE-0541 mixed targets are standard. */
+function swiftAtLeast65(version: string): boolean {
+  const [major = 0, minor = 0] = version.split(".").map(Number);
+  return major > 6 || (major === 6 && minor >= 5);
+}
 
 export function renderReport(checks: DoctorCheck[]): string {
   return checks.map((c) => `${SYMBOL[c.status]} ${c.name} — ${c.detail}`).join("\n");
@@ -109,6 +116,15 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
       ? { status: "ok", detail: v }
       : { status: "fail", detail: `${v} (need ${SWIFT_VERSION}+) — run expo-xtool setup` };
   });
+  const swiftCheck = checks.find((c) => c.name === "swift");
+  if (swiftCheck?.status === "ok" && swiftAtLeast65(swiftCheck.detail)) {
+    checks.push({
+      name: "swift-manifests",
+      status: "info",
+      detail:
+        "Swift 6.5+: mixed Swift + Objective-C packages build from their Package@swift-6.5.swift manifest (SE-0541 form, no experimentalMultiLang flag)",
+    });
+  }
   await add("xtool", async () => {
     if (!p.xtoolInstalled()) return { status: "fail", detail: "not found — run expo-xtool setup" };
     const v = await p.xtoolVersion();

@@ -92,11 +92,15 @@ must be CommonJS (`module.exports = {...}`) unless your project is ESM. Both are
      meta pods (no sources) and placeholder files; links generated packages to their podspec `dependency` pods; excludes
      resources only Xcode's tools compile (asset catalogs, storyboards); refuses modules built from vendored C sources
      such as expo-sqlite ([docs/upstream/expo-spm-plugin-mixed-modules.md](docs/upstream/expo-spm-plugin-mixed-modules.md)).
-   - **React Native** (`patches/react-native+0.88.0.patch`, about 1.7k lines across 3 files under
+   - **React Native** (`patches/react-native+0.88.0.patch`, about 1.75k lines across 3 files under
      `react-native/scripts/spm/`: `read-podspec.js`, `scaffold-package-swift.js`, `spm-utils.js`): 12 generic fixes
      to the `spm scaffold` podspec reader and `Package.swift` generator, including mixed Swift + Objective-C/C++
      targets and known CocoaPods dependencies mapped to SwiftPM packages, plus one to the per-app header farm
      ([docs/upstream/react-native-scaffolder.md](docs/upstream/react-native-scaffolder.md)).
+   Mixed Swift + Objective-C packages (scaffolded or generated) get two manifests: `Package.swift`
+   (`swift-tools-version: 6.4;(experimentalMultiLang)`, what Swift 6.4 builds) and `Package@swift-6.5.swift`
+   (the same with tools-version 6.5 and no flag, SE-0541), which SwiftPM 6.5+ picks instead. `doctor` notes
+   it when your Swift is 6.5 or newer. The 6.5 form is untested until a 6.5 toolchain is available.
 2. Runs React Native 0.88's SwiftPM pipeline and Expo's SPM plugin, with Linux shims for `plutil` and `otool`.
 3. Builds ExpoModulesJSI with the Darwin SDK and stages the runtime frameworks.
 4. Generates `ios-xtool/` (Package.swift, xtool.yml, Info.plist, ip.txt, app config). It is a regenerable

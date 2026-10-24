@@ -215,6 +215,25 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
       expect(read("pod-headers/MixMod/MixMod-Swift.h")).toBe("#import <MixMod-Swift.h>\n");
     });
 
+    it("also writes the Swift 6.5 manifest: identical, tools-version 6.5, no experimental flag", () => {
+      const { manifest, read } = emit("MixMod", root, "mixed", sources);
+      const v65 = read("Package@swift-6.5.swift");
+      expect(v65.split("\n")[0]).toBe("// swift-tools-version: 6.5");
+      expect(v65).not.toContain("experimentalMultiLang");
+      expect(v65.split("\n").slice(1)).toEqual(manifest.split("\n").slice(1));
+    });
+
+    it("removes a stale Swift 6.5 manifest when the package is no longer mixed", () => {
+      const outDir = mkdtempSync(path.join(tmpdir(), "xtool-expo-out-"));
+      tmp.push(outDir);
+      const ctx = { frameworkSearchPath: "/fw", outDir, macroFlags: [] };
+      const dir = manifests.emitGeneratedSourcePackage({ moduleRoot: root, product: "MixMod", language: "mixed", sources }, ctx).ok
+        .packageDep.path;
+      expect(existsSync(path.join(dir, "Package@swift-6.5.swift"))).toBe(true);
+      manifests.emitGeneratedSourcePackage({ moduleRoot: root, product: "MixMod", language: "clang", sources }, ctx);
+      expect(existsSync(path.join(dir, "Package@swift-6.5.swift"))).toBe(false);
+    });
+
     it("lists the module's Objective-C headers in the umbrella, minus the C++ ones", () => {
       const umbrella = emit("MixMod", root, "mixed", sources).read("umbrella.h");
       expect(umbrella).toContain("#import <Foundation/Foundation.h>\n#import <UIKit/UIKit.h>\n");
@@ -260,6 +279,7 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
     expect(manifest).not.toContain("rnSpmSwiftHeadersDir");
     expect(manifest).not.toContain("-import-objc-header");
     expect(existsSync(path.join(dir, "umbrella.h"))).toBe(false);
+    expect(existsSync(path.join(dir, "Package@swift-6.5.swift"))).toBe(false);
   });
 
   it("the committed patch carries the mixed and Objective-C emitter", () => {
