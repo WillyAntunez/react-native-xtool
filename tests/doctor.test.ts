@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { doctorWithProbes, renderReport, type DoctorProbes } from "../src/commands/doctor.js";
+import { doctorWithProbes, renderReport, wifiCheck, type DoctorProbes } from "../src/commands/doctor.js";
 import { XTOOL_SHA256, XTOOL_VERSION } from "../src/versions.js";
 
 const good: DoctorProbes = {
@@ -19,6 +19,7 @@ const good: DoctorProbes = {
   buildState: async () => ({ metroPort: 8081, lanIp: "192.168.1.5", depsFingerprint: "fp" }),
   depsFingerprint: async () => "fp",
   portFree: async () => true,
+  wifi: async () => ({ usb: { udid: "u1", enabled: true } }),
 };
 
 const statusOf = (r: { checks: { name: string; status: string }[] }, name: string) =>
@@ -55,7 +56,7 @@ describe("doctorWithProbes", () => {
     const r = await doctorWithProbes(good);
     expect(r.ok).toBe(true);
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "swift", "xtool", "darwin-sdk", "apple-login", "device", "firewall", "lan-ip",
+      "node", "swift", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
     ]);
     expect(r.checks.every((c) => c.status === "ok")).toBe(true);
   });
@@ -202,7 +203,7 @@ describe("doctorWithProbes", () => {
     const r = await doctorWithProbes({ ...good, ufwActive: async () => true, buildState: async () => ({ metroPort: 8099, lanIp: "1.2.3.4" }) }, "/p");
     expect(r.checks.find((c) => c.name === "firewall")?.detail).toContain("ufw allow 8099/tcp");
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "swift", "xtool", "darwin-sdk", "apple-login", "device", "firewall", "lan-ip", "expo-sdk", "build-state", "deps", "metro-port",
+      "node", "swift", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip", "expo-sdk", "build-state", "deps", "metro-port",
     ]);
   });
 
@@ -257,5 +258,38 @@ describe("deps check", () => {
   });
   it("is skipped without a build state", async () => {
     expect(find(await doctorWithProbes({ ...good, buildState: async () => undefined }, "/p"))).toBeUndefined();
+  });
+});
+
+describe("wifi check", () => {
+  it("is an optional note when Wi‑Fi installs were never set up", () => {
+    expect(wifiCheck({})).toEqual({ status: "info", detail: "not set up (optional) — see `expo-xtool setup --wifi`" });
+  });
+  it("warns when the setting is off on the USB iPhone", () => {
+    const c = wifiCheck({ usb: { udid: "U", enabled: false } });
+    expect(c.status).toBe("warn");
+    expect(c.detail).toContain("setup --wifi --yes");
+  });
+  it("is ok when the last known IP answers on 62078", () => {
+    expect(wifiCheck({ usb: { udid: "U", enabled: true }, lastIp: "192.168.1.10", reachable: true })).toEqual({
+      status: "ok",
+      detail: "enabled on U; iPhone answers at 192.168.1.10:62078",
+    });
+  });
+  it("warns, with the likely causes, when the last known IP does not answer", () => {
+    const c = wifiCheck({ lastIp: "192.168.1.10", reachable: false });
+    expect(c.status).toBe("warn");
+    expect(c.detail).toContain("asleep");
+    expect(c.detail).toContain("install --network");
+  });
+  it("mentions a USB read failure without failing", () => {
+    const c = wifiCheck({ usbError: "pairing removed", lastIp: "1.2.3.4", reachable: true });
+    expect(c.status).toBe("ok");
+    expect(c.detail).toContain("pairing removed");
+  });
+  it("never fails doctor, even when the probe throws", async () => {
+    const r = await doctorWithProbes({ ...good, wifi: async () => { throw new Error("boom"); } });
+    expect(statusOf(r, "wifi")).toBe("warn");
+    expect(r.ok).toBe(true);
   });
 });
