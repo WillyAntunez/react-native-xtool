@@ -10,19 +10,23 @@ import {
 } from "../src/pipeline/rnSpm.js";
 import type { ProjectPaths } from "../src/paths.js";
 
-const paths = { root: "/proj", ios: "/proj/ios" } as unknown as ProjectPaths;
+const paths = { root: "/proj", ios: "/proj/ios", iosXtool: "/proj/ios-xtool" } as unknown as ProjectPaths;
+const SWIFT_HEADERS = "/proj/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos";
 const rnDir = "/proj/node_modules/react-native";
 const missing = (n: string) =>
   `error: Package.swift is missing for library "${n}" — it ships no Swift Package Manager support.`;
+
+const mixed = (n: string) =>
+  `error: "${n}" has mixed Swift + Objective-C/C++ sources, which Swift Package Manager cannot compile in a single target (and its Swift↔ObjC interop typically can't be split into two targets without a circular dependency).`;
 
 const noPodspec = (n: string) =>
   `error: Package.swift is missing for library "${n}", and it ships no podspec so it cannot be scaffolded automatically.`;
 
 function harness(results: { exitCode: number; output: string }[]) {
-  const calls: { cmd: string; args: string[]; cwd: string }[] = [];
+  const calls: { cmd: string; args: string[]; cwd: string; env?: Record<string, string> }[] = [];
   const logs: string[] = [];
   const runner: RnRunner = async (cmd, args, o) => {
-    calls.push({ cmd, args, cwd: o.cwd });
+    calls.push({ cmd, args, cwd: o.cwd, ...(o.env ? { env: o.env } : {}) });
     return results.shift() ?? { exitCode: 0, output: "" };
   };
   return {
@@ -42,6 +46,10 @@ describe("parseMissingPackageSwift", () => {
       'error: other "x"',
     ].join("\n");
     expect(parseMissingPackageSwift(out)).toEqual(["a", "b"]);
+  });
+  it("includes libraries RN reports as mixed Swift + Objective-C", () => {
+    const out = [missing("a"), mixed("pager"), mixed("pager")].join("\n");
+    expect(parseMissingPackageSwift(out)).toEqual(["a", "pager"]);
   });
   it("skips the 'ships no podspec' variant", () => {
     const out = [missing("a"), noPodspec("np")].join("\n");
@@ -106,6 +114,21 @@ describe("runRnSpm", () => {
     expect(h.calls[2]!.cwd).toBe("/proj");
     expect(h.calls[4]!.args[1]).toMatch(/add|update/);
     expect(h.logs[0]).toContain("lib-a, lib-b");
+  });
+
+  it("passes the generated Swift headers dir to every React Native run", async () => {
+    const h = harness([
+      { exitCode: 1, output: mixed("pager") },
+      { exitCode: 0, output: "" },
+      { exitCode: 0, output: "" },
+      { exitCode: 0, output: "" },
+    ]);
+    await runRnSpm(paths, {}, h.deps);
+    const rnRuns = h.calls.filter((c) => c.cmd === "node");
+    expect(rnRuns.map((c) => c.args[1])).toEqual([expect.stringMatching(/add|update/), "scaffold", expect.stringMatching(/add|update/)]);
+    for (const c of rnRuns) expect(c.env).toEqual({ RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS });
+    expect(h.calls[1]!.args[1]).toBe("scaffold");
+    expect(h.calls[2]!.args[1]).toBe("pager");
   });
 
   it("forwards artifact flags to the scaffold run", async () => {

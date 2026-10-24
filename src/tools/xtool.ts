@@ -2,7 +2,7 @@ import { execa } from "execa";
 import { accessSync, constants } from "node:fs";
 import { join } from "node:path";
 import type { ExpoXtoolConfig } from "../config.js";
-import { cacheDir } from "../paths.js";
+import { cacheDir, swiftHeadersEnv } from "../paths.js";
 import { XTOOL_VERSION } from "../versions.js";
 import { run, toolEnv } from "./exec.js";
 
@@ -89,10 +89,27 @@ export function installedBundleId(teamId: string, bundleIdentifier: string): str
   return `XTL-${teamId}.${bundleIdentifier}`;
 }
 
+/**
+ * Env for `xtool dev build`/`dev run`: both re-evaluate the package manifests, and scaffolded
+ * mixed-language ones read the generated Swift headers dir from it (xtool passes its env through
+ * to `swift build`).
+ */
+export function devEnv(iosXtoolDir: string): NodeJS.ProcessEnv {
+  return toolEnv(swiftHeadersEnv(iosXtoolDir));
+}
+
 export async function devBuild(bin: string, iosXtoolDir: string): Promise<void> {
-  await run(bin, ["dev", "build", "--configuration", "debug"], { cwd: iosXtoolDir, nice: true });
+  await run(bin, ["dev", "build", "--configuration", "debug"], {
+    cwd: iosXtoolDir,
+    nice: true,
+    env: devEnv(iosXtoolDir),
+  });
 }
 
 export async function devRun(bin: string, iosXtoolDir: string): Promise<void> {
-  await run(bin, ["dev", "run", "--configuration", "debug", "--usb"], { cwd: iosXtoolDir, nice: true });
+  await run(bin, ["dev", "run", "--configuration", "debug", "--usb"], {
+    cwd: iosXtoolDir,
+    nice: true,
+    env: devEnv(iosXtoolDir),
+  });
 }

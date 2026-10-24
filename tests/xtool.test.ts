@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   authStatus,
+  devEnv,
   installedBundleId,
   listDevices,
   parseAuthStatus,
@@ -94,5 +95,16 @@ describe("authStatus", () => {
   });
   it("throws when the binary cannot be spawned", async () => {
     await expect(authStatus("/nonexistent/xtool")).rejects.toBeDefined();
+  });
+});
+
+describe("devEnv", () => {
+  it("exposes the generated Swift headers dir to the manifests xtool evaluates", () => {
+    const env = devEnv("/app/ios-xtool");
+    expect(env["RN_SPM_SWIFT_HEADERS_DIR"]).toBe(
+      "/app/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos",
+    );
+    expect(env.PATH).toContain(".local/share/swiftly/bin");
+    expect(env.SDKROOT).toBeUndefined();
   });
 });

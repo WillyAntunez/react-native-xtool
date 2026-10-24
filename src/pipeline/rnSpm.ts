@@ -3,7 +3,7 @@ import { execa } from "execa";
 import { installedVersion, patchPackageScript } from "./patches.js";
 import { createRequire } from "node:module";
 import path from "node:path";
-import type { ProjectPaths } from "../paths.js";
+import { swiftHeadersEnv, type ProjectPaths } from "../paths.js";
 import { runArgv, toolEnv } from "../tools/exec.js";
 
 export const AUTOLINKING_CONFIG_COMMAND = [
@@ -63,7 +63,7 @@ export interface RnRunResult {
 export type RnRunner = (
   cmd: string,
   args: string[],
-  opts: { cwd: string },
+  opts: { cwd: string; env?: Record<string, string> },
 ) => Promise<RnRunResult>;
 
 export interface RnSpmDeps {
@@ -77,7 +77,7 @@ export const streamingRunner: RnRunner = async (cmd, args, opts) => {
   const [bin, argv] = runArgv(cmd, args, true);
   const child = execa(bin, argv, {
     cwd: opts.cwd,
-    env: toolEnv(),
+    env: toolEnv(opts.env),
     extendEnv: false,
     stdio: ["ignore", "pipe", "pipe"],
     reject: false,
@@ -105,13 +105,16 @@ export const streamingRunner: RnRunner = async (cmd, args, opts) => {
 // RN's other variant (`..., and it ships no podspec so it cannot be scaffolded`) is not scaffoldable.
 const MISSING_RE =
   /error: Package\.swift is missing for library "([^"]+)"(?!, and it ships no podspec)/;
+// RN's autolinker reports a library without a manifest that mixes Swift and C-family sources with
+// this distinct message instead. Our patched scaffolder emits a mixed-language target for it.
+const MIXED_RE = /error: "([^"]+)" has mixed Swift \+ Objective-C\/C\+\+ sources/;
 const CREATED_RE = /Created file (patches\/\S+\.patch)/;
 
 /** Scaffoldable libraries RN reports as lacking a Package.swift (has a podspec), deduped, in first-seen order. */
 export function parseMissingPackageSwift(output: string): string[] {
   const names: string[] = [];
   for (const line of output.split("\n")) {
-    const name = MISSING_RE.exec(line)?.[1];
+    const name = MISSING_RE.exec(line)?.[1] ?? MIXED_RE.exec(line)?.[1];
     if (name && !names.includes(name)) names.push(name);
   }
   return names;
@@ -169,8 +172,11 @@ export async function runRnSpm(
   const log = deps.log ?? ((s: string) => console.log(s));
   const rnDir = deps.rnDir ?? resolveRnDir(paths);
   const rnArgs = rnSpmArgs(paths, opts, rnDir);
+  // RN's scaffolder warns about mixed-language libraries when this is unset, and any manifest
+  // it evaluates must see the same value the xtool build uses.
+  const env = swiftHeadersEnv(paths.iosXtool);
 
-  const first = await runner("node", rnArgs, { cwd: paths.ios });
+  const first = await runner("node", rnArgs, { cwd: paths.ios, env });
   if (first.exitCode === 0) return;
 
   const names = parseMissingPackageSwift(first.output);
@@ -182,6 +188,7 @@ export async function runRnSpm(
   log(`▸ scaffold — generating Package.swift for: ${names.join(", ")}`);
   const sc = await runner("node", scaffoldArgv(paths, opts, rnDir), {
     cwd: paths.ios,
+    env,
   });
   if (sc.exitCode !== 0)
     throw new Error(
@@ -208,7 +215,7 @@ export async function runRnSpm(
     log(`✔ scaffold — persisted ${createdPatchFile(persisted) ?? computedPatchFile(paths.root, name)}`);
   }
 
-  const second = await runner("node", rnArgs, { cwd: paths.ios });
+  const second = await runner("node", rnArgs, { cwd: paths.ios, env });
   if (second.exitCode !== 0) {
     throw new Error(
       `React Native SwiftPM setup still failed after scaffolding ${names.join(", ")} (exit ${second.exitCode}):\n${tail(second.output)}`,
