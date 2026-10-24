@@ -829,11 +829,193 @@ index 8fcf04b..09247b7 100644
    const name = field('name');
    const moduleName = field('module_name');
 diff --git a/node_modules/react-native/scripts/spm/scaffold-package-swift.js b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
-index cf7e587..bb1805e 100644
+index cf7e587..11e557e 100644
 --- a/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 +++ b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
-@@ -430,12 +430,49 @@ function translatePodspecToSpmTarget(
-       !f.startsWith('include/'),
+@@ -54,6 +54,7 @@ const {
+   SCAFFOLDER_MARKER,
+   makeLogger,
+   remotePackageConfig,
++  toC99Name,
+ } = require('./spm-utils');
+ const {readSwiftpmConfig, writeSwiftpmName} = require('./swiftpm-config');
+ const fs = require('node:fs');
+@@ -145,6 +146,157 @@ const SCAFFOLD_PREFIX_HEADER_CONTENTS = `// AUTO-SCAFFOLDED by react-native spm
+ #endif
+ `;
+ 
++// Mixed-language libraries (Swift + C-family sources in one pod). CocoaPods
++// and Xcode compile them as ONE module: Swift sees the pod's ObjC through the
++// umbrella header, and ObjC sees Swift through the generated
++// `<Module>-Swift.h`. SwiftPM >= 6.4 can build such a target behind the
++// `experimentalMultiLang` tools-version feature (only with the swiftbuild
++// backend; SE-0541 makes it standard, with no flag, in tools-version 6.5), but
++// 6.4.x wires neither direction, so the manifest supplies both:
++//   - Swift -> ObjC: `-import-objc-header <rn-spm-swift/umbrella.h>`, a
++//     generated header importing Foundation/UIKit and the module's headers
++//     except the C++ ones (or the podspec's own SWIFT_OBJC_BRIDGING_HEADER).
++//   - ObjC -> Swift: `-I` the directory where Swift Build writes
++//     `<Module>-Swift.h` (`<scratch>/out/Intermediates.noindex/
++//     GeneratedModuleMaps-<platform>`). It depends on the ROOT build's scratch
++//     path, so it is read from RN_SPM_SWIFT_HEADERS_DIR when the manifest is
++//     evaluated: a persisted (patch-package) manifest holds no absolute path.
++//     Unset, it falls back to this package's own `.build`, which is only right
++//     when the package is built on its own.
++// Upstream candidate: replaces the former "mixed Swift/ObjC → skipped" gate.
++const MIXED_TOOLS_VERSION_LINE =
++  '// swift-tools-version: 6.4;(experimentalMultiLang)';
++const SWIFT_HEADERS_DIR_ENV = 'RN_SPM_SWIFT_HEADERS_DIR';
++const SWIFT_HEADERS_FALLBACK =
++  '.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos';
++// Generated support files for the mixed target (umbrella + -Swift.h shims).
++// Kept out of `include/` so they never become part of the public module.
++const MIXED_SUPPORT_DIR = 'rn-spm-swift';
++const MIXED_UMBRELLA_HEADER = 'umbrella.h';
++const isSwiftSource = (f /*: string */) /*: boolean */ => /\.swift$/i.test(f);
++const isClangSource = (f /*: string */) /*: boolean */ =>
++  /\.(mm?|c|cc|cpp|cxx)$/i.test(f);
++
++// Include roots that hold C++-only code: an unresolved `#include <react/...>`
++// (Fabric), `<folly/...>`, ... still marks the including header as C++.
++const CXX_INCLUDE_PREFIXES = [
++  'react/',
++  'folly/',
++  'jsi/',
++  'jsireact/',
++  'cxxreact/',
++  'ReactCommon/',
++  'yoga/',
++  'glog/',
++  'boost/',
++  'fmt/',
++  'double-conversion/',
++  'hermes/',
++];
++const INCLUDE_RE = /^\s*#\s*(?:import|include)\s*([<"])([^>"]+)[>"]/gm;
++const CXX_MARKER_RE =
++  /\bnamespace\s+[\w:]*\s*\{|\btemplate\s*<|\bstd::|\busing\s+namespace\b|^\s*class\s+\w+\s*[:{]|^\s*#\s*include\s*<[a-z_]+>/m;
++
++// Drops `#if(def) __cplusplus` branches (keeping their `#else`), which a
++// Swift / Objective-C reader never sees.
++function stripCplusplusBlocks(text /*: string */) /*: string */ {
++  const out /*: Array<string> */ = [];
++  // One entry per open #if: 'skip' while inside a __cplusplus branch.
++  const stack /*: Array<'keep' | 'skip' | 'else'> */ = [];
++  const skipping = () => stack.includes('skip');
++  for (const line of text.split('\n')) {
++    const t = line.trim();
++    if (/^#\s*if/.test(t)) {
++      stack.push(
++        /^#\s*if(?:def\s+__cplusplus\b|\s+defined\s*\(?\s*__cplusplus\b|\s+__cplusplus\b)/.test(
++          t,
++        )
++          ? 'skip'
++          : 'keep',
++      );
++      continue;
++    }
++    if (/^#\s*(?:else|elif)\b/.test(t) && stack.length > 0) {
++      if (stack[stack.length - 1] === 'skip') stack[stack.length - 1] = 'else';
++      continue;
++    }
++    if (/^#\s*endif\b/.test(t)) {
++      stack.pop();
++      continue;
++    }
++    if (!skipping()) out.push(line);
++  }
++  return out.join('\n');
++}
++
++// The module headers Swift can import: CocoaPods' umbrella holds every public
++// header, but a Swift-side bridging header is parsed as Objective-C, so a
++// header that (transitively) pulls in C++ — typically a Fabric component view
++// including RCTViewComponentView.h → <react/renderer/...> — is left out. Header
++// lookups follow the module's own header dirs and `includeRoots` (the React
++// header trees, when known); an unresolved include counts as C++ only when it
++// names a C++-only root (CXX_INCLUDE_PREFIXES).
++function swiftImportableHeaders(
++  depRoot /*: string */,
++  headers /*: Array<string> */,
++  headerSearchPaths /*: Array<string> */,
++  includeRoots /*: Array<string> */,
++) /*: {safe: Array<string>, cxx: Array<string>} */ {
++  const localRoots = headerSearchPaths.map(p => path.join(depRoot, p));
++  const memo /*: Map<string, boolean> */ = new Map();
++  const isCxx = (abs /*: string */) /*: boolean */ => {
++    const known = memo.get(abs);
++    if (known != null) return known;
++    memo.set(abs, false); // cycle guard
++    let text = '';
++    try {
++      text = stripCplusplusBlocks(fs.readFileSync(abs, 'utf8'));
++    } catch {
++      return false;
++    }
++    let tainted = /\.(hh|hpp|hxx)$/i.test(abs) || CXX_MARKER_RE.test(text);
++    for (const m of tainted ? [] : text.matchAll(INCLUDE_RE)) {
++      const [, delim, inc] = m;
++      const candidates = [
++        ...(delim === '"' ? [path.join(path.dirname(abs), inc)] : []),
++        ...localRoots.map(r => path.join(r, inc)),
++        ...includeRoots.map(r => path.join(r, inc)),
++      ];
++      const found = candidates.find(c => fs.existsSync(c));
++      if (found != null ? isCxx(found) : CXX_INCLUDE_PREFIXES.some(p => inc.startsWith(p))) {
++        tainted = true;
++        break;
++      }
++    }
++    memo.set(abs, tainted);
++    return tainted;
++  };
++  const safe /*: Array<string> */ = [];
++  const cxx /*: Array<string> */ = [];
++  for (const h of headers) {
++    (isCxx(path.join(depRoot, h)) ? cxx : safe).push(h);
++  }
++  return {safe, cxx};
++}
++
++// A podspec's own Swift bridging header (pod_target_xcconfig
++// SWIFT_OBJC_BRIDGING_HEADER), dep-root relative. `undefined` when the podspec
++// sets none, null when it sets one we cannot resolve.
++function podspecBridgingHeader(
++  podspecText /*: string */,
++) /*: void | null | string */ {
++  const m = podspecText.match(
++    /SWIFT_OBJC_BRIDGING_HEADER['"]?\s*(?:=>|=|:)\s*['"]([^'"]+)['"]/,
++  );
++  if (m == null) {
++    return undefined;
++  }
++  const rel = m[1]
++    .replace(/\$[({]PODS_TARGET_SRCROOT[)}]\/?/g, '')
++    .replace(/^\.\//, '');
++  return /\$[({]|#\{/.test(rel) || path.posix.isAbsolute(rel) ? null : rel;
++}
++
+ // Names of deps the scaffolder always refuses to touch — `react-native`
+ // itself is handled by the xcframework subpackage, never as an autolinked
+ // target.
+@@ -248,6 +400,10 @@ function translatePodspecToSpmTarget(
+   // npm name → resolved Swift name for every autolinked dep, so a sibling
+   // reference honors that sibling's `spm.name` instead of re-deriving it.
+   swiftNameByNpm /*: Map<string, string> */ = new Map(),
++  // Directories that resolve the dependencies' `<React/X.h>`-style includes
++  // (the React header trees), used to keep C++ headers out of the Swift
++  // umbrella of a mixed-language target. Empty: unknown.
++  includeRoots /*: Array<string> */ = [],
+ ) /*: SpmScaffoldSpec */ {
+   const warnings = [...model.warnings];
+ 
+@@ -427,15 +583,53 @@ function translatePodspecToSpmTarget(
+     f =>
+       f !== SCAFFOLD_PREFIX_HEADER &&
+       f !== 'Package.swift' &&
+-      !f.startsWith('include/'),
++      !f.startsWith('include/') &&
++      !f.startsWith(`${MIXED_SUPPORT_DIR}/`),
    );
  
 +  // Metal shaders: SwiftPM compiles every `.metal` file under the target path
@@ -883,7 +1065,7 @@ index cf7e587..bb1805e 100644
    try {
      for (const f of expandSpmSourceGlobs(dep.root, model.publicHeaderFiles)) {
        if (/\.(h|hh|hpp)$/i.test(f)) headerFiles.push(f);
-@@ -497,6 +534,40 @@ function translatePodspecToSpmTarget(
+@@ -497,6 +691,40 @@ function translatePodspecToSpmTarget(
      }
    }
    let namespacedShimHeaders /*: Array<string> */ = [];
@@ -924,7 +1106,7 @@ index cf7e587..bb1805e 100644
    if (publicHeadersPath == null) {
      // Root-level podspecs (`s.source_files = "*.{h,m,mm}"`) keep their
      // headers in the package root. CocoaPods exposes them to dependents as
-@@ -518,6 +589,78 @@ function translatePodspecToSpmTarget(
+@@ -518,6 +746,78 @@ function translatePodspecToSpmTarget(
      );
    }
  
@@ -1003,7 +1185,7 @@ index cf7e587..bb1805e 100644
    const siblingSwiftNames /*: {[npmName: string]: string} */ = {};
    for (const npmName of siblingNames) {
      const resolved = swiftNameByNpm.get(npmName);
-@@ -526,11 +669,40 @@ function translatePodspecToSpmTarget(
+@@ -526,11 +826,113 @@ function translatePodspecToSpmTarget(
      }
    }
  
@@ -1036,8 +1218,81 @@ index cf7e587..bb1805e 100644
 +    });
 +  }
 +
++  // Mixed Swift + C-family sources → one mixed-language target (see
++  // MIXED_TOOLS_VERSION_LINE). Swift Build names the generated header after
++  // the TARGET (`react-native-foo-Swift.h`), not after the c99 module name;
++  // sources written for CocoaPods spell it after the pod's module
++  // (module_name, else header_dir, else the pod name, c99), with or without a
++  // `<Module>/` prefix, so forwarding shims cover those.
++  let mixedLanguage = null;
++  if (
++    expandedSources.some(isSwiftSource) &&
++    expandedSources.some(isClangSource)
++  ) {
++    const swiftHeader = `${swiftName}-Swift.h`;
++    const podModule = toC99Name(
++      model.moduleName ?? model.headerDir ?? model.name ?? swiftName,
++    );
++    let podspecText = '';
++    try {
++      const podspecPath =
++        dep.platforms.ios?.podspecPath ?? findPodspecs(dep.root)[0];
++      if (podspecPath != null) {
++        podspecText = fs.readFileSync(podspecPath, 'utf8');
++      }
++    } catch {
++      // No podspec text: no declared bridging header.
++    }
++    const declared = podspecBridgingHeader(podspecText);
++    if (declared === null) {
++      warnings.push(
++        `The podspec sets SWIFT_OBJC_BRIDGING_HEADER to a value that cannot be resolved; the generated ${MIXED_SUPPORT_DIR}/${MIXED_UMBRELLA_HEADER} is used instead.`,
++      );
++    }
++    let umbrellaHeaders /*: Array<string> */ = [];
++    if (typeof declared !== 'string') {
++      const {safe, cxx} = swiftImportableHeaders(
++        dep.root,
++        Array.from(new Set(headerFiles))
++          .filter(
++            h =>
++              /\.h$/i.test(h) &&
++              !h.startsWith('include/') &&
++              !h.startsWith(`${MIXED_SUPPORT_DIR}/`),
++          )
++          .sort(),
++        headerSearchPaths,
++        includeRoots,
++      );
++      umbrellaHeaders = safe;
++      if (cxx.length > 0) {
++        warnings.push(
++          `Left ${cxx.length} C++ header(s) out of the Swift umbrella (${MIXED_SUPPORT_DIR}/${MIXED_UMBRELLA_HEADER}): ${cxx.join(', ')}. Swift cannot import C++; Objective-C(++) sources still see them.`,
++        );
++      }
++    }
++    if (process.env[SWIFT_HEADERS_DIR_ENV] == null) {
++      warnings.push(
++        `Mixed Swift + Objective-C target: set ${SWIFT_HEADERS_DIR_ENV} to the build's GeneratedModuleMaps-<platform> directory when building, so Objective-C finds ${swiftHeader}. Unset, the manifest falls back to this package's own ${SWIFT_HEADERS_FALLBACK}.`,
++      );
++    }
++    mixedLanguage = {
++      swiftHeader,
++      podModule,
++      bridgingHeader:
++        typeof declared === 'string'
++          ? declared
++          : `${MIXED_SUPPORT_DIR}/${MIXED_UMBRELLA_HEADER}`,
++      umbrellaHeaders: typeof declared === 'string' ? null : umbrellaHeaders,
++    };
++    if (!headerSearchPaths.includes(MIXED_SUPPORT_DIR)) {
++      headerSearchPaths.push(MIXED_SUPPORT_DIR);
++    }
++  }
++
    return {
      swiftName,
++    mixedLanguage,
      sources: expandedSources,
      headerSearchPaths,
 -    preprocessorDefines: model.preprocessorDefines,
@@ -1045,7 +1300,7 @@ index cf7e587..bb1805e 100644
      needsObjCPrefix,
      coreReactNative,
      siblingNames,
-@@ -540,7 +712,9 @@ function translatePodspecToSpmTarget(
+@@ -540,7 +942,9 @@ function translatePodspecToSpmTarget(
      compilerFlags: model.compilerFlags,
      publicHeadersPath,
      namespacedShimHeaders,
@@ -1056,7 +1311,34 @@ index cf7e587..bb1805e 100644
      warnings,
    };
  }
-@@ -740,6 +914,11 @@ function emitScaffoldedPackageSwift(
+@@ -629,10 +1033,25 @@ function emitScaffoldedPackageSwift(
+   const prefixFlag = spec.needsObjCPrefix
+     ? `.unsafeFlags(["-include", "${SCAFFOLD_PREFIX_HEADER}"])`
+     : '';
+-  const cSettings = settingsEntries([prefixFlag].filter(e => e.length > 0));
++  // Mixed-language target: ObjC(++) finds `<Module>-Swift.h` in the Swift
++  // Build headers dir (see MIXED_TOOLS_VERSION_LINE).
++  const mixed = spec.mixedLanguage ?? null;
++  const swiftHeadersFlag =
++    mixed != null ? '.unsafeFlags(["-I", rnSpmSwiftHeadersDir])' : '';
++  // SwiftPM 6.4's swiftbuild backend does not apply the package's
++  // `cxxLanguageStandard` to a mixed-language target (its ObjC++/C++ files
++  // compile with the clang default and fail on React's C++20 headers), so the
++  // standard is passed explicitly.
++  const mixedCxxStdFlag =
++    mixed != null ? '.unsafeFlags(["-std=c++20"])' : '';
++  const cSettings = settingsEntries(
++    [prefixFlag, swiftHeadersFlag].filter(e => e.length > 0),
++  );
+   const cxxSettings = settingsEntries(
+     [
+       prefixFlag,
++      swiftHeadersFlag,
++      mixedCxxStdFlag,
+       ...(customFlagsCxx.length > 0
+         ? [`.unsafeFlags([${customFlagsCxx.join(', ')}])`]
+         : []),
+@@ -740,6 +1159,11 @@ function emitScaffoldedPackageSwift(
        ? `\n            publicHeadersPath: "${spec.publicHeadersPath}",`
        : '';
  
@@ -1068,16 +1350,162 @@ index cf7e587..bb1805e 100644
    const resourcesLine =
      spec.resources.length > 0
        ? `\n            resources: [${spec.resources.map(r => `.copy("${r}")`).join(', ')}],`
-@@ -778,7 +957,7 @@ let package = Package(
+@@ -755,7 +1179,27 @@ function emitScaffoldedPackageSwift(
+       ? `\n            dependencies: [${targetDeps.join(', ')}],`
+       : '';
+ 
+-  return `// swift-tools-version: 6.0
++  const toolsVersionLine =
++    mixed != null ? MIXED_TOOLS_VERSION_LINE : '// swift-tools-version: 6.0';
++  const mixedLets =
++    mixed != null
++      ? `
++// Mixed Swift + Objective-C target (SwiftPM experimentalMultiLang). Objective-C
++// finds ${mixed.swiftHeader} in the directory Swift Build writes it to,
++// which belongs to the root build: the build passes it in
++// ${SWIFT_HEADERS_DIR_ENV}. Swift sees the module's Objective-C through
++// ${mixed.bridgingHeader}.
++let rnSpmSwiftHeadersDir = Context.environment["${SWIFT_HEADERS_DIR_ENV}"]
++    ?? (Context.packageDirectory + "/${SWIFT_HEADERS_FALLBACK}")
++let rnSpmBridgingHeader = Context.packageDirectory + "/${mixed.bridgingHeader}"
++`
++      : '';
++  const swiftSettingsLine =
++    mixed != null
++      ? `\n            swiftSettings: [.unsafeFlags(["-import-objc-header", rnSpmBridgingHeader])],`
++      : '';
++
++  return `${toolsVersionLine}
+ ${SCAFFOLDER_MARKER}
+ // AUTO-SCAFFOLDED-VERSION: ${SCAFFOLDER_VERSION}${slotComment}
+ // Edit the contents below if needed and re-run \`npx patch-package <dep-name>\`
+@@ -768,7 +1212,7 @@ ${SCAFFOLDER_MARKER}
+ // (dropping the file) anyway.
+ 
+ import PackageDescription
+-
++${mixedLets}
+ let package = Package(
+     name: "${spec.swiftName}",
+     platforms: [.iOS("${iosDeploymentTarget}")],
+@@ -778,9 +1222,9 @@ let package = Package(
  ${packageDepsBlock}    targets: [
          .target(
              name: "${spec.swiftName}",${targetDepsLine}
 -            path: ".",${sourcesLine}${publicHeadersLine}${resourcesLine}
 +            path: ".",${excludeLine}${sourcesLine}${resourcesLine}${publicHeadersLine}
              cSettings: ${cSettings},
-             cxxSettings: ${cxxSettings},
+-            cxxSettings: ${cxxSettings},
++            cxxSettings: ${cxxSettings},${swiftSettingsLine}
              linkerSettings: [${linkerEntries.join(', ')}]
-@@ -1099,16 +1278,34 @@ function scaffoldPackageSwiftForDep(
+         ),
+     ],
+@@ -844,6 +1288,65 @@ function reportSwiftName(
+   }
+ }
+ 
++// The local React header trees (build/xcframeworks): the React module's
++// headers and the device slice of each headers xcframework.
++function reactIncludeRoots(appRoot /*: string */) /*: Array<string> */ {
++  const xcfw = path.join(appRoot, 'build', 'xcframeworks');
++  const roots = [path.join(xcfw, 'ReactHeadersTarget', 'include')];
++  try {
++    for (const name of fs.readdirSync(xcfw)) {
++      if (name.endsWith('.xcframework')) {
++        roots.push(path.join(xcfw, name, 'ios-arm64', 'Headers'));
++      }
++    }
++  } catch {
++    // No local xcframeworks (remote mode or not set up yet).
++  }
++  return roots.filter(r => fs.existsSync(r));
++}
++
++/**
++ * Writes the mixed-language target's support files under MIXED_SUPPORT_DIR:
++ * the Swift umbrella (unless the podspec brings its own bridging header) and
++ * the `<Module>-Swift.h` spellings CocoaPods sources use. The shims import the
++ * real header with angle brackets so the lookup skips their own directory.
++ */
++function writeMixedLanguageSupport(
++  depRoot /*: string */,
++  mixed /*: {swiftHeader: string, podModule: string, bridgingHeader: string, umbrellaHeaders: ?Array<string>} */,
++) /*: void */ {
++  const dir = path.join(depRoot, MIXED_SUPPORT_DIR);
++  fs.rmSync(dir, {recursive: true, force: true});
++  fs.mkdirSync(path.join(dir, mixed.podModule), {recursive: true});
++  const banner =
++    '// AUTO-SCAFFOLDED by react-native spm scaffold (mixed Swift + Objective-C target).\n';
++  if (mixed.umbrellaHeaders != null) {
++    fs.writeFileSync(
++      path.join(dir, MIXED_UMBRELLA_HEADER),
++      banner +
++        '// Swift bridging header: what the CocoaPods umbrella gives Swift — Foundation,\n' +
++        '// UIKit and the module headers (minus the C++ ones Swift cannot import).\n' +
++        '#import <Foundation/Foundation.h>\n' +
++        '#if __has_include(<UIKit/UIKit.h>)\n#import <UIKit/UIKit.h>\n#endif\n' +
++        mixed.umbrellaHeaders.map(h => `#import "../${h}"\n`).join(''),
++      'utf8',
++    );
++  }
++  const forward = `#import <${mixed.swiftHeader}>\n`;
++  fs.writeFileSync(
++    path.join(dir, mixed.podModule, `${mixed.podModule}-Swift.h`),
++    banner + forward,
++    'utf8',
++  );
++  if (`${mixed.podModule}-Swift.h` !== mixed.swiftHeader) {
++    fs.writeFileSync(
++      path.join(dir, `${mixed.podModule}-Swift.h`),
++      banner + forward,
++      'utf8',
++    );
++  }
++}
++
+ // ---------------------------------------------------------------------------
+ // Per-dep orchestrator
+ // ---------------------------------------------------------------------------
+@@ -1014,33 +1517,13 @@ function scaffoldPackageSwiftForDep(
+     dep,
+     ctx.podToNpm ?? new Map(),
+     ctx.swiftNameByNpm ?? new Map(),
++    reactIncludeRoots(ctx.appRoot),
+   );
+ 
+-  // Mixed-language fail-closed: SPM can't compile Swift + C-family in one
+-  // target. Don't emit a manifest that would fail with a cryptic "mixed
+-  // language source files" resolve error — skip with a clear reason (and remove
+-  // any stale scaffolded manifest so the autolinker reports it distinctly and
+-  // points the user at opting it out / a binary distribution).
+-  const hasSwift = spec.sources.some(f => /\.swift$/i.test(f));
+-  const hasClang = spec.sources.some(f => /\.(mm?|c|cc|cpp|cxx)$/i.test(f));
+-  if (hasSwift && hasClang) {
+-    if (!ctx.dryRun && fs.existsSync(pkgSwiftPath)) {
+-      const existing = fs.readFileSync(pkgSwiftPath, 'utf8');
+-      if (existing.includes(SCAFFOLDER_MARKER)) {
+-        fs.rmSync(pkgSwiftPath, {force: true});
+-      }
+-    }
+-    return {
+-      depName,
+-      status: 'skipped-mixed-language',
+-      reason:
+-        'has mixed Swift + Objective-C/C++ sources, which SPM cannot compile ' +
+-        'in one target (and the bidirectional ObjC↔Swift interop typical of ' +
+-        'such libs cannot be split without a circular dependency). Opt it out ' +
+-        'via react-native.config.js (platforms.ios = null) or use a prebuilt ' +
+-        'xcframework.',
+-    };
+-  }
++  // Mixed Swift + C-family sources used to be skipped here ("SPM cannot
++  // compile them in one target"). SwiftPM >= 6.4 can, so translate emits a
++  // mixed-language target instead (spec.mixedLanguage, see
++  // MIXED_TOOLS_VERSION_LINE) and the writer below adds its support files.
+ 
+   // Relative paths into the app, embedded in the scaffolded Package.swift.
+   //
+@@ -1099,16 +1582,38 @@ function scaffoldPackageSwiftForDep(
        const shimDir = path.join(dep.root, 'include', spec.swiftName);
        fs.mkdirSync(shimDir, {recursive: true});
        for (const header of spec.namespacedShimHeaders) {
@@ -1111,6 +1539,10 @@ index cf7e587..bb1805e 100644
 +        );
 +      }
 +    }
++  }
++
++  if (!ctx.dryRun && spec.mixedLanguage != null) {
++    writeMixedLanguageSupport(dep.root, spec.mixedLanguage);
    }
  
    reportSwiftName(dep, spec.swiftName, model);
