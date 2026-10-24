@@ -67,6 +67,16 @@ describe("tcpProbe and identify", () => {
       UnknownDeviceError,
     );
   });
+  it("does not trust a UDID from a session that declined SSL", async () => {
+    dev = await FakeDevice.start({ noSessionSsl: true });
+    const err = await identify("127.0.0.1", {
+      port: dev.lockdownPort,
+      timeoutMs: 1000,
+      candidates: async () => [{ record: pairRecord() }],
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UnknownDeviceError);
+    expect(dev.requests).not.toContain("GetValue");
+  });
   it("skips a host that accepts the session but is not the record's iPhone", async () => {
     dev = await FakeDevice.start({ presentCert: HOST_CERT });
     const err = await identify("127.0.0.1", {

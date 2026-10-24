@@ -62,6 +62,10 @@ export interface FakeDeviceOptions {
   udidBeforeSession?: boolean;
   /** Certificate presented in TLS (default: the pair record's DeviceCertificate). */
   presentCert?: Buffer;
+  /** Impostor: StartSession succeeds without EnableSessionSSL and the session stays plaintext. */
+  noSessionSsl?: boolean;
+  /** Impostor: services are offered without EnableServiceSSL (plaintext ports). */
+  noServiceSsl?: boolean;
   /** AFC: kill the connection when this write (1-based) arrives, like a Wi‑Fi drop. */
   afcDropOnWrite?: number;
   /** AFC: answer FileWrite with this status (e.g. 18 NoSpaceLeft). */
@@ -213,6 +217,11 @@ export class FakeDevice {
             await reply({ Error: "InvalidHostID" });
             break;
           }
+          if (this.opts.noSessionSsl) {
+            await reply({ SessionID: "S-1", EnableSessionSSL: false });
+            session = true;
+            break;
+          }
           await reply({ SessionID: "S-1", EnableSessionSSL: true });
           const raw = ch.detach();
           const t = await this.secure(raw);
@@ -228,11 +237,12 @@ export class FakeDevice {
             await reply({ Error: session ? "InvalidService" : "InvalidSession" });
             break;
           }
+          const plain = this.opts.noServiceSsl === true;
           const port = await this.listen(async (raw) => {
-            const t = await this.secure(raw);
+            const t = plain ? raw : await this.secure(raw);
             if (t) handler(t, this);
           }, true);
-          await reply({ Service: service, Port: port, EnableServiceSSL: true });
+          await reply({ Service: service, Port: port, EnableServiceSSL: !plain });
           break;
         }
         default:

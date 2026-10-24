@@ -133,6 +133,7 @@ export class UsbmuxClient {
 export function usbmuxConnector(deviceId: number, address?: net.NetConnectOpts): Connect {
   const connect: Connect = async (port) => (await UsbmuxClient.open(address)).connect(deviceId, port);
   connect.host = "USB";
+  connect.local = true;
   return connect;
 }
 

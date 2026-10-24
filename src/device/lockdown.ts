@@ -14,6 +14,11 @@ export const WIRELESS_LOCKDOWN_DOMAIN = "com.apple.mobile.wireless_lockdown";
 export type Connect = ((port: number) => Promise<Duplex>) & {
   /** Where it connects, for messages ("192.168.1.10", "USB"). */
   host?: string;
+  /**
+   * A local, already-trusted transport (usbmuxd over USB). Network connectors leave it unset, and
+   * then lockdown refuses any session or service that does not run over authenticated TLS.
+   */
+  local?: boolean;
 };
 
 export function tcpConnector(host: string, timeoutMs = 5000): Connect {
@@ -222,10 +227,19 @@ export class LockdownClient {
     await this.request("SetValue", { Domain: domain, Key: key, Value: value }, `${domain} ${key}`);
   }
 
-  /** Validates the pairing and switches the lockdown connection to TLS when the device asks for it. */
+  /**
+   * Validates the pairing and switches the lockdown connection to TLS. Over the network the session
+   * must be TLS (and the peer must present the pair record's certificate); only a local usbmuxd
+   * transport may stay in plaintext when the device says so.
+   */
   async startSession(record: PairRecord): Promise<void> {
     const resp = await this.request("StartSession", { HostID: record.HostID, SystemBUID: record.SystemBUID });
     const creds = credentialsOf(record);
+    if (resp.EnableSessionSSL !== true && !this.connect.local) {
+      // Without TLS the peer is never authenticated: a fake "iPhone" could just decline SSL.
+      this.close();
+      throw new DeviceAuthenticationError(this.connect.host ?? "the iPhone's address");
+    }
     if (resp.EnableSessionSSL === true) {
       const raw = this.channel.detach();
       let secure: tls.TLSSocket;
@@ -258,6 +272,7 @@ export class LockdownClient {
   /** StartService, connect to the returned port, and wrap it in TLS when `EnableServiceSSL`. */
   async openService(name: string): Promise<Duplex> {
     const info = await this.startService(name);
+    if (!info.ssl && !this.connect.local) throw new DeviceAuthenticationError(this.connect.host ?? "the iPhone's address");
     const sock = await this.connect(info.port);
     if (!info.ssl) return sock;
     if (!this.creds) {

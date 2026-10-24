@@ -111,6 +111,16 @@ describe("installOverWifi", () => {
     expect(Date.now() - t0).toBeLessThan(5000);
   });
 
+  for (const impostor of [{ noSessionSsl: true }, { noServiceSsl: true }]) {
+    it(`uploads nothing to a peer that declines SSL (${Object.keys(impostor)[0]})`, async () => {
+      const err = await run(impostor).catch((e: unknown) => e);
+      expect((err as Error).name).toBe("DeviceAuthenticationError");
+      expect(dev!.afcOps).toEqual([]);
+      expect(dev!.installs).toEqual([]);
+      if (impostor.noSessionSsl) expect(dev!.requests).toEqual(["QueryType", "StartSession"]);
+    });
+  }
+
   it("fails when the pairing is not accepted", async () => {
     await expect(run({ hostId: "SOMEONE-ELSE" })).rejects.toThrow("no longer trusts this computer");
   });

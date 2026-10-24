@@ -153,6 +153,34 @@ describe("LockdownClient", () => {
     l.close();
   });
 
+  it("refuses a network session that declines SSL, before sending anything else", async () => {
+    dev = await FakeDevice.start({ noSessionSsl: true });
+    const l = await open(dev);
+    const err = await l.startSession(pairRecord()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DeviceAuthenticationError);
+    await expect(l.udid()).rejects.toThrow();
+    expect(dev.requests).toEqual(["QueryType", "StartSession"]);
+  });
+
+  it("lets a local (usbmuxd) transport keep a plaintext session", async () => {
+    dev = await FakeDevice.start({ noSessionSsl: true });
+    const tcp = tcpConnector("127.0.0.1", 1000);
+    const local = Object.assign((port: number) => tcp(port), { host: "USB", local: true });
+    const l = await LockdownClient.open(local, { port: dev.lockdownPort, timeoutMs: 1000 });
+    await l.startSession(pairRecord());
+    expect(await l.udid()).toBe(UDID);
+    l.close();
+  });
+
+  it("refuses a plaintext service over the network", async () => {
+    dev = await FakeDevice.start({ noServiceSsl: true });
+    const l = await open(dev);
+    await l.startSession(pairRecord());
+    await expect(l.openService("com.apple.afc")).rejects.toBeInstanceOf(DeviceAuthenticationError);
+    expect(dev.afcOps).toEqual([]);
+    l.close();
+  });
+
   it("accepts a peer certificate issued by the pair record's RootCertificate", async () => {
     dev = await FakeDevice.start({ presentCert: DEVICE_SIGNED_CERT });
     const l = await open(dev);
