@@ -1037,6 +1037,12 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       });
     });
 
+    it("treats `React` and `ReactAppDependencyProvider` as core: no unmapped-pod warning", () => {
+      const spec = translate(lib(`  s.dependency "React"\n  s.dependency "ReactAppDependencyProvider"`));
+      expect(spec.warnings.filter((w) => w.includes("no known SwiftPM equivalent"))).toEqual([]);
+      expect(spec.externalPackages ?? []).toEqual([]);
+    });
+
     it("warns loudly about an unmapped external pod, once per pod (subspecs included)", () => {
       const spec = translate(lib(`  s.dependency "MMKV", '>= 1.3'\n  s.dependency "Firebase/Core"\n  s.dependency "Firebase/Messaging"`));
       expect(spec.externalPackages).toEqual([]);
