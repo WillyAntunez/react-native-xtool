@@ -996,6 +996,47 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       expect(pkg).toContain('.product(name: "SwiftUIIntrospect", package: "swiftui-introspect")');
     });
 
+    describe("scaffold revision marker", () => {
+      const scaffoldAgain = (root: string) => {
+        const dep = { name: "foo", root, swiftName: "Foo", swiftNameSource: "podspec", platforms: { ios: { podspecPath: path.join(root, "Foo.podspec") } } };
+        const ctx = { appRoot: root, projectRoot: root, reactNativeRoot: root, force: false, dryRun: false, cacheSlotLabel: null, remote: null };
+        return load<{ scaffoldPackageSwiftForDep(d: object, c: object): { status: string } }>(
+          "scaffold-package-swift.js",
+        ).scaffoldPackageSwiftForDep(dep, ctx).status;
+      };
+      const fresh = () => {
+        const root = lib(`  s.dependency "SwiftUIIntrospect", '~> 1.0'`);
+        expect(scaffoldAgain(root)).toBe("written");
+        return root;
+      };
+
+      it("emits the expo-xtool-scaffold-revision marker next to AUTO-SCAFFOLDED-VERSION", () => {
+        const pkg = readFileSync(path.join(fresh(), "Package.swift"), "utf8");
+        expect(pkg).toMatch(/^\/\/ AUTO-SCAFFOLDED-VERSION: \d+\n\/\/ expo-xtool-scaffold-revision: 1$/m);
+      });
+
+      it("keeps a scaffold that carries the current marker", () => {
+        expect(scaffoldAgain(fresh())).toBe("skipped-scaffolder-marker");
+      });
+
+      it("regenerates a scaffold from an older revision (marker missing)", () => {
+        const root = fresh();
+        const file = path.join(root, "Package.swift");
+        writeFileSync(file, readFileSync(file, "utf8").replace(/^\/\/ expo-xtool-scaffold-revision: \d+\n/m, "").replace("exact:", "from:"));
+        expect(scaffoldAgain(root)).toBe("written");
+        const pkg = readFileSync(file, "utf8");
+        expect(pkg).toContain("expo-xtool-scaffold-revision: 1");
+        expect(pkg).toContain('exact: "1.5.0"');
+      });
+
+      it("regenerates a scaffold whose marker is lower than the current revision", () => {
+        const root = fresh();
+        const file = path.join(root, "Package.swift");
+        writeFileSync(file, readFileSync(file, "utf8").replace("revision: 1", "revision: 0"));
+        expect(scaffoldAgain(root)).toBe("written");
+      });
+    });
+
     it("warns loudly about an unmapped external pod, once per pod (subspecs included)", () => {
       const spec = translate(lib(`  s.dependency "MMKV", '>= 1.3'\n  s.dependency "Firebase/Core"\n  s.dependency "Firebase/Messaging"`));
       expect(spec.externalPackages).toEqual([]);
