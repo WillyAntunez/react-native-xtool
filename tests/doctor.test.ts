@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { doctorWithProbes, renderReport, type DoctorProbes } from "../src/commands/doctor.js";
-import { XTOOL_VERSION } from "../src/versions.js";
+import { XTOOL_SHA256, XTOOL_VERSION } from "../src/versions.js";
 
 const good: DoctorProbes = {
   nodeVersion: () => "20.11.0",
@@ -8,6 +8,7 @@ const good: DoctorProbes = {
   xtoolPath: () => "/cache/xtool.AppImage",
   xtoolInstalled: () => true,
   xtoolVersion: async () => `xtool ${XTOOL_VERSION}`,
+  xtoolSha256: async () => undefined,
   sdkInstalled: () => true,
   authStatus: async () => ({ loggedIn: true, appleId: "me@example.com", teamId: "TEAM123" }),
   devices: async () => [{ name: "iPhone", udid: "u1", transport: "USB" }],
@@ -105,6 +106,14 @@ describe("doctorWithProbes", () => {
     const r = await doctorWithProbes({ ...good, xtoolVersion: async () => "xtool 0.0.1" });
     expect(statusOf(r, "xtool")).toBe("warn");
     expect(r.ok).toBe(true);
+  });
+
+  it("warns when the xtool sha256 differs from the pin and stays ok when it matches", async () => {
+    const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
+    const bad = await doctorWithProbes({ ...good, xtoolSha256: async () => "0".repeat(64) });
+    expect(statusOf(bad, "xtool")).toBe("warn");
+    const ok = await doctorWithProbes({ ...good, xtoolSha256: async () => XTOOL_SHA256[arch] });
+    expect(statusOf(ok, "xtool")).toBe("ok");
   });
 
   it("includes Apple ID and Team ID in the login detail", async () => {
