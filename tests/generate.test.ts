@@ -1,10 +1,11 @@
-import { mkdtemp, rm, mkdir, cp, readFile, readdir, lstat, readlink } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, cp, readFile, readdir, lstat, readlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { renderPackageSwift } from "../src/generate/packageSwift.js";
 import { renderXtoolYml } from "../src/generate/xtoolYml.js";
 import { writeIosXtool } from "../src/generate/iosXtool.js";
+import { expoClangImporterInputs } from "../src/generate/expoImporter.js";
 import { projectPaths } from "../src/paths.js";
 import type { ExpoProject } from "../src/project.js";
 import type { RuntimeFramework } from "../src/frameworks.js";
@@ -45,6 +46,17 @@ describe("renderPackageSwift", () => {
   it("defines Expo's configuration conditions, which gate debug-only modules in ExpoModulesProvider", () => {
     expect(out).toContain('.define("EXPO_CONFIGURATION_DEBUG", .when(configuration: .debug))');
     expect(out).toContain('.define("EXPO_CONFIGURATION_RELEASE", .when(configuration: .release))');
+  });
+  it("passes the Expo clang importer inputs to the app's Swift compiler when given", () => {
+    const o = renderPackageSwift({
+      iosDir: "/p/ios",
+      compileInterfacesDir: "/p/ci",
+      frameworks: [],
+      iosMin: "16.4",
+      clangImporter: { swiftHeadersDir: "/h", includeDirs: ["/e/A/pod-headers"], moduleMaps: ["/h/A.modulemap"] },
+    });
+    expect(o).toContain('.unsafeFlags(["-Xcc", "-I/h", "-Xcc", "-I/e/A/pod-headers", "-Xcc", "-fmodule-map-file=/h/A.modulemap"])');
+    expect(out).not.toContain('"-Xcc"');
   });
   it("escapes quotes and backslashes", () => {
     const o = renderPackageSwift({ iosDir: '/p"x\\y', compileInterfacesDir: "/c", frameworks: [], iosMin: "16.4" });
@@ -95,5 +107,48 @@ describe("writeIosXtool", () => {
     expect(await readFile(join(paths.iosXtool, ".gitignore"), "utf8")).toBe("*\n");
     const pkg = await readFile(join(paths.iosXtool, "Package.swift"), "utf8");
     expect(pkg.match(/"-F"/g)).toHaveLength(3); // compile-interfaces + 2 unique searchPaths
+  });
+});
+
+describe("expoClangImporterInputs", () => {
+  async function autolinking(pkgs: Record<string, string[]>): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), "xt-imp-"));
+    tmps.push(dir);
+    const decls: string[] = [];
+    for (const [name, files] of Object.entries(pkgs)) {
+      const pkg = join(dir, "expo", "expo-source", name);
+      for (const f of files) {
+        await mkdir(join(pkg, f, ".."), { recursive: true });
+        await writeFile(join(pkg, f), "");
+      }
+      await mkdir(pkg, { recursive: true });
+      decls.push(`        .package(name: "${name}", path: "${pkg}"),`);
+    }
+    // A stale package directory the manifest no longer references.
+    await mkdir(join(dir, "expo", "expo-source", "Gone", "pod-headers", "Gone"), { recursive: true });
+    await writeFile(join(dir, "expo", "expo-source", "Gone", "pod-headers", "Gone", "Gone-umbrella.h"), "");
+    await writeFile(join(dir, "Package.swift"), `let package = Package(dependencies: [\n${decls.join("\n")}\n])\n`);
+    return dir;
+  }
+
+  it("lists pod-headers dirs and Swift module maps of the referenced Expo packages when one is mixed", async () => {
+    const dir = await autolinking({
+      Mixed: ["pod-headers/Mixed/Mixed-Swift.h", "pod-headers/Mixed/Mixed-umbrella.h"],
+      Swifty: ["pod-headers/Swifty/Swifty-Swift.h"],
+      ObjC: ["pod-headers/ObjC/Header.h"],
+      Manifest: ["Package.swift"],
+    });
+    const inputs = await expoClangImporterInputs(dir, "/h");
+    expect(inputs).toEqual({
+      swiftHeadersDir: "/h",
+      includeDirs: ["Mixed", "ObjC", "Swifty"].map((n) => join(dir, "expo", "expo-source", n, "pod-headers")),
+      moduleMaps: ["/h/Mixed.modulemap", "/h/Swifty.modulemap"],
+    });
+  });
+
+  it("returns nothing without a mixed package, or without the autolinking manifest", async () => {
+    const dir = await autolinking({ Swifty: ["pod-headers/Swifty/Swifty-Swift.h"] });
+    expect(await expoClangImporterInputs(dir, "/h")).toBeUndefined();
+    expect(await expoClangImporterInputs(join(dir, "missing"), "/h")).toBeUndefined();
   });
 });

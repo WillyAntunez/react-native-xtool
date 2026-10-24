@@ -1,10 +1,12 @@
 import type { RuntimeFramework } from "../frameworks.js";
+import type { ClangImporterInputs } from "./expoImporter.js";
 
 export interface PackageSwiftInput {
   iosDir: string;
   compileInterfacesDir: string;
   frameworks: RuntimeFramework[];
   iosMin: string;
+  clangImporter?: ClangImporterInputs;
 }
 
 const lit = (s: string): string => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
@@ -13,6 +15,17 @@ export function renderPackageSwift(i: PackageSwiftInput): string {
   const ios = i.iosDir;
   const searchPaths = [...new Set(i.frameworks.map((f) => f.searchPath))];
   const linkerFlags = ["-Xlinker", "-ObjC", ...searchPaths.flatMap((p) => ["-F", p])];
+  const importer = i.clangImporter;
+  const importerFlags = importer
+    ? [
+        `-I${importer.swiftHeadersDir}`,
+        ...importer.includeDirs.map((d) => `-I${d}`),
+        ...importer.moduleMaps.map((m) => `-fmodule-map-file=${m}`),
+      ].flatMap((f) => ["-Xcc", f])
+    : [];
+  const importerSetting = importerFlags.length
+    ? `                .unsafeFlags([${importerFlags.map(lit).join(", ")}]),\n`
+    : "";
   const linkedFrameworks = i.frameworks
     .map((f) => `                .linkedFramework(${lit(f.name)}),\n`)
     .join("");
@@ -52,7 +65,7 @@ let package = Package(
                 .define("EXPO_CONFIGURATION_DEBUG", .when(configuration: .debug)),
                 .define("EXPO_CONFIGURATION_RELEASE", .when(configuration: .release)),
                 .unsafeFlags(["-F", ${lit(i.compileInterfacesDir)}]),
-            ],
+${importerSetting}            ],
             linkerSettings: [
                 .linkedLibrary("c++"),
                 .unsafeFlags([${linkerFlags.map(lit).join(", ")}]),
