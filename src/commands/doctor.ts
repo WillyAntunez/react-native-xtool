@@ -1,4 +1,5 @@
 import { execa } from "execa";
+import { nativeDepsFingerprint } from "../deps.js";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
 import { detectLanRoute, isPortFree, suspiciousLanRoute, tunnelWarning, type LanRoute } from "../net.js";
 import { projectPaths } from "../paths.js";
@@ -38,7 +39,8 @@ export interface DoctorProbes {
   configLanIp: () => string | undefined;
   /** Resolves when the project is a supported Expo project; rejects with the reason otherwise. */
   expoProject: (root: string) => Promise<unknown>;
-  buildState: (root: string) => Promise<{ metroPort: number; lanIp: string } | undefined>;
+  buildState: (root: string) => Promise<{ metroPort: number; lanIp: string; depsFingerprint?: string } | undefined>;
+  depsFingerprint: (root: string) => Promise<string>;
   portFree: (port: number) => Promise<boolean>;
 }
 
@@ -81,6 +83,7 @@ export function realProbes(config: ExpoXtoolConfig): DoctorProbes {
     configLanIp: () => config.lanIp,
     expoProject: (root) => readExpoProject(root),
     buildState: (root) => readState(projectPaths(root).iosXtool),
+    depsFingerprint: (root) => nativeDepsFingerprint(root),
     portFree: (port) => isPortFree(port),
   };
 }
@@ -200,7 +203,12 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
         : { status: "warn", detail: "no build yet — run expo-xtool build" };
     });
     if ("state" in stateResult && stateResult.state) {
-      const { metroPort } = stateResult.state;
+      const { metroPort, depsFingerprint } = stateResult.state;
+      await add("deps", async () =>
+        depsFingerprint !== undefined && depsFingerprint === (await p.depsFingerprint(root))
+          ? { status: "ok", detail: "unchanged since last build" }
+          : { status: "warn", detail: "dependencies changed since last build — run expo-xtool build && expo-xtool install" },
+      );
       await add("metro-port", async () =>
         (await p.portFree(metroPort))
           ? { status: "ok", detail: `port ${metroPort} is free` }

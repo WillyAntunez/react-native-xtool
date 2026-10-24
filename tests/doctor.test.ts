@@ -15,7 +15,8 @@ const good: DoctorProbes = {
   lanRoute: async () => ({ ip: "192.168.1.5", dev: "wlp2s0" }),
   configLanIp: () => undefined,
   expoProject: async () => undefined,
-  buildState: async () => ({ metroPort: 8081, lanIp: "192.168.1.5" }),
+  buildState: async () => ({ metroPort: 8081, lanIp: "192.168.1.5", depsFingerprint: "fp" }),
+  depsFingerprint: async () => "fp",
   portFree: async () => true,
 };
 
@@ -192,7 +193,7 @@ describe("doctorWithProbes", () => {
     const r = await doctorWithProbes({ ...good, ufwActive: async () => true, buildState: async () => ({ metroPort: 8099, lanIp: "1.2.3.4" }) }, "/p");
     expect(r.checks.find((c) => c.name === "firewall")?.detail).toContain("ufw allow 8099/tcp");
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "swift", "xtool", "darwin-sdk", "apple-login", "device", "firewall", "lan-ip", "expo-sdk", "build-state", "metro-port",
+      "node", "swift", "xtool", "darwin-sdk", "apple-login", "device", "firewall", "lan-ip", "expo-sdk", "build-state", "deps", "metro-port",
     ]);
   });
 
@@ -227,5 +228,24 @@ describe("doctorWithProbes", () => {
       const c = find(await lan({ lanRoute: async () => ({}), configLanIp: () => "192.168.0.9" }));
       expect(c).toMatchObject({ status: "ok", detail: "192.168.0.9 (from config)" });
     });
+  });
+});
+
+describe("deps check", () => {
+  const find = (r: { checks: { name: string; status: string; detail: string }[] }) => r.checks.find((c) => c.name === "deps");
+  it("is ok when the fingerprint matches", async () => {
+    expect(find(await doctorWithProbes(good, "/p"))?.status).toBe("ok");
+  });
+  it("warns when dependencies changed", async () => {
+    const r = await doctorWithProbes({ ...good, depsFingerprint: async () => "other" }, "/p");
+    expect(find(r)?.status).toBe("warn");
+    expect(find(r)?.detail).toContain("expo-xtool build && expo-xtool install");
+  });
+  it("warns when the state has no fingerprint", async () => {
+    const r = await doctorWithProbes({ ...good, buildState: async () => ({ metroPort: 8081, lanIp: "1.2.3.4" }) }, "/p");
+    expect(find(r)?.status).toBe("warn");
+  });
+  it("is skipped without a build state", async () => {
+    expect(find(await doctorWithProbes({ ...good, buildState: async () => undefined }, "/p"))).toBeUndefined();
   });
 });
