@@ -139,8 +139,10 @@ export interface LocateOptions {
   explicitIp?: string;
   /** Last address the iPhone answered on (build state). */
   lastIp?: string;
-  /** Wanted iPhone; when unset, the one paired iPhone found wins. */
+  /** `--udid`: this iPhone and no other. */
   udid?: string;
+  /** The remembered iPhone (build state): preferred, but another single paired iPhone may replace it. */
+  preferredUdid?: string;
   /** This computer's LAN address: its /24 is scanned. */
   lanIp: string;
   /** True when we hold a pair record for the UDID. */
@@ -156,6 +158,17 @@ export interface Located {
   scanned: boolean;
 }
 
+/** Paired iPhones answered, but not the wanted one (or too many to choose): waiting will not help. */
+export class OtherIPhonesError extends Error {
+  constructor(found: { ip: string; udid: string }[], wanted?: string) {
+    super(
+      `Found ${found.map((f) => `paired iPhone ${f.udid} at ${f.ip}`).join(", ")}` +
+        `${wanted ? `, but not iPhone ${wanted}` : ""}; pass --udid <udid> to choose.`,
+    );
+    this.name = "OtherIPhonesError";
+  }
+}
+
 /**
  * Finds the iPhone's address: the explicit IP, else the last known one, else a /24 scan for
  * port 62078 — always confirming the UDID, since any Apple device may answer there.
@@ -164,51 +177,62 @@ export async function locateDevice(o: LocateOptions): Promise<Located> {
   const ident = o.identify ?? ((ip: string) => identify(ip));
   const scan = o.scan ?? ((lanIp: string) => scanPort(subnet24Hosts(lanIp)));
   const log = o.log ?? (() => {});
-  const wanted = (udid: string): boolean => (o.udid ? sameUdid(udid, o.udid) : true);
+  const isStrict = (udid: string): boolean => !!o.udid && sameUdid(udid, o.udid);
+  const isPreferred = (udid: string): boolean => !!o.preferredUdid && sameUdid(udid, o.preferredUdid);
 
   if (o.explicitIp) {
     const udid = await ident(o.explicitIp);
-    if (!wanted(udid)) throw new Error(`${o.explicitIp} is iPhone ${udid}, not ${o.udid}`);
+    if (o.udid && !isStrict(udid)) throw new Error(`${o.explicitIp} is iPhone ${udid}, not ${o.udid}`);
     return { ip: o.explicitIp, udid, scanned: false };
   }
   if (o.lastIp) {
     try {
       const udid = await ident(o.lastIp);
       // A wanted --udid is returned even unpaired: loading its pair record then explains the fix.
-      if (wanted(udid) && (o.udid || (await o.paired(udid)))) return { ip: o.lastIp, udid, scanned: false };
-      log(`${wanted(udid) ? `iPhone ${udid} (not paired with this computer)` : "Another device"} answers at ${o.lastIp}; scanning ${subnet24(o.lanIp)}…`);
+      if (o.udid ? isStrict(udid) : (!o.preferredUdid || isPreferred(udid)) && (await o.paired(udid))) {
+        return { ip: o.lastIp, udid, scanned: false };
+      }
+      log(`iPhone ${udid} answers at ${o.lastIp}, not the one expected; scanning ${subnet24(o.lanIp)}…`);
     } catch (e) {
       log(`iPhone not at ${o.lastIp} (${message(e)}); scanning ${subnet24(o.lanIp)}…`);
     }
   } else {
     log(`Looking for the iPhone on ${subnet24(o.lanIp)}…`);
   }
-  const candidates: { ip: string; udid: string }[] = [];
+  const answered: { ip: string; udid: string }[] = [];
   const unknown: string[] = [];
   for (const ip of await scan(o.lanIp)) {
     try {
-      const udid = await ident(ip);
-      if (wanted(udid)) candidates.push({ ip, udid });
+      answered.push({ ip, udid: await ident(ip) });
     } catch (e) {
       if (e instanceof UnknownDeviceError) unknown.push(`a device at ${ip}`);
     }
   }
-  const found = o.udid ? candidates : [];
+  const paired: { ip: string; udid: string }[] = [];
   const unpaired: string[] = [];
-  if (!o.udid) {
-    for (const c of candidates) {
-      if (await o.paired(c.udid)) found.push(c);
-      else unpaired.push(`${c.udid} at ${c.ip}`);
-    }
+  for (const c of answered) {
+    if (await o.paired(c.udid)) paired.push(c);
+    else unpaired.push(`${c.udid} at ${c.ip}`);
   }
   // Unpaired answers may be someone else's iPhone while ours sleeps: still "not found" (retryable).
-  if (found.length === 0) throw new DeviceNotFoundError(subnet24(o.lanIp), [...unpaired, ...unknown]);
-  if (found.length > 1) {
-    throw new Error(
-      `Several paired iPhones answer on the LAN (${found.map((f) => `${f.udid} at ${f.ip}`).join(", ")}): pass --udid <udid>.`,
-    );
+  const notFound = (): DeviceNotFoundError => new DeviceNotFoundError(subnet24(o.lanIp), [...unpaired, ...unknown]);
+
+  if (o.udid) {
+    const hit = answered.find((c) => isStrict(c.udid));
+    if (hit) return { ...hit, scanned: true };
+    if (paired.length) throw new OtherIPhonesError(paired, o.udid);
+    throw notFound();
   }
-  return { ...found[0]!, scanned: true };
+  if (o.preferredUdid) {
+    const hit = paired.find((c) => isPreferred(c.udid));
+    if (hit) return { ...hit, scanned: true };
+    if (paired.length === 1) {
+      log(`The remembered iPhone ${o.preferredUdid} did not answer; using paired iPhone ${paired[0]!.udid} at ${paired[0]!.ip}.`);
+    }
+  }
+  if (paired.length === 1) return { ...paired[0]!, scanned: true };
+  if (paired.length > 1) throw new OtherIPhonesError(paired, o.preferredUdid);
+  throw notFound();
 }
 
 export const NOT_RESPONDING = "iPhone did not respond over Wi‑Fi — unlock it and keep it awake, retrying…";

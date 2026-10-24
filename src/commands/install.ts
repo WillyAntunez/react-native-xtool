@@ -200,7 +200,8 @@ async function installNetwork(root: string, deps: InstallDeps, opts: InstallOpti
     const where = await (w.locate ?? locateDevice)({
       explicitIp,
       lastIp: state.deviceIp,
-      udid: opts.udid ?? (explicitIp ? undefined : state.deviceUdid),
+      udid: opts.udid,
+      preferredUdid: explicitIp ? undefined : state.deviceUdid,
       lanIp: route.ip ?? state.lanIp,
       ...(scan && { scan }),
       paired: (udid) => load(udid, sources).then(() => true, () => false),

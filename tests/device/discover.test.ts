@@ -10,6 +10,7 @@ import {
   subnet24Hosts,
   tcpProbe,
   UnknownDeviceError,
+  OtherIPhonesError,
   pairCandidates,
 } from "../../src/device/discover.js";
 import { DeviceUnreachableError } from "../../src/device/errors.js";
@@ -152,6 +153,54 @@ describe("locateDevice", () => {
     expect(err).toBeInstanceOf(DeviceNotFoundError);
     expect((err as Error).message).toContain("NEW at 10.0.0.7");
     expect((err as Error).message).toContain("setup --wifi");
+  });
+  it("switches to the single other paired iPhone when the remembered one is gone", async () => {
+    const logs: string[] = [];
+    const r = await locateDevice({
+      lanIp: "10.0.0.2",
+      preferredUdid: "OLD",
+      paired: async () => true,
+      identify: async () => "NEW",
+      scan: async () => ["10.0.0.7"],
+      log: (s) => logs.push(s),
+    });
+    expect(r).toEqual({ ip: "10.0.0.7", udid: "NEW", scanned: true });
+    expect(logs.at(-1)).toBe("The remembered iPhone OLD did not answer; using paired iPhone NEW at 10.0.0.7.");
+  });
+  it("prefers the remembered iPhone when it answers among others", async () => {
+    const ids: Record<string, string> = { "10.0.0.7": "OTHER", "10.0.0.8": "OLD" };
+    const r = await locateDevice({
+      lanIp: "10.0.0.2",
+      preferredUdid: "OLD",
+      paired: async () => true,
+      identify: async (ip) => ids[ip]!,
+      scan: async () => ["10.0.0.7", "10.0.0.8"],
+    });
+    expect(r.udid).toBe("OLD");
+  });
+  it("names the paired iPhones found when the remembered one is gone and several answer", async () => {
+    const err = await locateDevice({
+      lanIp: "10.0.0.2",
+      preferredUdid: "OLD",
+      paired: async () => true,
+      identify: async (ip) => `U-${ip}`,
+      scan: async () => ["10.0.0.7", "10.0.0.8"],
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OtherIPhonesError);
+    expect((err as Error).message).toBe(
+      "Found paired iPhone U-10.0.0.7 at 10.0.0.7, paired iPhone U-10.0.0.8 at 10.0.0.8, but not iPhone OLD; pass --udid <udid> to choose.",
+    );
+  });
+  it("never switches away from an explicit --udid", async () => {
+    const err = await locateDevice({
+      lanIp: "10.0.0.2",
+      udid: "WANTED",
+      paired: async () => true,
+      identify: async () => "OTHER",
+      scan: async () => ["10.0.0.7"],
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OtherIPhonesError);
+    expect((err as Error).message).toContain("but not iPhone WANTED");
   });
   it("asks for --udid when several paired iPhones answer", async () => {
     await expect(

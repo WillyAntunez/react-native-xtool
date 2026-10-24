@@ -182,7 +182,8 @@ describe("install --network", () => {
     expect(calls.listDevices).not.toHaveBeenCalled();
     expect(calls.devRun).not.toHaveBeenCalled();
     expect(calls.devBuildIpa).toHaveBeenCalledWith("/bin/xtool", expect.stringMatching(/ios-xtool$/));
-    expect(calls.locate.mock.calls[0]![0]).toMatchObject({ lastIp: "192.168.1.9", udid: UD, lanIp: "192.168.1.20" });
+    expect(calls.locate.mock.calls[0]![0]).toMatchObject({ lastIp: "192.168.1.9", preferredUdid: UD, lanIp: "192.168.1.20" });
+    expect(calls.locate.mock.calls[0]![0].udid).toBeUndefined();
     expect(calls.installOverWifi.mock.calls[0]![0]).toMatchObject({
       ip: "192.168.1.10",
       udid: UD,
@@ -248,7 +249,7 @@ describe("install --network", () => {
   it("passes an explicit IP and does not force the remembered UDID on it", async () => {
     const { d, calls } = deps({ state: { deviceUdid: UD } });
     await install("/p", d, { network: "10.0.0.5" });
-    expect(calls.locate.mock.calls[0]![0]).toMatchObject({ explicitIp: "10.0.0.5", udid: undefined });
+    expect(calls.locate.mock.calls[0]![0]).toMatchObject({ explicitIp: "10.0.0.5", udid: undefined, preferredUdid: undefined });
   });
 
   it("retries 3 × 10 s while the iPhone does not respond, with the wake-up message", async () => {
@@ -262,6 +263,17 @@ describe("install --network", () => {
     expect(calls.sleep.mock.calls).toEqual([[10_000], [10_000], [10_000]]);
     expect(logs.filter((l) => l === "iPhone did not respond over Wi‑Fi — unlock it and keep it awake, retrying…")).toHaveLength(3);
     expect(calls.installOverWifi).not.toHaveBeenCalled();
+  });
+
+  it("does not retry when other paired iPhones answer instead", async () => {
+    const { OtherIPhonesError } = await import("../src/device/discover.js");
+    const locate = vi.fn(async () => {
+      throw new OtherIPhonesError([{ ip: "10.0.0.7", udid: "A" }, { ip: "10.0.0.8", udid: "B" }]);
+    });
+    const { d, calls } = deps({ wifi: { locate } });
+    await expect(install("/p", d, { network: true })).rejects.toThrow("paired iPhone A at 10.0.0.7");
+    expect(locate).toHaveBeenCalledOnce();
+    expect(calls.sleep).not.toHaveBeenCalled();
   });
 
   it("retries an interrupted upload exactly once", async () => {
