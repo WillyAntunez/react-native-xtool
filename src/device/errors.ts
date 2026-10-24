@@ -48,3 +48,13 @@ export class HeartbeatLostError extends Error {
     this.name = "HeartbeatLostError";
   }
 }
+
+/** The TLS peer is not the iPhone of the pair record (another host on that address, or an impostor). */
+export class DeviceAuthenticationError extends Error {
+  constructor(host: string) {
+    super(
+      `The host at ${host} is not the paired iPhone: its TLS certificate does not match this computer's pair record. Nothing was sent to it.`,
+    );
+    this.name = "DeviceAuthenticationError";
+  }
+}

@@ -131,7 +131,9 @@ export class UsbmuxClient {
 
 /** Opens device ports through usbmuxd (USB), one usbmuxd connection per device connection. */
 export function usbmuxConnector(deviceId: number, address?: net.NetConnectOpts): Connect {
-  return async (port) => (await UsbmuxClient.open(address)).connect(deviceId, port);
+  const connect: Connect = async (port) => (await UsbmuxClient.open(address)).connect(deviceId, port);
+  connect.host = "USB";
+  return connect;
 }
 
 /** Every device usbmuxd currently sees over USB; empty when usbmuxd is not running. */

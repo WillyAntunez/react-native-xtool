@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import * as plist from "plist";
-import { DeviceUnreachableError } from "../../src/device/errors.js";
+import { DeviceAuthenticationError, DeviceUnreachableError } from "../../src/device/errors.js";
 import {
   LockdownClient,
   LockdownError,
@@ -10,7 +10,16 @@ import {
 } from "../../src/device/lockdown.js";
 import { parsePairRecord } from "../../src/device/pairRecord.js";
 import { PlistChannel } from "../../src/device/plistio.js";
-import { FakeDevice, foreignPairRecord, HOST_CERT, HOST_KEY, pairRecord, UDID } from "./fakeDevice.js";
+import {
+  DEVICE_SIGNED_CERT,
+  FakeDevice,
+  foreignPairRecord,
+  HOST_CERT,
+  HOST_KEY,
+  pairRecord,
+  ROOT_CERT,
+  UDID,
+} from "./fakeDevice.js";
 
 let dev: FakeDevice | undefined;
 afterEach(async () => {
@@ -28,6 +37,7 @@ describe("parsePairRecord", () => {
       SystemBUID: "B",
       HostCertificate: HOST_CERT,
       HostPrivateKey: HOST_KEY,
+      DeviceCertificate: HOST_CERT,
       EscrowBag: Buffer.from([1, 2]),
       WiFiMACAddress: "14:7d:da:ed:7d:8c",
     });
@@ -37,12 +47,18 @@ describe("parsePairRecord", () => {
     expect(r.EscrowBag).toEqual(Buffer.from([1, 2]));
   });
   it("reads a binary record", () => {
-    const bin = plist.buildBinary({ HostID: "H", SystemBUID: "B", HostCertificate: HOST_CERT, HostPrivateKey: HOST_KEY });
+    const bin = plist.buildBinary({
+      HostID: "H",
+      SystemBUID: "B",
+      HostCertificate: HOST_CERT,
+      HostPrivateKey: HOST_KEY,
+      DeviceCertificate: HOST_CERT,
+    });
     expect(parsePairRecord(Buffer.from(bin), "x").SystemBUID).toBe("B");
   });
   it("names the missing keys", () => {
     expect(() => parsePairRecord(Buffer.from(plist.build({ HostID: "H" })), "rec.plist")).toThrow(
-      "rec.plist is not a usable pair record (missing SystemBUID, HostCertificate, HostPrivateKey)",
+      "rec.plist is not a usable pair record (missing SystemBUID, HostCertificate, HostPrivateKey, DeviceCertificate)",
     );
   });
 });
@@ -113,6 +129,31 @@ describe("LockdownClient", () => {
     const l = await open(dev);
     const err = await l.startSession(foreignPairRecord()).catch((e: unknown) => e);
     expect((err as LockdownError).code).toBe("PairingRejected");
+    l.close();
+  });
+
+  it("refuses a peer that does not present the pair record's DeviceCertificate, and sends it nothing", async () => {
+    dev = await FakeDevice.start({ presentCert: HOST_CERT });
+    const l = await open(dev);
+    const err = await l.startSession(pairRecord()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DeviceAuthenticationError);
+    expect((err as Error).message).toContain("The host at 127.0.0.1 is not the paired iPhone");
+    expect(dev.requests).toEqual(["QueryType", "StartSession"]);
+    l.close();
+  });
+
+  it("accepts a peer certificate issued by the pair record's RootCertificate", async () => {
+    dev = await FakeDevice.start({ presentCert: DEVICE_SIGNED_CERT });
+    const l = await open(dev);
+    await l.startSession(pairRecord({ DeviceCertificate: HOST_CERT, RootCertificate: ROOT_CERT }));
+    expect(await l.udid()).toBe(UDID);
+    l.close();
+  });
+
+  it("refuses a root-issued certificate when the record has no RootCertificate", async () => {
+    dev = await FakeDevice.start({ presentCert: DEVICE_SIGNED_CERT });
+    const l = await open(dev);
+    await expect(l.startSession(pairRecord())).rejects.toBeInstanceOf(DeviceAuthenticationError);
     l.close();
   });
 

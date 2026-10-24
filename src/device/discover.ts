@@ -1,5 +1,5 @@
 import net from "node:net";
-import { DeviceTimeoutError, DeviceUnreachableError, message } from "./errors.js";
+import { DeviceAuthenticationError, DeviceTimeoutError, DeviceUnreachableError, message } from "./errors.js";
 import { LOCKDOWN_PORT, LockdownClient, LockdownError, tcpConnector } from "./lockdown.js";
 import type { LoadedPairRecord, PairRecord } from "./pairRecord.js";
 import { sameUdid } from "./usbmux.js";
@@ -107,9 +107,10 @@ export async function pairCandidates(
 }
 
 /**
- * UDID of the iPhone answering lockdown at `ip`. Over Wi‑Fi iOS refuses UniqueDeviceID before a
- * session (GetProhibited), so each candidate pair record is tried: only the iPhone it belongs to
- * accepts the session, and inside it the UDID is readable.
+ * UDID of the iPhone answering lockdown at `ip`, read only inside an authenticated session: each
+ * candidate pair record is tried, and only the iPhone it belongs to both accepts the session and
+ * presents the record's DeviceCertificate (a session-less UDID could be spoofed by any host, and
+ * iOS refuses it over Wi‑Fi anyway with GetProhibited).
  */
 export async function identify(
   ip: string,
@@ -118,21 +119,14 @@ export async function identify(
   const timeoutMs = opts.timeoutMs ?? 5000;
   const open = (): Promise<LockdownClient> =>
     LockdownClient.open(tcpConnector(ip, timeoutMs), { port: opts.port ?? LOCKDOWN_PORT, timeoutMs });
-  const first = await open();
-  try {
-    return await first.udid();
-  } catch (e) {
-    if (!(e instanceof LockdownError)) throw e;
-  } finally {
-    first.close();
-  }
   for (const c of (await opts.candidates?.()) ?? []) {
     const l = await open();
     try {
       await l.startSession(c.record);
       return await l.udid();
     } catch (e) {
-      if (!(e instanceof LockdownError)) throw e;
+      // Not this record's iPhone (refused, or not authenticated): try the next record.
+      if (!(e instanceof LockdownError || e instanceof DeviceAuthenticationError)) throw e;
     } finally {
       l.close();
     }

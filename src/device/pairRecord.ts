@@ -11,6 +11,8 @@ export interface PairRecord {
   HostCertificate: Buffer;
   /** PEM. */
   HostPrivateKey: Buffer;
+  /** PEM: the certificate the iPhone presents in TLS; used to authenticate it. */
+  DeviceCertificate: Buffer;
   RootCertificate?: Buffer;
   EscrowBag?: Buffer;
   WiFiMACAddress?: string;
@@ -29,11 +31,13 @@ export function parsePairRecord(bytes: Buffer, source: string): PairRecord {
   }
   const cert = asBuffer(dict.HostCertificate);
   const key = asBuffer(dict.HostPrivateKey);
+  const device = asBuffer(dict.DeviceCertificate);
   const missing = [
     typeof dict.HostID === "string" ? undefined : "HostID",
     typeof dict.SystemBUID === "string" ? undefined : "SystemBUID",
     cert ? undefined : "HostCertificate",
     key ? undefined : "HostPrivateKey",
+    device ? undefined : "DeviceCertificate",
   ].filter(Boolean);
   if (missing.length) throw new Error(`${source} is not a usable pair record (missing ${missing.join(", ")})`);
   const record: PairRecord = {
@@ -41,6 +45,7 @@ export function parsePairRecord(bytes: Buffer, source: string): PairRecord {
     SystemBUID: dict.SystemBUID as string,
     HostCertificate: cert!,
     HostPrivateKey: key!,
+    DeviceCertificate: device!,
   };
   const root = asBuffer(dict.RootCertificate);
   const escrow = asBuffer(dict.EscrowBag);

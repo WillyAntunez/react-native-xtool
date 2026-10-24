@@ -1,7 +1,8 @@
+import { X509Certificate } from "node:crypto";
 import net from "node:net";
 import type { Duplex } from "node:stream";
 import tls from "node:tls";
-import { DeviceClosedError, DeviceTimeoutError, DeviceUnreachableError } from "./errors.js";
+import { DeviceAuthenticationError, DeviceClosedError, DeviceTimeoutError, DeviceUnreachableError } from "./errors.js";
 import type { PairRecord } from "./pairRecord.js";
 import { PlistChannel, type PlistDict, type PlistValue } from "./plistio.js";
 
@@ -9,10 +10,13 @@ export const LOCKDOWN_PORT = 62078;
 export const WIRELESS_LOCKDOWN_DOMAIN = "com.apple.mobile.wireless_lockdown";
 
 /** Opens a raw connection to a device port: plain TCP to its IP, or a usbmuxd tunnel. */
-export type Connect = (port: number) => Promise<Duplex>;
+export type Connect = ((port: number) => Promise<Duplex>) & {
+  /** Where it connects, for messages ("192.168.1.10", "USB"). */
+  host?: string;
+};
 
 export function tcpConnector(host: string, timeoutMs = 5000): Connect {
-  return (port) =>
+  const connect: Connect = (port) =>
     new Promise((resolve, reject) => {
       const s = net.connect({ host, port });
       // Keep a listener for the socket's whole life: later errors surface as a closed connection.
@@ -32,25 +36,49 @@ export function tcpConnector(host: string, timeoutMs = 5000): Connect {
         resolve(s);
       });
     });
+  connect.host = host;
+  return connect;
 }
 
 export interface TlsCredentials {
   cert: Buffer;
   key: Buffer;
+  /** The iPhone's certificate from the pair record: the TLS peer must present it. */
+  device?: X509Certificate;
+  /** The pair record's root: a peer certificate it issued is also accepted. */
+  root?: X509Certificate;
 }
 
 export function credentialsOf(record: PairRecord): TlsCredentials {
-  return { cert: record.HostCertificate, key: record.HostPrivateKey };
+  return {
+    cert: record.HostCertificate,
+    key: record.HostPrivateKey,
+    device: new X509Certificate(record.DeviceCertificate),
+    ...(record.RootCertificate && { root: new X509Certificate(record.RootCertificate) }),
+  };
 }
 
 /**
- * Client side of the device's TLS: the pair record's host certificate and key, no server
- * verification (the device certificate is self-issued), TLS 1.2 as negotiated by iOS.
+ * True when the TLS peer is the paired iPhone: it presents the pair record's DeviceCertificate
+ * (or a certificate issued by the record's RootCertificate, whose key only the pairing host holds).
+ */
+export function isPairedPeer(peer: X509Certificate | undefined, creds: TlsCredentials): boolean {
+  if (!peer) return false;
+  if (creds.device && peer.fingerprint256 === creds.device.fingerprint256) return true;
+  return !!creds.root && peer.checkIssued(creds.root) && peer.verify(creds.root.publicKey);
+}
+
+/**
+ * Client side of the device's TLS (1.2, as iOS negotiates): we present the pair record's host
+ * certificate and key. Node's CA verification is off because the device certificate is issued by
+ * the pair record's own root, not a public CA; instead the peer certificate is checked against the
+ * pair record (`isPairedPeer`) before the socket is handed back, so nothing is sent to an impostor.
  */
 export function upgradeToTls(
   socket: Duplex,
   creds: TlsCredentials,
   what: string,
+  host = "the iPhone's address",
   timeoutMs = 10_000,
 ): Promise<tls.TLSSocket> {
   return new Promise((resolve, reject) => {
@@ -77,7 +105,9 @@ export function upgradeToTls(
     const timer = setTimeout(() => done(new DeviceTimeoutError(`${what} TLS handshake`, timeoutMs)), timeoutMs);
     t.on("error", (e) => done(e));
     t.once("close", () => done(new DeviceClosedError(`${what} TLS handshake`)));
-    t.once("secureConnect", () => done());
+    t.once("secureConnect", () =>
+      done(creds.device || creds.root ? (isPairedPeer(t.getPeerX509Certificate(), creds) ? undefined : new DeviceAuthenticationError(host)) : undefined),
+    );
   });
 }
 
@@ -188,7 +218,7 @@ export class LockdownClient {
       const raw = this.channel.detach();
       let secure: tls.TLSSocket;
       try {
-        secure = await upgradeToTls(raw, creds, "lockdownd session");
+        secure = await upgradeToTls(raw, creds, "lockdownd session", this.connect.host);
       } catch (e) {
         raw.destroy();
         // The device drops the handshake when it no longer knows our host certificate.
@@ -220,7 +250,7 @@ export class LockdownClient {
       sock.destroy();
       throw new Error(`${name} needs TLS but no session was started`);
     }
-    return upgradeToTls(sock, this.creds, name);
+    return upgradeToTls(sock, this.creds, name, this.connect.host);
   }
 
   close(): void {

@@ -13,7 +13,7 @@ import {
   pairCandidates,
 } from "../../src/device/discover.js";
 import { DeviceUnreachableError } from "../../src/device/errors.js";
-import { FakeDevice, foreignPairRecord, pairRecord, UDID } from "./fakeDevice.js";
+import { FakeDevice, foreignPairRecord, HOST_CERT, pairRecord, UDID } from "./fakeDevice.js";
 
 describe("subnet24Hosts", () => {
   it("lists .1–.254 without our own address", () => {
@@ -60,9 +60,21 @@ describe("tcpProbe and identify", () => {
     server.close();
     expect(await tcpProbe("127.0.0.1", 1, 500)).toBe(false);
   });
-  it("identifies the UDID before a session when the device allows it", async () => {
+  it("never trusts a UDID offered before an authenticated session", async () => {
     dev = await FakeDevice.start({ udidBeforeSession: true });
-    expect(await identify("127.0.0.1", { port: dev.lockdownPort, timeoutMs: 1000 })).toBe(UDID);
+    await expect(identify("127.0.0.1", { port: dev.lockdownPort, timeoutMs: 1000 })).rejects.toBeInstanceOf(
+      UnknownDeviceError,
+    );
+  });
+  it("skips a host that accepts the session but is not the record's iPhone", async () => {
+    dev = await FakeDevice.start({ presentCert: HOST_CERT });
+    const err = await identify("127.0.0.1", {
+      port: dev.lockdownPort,
+      timeoutMs: 1000,
+      candidates: async () => [{ record: pairRecord() }],
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(UnknownDeviceError);
+    expect(dev.requests).not.toContain("GetValue");
   });
   it("over Wi‑Fi, tries pair records until one opens a session, then reads the UDID", async () => {
     dev = await FakeDevice.start();

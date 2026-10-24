@@ -20,6 +20,10 @@ export const HOST_CERT = readFileSync(join(FIX, "host-cert.pem"));
 export const HOST_KEY = readFileSync(join(FIX, "host-key.pem"));
 const DEVICE_CERT = readFileSync(join(FIX, "device-cert.pem"));
 const DEVICE_KEY = readFileSync(join(FIX, "device-key.pem"));
+/** Same key as DEVICE_CERT, issued by ROOT_CERT (as iOS pairing does). */
+export const DEVICE_SIGNED_CERT = readFileSync(join(FIX, "device-signed-cert.pem"));
+export const ROOT_CERT = readFileSync(join(FIX, "root-cert.pem"));
+export const DEVICE_CERT_PEM = DEVICE_CERT;
 const DEVICE_KEY_AS_HOST = { cert: DEVICE_CERT, key: DEVICE_KEY };
 
 export const UDID = "00008030-00000000DEADBEEF";
@@ -29,6 +33,7 @@ export const pairRecord = (over: Partial<PairRecord> = {}): PairRecord => ({
   SystemBUID: "BUID-1",
   HostCertificate: HOST_CERT,
   HostPrivateKey: HOST_KEY,
+  DeviceCertificate: DEVICE_CERT,
   ...over,
 });
 
@@ -55,6 +60,8 @@ export interface FakeDeviceOptions {
    * over Wi‑Fi: GetProhibited, and the session-less dictionary has no UniqueDeviceID.
    */
   udidBeforeSession?: boolean;
+  /** Certificate presented in TLS (default: the pair record's DeviceCertificate). */
+  presentCert?: Buffer;
   /** AFC: kill the connection when this write (1-based) arrives, like a Wi‑Fi drop. */
   afcDropOnWrite?: number;
   /** AFC: answer FileWrite with this status (e.g. 18 NoSpaceLeft). */
@@ -121,7 +128,10 @@ export class FakeDevice {
     return new Promise((resolve) => {
       const t = new tls.TLSSocket(raw as net.Socket, {
         isServer: true,
-        secureContext: tls.createSecureContext({ cert: DEVICE_CERT, key: DEVICE_KEY }),
+        secureContext: tls.createSecureContext({
+          cert: this.opts.presentCert ?? DEVICE_CERT,
+          key: this.opts.presentCert?.equals(HOST_CERT) ? HOST_KEY : DEVICE_KEY,
+        }),
         requestCert: true,
         rejectUnauthorized: false,
       });

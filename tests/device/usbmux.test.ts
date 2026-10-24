@@ -18,7 +18,13 @@ import {
 import { FakeDevice, HOST_CERT, HOST_KEY, UDID } from "./fakeDevice.js";
 
 const RECORD = Buffer.from(
-  plist.build({ HostID: "HOST-1", SystemBUID: "BUID-1", HostCertificate: HOST_CERT, HostPrivateKey: HOST_KEY }),
+  plist.build({
+    HostID: "HOST-1",
+    SystemBUID: "BUID-1",
+    HostCertificate: HOST_CERT,
+    HostPrivateKey: HOST_KEY,
+    DeviceCertificate: HOST_CERT,
+  }),
 );
 
 let dir: string;

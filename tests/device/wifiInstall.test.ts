@@ -77,6 +77,14 @@ describe("installOverWifi", () => {
     expect(dev!.files.size).toBe(0);
   });
 
+  it("sends nothing past StartSession to a host that is not the paired iPhone", async () => {
+    const err = await run({ presentCert: (await import("./fakeDevice.js")).HOST_CERT }).catch((e: unknown) => e);
+    expect((err as Error).name).toBe("DeviceAuthenticationError");
+    expect(dev!.requests).toEqual(["QueryType", "StartSession"]);
+    expect(dev!.afcOps).toEqual([]);
+    expect(dev!.installs).toEqual([]);
+  });
+
   it("fails when the pairing is not accepted", async () => {
     await expect(run({ hostId: "SOMEONE-ELSE" })).rejects.toThrow("no longer trusts this computer");
   });
