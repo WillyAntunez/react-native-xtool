@@ -435,6 +435,22 @@ directory instead of generating one, and the farm's headers are then included te
 header search paths include them. Nothing imports `ReactAppHeaders` as a module (Swift cannot: it is C++).
 Verified with the full reference app (all scaffolded and Expo modules still build) plus the dev client.
 
+**Ruling: accepted behaviour change.** The farm is no longer a Clang module; its headers are included
+textually by every consumer, as CocoaPods' header search paths include them. Verified on this app's library
+set only (screens, gesture-handler, svg, webview, datetimepicker, pager-view, reanimated/worklets, the Expo
+modules and the dev client). A library that does `@import ReactAppHeaders;`, or whose codegen header is not
+include-guarded, would break; none in that set does.
+
+## Known limitation (deferred): pure-Swift packages importing a mixed Expo module
+
+A Swift module built with a bridging header (every mixed target) makes each Swift importer re-read that
+header, so the importer needs the same `-Xcc -I` paths (`RN_SPM_SWIFT_HEADERS_DIR`, the module's
+`pod-headers/`, `-fmodule-map-file=` for its Swift dependencies). expo-xtool passes them to the app target and
+to generated mixed targets only. A pure-Swift package (scaffolded or generated) that imports a mixed Expo
+module does not get them and fails with "`<Module>-Swift.h` file not found". No library in the reference app
+does this today. **Ruling: deferred** (documented limitation; fix when a real library needs it, by giving
+every generated or scaffolded Swift target that depends on a mixed module the same importer flags).
+
 ## Tests
 
 `tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks the

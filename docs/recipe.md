@@ -52,11 +52,11 @@ imports fine with Swift 6.4.1.
 | Patch | Effect |
 | --- | --- |
 | `patches/expo-modules-autolinking+58.0.14.patch` | Removes the `process.platform !== 'darwin'` gate in the `@ExpoModule` scanner (the Linux macros binary `@expo/modules-macros-linux-x64` works). |
-| `patches/expo+58.0.17.patch` | `expo/scripts/spm/plugin.js` resolves the macro plugin binary path per platform. |
+| `patches/expo+58.0.17.patch` | Expo's SPM plugin (`expo/scripts/spm/`): resolves the macro plugin binary per platform; adds the umbrella Foundation/UIKit imports to pure-Swift modules; builds mixed Swift + Objective-C and Objective-C-only modules; skips meta pods and placeholder files; links generated packages to their podspec dependencies; excludes Xcode-only resources; refuses vendored-C modules (expo-sqlite). See `docs/upstream/expo-spm-plugin-umbrella.md` and `docs/upstream/expo-spm-plugin-mixed-modules.md`. |
 | `patches/expo-modules-jsi+58.0.17.patch` | Swift 6.4 rejects a `public` member in an extension of a C++ type under library evolution (`CppError.message`); made internal. |
-| `patches/react-native+0.88.0.patch` | Fixes two bugs in RN's `spm scaffold`: `read-podspec.js` reads Ruby bare lists (`s.source_files = "a", "b"`), and `scaffold-package-swift.js` falls back to the `include/<Name>/` shim when the umbrella header sits next to subdirectories. See `docs/upstream/react-native-scaffolder.md`. |
+| `patches/react-native+0.88.0.patch` | About 1.6k lines across `read-podspec.js`, `scaffold-package-swift.js` and `spm-utils.js`: 11 generic fixes to RN's `spm scaffold` (Ruby bare lists and locals, subspecs, `header_dir`, platform-scoped fields, defines, mixed Swift + Objective-C/C++ targets, ...) and a header-less module map for the per-app header farm. See `docs/upstream/react-native-scaffolder.md`. |
 
-Without `expo-dev-client`: dev-launcher, dev-menu, json-utils and updates-interface are not SwiftPM-ready in Expo 58.
+`expo-dev-client` builds through the Expo patch (dev-launcher and dev-menu as mixed targets, json-utils as an Objective-C target); its asset catalogs are dropped (no `actool` on Linux), so launcher and menu icons are missing.
 
 ## 4. Linux shims
 

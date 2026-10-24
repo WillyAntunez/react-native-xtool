@@ -83,14 +83,27 @@ must be CommonJS (`module.exports = {...}`) unless your project is ESM. Both are
 
 ## How it works
 
-1. Applies four small patches to `node_modules` with patch-package. The Expo patch has three jobs: it finds the Swift macro plugin on Linux, makes Expo's SwiftPM plugin give pure-Swift modules the Foundation/UIKit imports CocoaPods' umbrella header provides ([docs/upstream/expo-spm-plugin-umbrella.md](docs/upstream/expo-spm-plugin-umbrella.md)), and lets it build Expo modules that mix Swift and Objective-C or are Objective-C only, such as expo-application ([docs/upstream/expo-spm-plugin-mixed-modules.md](docs/upstream/expo-spm-plugin-mixed-modules.md)).
+1. Applies four patches to `node_modules` with patch-package. Two are one-liners (the `@ExpoModule` scanner gate in
+   expo-modules-autolinking, a Swift 6.4 access-level error in expo-modules-jsi). The other two are large:
+   - **Expo** (`patches/expo+58.0.17.patch`, files under `expo/scripts/spm/`): finds the Swift macro plugin on Linux;
+     gives pure-Swift modules the Foundation/UIKit imports CocoaPods' umbrella header provides
+     ([docs/upstream/expo-spm-plugin-umbrella.md](docs/upstream/expo-spm-plugin-umbrella.md)); builds Expo modules
+     that mix Swift and Objective-C or are Objective-C only, such as expo-application and the dev client chain; skips
+     meta pods (no sources) and placeholder files; links generated packages to their podspec `dependency` pods; excludes
+     resources only Xcode's tools compile (asset catalogs, storyboards); refuses modules built from vendored C sources
+     such as expo-sqlite ([docs/upstream/expo-spm-plugin-mixed-modules.md](docs/upstream/expo-spm-plugin-mixed-modules.md)).
+   - **React Native** (`patches/react-native+0.88.0.patch`, about 1.6k lines across 3 files under
+     `react-native/scripts/spm/`: `read-podspec.js`, `scaffold-package-swift.js`, `spm-utils.js`): 11 generic fixes
+     to the `spm scaffold` podspec reader and `Package.swift` generator, including mixed Swift + Objective-C/C++
+     targets, plus one to the per-app header farm
+     ([docs/upstream/react-native-scaffolder.md](docs/upstream/react-native-scaffolder.md)).
 2. Runs React Native 0.88's SwiftPM pipeline and Expo's SPM plugin, with Linux shims for `plutil` and `otool`.
 3. Builds ExpoModulesJSI with the Darwin SDK and stages the runtime frameworks.
 4. Generates `ios-xtool/` (Package.swift, xtool.yml, Info.plist, ip.txt, app config). It is a regenerable
    artifact; do not edit it by hand.
 5. CocoaPods-only libraries (no `Package.swift`) get one generated automatically by React Native's `spm scaffold`.
-   expo-xtool persists it in your project's `patches/` with patch-package: commit those files. The fourth patch fixes
-   two bugs in that scaffolder ([docs/upstream/react-native-scaffolder.md](docs/upstream/react-native-scaffolder.md)).
+   expo-xtool persists it in your project's `patches/` with patch-package: commit those files. The React Native
+   patch above is what makes that scaffolder work for real-world podspecs.
    On every build the `patches` step applies expo-xtool's own patches and then your project's `patches/` (when
    present), so a fresh `node_modules` gets those Package.swift files back. To also restore them on a plain
    `npm install`, add `"postinstall": "patch-package"` to your `package.json` scripts and `patch-package` to your
@@ -104,7 +117,9 @@ Details and file locations: [docs/recipe.md](docs/recipe.md). Design:
 ## Limits and non-goals
 
 - Expo SDK 57 and older are out of scope. Production / App Store builds are out of scope (use EAS).
-- `expo-dev-client` is not supported (not SwiftPM-ready in Expo 58). The dev menu is React Native's (shake the phone).
+- `expo-dev-client` builds and runs. Known gaps: the launcher's and dev menu's icons are missing (their asset catalogs
+  need Xcode's `actool`, which does not exist on Linux), and when Metro is not on the default port 8081 you type the
+  URL in the launcher yourself. See [docs/libraries.md](docs/libraries.md).
 - No iOS simulator (macOS only). macOS and native Windows are not supported; WSL is untested.
 - Free Apple ID: signature lasts 7 days, 3 apps at a time, no push notifications or special entitlements.
   A paid developer account lifts these.
