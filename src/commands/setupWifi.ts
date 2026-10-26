@@ -46,7 +46,7 @@ export function pickUsbDevice(devices: MuxDevice[], udid?: string): MuxDevice {
   const matching = udid ? devices.filter((d) => sameUdid(d.udid, udid)) : devices;
   if (matching.length === 0) {
     throw new Error(
-      `No iPhone${udid ? ` ${udid}` : ""} connected over USB. Connect it with the cable, unlock it and tap Trust, then re-run \`expo-xtool setup --wifi\`.`,
+      `No iPhone${udid ? ` ${udid}` : ""} connected over USB. Connect it with the cable, unlock it and tap Trust, then re-run \`rn-xtool setup --wifi\`.`,
     );
   }
   if (matching.length > 1) {
@@ -75,13 +75,13 @@ export async function setupWifi(opts: SetupWifiOptions, deps: SetupWifiDeps = {}
       log(`✔ Wi‑Fi connections are already enabled on ${label}; nothing to change.`);
     } else if (!opts.yes) {
       log(`This sets ${WIFI_KEY}=true in ${WIRELESS_LOCKDOWN_DOMAIN} on ${label}, so it accepts installs over Wi‑Fi from computers it trusts.`);
-      throw new Error("Nothing changed on the iPhone: re-run with --yes to confirm (`expo-xtool setup --wifi --yes`).");
+      throw new Error("Nothing changed on the iPhone: re-run with --yes to confirm (`rn-xtool setup --wifi --yes`).");
     } else {
       await lockdown.setValue(WIRELESS_LOCKDOWN_DOMAIN, WIFI_KEY, true);
       if (!(await wifiEnabled(lockdown))) throw new Error(`The iPhone did not keep ${WIFI_KEY}=true`);
       log(`✔ Set ${WIFI_KEY}=true in ${WIRELESS_LOCKDOWN_DOMAIN} on ${label}.`);
     }
-    log("Next: unplug the cable, keep the iPhone unlocked on the same Wi‑Fi, and run `expo-xtool install --network`.");
+    log("Next: unplug the cable, keep the iPhone unlocked on the same Wi‑Fi, and run `rn-xtool install --network`.");
   } finally {
     lockdown.close();
   }

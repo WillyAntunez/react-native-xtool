@@ -21,7 +21,7 @@ async function addPackage(dir: string, name: string, version = "1.0.0"): Promise
 }
 
 async function tempBare(opts: { rn?: string; expo?: boolean; modulesCore?: boolean; useExpoModules?: boolean } = {}): Promise<string> {
-  const dir = await mkdtemp(path.join(tmpdir(), "expo-xtool-bare-"));
+  const dir = await mkdtemp(path.join(tmpdir(), "rn-xtool-bare-"));
   tempDirs.push(dir);
   await cp(path.join(fixtures, "bare"), dir, { recursive: true });
   await addPackage(dir, "react-native", opts.rn ?? "0.88.0");

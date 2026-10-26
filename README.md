@@ -1,4 +1,4 @@
-# expo-xtool
+# react-native-xtool
 
 Build, sign and install Expo (SDK 58+) and bare React Native (0.88+) iOS dev builds from Linux, with no Mac, using
 [xtool](https://github.com/xtool-org/xtool) and the official React Native / Expo SwiftPM pipeline.
@@ -28,14 +28,14 @@ Linux only: x86_64 is the tested platform, and WSL2 (Ubuntu) on x86_64 is suppor
 
 ```sh
 # 1. From npm (alpha tag), after the first publish
-npx expo-xtool@alpha doctor
-npm i -g expo-xtool@alpha
+npx react-native-xtool@alpha doctor
+npm i -g react-native-xtool@alpha
 
 # 2. From GitHub (builds on install through the `prepare` script)
-npm i -g github:WillyAntunez/expo-xtool
+npm i -g github:WillyAntunez/react-native-xtool
 
 # 3. From a clone, for contributors
-git clone https://github.com/WillyAntunez/expo-xtool && cd expo-xtool
+git clone https://github.com/WillyAntunez/react-native-xtool && cd react-native-xtool
 npm ci && npm run build && npm link
 ```
 
@@ -43,14 +43,14 @@ npm ci && npm run build && npm link
 
 ```sh
 # Once per machine: Swift 6.4 (swiftly), xtool 1.23.0, Darwin SDK from your Xcode.xip
-expo-xtool setup --xcode-xip ~/Downloads/Xcode_27.1.xip
+rn-xtool setup --xcode-xip ~/Downloads/Xcode_27.1.xip
 
 # Sign in with your Apple ID (interactive, handled by xtool)
-~/.cache/expo-xtool/xtool-1.23.0.AppImage auth login
+~/.cache/rn-xtool/xtool-1.23.0.AppImage auth login
 
 # In your Expo project, with the iPhone plugged in
 cd my-app
-expo-xtool run
+rn-xtool run
 ```
 
 A project straight out of `create-expo-app` works as is: when `app.json` has no `ios.bundleIdentifier`, `build` writes
@@ -62,7 +62,7 @@ nothing changed since the last build. The cable is needed only when it reinstall
 
 ## Daily loop
 
-`expo-xtool run` is the one command to use. It fingerprints your installed dependencies
+`rn-xtool run` is the one command to use. It fingerprints your installed dependencies
 (every `dependencies`/`devDependencies` entry at its installed version, plus `patches/*.patch`)
 and compares that with the fingerprints stored by the last successful `build` and `install`:
 
@@ -78,10 +78,10 @@ and compares that with the fingerprints stored by the last successful `build` an
 There is no native/JS distinction: any dependency change rebuilds. JS-only changes also need
 a Metro cache reset, and telling native dependencies apart reliably needs the autolinking pass.
 
-- `expo-xtool start` warns and adds `--clear` itself when dependencies changed since the last
-  build; `expo-xtool start --clear` forces a cache reset.
-- `expo-xtool run --force` always rebuilds and reinstalls (`--clean` does too).
-- `expo-xtool doctor` reports a `deps` warning when the app is out of date.
+- `rn-xtool start` warns and adds `--clear` itself when dependencies changed since the last
+  build; `rn-xtool start --clear` forces a cache reset.
+- `rn-xtool run --force` always rebuilds and reinstalls (`--clean` does too).
+- `rn-xtool doctor` reports a `deps` warning when the app is out of date.
 
 ## Commands
 
@@ -101,7 +101,7 @@ xtool build 24.5 s. The resulting `App.app` is about 99 MB with 8 embedded frame
 
 ## Configuration
 
-Optional `expo-xtool.config.json` in the project root (recommended). A `expo-xtool.config.js` also works, but it
+Optional `rn-xtool.config.json` in the project root (recommended). A `rn-xtool.config.js` also works, but it
 must be CommonJS (`module.exports = {...}`) unless your project is ESM. Both are merged, `.js` winning:
 
 ```json
@@ -147,14 +147,14 @@ must be CommonJS (`module.exports = {...}`) unless your project is ESM. Both are
 4. Generates `ios-xtool/` (Package.swift, xtool.yml, Info.plist, ip.txt, app config). It is a regenerable
    artifact; do not edit it by hand.
 5. CocoaPods-only libraries (no `Package.swift`) get one generated automatically by React Native's `spm scaffold`.
-   expo-xtool persists it in your project's `patches/` with patch-package: commit those files. The React Native
+   rn-xtool persists it in your project's `patches/` with patch-package: commit those files. The React Native
    patch above is what makes that scaffolder work for real-world podspecs. Mapped external dependencies
    (for example SwiftUIIntrospect, pinned to an exact version) are fetched from GitHub on the first clean build;
    offline builds with `rnArtifactsDir` need them already cached in `ios-xtool/.build`.
-   On every build the `patches` step applies expo-xtool's own patches and then your project's `patches/` (when
+   On every build the `patches` step applies rn-xtool's own patches and then your project's `patches/` (when
    present), so a fresh `node_modules` gets those Package.swift files back. To also restore them on a plain
    `npm install`, add `"postinstall": "patch-package"` to your `package.json` scripts and `patch-package` to your
-   devDependencies. If persisting a scaffolded package fails (no lockfile, no network, ...), expo-xtool prints a
+   devDependencies. If persisting a scaffolded package fails (no lockfile, no network, ...), rn-xtool prints a
    warning and keeps building; the package is simply re-scaffolded after the next fresh install.
 6. `xtool` builds, signs and installs it; Metro serves JS to the phone over Wi-Fi.
 
@@ -164,13 +164,13 @@ Details and file locations: [docs/recipe.md](docs/recipe.md). Design:
 ## Bare React Native projects
 
 A project made with `npx @react-native-community/cli init` (React Native 0.88.0 or newer) builds with the same commands
-(`doctor`, `build`, `install`, `start`, `run`). Nothing in `ios/` is modified: expo-xtool reads the Xcode project and
+(`doctor`, `build`, `install`, `start`, `run`). Nothing in `ios/` is modified: rn-xtool reads the Xcode project and
 generates its own `ios-xtool/` from it.
 
 **Detection.** A project is `expo` when `package.json` depends on `expo` and an Expo config exists (`app.config.*`, or an
 `app.json` with an `expo` key). Otherwise it is `bare` when `ios/` holds exactly one `.xcodeproj`. A bare project that also
 has Expo modules (`expo` and `expo-modules-core` installed and `use_expo_modules!` in the `Podfile`) is a hybrid and also
-gets ExpoModulesJSI. Set `"projectKind": "expo"` or `"bare"` in `expo-xtool.config.json` to skip detection. `doctor` prints
+gets ExpoModulesJSI. Set `"projectKind": "expo"` or `"bare"` in `rn-xtool.config.json` to skip detection. `doctor` prints
 the result in its `project` check, for example `bare + expo modules, React Native 0.88.0, target BareDemo (BareDemo.xcodeproj)`;
 its `project-config` check reports a missing bundle identifier.
 
@@ -240,14 +240,14 @@ After pairing once over USB, `install --network` installs the app over Wi‑Fi w
 
 ```sh
 # Once, with the iPhone plugged in, unlocked and trusted:
-expo-xtool install               # the first install must be over USB: it registers the iPhone with Apple
-expo-xtool setup --wifi          # caches the pair record, shows what it would change
-expo-xtool setup --wifi --yes    # enables "Wi‑Fi connections" on the iPhone
+rn-xtool install               # the first install must be over USB: it registers the iPhone with Apple
+rn-xtool setup --wifi          # caches the pair record, shows what it would change
+rn-xtool setup --wifi --yes    # enables "Wi‑Fi connections" on the iPhone
 
 # From then on, cable unplugged, iPhone unlocked on the same Wi‑Fi:
-expo-xtool install --network                 # finds the iPhone on your LAN by its UDID
-expo-xtool install --network 192.168.1.10    # or give its IP
-expo-xtool run --network                     # the daily loop, installing over Wi‑Fi when needed
+rn-xtool install --network                 # finds the iPhone on your LAN by its UDID
+rn-xtool install --network 192.168.1.10    # or give its IP
+rn-xtool run --network                     # the daily loop, installing over Wi‑Fi when needed
 ```
 
 The first install over USB matters: signing registers the connected iPhone's UDID with your Apple account, and
@@ -260,7 +260,7 @@ answered for the whole run (without it iOS drops every service connection over W
 `/PublicStaging` over AFC, installs it with `installation_proxy` and checks the result with a lookup. No Python,
 no extra daemons, no root. The iPhone is authenticated: its TLS certificate must be the `DeviceCertificate` of the
 pair record, and its UDID is read only inside that session, so nothing is uploaded to another host on the address.
-It remembers the iPhone's address and UDID in `ios-xtool/.expo-xtool-state.json`; without an IP it tries that address
+It remembers the iPhone's address and UDID in `ios-xtool/.rn-xtool-state.json`; without an IP it tries that address
 first and otherwise scans your /24 for port 62078. The scan only runs from a private, non-VPN address (the
 configured `lanIp`, or your default route); otherwise pass the IP. If the remembered iPhone is gone and exactly one
 other paired iPhone answers, that one is used (and remembered); with several, pass `--udid`. The lockdown protocol
@@ -269,19 +269,19 @@ host answering on port 62078 in that /24; on networks you do not trust (hotspots
 about a minute. Debugging and `launch` over the network are not supported: open the app by hand.
 
 Pair records are read from usbmuxd (it keeps them in `/var/lib/lockdown`, also with the cable unplugged) and cached
-in `~/.cache/expo-xtool/pair-records/<UDID>.plist` (mode 600: it holds this computer's private key for the iPhone).
+in `~/.cache/rn-xtool/pair-records/<UDID>.plist` (mode 600: it holds this computer's private key for the iPhone).
 
 **WSL2:** WSL2 has no USB by default, and the phone is reached through Windows' network. Ways to get a pair record:
 
 - Attach the iPhone to WSL once with [usbipd-win](https://github.com/dorssel/usbipd-win) (`usbipd bind` /
-  `usbipd attach --wsl`), run `usbmuxd` and `expo-xtool setup --wifi`.
+  `usbipd attach --wsl`), run `usbmuxd` and `rn-xtool setup --wifi`.
 - Reuse Windows' own record: if iTunes / Apple Devices ever trusted the iPhone on that PC, it is likely in
   `C:\ProgramData\Apple\Lockdown\<UDID>.plist`, in the same format (believed, not verified yet). Copy it from
   `/mnt/c/ProgramData/Apple/Lockdown/` (it may need an elevated copy on the Windows side).
 - Copy `/var/lib/lockdown/<UDID>.plist` from a Linux machine where the iPhone is paired. That directory may be
   readable by root only: `sudo cp /var/lib/lockdown/<UDID>.plist ~/<UDID>.plist && sudo chown $USER ~/<UDID>.plist && chmod 600 ~/<UDID>.plist`.
 
-Put the file in `~/.cache/expo-xtool/pair-records/<UDID>.plist` (mode 600) or pass `--pair-record <file>`. Use
+Put the file in `~/.cache/rn-xtool/pair-records/<UDID>.plist` (mode 600) or pass `--pair-record <file>`. Use
 `install --network <ip>`: WSL2's NAT usually hides your LAN from the /24 scan (mirrored networking does not), and
 its default route is not your Wi‑Fi address, so the scan is refused anyway unless `lanIp` is set.
 
@@ -294,19 +294,19 @@ Troubleshooting:
 - **Nothing found by the scan:** the phone is on another network or VLAN, a guest Wi‑Fi isolates clients, or a
   firewall blocks outgoing TCP to port 62078. Pass the IP (Settings > Wi‑Fi > ⓘ) to rule out the scan.
 - **"no longer trusts this computer":** the pairing was reset on the iPhone (or belongs to another host). Plug it in,
-  tap Trust, and run `expo-xtool setup --wifi` again.
+  tap Trust, and run `rn-xtool setup --wifi` again.
 - **Signature rejected (`ApplicationVerificationFailed`):** free-account signatures expire after 7 days; re-run
   `install --network`, which re-signs. On an iPhone that never had a USB install from this Apple account, do that
   first install over USB.
 - **"Not scanning the network":** your default route is a VPN/tunnel or not a private address. Pass the iPhone's IP,
-  or set `lanIp` in `expo-xtool.config.json` to your Wi‑Fi address.
+  or set `lanIp` in `rn-xtool.config.json` to your Wi‑Fi address.
 - **"Found paired iPhone … pass --udid":** the remembered iPhone did not answer but other paired iPhones did; pick one
   with `--udid <udid>`.
 - **"is not the paired iPhone":** something else answers at that address with a different certificate. Check the
   IP; nothing was uploaded to it.
 - **Connection lost during the install:** the result on the iPhone is unknown, so it is not retried automatically;
   check the app and run the install again if needed.
-- `expo-xtool doctor` shows the `wifi` check: whether Wi‑Fi connections are on (iPhone plugged in) and whether the
+- `rn-xtool doctor` shows the `wifi` check: whether Wi‑Fi connections are on (iPhone plugged in) and whether the
   last known address answers.
 
 ## Limits and non-goals
@@ -326,18 +326,18 @@ Troubleshooting:
 1. Enable Developer Mode (Settings > Privacy & Security > Developer Mode); the phone reboots.
 2. Trust the certificate: Settings > General > VPN & Device Management > your Apple ID > Trust.
 3. Open the app by hand, and allow Local Network access when asked.
-4. Keep the phone and the computer on the same Wi-Fi network with `expo-xtool start` running.
+4. Keep the phone and the computer on the same Wi-Fi network with `rn-xtool start` running.
 
 ## Troubleshooting
 
 - **Black screen on launch:** Info.plist had an unresolved `$(VAR)` (for example
-  `$(PRODUCT_MODULE_NAME).SceneDelegate`). expo-xtool resolves them; if you see this, rebuild with `build --clean`
+  `$(PRODUCT_MODULE_NAME).SceneDelegate`). rn-xtool resolves them; if you see this, rebuild with `build --clean`
   and report it.
 - **Red screen "No script URL provided":** the app cannot reach Metro. Check that `start` is running, that the phone is
   on the same Wi-Fi, that Local Network is allowed, and the firewall (below).
-- **"No script URL" with a VPN on:** expo-xtool bakes in the IP of your default route; a VPN can make that a tunnel
+- **"No script URL" with a VPN on:** rn-xtool bakes in the IP of your default route; a VPN can make that a tunnel
   address (`tun0`, `wg0`, `tailscale0`) the phone cannot reach. `build` and `doctor` warn about it; set `lanIp` in
-  `expo-xtool.config.json` to your Wi‑Fi address and rebuild.
+  `rn-xtool.config.json` to your Wi‑Fi address and rebuild.
 - **Metal shaders are skipped on Linux:** a library that ships `.metal` files (react-native-svg's `MetalCI` filters)
   would fail the build with `unable to spawn process 'metal'`, because the Metal compiler only exists on macOS. The
   scaffolder excludes them and prints `Skipped N Metal shader(s)`; the library works, but features that rely on those
@@ -348,28 +348,28 @@ Troubleshooting:
   `.metal` compilation is the only Linux-specific part. Rendering that does not use those filters is unaffected.
 - **Firewall:** ufw blocks Metro by default: `sudo ufw allow <port>/tcp`.
 - **A committed project patch no longer applies** (after a library upgrade): delete it from `patches/` and let
-  `expo-xtool build` re-scaffold it.
-- **"expo-xtool could not patch <package>":** your project has a different version of an Expo package than the one
-  this release of expo-xtool patches. The message names the versions: pin the package to the patched version, or
+  `rn-xtool build` re-scaffold it.
+- **"rn-xtool could not patch <package>":** your project has a different version of an Expo package than the one
+  this release of rn-xtool patches. The message names the versions: pin the package to the patched version, or
   report the new version in the issue tracker so the patch can be refreshed.
 - **Metro already running on 8081:** `build` keeps the port when a Metro already serves `packager-status:running` there
-  (expo-xtool cannot tell which project it belongs to; if it is another project's Metro, stop it). `start` then reports
+  (rn-xtool cannot tell which project it belongs to; if it is another project's Metro, stop it). `start` then reports
   that Metro is running and leaves it alone. Only a different program on the port makes `build` look further (next item).
 - **Port busy (8081 taken, for example by Docker):** `build` picks the Metro port in this order: the configured
-  `metroPort` if free or already serving Metro; otherwise the previous build's port (from `ios-xtool/.expo-xtool-state.json`)
+  `metroPort` if free or already serving Metro; otherwise the previous build's port (from `ios-xtool/.rn-xtool-state.json`)
   if free or serving Metro, so a running Metro keeps matching the installed app; otherwise the next free port after the
   configured one. To choose differently, free the port, or set `metroPort` in the config and rebuild + reinstall
   (the port is baked in; `start` tells you which).
 - **LAN IP changed (new network, DHCP):** `start` detects it and tells you; rebuild and reinstall, or pin `lanIp`.
 - **"Developer Mode required":** enable it on the phone (see checklist) and reboot.
 - **"Untrusted Developer":** trust the certificate under VPN & Device Management.
-- **App stops opening after a week:** free-account signatures expire after 7 days. Run `expo-xtool install` again.
+- **App stops opening after a week:** free-account signatures expire after 7 days. Run `rn-xtool install` again.
 - **`xtool launch` fails with `DebugserverClient.Error`:** known on current iOS. Open the app by hand.
-- **Anything else:** run `expo-xtool doctor` first.
+- **Anything else:** run `rn-xtool doctor` first.
 
 ## Legal
 
-You bring your own `Xcode.xip` and Apple ID. expo-xtool does not redistribute anything from Apple; it extracts the
+You bring your own `Xcode.xip` and Apple ID. rn-xtool does not redistribute anything from Apple; it extracts the
 SDK locally from your copy, and Apple's Xcode license terms apply to that use.
 
 ## Contributing
@@ -378,9 +378,9 @@ Branches: `feature/<kebab-name>` or `fix/<kebab-name>`. Commits follow Conventio
 (`type: short imperative summary`). Run `npm test` before opening a PR.
 
 Testing: the suite needs no external setup. Tests that read the patched React Native / Expo files look for the
-reference app (default `../app`, a sibling of the repo checkout, override with `EXPO_XTOOL_REF_APP`) and skip when it is
+reference app (default `../app`, a sibling of the repo checkout, override with `RN_XTOOL_REF_APP`) and skip when it is
 absent. The functional Expo plugin check re-runs `setup-apple-spm.js update` and rewrites that app's `ios/build`,
-so it only runs with `EXPO_XTOOL_E2E=1` (it also needs Swift and the `shims/` directory on `PATH`).
+so it only runs with `RN_XTOOL_E2E=1` (it also needs Swift and the `shims/` directory on `PATH`).
 
 ## License
 

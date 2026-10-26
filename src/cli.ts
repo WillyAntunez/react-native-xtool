@@ -26,8 +26,8 @@ function action<A extends unknown[]>(fn: (...args: A) => Promise<void>): (...arg
 
 export function buildProgram(): Command {
   const program = new Command()
-    .name("expo-xtool")
-    .description("Build Expo iOS dev builds on Linux via xtool")
+    .name("rn-xtool")
+    .description("Build Expo and bare React Native iOS dev builds on Linux via xtool")
     .version(pkg.version);
   program
     .command("setup")

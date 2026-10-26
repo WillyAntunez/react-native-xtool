@@ -124,7 +124,7 @@ describe("swiftPostInstallMessage", () => {
     const msg = swiftPostInstallMessage(script)!;
     expect(msg).toContain("system packages");
     expect(msg).toContain("sudo apt-get -y install binutils libcurl4-openssl-dev");
-    expect(msg).toContain("expo-xtool setup");
+    expect(msg).toContain("rn-xtool setup");
   });
 });
 

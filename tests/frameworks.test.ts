@@ -15,7 +15,7 @@ afterEach(async () => {
 });
 
 async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(path.join(tmpdir(), "expo-xtool-frameworks-"));
+  const dir = await mkdtemp(path.join(tmpdir(), "rn-xtool-frameworks-"));
   tempDirs.push(dir);
   return dir;
 }

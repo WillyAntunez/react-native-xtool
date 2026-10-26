@@ -22,7 +22,7 @@ unpaired, no tunnel was started and no developer image was mounted.
   services AFC and `installation_proxy` still work over plain lockdown Wi-Fi on iOS 26.5.
   No tunnel and no root are needed.
 - **Recommendation: implement it natively in TypeScript**, with no Python dependency. A
-  140-line Node probe using only `net`, `tls` and the `plist` package that expo-xtool
+  140-line Node probe using only `net`, `tls` and the `plist` package that rn-xtool
   already depends on did this over Wi-Fi: lockdown session, TLS, heartbeat and
   `installation_proxy` Lookup in 0.64 s. The rest is AFC upload plus the `Install`
   command. Estimate: about 2–3 days with tests.
@@ -156,7 +156,7 @@ flag relates to this. The CLI must:
 - give a clear "wake/unlock the iPhone" error on connect timeout, and
 - consider retrying for N seconds.
 
-## 5. How expo-xtool should implement `install --network <ip>`
+## 5. How rn-xtool should implement `install --network <ip>`
 
 ### Option A: Python helper (pymobiledevice3)
 

@@ -31,7 +31,7 @@ let dir: string;
 let servers: net.Server[] = [];
 let dev: FakeDevice | undefined;
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), "expo-xtool-mux-"));
+  dir = await mkdtemp(join(tmpdir(), "rn-xtool-mux-"));
 });
 afterEach(async () => {
   for (const s of servers) s.close();
@@ -106,7 +106,7 @@ describe("encodeMuxPacket", () => {
     const p = encodeMuxPacket(5, { MessageType: "ListDevices" });
     expect(p.readUInt32LE(0)).toBe(p.length);
     expect([p.readUInt32LE(4), p.readUInt32LE(8), p.readUInt32LE(12)]).toEqual([1, 8, 5]);
-    expect(decodePlist(p.subarray(16))).toMatchObject({ MessageType: "ListDevices", ProgName: "expo-xtool" });
+    expect(decodePlist(p.subarray(16))).toMatchObject({ MessageType: "ListDevices", ProgName: "rn-xtool" });
   });
 });
 

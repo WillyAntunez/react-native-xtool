@@ -18,7 +18,7 @@ function checkRnVersion(version: string): void {
   const match = version.match(/^(\d+)\.(\d+)/);
   const supported = match !== null && (Number(match[1]) > 0 || Number(match[2]) >= MIN_RN_MINOR);
   if (!supported) {
-    throw new DetectError(`React Native ${version} is not supported; expo-xtool requires 0.${MIN_RN_MINOR} or newer`);
+    throw new DetectError(`React Native ${version} is not supported; rn-xtool requires 0.${MIN_RN_MINOR} or newer`);
   }
 }
 

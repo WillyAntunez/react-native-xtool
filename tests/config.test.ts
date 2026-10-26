@@ -8,7 +8,7 @@ import { cacheDir, projectPaths } from "../src/paths.js";
 describe("loadConfig", () => {
   let dir: string;
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), "expo-xtool-"));
+    dir = await mkdtemp(join(tmpdir(), "rn-xtool-"));
   });
   afterEach(async () => {
     await rm(dir, { recursive: true, force: true });
@@ -18,19 +18,19 @@ describe("loadConfig", () => {
     expect(await loadConfig(dir)).toEqual({ metroPort: 8081 });
   });
 
-  it("merges expo-xtool.config.json over defaults", async () => {
-    await writeFile(join(dir, "expo-xtool.config.json"), '{"metroPort": 8082, "lanIp": "10.0.0.2"}');
+  it("merges rn-xtool.config.json over defaults", async () => {
+    await writeFile(join(dir, "rn-xtool.config.json"), '{"metroPort": 8082, "lanIp": "10.0.0.2"}');
     expect(await loadConfig(dir)).toEqual({ metroPort: 8082, lanIp: "10.0.0.2" });
   });
 
-  it("merges expo-xtool.config.js default export over json", async () => {
-    await writeFile(join(dir, "expo-xtool.config.json"), '{"metroPort": 8082, "lanIp": "10.0.0.2"}');
-    await writeFile(join(dir, "expo-xtool.config.js"), "export default { metroPort: 9000 };\n");
+  it("merges rn-xtool.config.js default export over json", async () => {
+    await writeFile(join(dir, "rn-xtool.config.json"), '{"metroPort": 8082, "lanIp": "10.0.0.2"}');
+    await writeFile(join(dir, "rn-xtool.config.js"), "export default { metroPort: 9000 };\n");
     expect(await loadConfig(dir)).toEqual({ metroPort: 9000, lanIp: "10.0.0.2" });
   });
 
-  it("rejects when expo-xtool.config.js exists but fails to load", async () => {
-    await writeFile(join(dir, "expo-xtool.config.js"), 'import "nonexistent-module-xyz";\nexport default {};\n');
+  it("rejects when rn-xtool.config.js exists but fails to load", async () => {
+    await writeFile(join(dir, "rn-xtool.config.js"), 'import "nonexistent-module-xyz";\nexport default {};\n');
     await expect(loadConfig(dir)).rejects.toThrow();
   });
 });
@@ -58,11 +58,11 @@ describe("cacheDir", () => {
 
   it("honours XDG_CACHE_HOME", () => {
     process.env.XDG_CACHE_HOME = "/x";
-    expect(cacheDir()).toBe("/x/expo-xtool");
+    expect(cacheDir()).toBe("/x/rn-xtool");
   });
 
   it("falls back to ~/.cache", () => {
     delete process.env.XDG_CACHE_HOME;
-    expect(cacheDir()).toMatch(/\.cache[\\/]expo-xtool$/);
+    expect(cacheDir()).toMatch(/\.cache[\\/]rn-xtool$/);
   });
 });

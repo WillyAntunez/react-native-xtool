@@ -43,9 +43,9 @@ export interface PatchFailureDetails {
 export function patchFailureMessage(d: PatchFailureDetails): string {
   const tail = d.output.trimEnd().split("\n").slice(-40).join("\n");
   return [
-    `expo-xtool could not patch ${d.pkg}@${d.installed} (patch file: ${d.patchFile}): the installed version differs from the one this release of expo-xtool patches (${d.patched}).`,
-    "This is a known limitation of expo-xtool, not of your project.",
-    `Options: pin "${d.pkg}" to ${d.patched} in package.json, or report the new version at https://github.com/WillyAntunez/expo-xtool/issues so the patch can be refreshed.`,
+    `rn-xtool could not patch ${d.pkg}@${d.installed} (patch file: ${d.patchFile}): the installed version differs from the one this release of rn-xtool patches (${d.patched}).`,
+    "This is a known limitation of rn-xtool, not of your project.",
+    `Options: pin "${d.pkg}" to ${d.patched} in package.json, or report the new version at https://github.com/WillyAntunez/react-native-xtool/issues so the patch can be refreshed.`,
     "--- patch-package output ---",
     tail,
   ].join("\n");
@@ -125,7 +125,7 @@ export function genericPatchFailureMessage(
 ): string {
   const tail = output.trimEnd().split("\n").slice(-40).join("\n");
   const spawnFailure = r.exitCode === undefined ? `\n${r.shortMessage ?? r.message ?? "process failed to spawn"}` : "";
-  return `patch-package failed (exit ${r.exitCode ?? "unknown"}):${spawnFailure}\n${tail}\nReport this at https://github.com/WillyAntunez/expo-xtool/issues with the output above.`;
+  return `patch-package failed (exit ${r.exitCode ?? "unknown"}):${spawnFailure}\n${tail}\nReport this at https://github.com/WillyAntunez/react-native-xtool/issues with the output above.`;
 }
 
 /** patch-package 8 can exit 0 after printing a failure; detect that from its output. */
@@ -163,7 +163,7 @@ const execPatchPackage: PatchExec = (cmd, args, cwd) =>
 
 /**
  * patch-package is idempotent for already-applied patches and exits non-zero on failure.
- * Applies expo-xtool's bundled patches first, then the project's own `patches/` when present.
+ * Applies rn-xtool's bundled patches first, then the project's own `patches/` when present.
  * The order does not matter: the project's patches only hold library Package.swift files.
  */
 export async function applyPatches(projectRoot: string, exec: PatchExec = execPatchPackage): Promise<void> {

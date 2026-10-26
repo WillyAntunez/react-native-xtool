@@ -13,7 +13,7 @@ afterEach(async () => {
 });
 
 async function temp(fixture: "project" | "bare"): Promise<string> {
-  const dir = await mkdtemp(path.join(tmpdir(), "expo-xtool-detect-"));
+  const dir = await mkdtemp(path.join(tmpdir(), "rn-xtool-detect-"));
   tempDirs.push(dir);
   await cp(path.join(fixtures, fixture), dir, { recursive: true });
   return dir;
@@ -53,22 +53,22 @@ describe("detectProjectKind", () => {
   });
 
   it("fails without ios and without expo config", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "expo-xtool-detect-"));
+    const dir = await mkdtemp(path.join(tmpdir(), "rn-xtool-detect-"));
     tempDirs.push(dir);
     await writeFile(path.join(dir, "package.json"), JSON.stringify({ name: "x", dependencies: {} }));
     expect(() => detectProjectKind(dir)).toThrow(/no ios\/ directory.*@react-native-community\/cli init/);
   });
 
   it("points an Expo project with a flat app.json at projectKind, not at the RN CLI", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "expo-xtool-detect-"));
+    const dir = await mkdtemp(path.join(tmpdir(), "rn-xtool-detect-"));
     tempDirs.push(dir);
     await writeFile(path.join(dir, "package.json"), JSON.stringify({ name: "x", dependencies: { expo: "~58.0.19" } }));
     await writeFile(path.join(dir, "app.json"), JSON.stringify({ name: "x", slug: "x" }));
     const noIos = () => detectProjectKind(dir);
-    expect(noIos).toThrow(/"projectKind": "expo".*expo-xtool\.config\.json/);
+    expect(noIos).toThrow(/"projectKind": "expo".*rn-xtool\.config\.json/);
     expect(noIos).not.toThrow(/@react-native-community\/cli init/);
     await mkdir(path.join(dir, "ios"));
-    expect(() => detectProjectKind(dir)).toThrow(/"projectKind": "expo".*expo-xtool\.config\.json/);
+    expect(() => detectProjectKind(dir)).toThrow(/"projectKind": "expo".*rn-xtool\.config\.json/);
   });
 
   it("fails with two xcodeproj", async () => {

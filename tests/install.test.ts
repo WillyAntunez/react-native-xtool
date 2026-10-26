@@ -64,7 +64,7 @@ describe("install", () => {
           devRun,
         },
       }),
-    ).rejects.toThrow("No build found. Run `expo-xtool build` first.");
+    ).rejects.toThrow("No build found. Run `rn-xtool build` first.");
     expect(devRun).not.toHaveBeenCalled();
   });
   it("treats an unreadable build state like a missing one", async () => {
@@ -79,7 +79,7 @@ describe("install", () => {
           devRun,
         },
       }),
-    ).rejects.toThrow("No build found. Run `expo-xtool build` first.");
+    ).rejects.toThrow("No build found. Run `rn-xtool build` first.");
     expect(devRun).not.toHaveBeenCalled();
   });
   it("install does not print the dev launcher URL without the dev client", async () => {
@@ -356,7 +356,7 @@ describe("install --network", () => {
       throw new InstallProxyError("ApplicationVerificationFailed");
     });
     const { d } = deps({ wifi: { installOverWifi } });
-    await expect(install("/p", d, { network: true })).rejects.toThrow("Re-run `expo-xtool install --network`");
+    await expect(install("/p", d, { network: true })).rejects.toThrow("Re-run `rn-xtool install --network`");
     expect(installOverWifi).toHaveBeenCalledOnce();
   });
 
@@ -391,7 +391,7 @@ describe("install --network against a fake iPhone", () => {
     const { FakeDevice, pairRecord, UDID } = await import("./device/fakeDevice.js");
     const { tcpConnector } = await import("../src/device/lockdown.js");
     const { installOverWifi } = await import("../src/device/wifiInstall.js");
-    const dir = await mkdtemp(join(tmpdir(), "expo-xtool-net-"));
+    const dir = await mkdtemp(join(tmpdir(), "rn-xtool-net-"));
     const ipa = join(dir, "App.ipa");
     await writeFile(ipa, Buffer.alloc(10 * 1024 * 1024, 3));
     const dev = await FakeDevice.start({ requireHeartbeat: true, bundleId: "XTL-TEAM.com.a.b", heartbeatDropOnWrite: 1 });

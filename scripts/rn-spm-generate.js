@@ -2,7 +2,7 @@
 
 /**
  * Runs React Native's SwiftPM pipeline (`setup-apple-spm.js add`, steps 1-5) without step 6, the
- * in-place injection into the app's .xcodeproj: expo-xtool never builds with the xcodeproj, and a
+ * in-place injection into the app's .xcodeproj: rn-xtool never builds with the xcodeproj, and a
  * bare app's pbxproj is CocoaPods-integrated, which `add` refuses. Only `<app-root>/ios/build/` is
  * written. RN's own modules (required from --rn-dir) do the work; this file only sequences them.
  *

@@ -16,7 +16,7 @@ afterEach(async () => {
 async function tempProject(
   mutate: (app: { expo: Record<string, any> }, pkg: Record<string, any>) => void,
 ): Promise<string> {
-  const dir = await mkdtemp(path.join(tmpdir(), "expo-xtool-project-"));
+  const dir = await mkdtemp(path.join(tmpdir(), "rn-xtool-project-"));
   tempDirs.push(dir);
   await cp(fixture, dir, { recursive: true });
   const app = JSON.parse(await readFile(path.join(dir, "app.json"), "utf8"));

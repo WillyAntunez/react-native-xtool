@@ -61,5 +61,5 @@ export function swiftHeadersEnv(iosXtool: string): Record<string, string> {
 
 export function cacheDir(): string {
   const xdg = process.env.XDG_CACHE_HOME;
-  return join(xdg ? xdg : join(homedir(), ".cache"), "expo-xtool");
+  return join(xdg ? xdg : join(homedir(), ".cache"), "rn-xtool");
 }

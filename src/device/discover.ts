@@ -11,7 +11,7 @@ export class DeviceNotFoundError extends Error {
     super(
       `no paired iPhone answered on ${subnet} (port ${LOCKDOWN_PORT})` +
         (unpaired.length
-          ? `; not paired with this computer: ${unpaired.join(", ")} — if one is yours, pair it over USB once (\`expo-xtool setup --wifi\`) or pass --pair-record <file>`
+          ? `; not paired with this computer: ${unpaired.join(", ")} — if one is yours, pair it over USB once (\`rn-xtool setup --wifi\`) or pass --pair-record <file>`
           : ""),
     );
     this.name = "DeviceNotFoundError";
@@ -79,7 +79,7 @@ export class UnknownDeviceError extends Error {
   constructor(readonly ip: string) {
     super(
       `${ip} answers as an iPhone but accepts none of this computer's pair records (not paired with it, or its pairing was reset). ` +
-        "Pair it once over USB (`expo-xtool setup --wifi`), or pass --pair-record <file>.",
+        "Pair it once over USB (`rn-xtool setup --wifi`), or pass --pair-record <file>.",
     );
     this.name = "UnknownDeviceError";
   }
@@ -274,7 +274,7 @@ export async function retryWhileUnreachable<T>(fn: () => Promise<T>, o: RetryOpt
         throw new Error(
           `iPhone did not respond over Wi‑Fi after ${retries + 1} tries (${message(e)}). ` +
             "Unlock it and keep the screen on, check it is on the same Wi‑Fi as this computer, " +
-            "and that nothing blocks TCP port 62078; or connect it by USB and run `expo-xtool install`.",
+            "and that nothing blocks TCP port 62078; or connect it by USB and run `rn-xtool install`.",
         );
       }
       o.log?.(NOT_RESPONDING);

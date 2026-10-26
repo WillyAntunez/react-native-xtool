@@ -1,6 +1,6 @@
 # Releasing
 
-expo-xtool ships alpha builds under the npm `alpha` dist-tag. Supported platform: Linux x86_64, including WSL2 on
+rn-xtool ships alpha builds under the npm `alpha` dist-tag. Supported platform: Linux x86_64, including WSL2 on
 x86_64. arm64 Linux is untested (the xtool checksum is pinned for it, but nothing else is verified).
 
 ## Before releasing
@@ -8,8 +8,8 @@ x86_64. arm64 Linux is untested (the xtool checksum is pinned for it, but nothin
 1. `npm ci && npm test && npm run lint` are green.
 2. `npm pack --dry-run` lists only `bin/`, `dist/`, `patches/`, `scripts/`, `shims/`, `README.md`, `LICENSE` and
    `package.json`. No `tests/`, `docs/`, `src/` or `.superpowers/`.
-3. On a clean machine (or a fresh WSL2 distro) install the packed tarball and run `expo-xtool doctor`:
-   `npm pack && npm i -g ./expo-xtool-<version>.tgz && expo-xtool doctor`.
+3. On a clean machine (or a fresh WSL2 distro) install the packed tarball and run `rn-xtool doctor`:
+   `npm pack && npm i -g ./react-native-xtool-<version>.tgz && rn-xtool doctor`.
 4. Repo-public checklist:
    - `LICENSE` is present and `package.json` says `MIT`.
    - No private names or paths: `npm run scan:private` (scans tracked files via `scripts/scan-private.sh`) must
@@ -27,4 +27,4 @@ git push --follow-tags
 ```
 
 Then create a GitHub release from the tag with the notes (what changed, known limits, tested xtool/Swift/Expo
-versions). Check the result: `npm view expo-xtool dist-tags` and `npx expo-xtool@alpha doctor`.
+versions). Check the result: `npm view react-native-xtool dist-tags` and `npx react-native-xtool@alpha doctor`.

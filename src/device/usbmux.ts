@@ -31,7 +31,7 @@ const MESSAGE_PLIST = 8;
 /** usbmuxd plist protocol: u32 LE total length, version 1, message 8 (plist), tag; then XML. */
 export function encodeMuxPacket(tag: number, msg: PlistDict): Buffer {
   const body = Buffer.from(
-    plist.build({ ClientVersionString: "expo-xtool", ProgName: "expo-xtool", kLibUSBMuxVersion: 3, ...msg }),
+    plist.build({ ClientVersionString: "rn-xtool", ProgName: "rn-xtool", kLibUSBMuxVersion: 3, ...msg }),
   );
   const h = Buffer.alloc(HEADER);
   h.writeUInt32LE(HEADER + body.length, 0);

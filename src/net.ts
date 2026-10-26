@@ -41,7 +41,7 @@ export function suspiciousLanRoute(route: LanRoute): boolean {
 }
 
 export function tunnelWarning(route: LanRoute): string {
-  return `⚠ Detected LAN IP ${route.ip} on ${route.dev ?? "unknown"} looks like a VPN/tunnel address; the iPhone may not reach Metro. Set "lanIp" in expo-xtool.config.json to your Wi‑Fi address if it fails.`;
+  return `⚠ Detected LAN IP ${route.ip} on ${route.dev ?? "unknown"} looks like a VPN/tunnel address; the iPhone may not reach Metro. Set "lanIp" in rn-xtool.config.json to your Wi‑Fi address if it fails.`;
 }
 
 export async function detectLanRoute(runner: Runner = defaultRunner): Promise<LanRoute> {
@@ -52,7 +52,7 @@ export async function detectLanIp(runner: Runner = defaultRunner): Promise<strin
   const out = await runner("ip", ["-4", "route", "get", "1.1.1.1"]);
   const ip = parseLanIp(out);
   if (!ip) {
-    throw new Error("Could not detect LAN IP; set lanIp in expo-xtool.config.json");
+    throw new Error("Could not detect LAN IP; set lanIp in rn-xtool.config.json");
   }
   return ip;
 }

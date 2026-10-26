@@ -162,7 +162,7 @@ export function scaffoldArgv(
 }
 
 /**
- * `--patch-dir patches` is relative to the project root: the user's patches, not expo-xtool's.
+ * `--patch-dir patches` is relative to the project root: the user's patches, not rn-xtool's.
  * `--exclude` replaces patch-package's default (`package\.json$`): it also drops SwiftPM build
  * artifacts (`.build/.lock`, `CACHEDIR.TAG`, ...). package.json stays excluded on purpose:
  * `swiftpmConfig.name` falls back to the podspec name, so the scaffolded manifest does not need it.

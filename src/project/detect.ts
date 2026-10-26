@@ -46,7 +46,7 @@ export function detectProjectKind(root: string, override?: ProjectKind): Project
   // An Expo project whose app.json is flat (no "expo" key) reads as bare: say how to keep it Expo.
   const expoHint = pkg?.dependencies?.expo
     ? '. package.json depends on expo but no Expo config was found (no app.config.* and no "expo" key in app.json), so ' +
-      'it was read as a bare React Native project; if this is an Expo project, add "projectKind": "expo" to expo-xtool.config.json'
+      'it was read as a bare React Native project; if this is an Expo project, add "projectKind": "expo" to rn-xtool.config.json'
     : "";
   if (!existsSync(path.join(root, "ios"))) {
     if (expoHint) throw new DetectError(`${root}: no ios/ directory${expoHint}`);
@@ -60,7 +60,7 @@ export function detectProjectKind(root: string, override?: ProjectKind): Project
     throw new DetectError(`${root}: ios/ has no .xcodeproj, so this is not a bare React Native iOS project${expoHint}`);
   }
   if (projects.length > 1) {
-    throw new DetectError(`ios/ holds more than one .xcodeproj (${projects.join(", ")}); expo-xtool needs exactly one${expoHint}`);
+    throw new DetectError(`ios/ holds more than one .xcodeproj (${projects.join(", ")}); rn-xtool needs exactly one${expoHint}`);
   }
   return "bare";
 }

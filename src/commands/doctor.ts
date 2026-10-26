@@ -46,7 +46,7 @@ export interface DoctorProbes {
   ufwActive: () => Promise<boolean>;
   /** Source IP and interface of the default route. */
   lanRoute: () => Promise<LanRoute>;
-  /** The lanIp pinned in expo-xtool.config.json, if any. */
+  /** The lanIp pinned in rn-xtool.config.json, if any. */
   configLanIp: () => string | undefined;
   /** Reads the project without writing anything; rejects with the detect/read error. */
   project: (root: string) => Promise<ProjectProbe>;
@@ -99,7 +99,7 @@ function missingBundleIdDetail(err: MissingBundleIdentifierError): string {
     return `PRODUCT_BUNDLE_IDENTIFIER is missing for the app target in ${err.configFile}; add "${err.suggestion}" (or your own) to it`;
   }
   return err.configFile.endsWith(".json")
-    ? `ios.bundleIdentifier is missing in ${err.configFile}; expo-xtool build writes "${err.suggestion}" there`
+    ? `ios.bundleIdentifier is missing in ${err.configFile}; rn-xtool build writes "${err.suggestion}" there`
     : `ios.bundleIdentifier is missing in ${err.configFile}; add "${err.suggestion}" (or your own) to it`;
 }
 
@@ -199,7 +199,7 @@ export function wifiCheck(p: WifiProbe): Omit<DoctorCheck, "name"> {
     if (p.usb.enabled) notes.push(`enabled on ${p.usb.udid}`);
     else {
       status = "warn";
-      notes.push(`Wi‑Fi connections are off on ${p.usb.udid} — run expo-xtool setup --wifi --yes`);
+      notes.push(`Wi‑Fi connections are off on ${p.usb.udid} — run rn-xtool setup --wifi --yes`);
     }
   }
   if (p.usbError) notes.push(`could not read the setting over USB (${p.usbError})`);
@@ -213,7 +213,7 @@ export function wifiCheck(p: WifiProbe): Omit<DoctorCheck, "name"> {
     }
   }
   if (!p.usb && !p.lastIp) {
-    if (!p.usbError) return { status: "info", detail: "not set up (optional) — see `expo-xtool setup --wifi`" };
+    if (!p.usbError) return { status: "info", detail: "not set up (optional) — see `rn-xtool setup --wifi`" };
     status = "info";
   }
   return { status, detail: notes.join("; ") };
@@ -239,10 +239,10 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
   });
   await add("swift", async () => {
     const v = await p.swiftVersion();
-    if (!v) return { status: "fail", detail: "not found — run expo-xtool setup" };
+    if (!v) return { status: "fail", detail: "not found — run rn-xtool setup" };
     return swiftMeetsMin(v)
       ? { status: "ok", detail: v }
-      : { status: "fail", detail: `${v} (need ${SWIFT_VERSION}+) — run expo-xtool setup` };
+      : { status: "fail", detail: `${v} (need ${SWIFT_VERSION}+) — run rn-xtool setup` };
   });
   const swiftCheck = checks.find((c) => c.name === "swift");
   if (swiftCheck?.status === "ok" && swiftAtLeast(swiftCheck.detail, "6.5")) {
@@ -254,7 +254,7 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
     });
   }
   await add("xtool", async () => {
-    if (!p.xtoolInstalled()) return { status: "fail", detail: "not found — run expo-xtool setup" };
+    if (!p.xtoolInstalled()) return { status: "fail", detail: "not found — run rn-xtool setup" };
     const v = await p.xtoolVersion();
     if (!v.includes(XTOOL_VERSION)) {
       return { status: "warn", detail: `expected ${XTOOL_VERSION}, got ${v || "unknown"}` };
@@ -262,14 +262,14 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
     const pinned = XTOOL_SHA256[process.arch === "arm64" ? "aarch64" : "x86_64"];
     const actual = pinned ? await p.xtoolSha256() : undefined;
     if (pinned && actual && actual !== pinned) {
-      return { status: "warn", detail: `${XTOOL_VERSION}, but sha256 ${actual} differs from the pinned ${pinned} — delete ${p.xtoolPath()} and run expo-xtool setup` };
+      return { status: "warn", detail: `${XTOOL_VERSION}, but sha256 ${actual} differs from the pinned ${pinned} — delete ${p.xtoolPath()} and run rn-xtool setup` };
     }
     return { status: "ok", detail: XTOOL_VERSION };
   });
   await add("darwin-sdk", async () =>
     p.sdkInstalled()
       ? { status: "ok", detail: "installed" }
-      : { status: "fail", detail: "not found — run expo-xtool setup --xcode-xip <path>" },
+      : { status: "fail", detail: "not found — run rn-xtool setup --xcode-xip <path>" },
   );
   await add("apple-login", async () => {
     if (!p.xtoolInstalled()) return { status: "fail", detail: "xtool not installed" };
@@ -325,7 +325,7 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
     if (pinned) return { status: "ok", detail: `${pinned} (from config)` };
     const route = await p.lanRoute().catch((): LanRoute => ({}));
     if (!route.ip) {
-      return { status: "fail", detail: 'could not detect the LAN IP; set "lanIp" in expo-xtool.config.json' };
+      return { status: "fail", detail: 'could not detect the LAN IP; set "lanIp" in rn-xtool.config.json' };
     }
     return suspiciousLanRoute(route)
       ? { status: "warn", detail: tunnelWarning(route).replace(/^⚠ /, "") }
@@ -360,12 +360,12 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
     });
     await add("build-state", async () => {
       if ("error" in stateResult) {
-        return { status: "warn", detail: `unreadable build state (${message(stateResult.error)}) — run expo-xtool build` };
+        return { status: "warn", detail: `unreadable build state (${message(stateResult.error)}) — run rn-xtool build` };
       }
       const state = stateResult.state;
       return state
         ? { status: "ok", detail: `port ${state.metroPort}, ip ${state.lanIp}` }
-        : { status: "warn", detail: "no build yet — run expo-xtool build" };
+        : { status: "warn", detail: "no build yet — run rn-xtool build" };
     });
     if ("state" in stateResult && stateResult.state) {
       const { metroPort, depsFingerprint, kind } = stateResult.state;
@@ -374,7 +374,7 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
         if (depsFingerprint === undefined) return { status: "warn", detail: NO_FINGERPRINT_WARNING };
         return depsFingerprint === (await p.depsFingerprint(root))
           ? { status: "ok", detail: "unchanged since last build" }
-          : { status: "warn", detail: `${changed} since last build — run expo-xtool build && expo-xtool install` };
+          : { status: "warn", detail: `${changed} since last build — run rn-xtool build && rn-xtool install` };
       });
       await add("metro-port", async () =>
         (await p.portFree(metroPort))

@@ -15,7 +15,7 @@ afterEach(async () => {
 
 /** A temp ios/ dir holding the given pbxproj contents in `<name>.xcodeproj`. */
 async function iosWith(names: string[], contents: string): Promise<string> {
-  const dir = await mkdtemp(path.join(tmpdir(), "expo-xtool-pbxproj-"));
+  const dir = await mkdtemp(path.join(tmpdir(), "rn-xtool-pbxproj-"));
   tempDirs.push(dir);
   for (const n of names) {
     await mkdir(path.join(dir, `${n}.xcodeproj`));

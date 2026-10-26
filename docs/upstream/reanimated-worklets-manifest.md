@@ -27,7 +27,7 @@ swift package dump-package
 error: cannot find 'CFGetTypeID' in scope
 ```
 
-(with expo-xtool this appears as soon as the app manifest graph is loaded).
+(with rn-xtool this appears as soon as the app manifest graph is loaded).
 
 ## Fix
 

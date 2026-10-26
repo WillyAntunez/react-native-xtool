@@ -75,7 +75,7 @@ export function firstRunChecklist(appleId: string | undefined): string {
     "  - Enable Developer Mode: Settings → Privacy & Security → Developer Mode (the phone reboots).",
     `  - Trust the developer certificate: Settings → General → VPN & Device Management → Apple Development: ${appleId ?? "<your Apple ID>"} → Trust.`,
     "  - Allow Local Network access when iOS asks (needed to reach Metro).",
-    "  - With a free Apple ID the signature expires in 7 days; reinstall the app with `expo-xtool install`.",
+    "  - With a free Apple ID the signature expires in 7 days; reinstall the app with `rn-xtool install`.",
   ].join("\n");
 }
 
@@ -151,12 +151,12 @@ export async function install(root: string, deps: InstallDeps = {}, opts: Instal
   );
   if (devices.length === 0) {
     throw new Error(
-      "No iPhone found over USB. Connect it, tap Trust on the phone, and enable Developer Mode (Settings → Privacy & Security). Or install over Wi‑Fi: `expo-xtool install --network`.",
+      "No iPhone found over USB. Connect it, tap Trust on the phone, and enable Developer Mode (Settings → Privacy & Security). Or install over Wi‑Fi: `rn-xtool install --network`.",
     );
   }
   const iosXtool = projectPaths(root).iosXtool;
   const state = await (x.readState ?? readState)(iosXtool).catch(() => undefined);
-  if (!state) throw new Error("No build found. Run `expo-xtool build` first.");
+  if (!state) throw new Error("No build found. Run `rn-xtool build` first.");
   await (x.devRun ?? devRun)(bin, iosXtool);
   // Which iPhone got this build: `run` must not skip the install for a different one.
   const installed: Partial<BuildState> = { installedUdid: devices[0]!.udid };
@@ -175,7 +175,7 @@ async function installNetwork(root: string, deps: InstallDeps, opts: InstallOpti
   const { config, bin, auth } = await authenticated(x, root);
   const iosXtool = projectPaths(root).iosXtool;
   const state = await (x.readState ?? readState)(iosXtool).catch(() => undefined);
-  if (!state) throw new Error("No build found. Run `expo-xtool build` first.");
+  if (!state) throw new Error("No build found. Run `rn-xtool build` first.");
 
   const ipa = await (x.devBuildIpa ?? devBuildIpa)(bin, iosXtool);
   const bundleId = installedBundleId(auth.teamId, state.bundleIdentifier);
@@ -184,8 +184,8 @@ async function installNetwork(root: string, deps: InstallDeps, opts: InstallOpti
     : await (w.lanRoute ?? (() => detectLanRoute()))().catch((): LanRoute => ({}));
   const refusal = scanRefusal(route);
   const refusalMessage = refusal
-    ? `Not scanning the network for the iPhone: ${refusal}. Pass its IP: \`expo-xtool install --network <ip>\` ` +
-      '(on the iPhone: Settings → Wi‑Fi → ⓘ), or set "lanIp" in expo-xtool.config.json to your Wi‑Fi address.'
+    ? `Not scanning the network for the iPhone: ${refusal}. Pass its IP: \`rn-xtool install --network <ip>\` ` +
+      '(on the iPhone: Settings → Wi‑Fi → ⓘ), or set "lanIp" in rn-xtool.config.json to your Wi‑Fi address.'
     : undefined;
   const sources: PairRecordSources = {
     override: opts.pairRecord,

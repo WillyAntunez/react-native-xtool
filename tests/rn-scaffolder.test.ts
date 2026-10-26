@@ -7,9 +7,9 @@ import { execa } from "execa";
 import { afterAll, describe, expect, it } from "vitest";
 
 // Exercises the PATCHED react-native SwiftPM scaffolder (patches/react-native+0.88.0.patch)
-// as installed in the reference app (override with EXPO_XTOOL_REF_APP). Skipped when that app is
+// as installed in the reference app (override with RN_XTOOL_REF_APP). Skipped when that app is
 // not on this machine.
-const APP = process.env["EXPO_XTOOL_REF_APP"] ?? path.resolve(import.meta.dirname, "../../app");
+const APP = process.env["RN_XTOOL_REF_APP"] ?? path.resolve(import.meta.dirname, "../../app");
 const SPM = path.join(APP, "node_modules/react-native/scripts/spm");
 const RNGH_PODSPEC = path.join(
   APP,

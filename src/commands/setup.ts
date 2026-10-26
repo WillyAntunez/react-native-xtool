@@ -115,7 +115,7 @@ export function swiftPostInstallMessage(script: string | undefined): string | un
   return [
     `Swift ${SWIFT_VERSION} is installed, but it needs system packages that only an administrator can install. Run:`,
     ...commands.map((c) => `  sudo ${c}`),
-    "then run `expo-xtool setup` again.",
+    "then run `rn-xtool setup` again.",
   ].join("\n");
 }
 

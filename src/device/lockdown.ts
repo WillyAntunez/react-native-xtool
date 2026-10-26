@@ -123,7 +123,7 @@ export class TlsHandshakeClosedError extends DeviceUnreachableError {
     super(
       host,
       port,
-      "the connection closed during the TLS handshake; if this keeps happening, the iPhone may no longer trust this computer: re-pair over USB with `expo-xtool setup --wifi`",
+      "the connection closed during the TLS handshake; if this keeps happening, the iPhone may no longer trust this computer: re-pair over USB with `rn-xtool setup --wifi`",
     );
     this.name = "TlsHandshakeClosedError";
   }
@@ -141,7 +141,7 @@ export class LockdownError extends Error {
 }
 
 const REPAIR_HINT =
-  "Connect it by USB once, tap Trust on the iPhone, then run `expo-xtool setup --wifi`.";
+  "Connect it by USB once, tap Trust on the iPhone, then run `rn-xtool setup --wifi`.";
 
 export function lockdownErrorMessage(request: string, code: string, detail?: string): string {
   switch (code) {
@@ -194,7 +194,7 @@ export class LockdownClient {
   }
 
   async request(request: string, extra: PlistDict = {}, what?: string): Promise<PlistDict> {
-    const resp = await this.channel.request({ Label: "expo-xtool", Request: request, ...extra }, this.timeoutMs);
+    const resp = await this.channel.request({ Label: "rn-xtool", Request: request, ...extra }, this.timeoutMs);
     if (resp.Error !== undefined) throw new LockdownError(request, String(resp.Error), what);
     if (resp.Request !== request) {
       throw new Error(`lockdownd answered ${String(resp.Request)} to ${request}`);

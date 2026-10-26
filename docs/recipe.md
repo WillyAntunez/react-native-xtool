@@ -1,6 +1,6 @@
 # Recipe: Expo SDK 58 iOS dev build from Linux
 
-The technical recipe behind `expo-xtool`, migrated from the original research notes (2026-10-23). The CLI
+The technical recipe behind `rn-xtool`, migrated from the original research notes (2026-10-23). The CLI
 automates exactly these steps. Paths are relative to this repo.
 
 ## 1. Toolchain
@@ -114,7 +114,7 @@ on current iOS, so the app is opened by hand.
 into the app and records them in the build state (`src/state.ts`). `start` (`src/commands/start.ts`) only verifies: it
 checks the LAN IP is unchanged and the baked port is usable, refuses to start on a mismatch (rebuild and reinstall),
 and runs `expo start --lan`. Keep-Metro rule: if the port is held by a Metro already serving `packager-status:running`,
-`build` keeps the port and `start` reports it and does nothing (expo-xtool cannot tell which project that Metro belongs
+`build` keeps the port and `start` reports it and does nothing (rn-xtool cannot tell which project that Metro belongs
 to; if it is another project's Metro, stop it). Only a non-Metro program on the port forces a different port. VPN warning:
 the LAN IP comes from the default route, so a VPN tunnel can bake an address the phone cannot reach ("No script URL");
 `build` and `doctor lan-ip` warn, and `lanIp` in the config pins it. The phone fetches the

@@ -100,7 +100,7 @@ describe("doctorWithProbes", () => {
     });
     expect(r.ok).toBe(false);
     for (const n of ["node", "swift", "darwin-sdk", "apple-login"]) expect(statusOf(r, n)).toBe("fail");
-    expect(r.checks.find((c) => c.name === "swift")?.detail).toContain("expo-xtool setup");
+    expect(r.checks.find((c) => c.name === "swift")?.detail).toContain("rn-xtool setup");
   });
 
   it("fails the xtool check when the binary cannot run", async () => {
@@ -372,7 +372,7 @@ describe("deps check", () => {
   it("warns when dependencies changed", async () => {
     const r = await doctorWithProbes({ ...good, depsFingerprint: async () => "other" }, "/p");
     expect(find(r)?.status).toBe("warn");
-    expect(find(r)?.detail).toContain("expo-xtool build && expo-xtool install");
+    expect(find(r)?.detail).toContain("rn-xtool build && rn-xtool install");
   });
   it("names native edits for a bare build", async () => {
     const r = await doctorWithProbes(
@@ -380,7 +380,7 @@ describe("deps check", () => {
       "/p",
     );
     expect(find(r)?.status).toBe("warn");
-    expect(find(r)?.detail).toMatch(/^native project or dependencies changed since last build — run expo-xtool build && expo-xtool install$/);
+    expect(find(r)?.detail).toMatch(/^native project or dependencies changed since last build — run rn-xtool build && rn-xtool install$/);
   });
   it("warns when the state has no fingerprint", async () => {
     const r = await doctorWithProbes({ ...good, buildState: async () => ({ metroPort: 8081, lanIp: "1.2.3.4" }) }, "/p");
@@ -394,7 +394,7 @@ describe("deps check", () => {
 
 describe("wifi check", () => {
   it("is an optional note when Wi‑Fi installs were never set up", () => {
-    expect(wifiCheck({})).toEqual({ status: "info", detail: "not set up (optional) — see `expo-xtool setup --wifi`" });
+    expect(wifiCheck({})).toEqual({ status: "info", detail: "not set up (optional) — see `rn-xtool setup --wifi`" });
   });
   it("warns when the setting is off on the USB iPhone", () => {
     const c = wifiCheck({ usb: { udid: "U", enabled: false } });

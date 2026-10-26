@@ -166,9 +166,9 @@ describe("patchFailureMessage", () => {
       output,
     });
     expect(msg.split("\n").slice(0, 4)).toEqual([
-      "expo-xtool could not patch expo@58.0.20 (patch file: expo+58.0.19.patch): the installed version differs from the one this release of expo-xtool patches (58.0.19).",
-      "This is a known limitation of expo-xtool, not of your project.",
-      'Options: pin "expo" to 58.0.19 in package.json, or report the new version at https://github.com/WillyAntunez/expo-xtool/issues so the patch can be refreshed.',
+      "rn-xtool could not patch expo@58.0.20 (patch file: expo+58.0.19.patch): the installed version differs from the one this release of rn-xtool patches (58.0.19).",
+      "This is a known limitation of rn-xtool, not of your project.",
+      'Options: pin "expo" to 58.0.19 in package.json, or report the new version at https://github.com/WillyAntunez/react-native-xtool/issues so the patch can be refreshed.',
       "--- patch-package output ---",
     ]);
     expect(msg).toContain("line 50");
@@ -235,7 +235,7 @@ describe("genericPatchFailureMessage", () => {
     const m = genericPatchFailureMessage({ exitCode: 1 }, "boom\n");
     expect(m).toContain("patch-package failed (exit 1):");
     expect(m).toContain("boom");
-    expect(m).toContain("Report this at https://github.com/WillyAntunez/expo-xtool/issues with the output above.");
+    expect(m).toContain("Report this at https://github.com/WillyAntunez/react-native-xtool/issues with the output above.");
   });
   it("includes the spawn error when the process never ran", () => {
     const m = genericPatchFailureMessage({ shortMessage: "Command failed with ENOENT: node" }, "");

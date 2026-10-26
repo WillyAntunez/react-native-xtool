@@ -11,7 +11,7 @@ export const STAGING_DIR = "/PublicStaging";
 
 /** One fixed name per app: a later run overwrites (truncates) whatever an interrupted one left. */
 export function stagingPath(bundleId: string): string {
-  return `${STAGING_DIR}/expo-xtool-${bundleId.replace(/[^A-Za-z0-9._-]/g, "_")}.ipa`;
+  return `${STAGING_DIR}/rn-xtool-${bundleId.replace(/[^A-Za-z0-9._-]/g, "_")}.ipa`;
 }
 
 /**

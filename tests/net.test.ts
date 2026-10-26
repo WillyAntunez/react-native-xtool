@@ -55,7 +55,7 @@ describe("detectLanIp", () => {
 
   it("throws when no address can be parsed", async () => {
     await expect(detectLanIp(async () => "")).rejects.toThrow(
-      "Could not detect LAN IP; set lanIp in expo-xtool.config.json",
+      "Could not detect LAN IP; set lanIp in rn-xtool.config.json",
     );
   });
 });
