@@ -9,6 +9,7 @@
 #   e2e.sh setup                   expo-xtool setup --xcode-xip (the slow part: Swift, xtool, Darwin SDK)
 #   e2e.sh auth                    copy the host's xtool login and the iPhone pair record into the container
 #   e2e.sh project [<name>]        npx create-expo-app <name> (default: demo)
+#   e2e.sh project --bare [<name>] bare React Native 0.88.0 app via @react-native-community/cli init, without pod install (default: demo)
 #   e2e.sh sh [<cmd...>]           run a command (or a shell) as the test user, in the project dir if it exists
 #   e2e.sh down                    remove the container and its home volume
 #
@@ -70,8 +71,15 @@ cmd_auth() {
 }
 
 cmd_project() {
+  local bare=0
+  if [ "${1:-}" = "--bare" ]; then bare=1; shift; fi
   local name="${1:-demo}"
-  as_user /home/me "npx --yes create-expo-app@latest '$name' --template blank-typescript"
+  if [ "$bare" -eq 1 ]; then
+    # --install-pods false: the container has no CocoaPods, and expo-xtool does not need Pods. npm deps are installed.
+    as_user /home/me "npx --yes @react-native-community/cli@latest init '$name' --version 0.88.0 --install-pods false --skip-git-init"
+  else
+    as_user /home/me "npx --yes create-expo-app@latest '$name' --template blank-typescript"
+  fi
   echo "$name" > "$PROJECT_FILE"
 }
 
