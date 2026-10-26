@@ -59,6 +59,18 @@ describe("detectProjectKind", () => {
     expect(() => detectProjectKind(dir)).toThrow(/no ios\/ directory.*@react-native-community\/cli init/);
   });
 
+  it("points an Expo project with a flat app.json at projectKind, not at the RN CLI", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "expo-xtool-detect-"));
+    tempDirs.push(dir);
+    await writeFile(path.join(dir, "package.json"), JSON.stringify({ name: "x", dependencies: { expo: "~58.0.19" } }));
+    await writeFile(path.join(dir, "app.json"), JSON.stringify({ name: "x", slug: "x" }));
+    const noIos = () => detectProjectKind(dir);
+    expect(noIos).toThrow(/"projectKind": "expo".*expo-xtool\.config\.json/);
+    expect(noIos).not.toThrow(/@react-native-community\/cli init/);
+    await mkdir(path.join(dir, "ios"));
+    expect(() => detectProjectKind(dir)).toThrow(/"projectKind": "expo".*expo-xtool\.config\.json/);
+  });
+
   it("fails with two xcodeproj", async () => {
     const dir = await temp("bare");
     await mkdir(path.join(dir, "ios", "Other.xcodeproj"));
