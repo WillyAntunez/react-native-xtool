@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { depsFingerprint } from "../deps.js";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
 import { readFlavoredFrameworks, stageFrameworks, type RuntimeFramework } from "../frameworks.js";
@@ -9,7 +10,7 @@ import { generateAppConfig } from "../pipeline/appConfig.js";
 import { buildExpoModulesJsi } from "../pipeline/jsi.js";
 import { applyPatches } from "../pipeline/patches.js";
 import { runRnSpm } from "../pipeline/rnSpm.js";
-import { readExpoProject, type ExpoProject } from "../project.js";
+import { readProject, RN_CLI_MISSING, type ProjectInfo, type ProjectKind, type ReadProjectOptions } from "../project/index.js";
 import { readState, writeState, type BuildState } from "../state.js";
 import { run } from "../tools/exec.js";
 import { devBuild, xtoolBin } from "../tools/xtool.js";
@@ -24,12 +25,31 @@ export const BUILD_STEP_NAMES = [
   "xtool-build",
 ] as const;
 
-export function buildSteps(state: { hasIos: boolean; clean: boolean }): string[] {
-  const steps: string[] = [...BUILD_STEP_NAMES];
-  if (!state.hasIos || state.clean) {
-    steps.unshift(state.clean ? "prebuild --clean" : "prebuild");
+export interface BuildPlanInput {
+  kind: ProjectKind;
+  hasIos: boolean;
+  clean: boolean;
+  hasExpoModules: boolean;
+  hasExpoConstants: boolean;
+}
+
+/**
+ * Expo: every step, with `expo prebuild` first when `ios/` is missing or on `--clean`. Bare: never
+ * prebuild (`--clean` removes the build outputs instead), ExpoModulesJSI only with Expo modules set
+ * up, app-config only with expo-constants.
+ */
+export function buildSteps(state: BuildPlanInput): string[] {
+  if (state.kind === "expo") {
+    const steps: string[] = [...BUILD_STEP_NAMES];
+    if (!state.hasIos || state.clean) steps.unshift(state.clean ? "prebuild --clean" : "prebuild");
+    return steps;
   }
-  return steps;
+  return [
+    ...(state.clean ? ["clean"] : []),
+    ...BUILD_STEP_NAMES.filter(
+      (s) => (s !== "jsi" || state.hasExpoModules) && (s !== "app-config" || state.hasExpoConstants),
+    ),
+  ];
 }
 
 export type MetroPortReason = "configured-free" | "configured-metro" | "previous-free" | "previous-metro" | "fallback";
@@ -55,11 +75,13 @@ export async function chooseMetroPort(i: MetroPortInput): Promise<{ port: number
 
 export interface BuildDeps {
   loadConfig: (root: string) => Promise<ExpoXtoolConfig>;
-  readProject: (root: string, opts?: { log?: (s: string) => void }) => Promise<ExpoProject>;
+  readProject: (root: string, opts?: ReadProjectOptions) => Promise<ProjectInfo>;
   exists: (path: string) => boolean;
+  /** Deletes a directory tree (no error when it is missing). */
+  remove: (path: string) => Promise<void>;
   prebuild: (root: string, clean: boolean) => Promise<void>;
   applyPatches: (root: string) => Promise<void>;
-  runRnSpm: (paths: ProjectPaths, opts: { rnArtifactsDir?: string }) => Promise<void>;
+  runRnSpm: (paths: ProjectPaths, opts: { rnArtifactsDir?: string; kind: ProjectKind }) => Promise<void>;
   buildJsi: (paths: ProjectPaths) => Promise<RuntimeFramework>;
   generateAppConfig: (paths: ProjectPaths) => Promise<void>;
   readFrameworks: (dir: string, flavor: "debug" | "release") => RuntimeFramework[];
@@ -79,8 +101,9 @@ export interface BuildDeps {
 
 const realDeps: BuildDeps = {
   loadConfig,
-  readProject: readExpoProject,
+  readProject,
   exists: existsSync,
+  remove: (path) => rm(path, { recursive: true, force: true }),
   prebuild: (root, clean) =>
     run("npx", ["expo", "prebuild", "--platform", "ios", "--no-install", ...(clean ? ["--clean"] : [])], {
       cwd: root,
@@ -120,6 +143,8 @@ export async function build(
   }
   const config = await d.loadConfig(root);
   const project = await d.readProject(root, { log: d.log });
+  // Bare rn-spm runs RN's default autolinking config command, `npx --no-install @react-native-community/cli config`.
+  if (project.kind === "bare" && project.hasRnCli === false) throw new Error(RN_CLI_MISSING);
 
   const step = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
     d.log(`▸ ${name}`);
@@ -129,15 +154,31 @@ export async function build(
     return result;
   };
 
-  if (!d.exists(paths.ios) || clean) {
+  const steps = buildSteps({
+    kind: project.kind,
+    hasIos: d.exists(paths.ios),
+    clean,
+    hasExpoModules: project.hasExpoModules,
+    hasExpoConstants: project.hasExpoConstants,
+  });
+  const planned = (name: string): boolean => steps.includes(name);
+
+  if (planned("prebuild") || planned("prebuild --clean")) {
     await step(clean ? "prebuild --clean" : "prebuild", () => d.prebuild(paths.root, clean));
   }
+  if (planned("clean")) {
+    // Bare: the user's ios/ is theirs; only what the pipeline generated goes.
+    await step("clean", async () => {
+      await d.remove(paths.iosBuild);
+      await d.remove(paths.iosXtool);
+    });
+  }
   await step("patches", () => d.applyPatches(paths.root));
-  await step("rn-spm", () => d.runRnSpm(paths, { rnArtifactsDir: config.rnArtifactsDir }));
-  const jsi = await step("jsi", () => d.buildJsi(paths));
-  await step("app-config", () => d.generateAppConfig(paths));
+  await step("rn-spm", () => d.runRnSpm(paths, { rnArtifactsDir: config.rnArtifactsDir, kind: project.kind }));
+  const jsi = planned("jsi") ? await step("jsi", () => d.buildJsi(paths)) : undefined;
+  if (planned("app-config")) await step("app-config", () => d.generateAppConfig(paths));
   const frameworks = await step("frameworks", async () => {
-    const fws = [...d.readFrameworks(paths.xcframeworks, "debug"), jsi];
+    const fws = [...d.readFrameworks(paths.xcframeworks, "debug"), ...(jsi ? [jsi] : [])];
     await d.stageFrameworks(fws, paths.frameworks);
     return fws;
   });
@@ -169,11 +210,13 @@ export async function build(
     lanIp,
     bundleIdentifier: project.bundleIdentifier,
     builtAt: new Date().toISOString(),
+    kind: project.kind,
+    hasDevClient: project.hasDevClient,
     ...(previousState?.deviceIp && { deviceIp: previousState.deviceIp }),
     ...(previousState?.deviceUdid && { deviceUdid: previousState.deviceUdid }),
   };
   await step("generate", async () => {
-    await d.writeIosXtool({ project, paths, frameworks, metroPort, lanIp });
+    await d.writeIosXtool({ project, paths, frameworks, metroPort, lanIp, log: d.log });
     await writeState(paths.iosXtool, state);
   });
   await step("xtool-build", () => d.devBuild(d.xtoolBin(config), paths.iosXtool));

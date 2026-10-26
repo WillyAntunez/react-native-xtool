@@ -1,7 +1,13 @@
+import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { run as runCommand } from "../src/commands/run.js";
+import { depsFingerprint } from "../src/deps.js";
 import {
   ipMismatchMessage,
+  metroCommand,
   portMismatchMessage,
   start,
   startDecision,
@@ -135,6 +141,33 @@ describe("start", () => {
     await start("/p", {}, deps);
     expect(exec).toHaveBeenCalledWith("npx", ["expo", "start", "--lan", "--port", "8081"], { cwd: "/p" });
   });
+
+  it("start runs react-native start for a bare state", async () => {
+    const { deps, exec } = makeDeps({ readState: async () => ({ ...state, kind: "bare" as const }) });
+    await start("/p", {}, deps);
+    expect(exec).toHaveBeenCalledWith("npx", ["react-native", "start", "--port", "8081"], { cwd: "/p" });
+    expect(exec.mock.calls[0]?.[1]).not.toContain("expo");
+  });
+
+  it("resets the bare Metro cache when dependencies changed", async () => {
+    const { deps, exec } = makeDeps({
+      readState: async () => ({ ...state, kind: "bare" as const }),
+      depsFingerprint: async () => "other",
+    });
+    await start("/p", {}, deps);
+    expect(exec).toHaveBeenCalledWith("npx", ["react-native", "start", "--port", "8081", "--reset-cache"], { cwd: "/p" });
+  });
+});
+
+describe("metroCommand", () => {
+  it("runs expo start on the LAN for expo", () => {
+    expect(metroCommand("expo", 8082, false)).toEqual(["npx", ["expo", "start", "--lan", "--port", "8082"]]);
+    expect(metroCommand("expo", 8082, true)).toEqual(["npx", ["expo", "start", "--lan", "--port", "8082", "--clear"]]);
+  });
+  it("runs react-native start for bare, with --reset-cache to clear", () => {
+    expect(metroCommand("bare", 8082, false)).toEqual(["npx", ["react-native", "start", "--port", "8082"]]);
+    expect(metroCommand("bare", 8082, true)).toEqual(["npx", ["react-native", "start", "--port", "8082", "--reset-cache"]]);
+  });
 });
 
 describe("start and dependency changes", () => {
@@ -143,6 +176,12 @@ describe("start and dependency changes", () => {
     await start("/p", {}, deps);
     expect(exec).toHaveBeenCalledWith("npx", ["expo", "start", "--lan", "--port", "8081", "--clear"], { cwd: "/p" });
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Dependencies changed since the last build"));
+  });
+  it("names native edits when a bare project's fingerprint differs", async () => {
+    const { deps, log } = makeDeps({ depsFingerprint: async () => "other", readState: async () => ({ ...state, kind: "bare" as const }) });
+    await start("/p", {}, deps);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("Native project or dependencies changed since the last build"));
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("Dependencies changed"));
   });
   it("warns and clears when the state has no fingerprint", async () => {
     const { depsFingerprint: _omit, ...old } = state;
@@ -245,11 +284,26 @@ describe("run", () => {
     expect(start2).toHaveBeenLastCalledWith("/p", {});
   });
 
+  it("rebuilds a bare project after an edit to its native code", async () => {
+    const root = mkdtempSync(join(tmpdir(), "run-bare-"));
+    cpSync(fileURLToPath(new URL("./fixtures/bare", import.meta.url)), root, { recursive: true });
+    const fp = await depsFingerprint(root);
+    const built = { ...state, depsFingerprint: fp, installedFingerprint: fp };
+    const before = fresh({ readState: async () => built, depsFingerprint });
+    await runCommand(root, {}, before.overrides);
+    expect(before.calls).toEqual(["start"]);
+    mkdirSync(join(root, "ios", "HelloWorld"), { recursive: true });
+    writeFileSync(join(root, "ios", "HelloWorld", "AppDelegate.swift"), "// edited\n");
+    const after = fresh({ readState: async () => built, depsFingerprint });
+    await runCommand(root, {}, after.overrides);
+    expect(after.calls).toEqual(["build:undefined", "install", "start"]);
+  });
+
   it("skips build and install when up to date", async () => {
     const { calls, log, overrides } = fresh();
     await runCommand("/p", {}, overrides);
     expect(calls).toEqual(["start"]);
-    expect(log).toHaveBeenCalledWith("Native app is up to date (no dependency changes); skipping build and install.");
+    expect(log).toHaveBeenCalledWith("Native app is up to date (nothing changed since the last build); skipping build and install.");
   });
 
   it.each([

@@ -2,6 +2,7 @@ import { depsFingerprint } from "../deps.js";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
 import { detectLanIp, findFreePort, isMetroRunning, isPortFree } from "../net.js";
 import { projectPaths } from "../paths.js";
+import type { ProjectKind } from "../project/index.js";
 import { readState, type BuildState } from "../state.js";
 import { run } from "../tools/exec.js";
 
@@ -26,6 +27,14 @@ export function startDecision(input: {
   if (!input.portFree && input.metroRunning) return "metro-running";
   if (!input.portFree) return "port-mismatch";
   return "ok";
+}
+
+/** The Metro command for the project kind; `clear` drops Metro's cache. */
+export function metroCommand(kind: ProjectKind, port: number, clear: boolean): [string, string[]] {
+  if (kind === "bare") {
+    return ["npx", ["react-native", "start", "--port", String(port), ...(clear ? ["--reset-cache"] : [])]];
+  }
+  return ["npx", ["expo", "start", "--lan", "--port", String(port), ...(clear ? ["--clear"] : [])]];
 }
 
 export interface StartDeps {
@@ -55,8 +64,12 @@ const realDeps: StartDeps = {
 export const NO_FINGERPRINT_WARNING =
   "No dependency fingerprint recorded; run expo-xtool build to enable change detection.";
 
-export const DEPS_CHANGED_WARNING =
-  "Dependencies changed since the last build; the installed app may miss native modules. Run `expo-xtool build && expo-xtool install` (or `expo-xtool run`).";
+/** Bare fingerprints also cover the native project in ios/ (see `depsFingerprint`), so say so. */
+export function changedSinceBuildWarning(kind: ProjectKind): string {
+  return kind === "bare"
+    ? "Native project or dependencies changed since the last build; the installed app may be out of date. Run `expo-xtool build && expo-xtool install` (or `expo-xtool run`)."
+    : "Dependencies changed since the last build; the installed app may miss native modules. Run `expo-xtool build && expo-xtool install` (or `expo-xtool run`).";
+}
 
 export async function start(
   root: string,
@@ -87,9 +100,8 @@ export async function start(
   const missing = state.depsFingerprint === undefined;
   const depsChanged = !missing && state.depsFingerprint !== (await d.depsFingerprint(root));
   if (missing) d.log(`⚠ ${NO_FINGERPRINT_WARNING}`);
-  else if (depsChanged) d.log(`⚠ ${DEPS_CHANGED_WARNING}`);
+  else if (depsChanged) d.log(`⚠ ${changedSinceBuildWarning(state.kind ?? "expo")}`);
   const clear = opts.clear === true || missing || depsChanged;
-  await d.run("npx", ["expo", "start", "--lan", "--port", String(state.metroPort), ...(clear ? ["--clear"] : [])], {
-    cwd: root,
-  });
+  const [cmd, args] = metroCommand(state.kind ?? "expo", state.metroPort, clear);
+  await d.run(cmd, args, { cwd: root });
 }

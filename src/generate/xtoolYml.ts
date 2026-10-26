@@ -3,7 +3,9 @@ export interface XtoolYmlInput {
   resources?: string[];
 }
 
-export const DEFAULT_RESOURCES = ["Frameworks", "ip.txt", "EXConstants.bundle"];
+/** Bundled by every app; `EXConstants.bundle` joins them when expo-constants is installed. */
+export const BASE_RESOURCES = ["Frameworks", "ip.txt"];
+export const DEFAULT_RESOURCES = [...BASE_RESOURCES, "EXConstants.bundle"];
 
 export function renderXtoolYml(i: XtoolYmlInput): string {
   const resources = i.resources ?? DEFAULT_RESOURCES;

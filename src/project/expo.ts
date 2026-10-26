@@ -2,20 +2,41 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { getConfig, modifyConfigAsync } from "@expo/config";
 import { IOSConfig } from "@expo/config-plugins";
-import type { BuildVars } from "./plist.js";
-import { MIN_EXPO_SDK } from "./versions.js";
+import { createRequire } from "node:module";
+import type { BuildVars } from "../plist.js";
+import { MIN_EXPO_SDK } from "../versions.js";
+import type { ProjectInfo, ReadProjectOptions } from "./types.js";
 
-export interface ExpoProject {
-  root: string;
-  name: string;
-  slug: string;
-  version: string;
-  buildNumber: string;
-  bundleIdentifier: string;
-  sdkVersion: number;
-  /** Sanitized name, as expo prebuild derives it. */
-  iosTargetName: string;
-  iosTargetDir: string;
+/** True when `pkg` resolves from the project root (Node's lookup: root/node_modules, then the parents'). */
+export function resolvesFromRoot(root: string, pkg: string): boolean {
+  try {
+    createRequire(path.join(root, "noop.js")).resolve(`${pkg}/package.json`, { paths: [root] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** True when `pkg` resolves from the project root or from the `expo` package directory (npm may nest it there). */
+export function isInstalled(root: string, pkg: string): boolean {
+  if (resolvesFromRoot(root, pkg)) return true;
+  const req = createRequire(path.join(root, "noop.js"));
+  try {
+    const expoDir = path.dirname(req.resolve("expo/package.json", { paths: [root] }));
+    req.resolve(`${pkg}/package.json`, { paths: [expoDir] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function installedRnVersion(root: string): Promise<string> {
+  try {
+    const file = createRequire(path.join(root, "noop.js")).resolve("react-native/package.json", { paths: [root] });
+    return JSON.parse(await readFile(file, "utf8")).version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 
 function majorOf(version: string | undefined): number | undefined {
@@ -41,12 +62,6 @@ export function defaultBundleIdentifier(slug: string): string {
     .replace(/^-+|-+$/g, "")
     .toLowerCase();
   return `com.anonymous.${name || "app"}`;
-}
-
-export interface ReadProjectOptions {
-  /** Write a default `ios.bundleIdentifier` into a static app.json when it is missing (default true). */
-  writeDefaults?: boolean;
-  log?: (line: string) => void;
 }
 
 /** Thrown in read-only mode (doctor) when the config has no `ios.bundleIdentifier`; `build` would write `suggestion`. */
@@ -91,7 +106,7 @@ async function resolveBundleIdentifier(
   return suggestion;
 }
 
-export async function readExpoProject(root: string, opts: ReadProjectOptions = {}): Promise<ExpoProject> {
+export async function readExpoProject(root: string, opts: ReadProjectOptions = {}): Promise<ProjectInfo> {
   const config = getConfig(root, { skipSDKVersionRequirement: true });
   const { exp } = config;
   const sdkVersion = majorOf(exp.sdkVersion) ?? majorOf(await declaredExpoRange(root));
@@ -106,6 +121,7 @@ export async function readExpoProject(root: string, opts: ReadProjectOptions = {
   const bundleIdentifier = await resolveBundleIdentifier(root, config, opts);
   const iosTargetName = IOSConfig.XcodeUtils.sanitizedName(exp.name);
   return {
+    kind: "expo",
     root,
     name: exp.name,
     slug: exp.slug,
@@ -115,10 +131,16 @@ export async function readExpoProject(root: string, opts: ReadProjectOptions = {
     sdkVersion,
     iosTargetName,
     iosTargetDir: path.join(root, "ios", iosTargetName),
+    infoPlistPath: path.join(root, "ios", iosTargetName, "Info.plist"),
+    moduleName: "main",
+    rnVersion: await installedRnVersion(root),
+    hasExpoModules: true,
+    hasExpoConstants: isInstalled(root, "expo-constants"),
+    hasDevClient: isInstalled(root, "expo-dev-client"),
   };
 }
 
-export function buildVars(p: ExpoProject): BuildVars {
+export function buildVars(p: ProjectInfo): BuildVars {
   return {
     PRODUCT_NAME: p.name,
     PRODUCT_BUNDLE_IDENTIFIER: p.bundleIdentifier,

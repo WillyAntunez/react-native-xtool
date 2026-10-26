@@ -4,7 +4,8 @@ import { installedVersion, patchPackageScript } from "./patches.js";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { swiftHeadersEnv, type ProjectPaths } from "../paths.js";
-import { runArgv, toolEnv } from "../tools/exec.js";
+import type { ProjectKind } from "../project/index.js";
+import { packageRoot, runArgv, toolEnv } from "../tools/exec.js";
 
 export const AUTOLINKING_CONFIG_COMMAND = [
   "npx",
@@ -53,6 +54,35 @@ export function rnSpmArgs(
       ? ["--download", "skip", "--artifacts", opts.rnArtifactsDir]
       : []),
   ];
+}
+
+/**
+ * Bare apps run RN's SwiftPM steps through our driver instead of `setup-apple-spm.js add|update`:
+ * same codegen, autolinking and artifact steps, minus the injection into the user's xcodeproj
+ * (which `add` refuses anyway on a CocoaPods-integrated pbxproj). Only `ios/build/` is written.
+ */
+export function rnSpmGenerateArgs(
+  paths: ProjectPaths,
+  opts: { rnArtifactsDir?: string },
+  rnDir: string = resolveRnDir(paths),
+): string[] {
+  return [
+    path.join(packageRoot(), "scripts", "rn-spm-generate.js"),
+    "--rn-dir",
+    rnDir,
+    "--app-root",
+    paths.root,
+    ...(opts.rnArtifactsDir ? ["--artifacts", opts.rnArtifactsDir] : []),
+  ];
+}
+
+/** The driver's `scaffold` step alone: RN's `setup-apple-spm.js scaffold` would go on to inject into the xcodeproj. */
+export function rnSpmScaffoldArgs(
+  paths: ProjectPaths,
+  opts: { rnArtifactsDir?: string },
+  rnDir: string = resolveRnDir(paths),
+): string[] {
+  return [...rnSpmGenerateArgs(paths, opts, rnDir), "--scaffold"];
 }
 
 export interface RnRunResult {
@@ -165,13 +195,18 @@ function tail(output: string): string {
 
 export async function runRnSpm(
   paths: ProjectPaths,
-  opts: { rnArtifactsDir?: string },
+  opts: { rnArtifactsDir?: string; kind: ProjectKind },
   deps: Partial<RnSpmDeps> = {},
 ): Promise<void> {
+  // Expo runs `setup-apple-spm.js add --yes`, which may edit the xcodeproj: never pick it by default.
+  if (opts.kind !== "bare" && opts.kind !== "expo") {
+    throw new Error(`runRnSpm needs the project kind ("expo" or "bare"), got ${String(opts.kind)}`);
+  }
   const runner = deps.runner ?? streamingRunner;
   const log = deps.log ?? ((s: string) => console.log(s));
   const rnDir = deps.rnDir ?? resolveRnDir(paths);
-  const rnArgs = rnSpmArgs(paths, opts, rnDir);
+  const bare = opts.kind === "bare";
+  const rnArgs = bare ? rnSpmGenerateArgs(paths, opts, rnDir) : rnSpmArgs(paths, opts, rnDir);
   // RN's scaffolder warns about mixed-language libraries when this is unset, and any manifest
   // it evaluates must see the same value the xtool build uses.
   const env = swiftHeadersEnv(paths.iosXtool);
@@ -186,7 +221,8 @@ export async function runRnSpm(
     );
 
   log(`▸ scaffold — generating Package.swift for: ${names.join(", ")}`);
-  const sc = await runner("node", scaffoldArgv(paths, opts, rnDir), {
+  const scArgs = bare ? rnSpmScaffoldArgs(paths, opts, rnDir) : scaffoldArgv(paths, opts, rnDir);
+  const sc = await runner("node", scArgs, {
     cwd: paths.ios,
     env,
   });

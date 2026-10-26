@@ -121,6 +121,29 @@ the LAN IP comes from the default route, so a VPN tunnel can bake an address the
 bundle over Wi-Fi (`iOS Bundled 289ms` on a warm cache). Pitfalls seen: Docker holding 8081, ufw blocking the port, and
 the iOS Local Network permission.
 
+## Bare React Native notes
+
+Bare projects (no `expo`, or `expo` plus Expo modules as a hybrid) follow the same recipe with these differences:
+
+- **Detection and reading**: `src/project/detect.ts` (`expo` iff `expo` is a dependency and an Expo config exists, else
+  `bare` iff `ios/` holds one `.xcodeproj`; the `projectKind` config key overrides) and `src/project/bare.ts` /
+  `pbxproj.ts` (the `xcode` package parses the pbxproj; Debug settings resolve only `$(inherited)`, `$(TARGET_NAME)`,
+  `$(PROJECT_NAME)`, the `:rfc1034identifier` modifier and settings defined in the pbxproj; any other `$(VAR)`, such as
+  `$(SRCROOT)`, is an error naming the setting; paths are relative to `ios/`). The Sources and Resources phases of the single application target
+  become the content of the App target (`BareTargetContent`).
+- **Section 2**: `rn-spm` does not run `setup-apple-spm.js add|update` (no injection into the xcodeproj, which `add` refuses
+  on a CocoaPods-integrated project). `scripts/rn-spm-generate.js` runs RN's steps 1-5 and writes only `ios/build/`.
+  `--scaffold` runs the scaffold step alone.
+- **Section 5**: ExpoModulesJSI is built only with Expo modules; `app-config` runs only when `expo-constants` is installed.
+- **Section 7**: `src/generate/bareSources.ts` copies the app sources to `ios-xtool/Sources/App` (header forwards in
+  `include/`) and the resources to `ios-xtool/Resources`. `Package.swift` (`src/generate/packageSwift.ts`) compiles those
+  copies instead of the Expo template's AppDelegate/SceneDelegate, passes the bridging header (`-import-objc-header`),
+  header search paths and defines, and takes the mixed-language form (with `Package@swift-6.5.swift`) when the target has
+  C-family sources. The deployment target is fixed at 16.4 (`IOS_MIN`), Swift 5 mode.
+- **Section 9**: `ip.txt` holds `<lanIp>:<metroPort>` (RN takes only the host from `ip.txt`; the port is compiled into the
+  framework as 8081); `start` runs `npx react-native start`.
+- `build --clean` removes `ios/build` and `ios-xtool` only; the user's `ios/` is never modified.
+
 ## Open risks
 
 - ExpoModulesCore `.swiftinterface` compatibility depends on Xcode's Swift vs the Linux Swift version.

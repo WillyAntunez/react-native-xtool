@@ -50,7 +50,7 @@ export async function run(
   let rebuilt = true;
   if (opts.force !== true && opts.clean !== true && (await upToDate(root, d, opts))) {
     rebuilt = false;
-    d.log("Native app is up to date (no dependency changes); skipping build and install.");
+    d.log("Native app is up to date (nothing changed since the last build); skipping build and install.");
   } else {
     await d.build(root, { clean: opts.clean });
     // `--network [ip]` (and its --udid / --pair-record) go straight to install.

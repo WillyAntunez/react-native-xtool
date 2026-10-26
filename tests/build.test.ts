@@ -5,23 +5,49 @@ import { describe, expect, it, vi } from "vitest";
 import { build, buildSteps, chooseMetroPort, type BuildDeps } from "../src/commands/build.js";
 import { readState, writeState } from "../src/state.js";
 
+const expoFlags = { kind: "expo" as const, hasExpoModules: true, hasExpoConstants: true };
+const bareFlags = { kind: "bare" as const, hasExpoModules: false, hasExpoConstants: false };
+
 describe("buildSteps", () => {
   it("starts with prebuild when ios/ is missing", () => {
-    expect(buildSteps({ hasIos: false, clean: false })[0]).toBe("prebuild");
+    expect(buildSteps({ ...expoFlags, hasIos: false, clean: false })[0]).toBe("prebuild");
   });
   it("omits prebuild when ios/ exists", () => {
-    expect(buildSteps({ hasIos: true, clean: false })).toEqual([
+    expect(buildSteps({ ...expoFlags, hasIos: true, clean: false })).toEqual([
       "patches", "rn-spm", "jsi", "app-config", "frameworks", "generate", "xtool-build",
     ]);
   });
   it("uses prebuild --clean when clean", () => {
-    const steps = buildSteps({ hasIos: true, clean: true });
+    const steps = buildSteps({ ...expoFlags, hasIos: true, clean: true });
     expect(steps[0]).toBe("prebuild --clean");
     expect(steps).not.toContain("prebuild");
   });
+  it("keeps the expo steps whatever the module flags say", () => {
+    expect(buildSteps({ ...expoFlags, hasExpoConstants: false, hasIos: true, clean: false })).toEqual(
+      buildSteps({ ...expoFlags, hasIos: true, clean: false }),
+    );
+  });
+  it("bare pure: no prebuild, jsi or app-config", () => {
+    expect(buildSteps({ ...bareFlags, hasIos: false, clean: false })).toEqual([
+      "patches", "rn-spm", "frameworks", "generate", "xtool-build",
+    ]);
+  });
+  it("bare --clean cleans instead of prebuilding", () => {
+    const steps = buildSteps({ ...bareFlags, hasIos: true, clean: true });
+    expect(steps).toEqual(["clean", "patches", "rn-spm", "frameworks", "generate", "xtool-build"]);
+  });
+  it("bare hybrid: jsi with expo modules, app-config only with expo-constants", () => {
+    const hybrid = { ...bareFlags, hasExpoModules: true, hasIos: true, clean: false };
+    expect(buildSteps(hybrid)).toEqual(["patches", "rn-spm", "jsi", "frameworks", "generate", "xtool-build"]);
+    expect(buildSteps({ ...hybrid, hasExpoConstants: true })).toEqual([
+      "patches", "rn-spm", "jsi", "app-config", "frameworks", "generate", "xtool-build",
+    ]);
+  });
 });
 
-function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunning?: (p: number) => Promise<boolean>; hasIos?: boolean; cfg?: object; route?: { ip?: string; dev?: string } } = {}) {
+type ProjectOver = { kind?: "expo" | "bare"; hasExpoModules?: boolean; hasExpoConstants?: boolean; hasDevClient?: boolean; hasRnCli?: boolean };
+
+function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunning?: (p: number) => Promise<boolean>; hasIos?: boolean; cfg?: object; route?: { ip?: string; dev?: string }; project?: ProjectOver } = {}) {
   const root = mkdtempSync(join(tmpdir(), "build-"));
   const calls: string[] = [];
   const logs: string[] = [];
@@ -33,8 +59,19 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
   });
   const deps: BuildDeps = {
     loadConfig: async () => ({ metroPort: 8081, ...over.cfg }),
-    readProject: async () => ({ bundleIdentifier: "com.example.app" }) as never,
+    readProject: async () =>
+      ({
+        kind: "expo",
+        bundleIdentifier: "com.example.app",
+        hasExpoModules: true,
+        hasExpoConstants: true,
+        hasDevClient: false,
+        ...over.project,
+      }) as never,
     exists: () => over.hasIos ?? false,
+    remove: async (path) => {
+      calls.push(`remove ${path}`);
+    },
     prebuild: async (_r, clean) => {
       calls.push(clean ? "prebuild --clean" : "prebuild");
     },
@@ -83,7 +120,7 @@ describe("build", () => {
   it("runs steps in order, passes port/ip and writes state", async () => {
     const t = setup();
     await build(t.root, {}, t.deps);
-    expect(t.calls).toEqual(buildSteps({ hasIos: false, clean: false }));
+    expect(t.calls).toEqual(buildSteps({ ...expoFlags, hasIos: false, clean: false }));
     const ctx = (t.writeIosXtool.mock.calls[0] as unknown[])[0] as { metroPort: number; lanIp: string; frameworks: unknown[] };
     expect(ctx.metroPort).toBe(8081);
     expect(ctx.lanIp).toBe("10.0.0.7");
@@ -96,13 +133,62 @@ describe("build", () => {
   it("skips prebuild when ios exists and honors config lanIp", async () => {
     const t = setup({ hasIos: true, cfg: { lanIp: "1.2.3.4" } });
     await build(t.root, {}, t.deps);
-    expect(t.calls).toEqual(buildSteps({ hasIos: true, clean: false }));
+    expect(t.calls).toEqual(buildSteps({ ...expoFlags, hasIos: true, clean: false }));
     expect((await readState(join(t.root, "ios-xtool")))?.lanIp).toBe("1.2.3.4");
   });
   it("prebuilds with --clean", async () => {
     const t = setup({ hasIos: true });
     await build(t.root, { clean: true }, t.deps);
     expect(t.calls[0]).toBe("prebuild --clean");
+  });
+  it("build passes the kind to runRnSpm and skips prebuild for bare", async () => {
+    const t = setup({ project: { kind: "bare", hasExpoModules: false, hasExpoConstants: false } });
+    const runRnSpm = vi.fn(async () => {
+      t.calls.push("rn-spm");
+    });
+    await build(t.root, {}, { ...t.deps, runRnSpm });
+    expect(t.calls).toEqual(buildSteps({ ...bareFlags, hasIos: false, clean: false }));
+    expect(runRnSpm).toHaveBeenCalledWith(expect.objectContaining({ root: t.root }), { rnArtifactsDir: undefined, kind: "bare" });
+    const ctx = (t.writeIosXtool.mock.calls[0] as unknown[])[0] as { frameworks: { name: string }[] };
+    expect(ctx.frameworks.map((f) => f.name)).toEqual(["A"]);
+  });
+  it("passes the expo kind to runRnSpm", async () => {
+    const t = setup({ hasIos: true });
+    const runRnSpm = vi.fn(async () => {});
+    await build(t.root, {}, { ...t.deps, runRnSpm });
+    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: undefined, kind: "expo" });
+  });
+  it("builds the JSI framework for a bare project with expo modules, app-config only with expo-constants", async () => {
+    const t = setup({ project: { kind: "bare", hasExpoModules: true, hasExpoConstants: false } });
+    await build(t.root, {}, t.deps);
+    expect(t.calls).toEqual(["patches", "rn-spm", "jsi", "frameworks", "generate", "xtool-build"]);
+    const ctx = (t.writeIosXtool.mock.calls[0] as unknown[])[0] as { frameworks: { name: string }[] };
+    expect(ctx.frameworks.map((f) => f.name)).toEqual(["A", "ExpoModulesJSI"]);
+    const u = setup({ project: { kind: "bare", hasExpoModules: true, hasExpoConstants: true } });
+    await build(u.root, {}, u.deps);
+    expect(u.calls).toContain("app-config");
+  });
+  it("stops a bare build before any step when @react-native-community/cli is missing", async () => {
+    const t = setup({ hasIos: true, project: { kind: "bare", hasRnCli: false } });
+    await expect(build(t.root, { clean: true }, t.deps)).rejects.toThrow(
+      /@react-native-community\/cli is not installed.*npm install --save-dev @react-native-community\/cli/s,
+    );
+    expect(t.calls).toEqual([]);
+  });
+  it("cleans ios/build and ios-xtool instead of prebuilding a bare project", async () => {
+    const t = setup({ hasIos: true, project: { kind: "bare" } });
+    await build(t.root, { clean: true }, t.deps);
+    expect(t.calls.slice(0, 2)).toEqual([`remove ${join(t.root, "ios", "build")}`, `remove ${join(t.root, "ios-xtool")}`]);
+    expect(t.calls.some((c) => c.startsWith("prebuild"))).toBe(false);
+    expect(t.logs).toContain("▸ clean");
+  });
+  it("records the project kind and the dev client in the state", async () => {
+    const t = setup({ project: { kind: "bare", hasDevClient: true } });
+    await build(t.root, {}, t.deps);
+    expect(await readState(join(t.root, "ios-xtool"))).toMatchObject({ kind: "bare", hasDevClient: true });
+    const e = setup();
+    await build(e.root, {}, e.deps);
+    expect(await readState(join(e.root, "ios-xtool"))).toMatchObject({ kind: "expo", hasDevClient: false });
   });
   it("picks another port when the configured one is busy", async () => {
     const t = setup({ isPortFree: async () => false });
@@ -210,7 +296,7 @@ describe("build corrupt state", () => {
     writeFileSync(join(dir, ".expo-xtool-state.json"), "{not json");
     await build(t.root, {}, t.deps);
     expect(t.logs.some((l) => l.startsWith("⚠ Ignoring unreadable build state (") && l.endsWith("a fresh one will be written."))).toBe(true);
-    expect(t.calls).toEqual(buildSteps({ hasIos: false, clean: false }));
+    expect(t.calls).toEqual(buildSteps({ ...expoFlags, hasIos: false, clean: false }));
     expect((await readState(dir))?.metroPort).toBe(8081);
   });
 });

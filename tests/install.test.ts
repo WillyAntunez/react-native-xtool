@@ -82,6 +82,40 @@ describe("install", () => {
     ).rejects.toThrow("No build found. Run `expo-xtool build` first.");
     expect(devRun).not.toHaveBeenCalled();
   });
+  it("install does not print the dev launcher URL without the dev client", async () => {
+    for (const st of [{ hasDevClient: false }, { kind: "expo" as const }, { kind: "bare" as const }]) {
+      const logs: string[] = [];
+      await install("/p", {
+        xtool: {
+          ...base,
+          authStatus: async () => ({ loggedIn: true, teamId: "TEAM", appleId: "a@b.c" }),
+          listDevices: async () => [{ name: "Phone", udid: "u", transport: "usb" }],
+          readState: async () => ({ bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20", ...st }),
+          devRun: async () => {},
+          writeState: async () => {},
+        },
+        log: (s) => logs.push(s),
+      });
+      expect(logs.join("\n")).toContain("Installed XTL-TEAM.com.a.b on Phone");
+      expect(logs.join("\n")).not.toContain("dev launcher");
+      expect(logs.join("\n")).toContain("First-run checklist");
+    }
+  });
+  it("install prints the dev launcher URL for a state written before bare support (no kind, no hasDevClient)", async () => {
+    const logs: string[] = [];
+    await install("/p", {
+      xtool: {
+        ...base,
+        authStatus: async () => ({ loggedIn: true, teamId: "TEAM", appleId: "a@b.c" }),
+        listDevices: async () => [{ name: "Phone", udid: "u", transport: "usb" }],
+        readState: async () => ({ bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20" }),
+        devRun: async () => {},
+        writeState: async () => {},
+      },
+      log: (s) => logs.push(s),
+    });
+    expect(logs).toContain("Metro URL for the dev launcher: http://192.168.1.20:8082");
+  });
   it("runs, then logs bundle id and checklist", async () => {
     const logs: string[] = [];
     const devRun = vi.fn(async () => {});
@@ -90,7 +124,7 @@ describe("install", () => {
         ...base,
         authStatus: async () => ({ loggedIn: true, teamId: "TEAM", appleId: "a@b.c" }),
         listDevices: async () => [{ name: "Phone", udid: "u", transport: "usb" }],
-        readState: async () => ({ bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20" }),
+        readState: async () => ({ bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20", hasDevClient: true }),
         devRun,
         writeState: async () => {},
       },
@@ -182,7 +216,7 @@ describe("install --network", () => {
   };
 
   it("builds a signed ipa, installs it over Wi‑Fi without USB and remembers the iPhone", async () => {
-    const { d, logs, calls } = deps({ state: { deviceIp: "192.168.1.9", deviceUdid: UD } });
+    const { d, logs, calls } = deps({ state: { deviceIp: "192.168.1.9", deviceUdid: UD, hasDevClient: true } });
     await install("/p", d, { network: true });
     expect(calls.listDevices).not.toHaveBeenCalled();
     expect(calls.devRun).not.toHaveBeenCalled();
@@ -205,6 +239,13 @@ describe("install --network", () => {
     expect(text).toContain("Installed XTL-TEAM.com.a.b 1.0.0 1 on iPhone 00008030-0000000012345678 over Wi‑Fi (192.168.1.10)");
     expect(text).toContain("Metro URL for the dev launcher: http://192.168.1.20:8082");
     expect(text).toContain("First-run checklist");
+  });
+
+  it("does not print the dev launcher URL over Wi‑Fi without the dev client", async () => {
+    const { d, logs } = deps({ state: { hasDevClient: false } });
+    await install("/p", d, { network: true });
+    expect(logs.join("\n")).toContain("over Wi‑Fi");
+    expect(logs.join("\n")).not.toContain("dev launcher");
   });
 
   it("records the installed build's fingerprint together with the iPhone's address", async () => {

@@ -1,7 +1,35 @@
+import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { doctorWithProbes, renderReport, wifiCheck, type DoctorProbes } from "../src/commands/doctor.js";
-import { MissingBundleIdentifierError } from "../src/project.js";
+import {
+  doctorWithProbes,
+  readProjectProbe,
+  renderReport,
+  wifiCheck,
+  type DoctorProbes,
+  type ProjectProbe,
+} from "../src/commands/doctor.js";
+import { MissingBundleIdentifierError } from "../src/project/index.js";
 import { XTOOL_SHA256, XTOOL_VERSION } from "../src/versions.js";
+
+const expoProbe: ProjectProbe = {
+  kind: "expo",
+  rnVersion: "0.88.0",
+  sdkVersion: 58,
+  bundleIdentifier: "com.example.app",
+  hasExpoModules: true,
+  warnings: [],
+};
+const bareProbe: ProjectProbe = {
+  kind: "bare",
+  rnVersion: "0.88.0",
+  bundleIdentifier: "org.reactjs.native.example.HelloWorld",
+  hasExpoModules: false,
+  target: { name: "HelloWorld", xcodeproj: "HelloWorld.xcodeproj" },
+  warnings: [],
+};
 
 const good: DoctorProbes = {
   nodeVersion: () => "20.11.0",
@@ -16,7 +44,7 @@ const good: DoctorProbes = {
   ufwActive: async () => false,
   lanRoute: async () => ({ ip: "192.168.1.5", dev: "wlp2s0" }),
   configLanIp: () => undefined,
-  expoProject: async () => undefined,
+  project: async () => expoProbe,
   buildState: async () => ({ metroPort: 8081, lanIp: "192.168.1.5", depsFingerprint: "fp" }),
   depsFingerprint: async () => "fp",
   portFree: async () => true,
@@ -133,10 +161,14 @@ describe("doctorWithProbes", () => {
 
   it("runs project checks when a root is given", async () => {
     const r = await doctorWithProbes(
-      { ...good, expoProject: async () => undefined, portFree: async () => false },
+      { ...good, portFree: async () => false },
       "/proj",
     );
-    expect(statusOf(r, "expo-sdk")).toBe("ok");
+    expect(statusOf(r, "project")).toBe("ok");
+    expect(r.checks.find((c) => c.name === "project-config")).toMatchObject({
+      status: "ok",
+      detail: "bundle identifier com.example.app",
+    });
     expect(statusOf(r, "build-state")).toBe("ok");
     expect(statusOf(r, "metro-port")).toBe("warn");
     expect(r.ok).toBe(true);
@@ -146,39 +178,58 @@ describe("doctorWithProbes", () => {
     const r = await doctorWithProbes(
       {
         ...good,
-        expoProject: async () => {
+        project: async () => {
           throw new MissingBundleIdentifierError("com.anonymous.demo", "app.json");
         },
       },
       "/p",
     );
-    expect(r.checks.find((c) => c.name === "expo-sdk")).toMatchObject({
+    expect(r.checks.find((c) => c.name === "project-config")).toMatchObject({
       status: "warn",
       detail: expect.stringContaining('build writes "com.anonymous.demo"'),
     });
+    expect(statusOf(r, "project")).toBe("info");
+    expect(r.ok).toBe(true);
   });
 
   it("tells dynamic-config users to add the bundle identifier themselves", async () => {
     const r = await doctorWithProbes(
       {
         ...good,
-        expoProject: async () => {
+        project: async () => {
           throw new MissingBundleIdentifierError("com.anonymous.demo", "app.config.js");
         },
       },
       "/p",
     );
-    expect(r.checks.find((c) => c.name === "expo-sdk")).toMatchObject({
+    expect(r.checks.find((c) => c.name === "project-config")).toMatchObject({
       status: "warn",
       detail: expect.stringContaining("add \"com.anonymous.demo\" (or your own) to it"),
     });
   });
 
-  it("fails expo-sdk with the thrown message and warns on missing build state", async () => {
+  it("tells bare users to set PRODUCT_BUNDLE_IDENTIFIER themselves", async () => {
     const r = await doctorWithProbes(
       {
         ...good,
-        expoProject: async () => {
+        project: async () => {
+          throw new MissingBundleIdentifierError("com.anonymous.helloworld", "project.pbxproj");
+        },
+      },
+      "/p",
+    );
+    expect(r.checks.find((c) => c.name === "project-config")).toMatchObject({
+      status: "warn",
+      detail:
+        'PRODUCT_BUNDLE_IDENTIFIER is missing for the app target in project.pbxproj; add "com.anonymous.helloworld" (or your own) to it',
+    });
+  });
+
+  it("fails project with the thrown message and warns on missing build state", async () => {
+    const r = await doctorWithProbes(
+      {
+        ...good,
+        project: async () => {
           throw new Error("Expo SDK 57 is not supported");
         },
         buildState: async () => undefined,
@@ -186,10 +237,11 @@ describe("doctorWithProbes", () => {
       "/proj",
     );
     expect(r.ok).toBe(false);
-    expect(r.checks.find((c) => c.name === "expo-sdk")).toMatchObject({
+    expect(r.checks.find((c) => c.name === "project")).toMatchObject({
       status: "fail",
       detail: "Expo SDK 57 is not supported",
     });
+    expect(r.checks.filter((c) => c.status === "fail").map((c) => c.name)).toEqual(["project"]);
     expect(statusOf(r, "build-state")).toBe("warn");
     expect(r.checks.some((c) => c.name === "metro-port")).toBe(false);
   });
@@ -236,8 +288,46 @@ describe("doctorWithProbes", () => {
     const r = await doctorWithProbes({ ...good, ufwActive: async () => true, buildState: async () => ({ metroPort: 8099, lanIp: "1.2.3.4" }) }, "/p");
     expect(r.checks.find((c) => c.name === "firewall")?.detail).toContain("ufw allow 8099/tcp");
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "swift", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip", "expo-sdk", "build-state", "deps", "metro-port",
+      "node", "swift", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip", "project", "project-config", "build-state", "deps", "metro-port",
     ]);
+  });
+
+  describe("project check", () => {
+    const detailOf = async (probe: ProjectProbe) =>
+      (await doctorWithProbes({ ...good, project: async () => probe }, "/p")).checks.find((c) => c.name === "project");
+    it("describes an expo project", async () => {
+      expect(await detailOf(expoProbe)).toMatchObject({ status: "ok", detail: "expo SDK 58, React Native 0.88.0" });
+    });
+    it("describes a bare project with its target and xcodeproj", async () => {
+      expect(await detailOf(bareProbe)).toMatchObject({
+        status: "ok",
+        detail: "bare React Native 0.88.0, target HelloWorld (HelloWorld.xcodeproj)",
+      });
+    });
+    it("describes a bare project with expo modules", async () => {
+      expect(await detailOf({ ...bareProbe, hasExpoModules: true })).toMatchObject({
+        status: "ok",
+        detail: "bare + expo modules, React Native 0.88.0, target HelloWorld (HelloWorld.xcodeproj)",
+      });
+    });
+    it("warns when expo modules are installed but the Podfile does not set them up", async () => {
+      const warning = "expo-modules-core is installed but ios/Podfile has no use_expo_modules!: run npx install-expo-modules.";
+      expect(await detailOf({ ...bareProbe, warnings: [warning] })).toMatchObject({
+        status: "warn",
+        detail: `bare React Native 0.88.0, target HelloWorld (HelloWorld.xcodeproj); ${warning}`,
+      });
+    });
+    it("fails with the detect error", async () => {
+      const r = await doctorWithProbes(
+        { ...good, project: async () => { throw new Error("ios/ holds more than one .xcodeproj (A.xcodeproj, B.xcodeproj)"); } },
+        "/p",
+      );
+      expect(r.checks.find((c) => c.name === "project")).toMatchObject({
+        status: "fail",
+        detail: "ios/ holds more than one .xcodeproj (A.xcodeproj, B.xcodeproj)",
+      });
+      expect(statusOf(r, "project-config")).toBe("info");
+    });
   });
 
   it("warns on build-state when reading it throws", async () => {
@@ -284,6 +374,14 @@ describe("deps check", () => {
     expect(find(r)?.status).toBe("warn");
     expect(find(r)?.detail).toContain("expo-xtool build && expo-xtool install");
   });
+  it("names native edits for a bare build", async () => {
+    const r = await doctorWithProbes(
+      { ...good, depsFingerprint: async () => "other", buildState: async () => ({ metroPort: 8081, lanIp: "1.2.3.4", depsFingerprint: "fp", kind: "bare" as const }) },
+      "/p",
+    );
+    expect(find(r)?.status).toBe("warn");
+    expect(find(r)?.detail).toMatch(/^native project or dependencies changed since last build — run expo-xtool build && expo-xtool install$/);
+  });
   it("warns when the state has no fingerprint", async () => {
     const r = await doctorWithProbes({ ...good, buildState: async () => ({ metroPort: 8081, lanIp: "1.2.3.4" }) }, "/p");
     expect(find(r)?.status).toBe("warn");
@@ -324,5 +422,48 @@ describe("wifi check", () => {
     const r = await doctorWithProbes({ ...good, wifi: async () => { throw new Error("boom"); } });
     expect(statusOf(r, "wifi")).toBe("warn");
     expect(r.ok).toBe(true);
+  });
+});
+
+describe("readProjectProbe", () => {
+  const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
+  it("warns that @react-native-community/cli is missing from a bare project", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "doctor-bare-"));
+    try {
+      await cp(path.join(fixtures, "bare"), dir, { recursive: true });
+      await mkdir(path.join(dir, "node_modules", "react-native"), { recursive: true });
+      await writeFile(path.join(dir, "node_modules", "react-native", "package.json"), JSON.stringify({ version: "0.88.0" }));
+      const probe = await readProjectProbe(dir);
+      expect(probe.warnings).toEqual([expect.stringMatching(/^@react-native-community\/cli is not installed.*npm install --save-dev/)]);
+      const project = (await doctorWithProbes({ ...good, project: async () => probe }, "/p")).checks.find((c) => c.name === "project");
+      expect(project?.status).toBe("warn");
+      expect(project?.detail).toContain("@react-native-community/cli is not installed");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+  it("reads a bare project read-only and reports the Podfile warning", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "doctor-bare-"));
+    try {
+      await cp(path.join(fixtures, "bare"), dir, { recursive: true });
+      for (const [name, version] of [
+        ["react-native", "0.88.0"], ["expo-modules-core", "1.0.0"], ["expo", "58.0.0"], ["@react-native-community/cli", "20.2.0"],
+      ]) {
+        await mkdir(path.join(dir, "node_modules", name!), { recursive: true });
+        await writeFile(path.join(dir, "node_modules", name!, "package.json"), JSON.stringify({ name, version }));
+      }
+      const probe = await readProjectProbe(dir);
+      expect(probe).toMatchObject({
+        kind: "bare",
+        rnVersion: "0.88.0",
+        bundleIdentifier: "org.reactjs.native.example.HelloWorld",
+        hasExpoModules: false,
+        target: { name: "HelloWorld", xcodeproj: "HelloWorld.xcodeproj" },
+      });
+      expect(probe.warnings).toHaveLength(1);
+      expect(probe.warnings[0]).toMatch(/^expo-modules-core is installed but ios\/Podfile has no use_expo_modules!/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

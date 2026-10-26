@@ -4,11 +4,15 @@ import {
   parseMissingPackageSwift,
   persistScaffoldArgv,
   rnSpmArgs,
+  rnSpmGenerateArgs,
+  rnSpmScaffoldArgs,
   runRnSpm,
   scaffoldArgv,
   type RnRunner,
 } from "../src/pipeline/rnSpm.js";
 import type { ProjectPaths } from "../src/paths.js";
+import { packageRoot } from "../src/tools/exec.js";
+import path from "node:path";
 
 const paths = { root: "/proj", ios: "/proj/ios", iosXtool: "/proj/ios-xtool" } as unknown as ProjectPaths;
 const SWIFT_HEADERS = "/proj/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos";
@@ -90,10 +94,87 @@ describe("argv helpers", () => {
   });
 });
 
+describe("rnSpmGenerateArgs", () => {
+  it("rnSpmGenerateArgs points at the driver with the artifacts flags", () => {
+    const a = rnSpmGenerateArgs(paths, {}, rnDir);
+    expect(a[0]).toBe(path.join(packageRoot(), "scripts", "rn-spm-generate.js"));
+    expect(a.slice(1)).toEqual(["--rn-dir", rnDir, "--app-root", "/proj"]);
+    expect(a).not.toContain("--artifacts");
+    expect(rnSpmGenerateArgs(paths, { rnArtifactsDir: "/art" }, rnDir).slice(1)).toEqual([
+      "--rn-dir",
+      rnDir,
+      "--app-root",
+      "/proj",
+      "--artifacts",
+      "/art",
+    ]);
+  });
+});
+
 describe("runRnSpm", () => {
+  it("runRnSpm uses the generate driver for bare and setup-apple-spm for expo", async () => {
+    const bare = harness([{ exitCode: 0, output: "" }]);
+    await runRnSpm(paths, { kind: "bare" }, bare.deps);
+    expect(bare.calls).toEqual([
+      {
+        cmd: "node",
+        args: rnSpmGenerateArgs(paths, {}, rnDir),
+        cwd: "/proj/ios",
+        env: { RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS },
+      },
+    ]);
+    const expo = harness([{ exitCode: 0, output: "" }]);
+    await runRnSpm(paths, { kind: "expo" }, expo.deps);
+    expect(expo.calls[0]!.args).toEqual(rnSpmArgs(paths, {}, rnDir));
+  });
+
+  it("refuses to run without the project kind (never `add --yes` by default)", async () => {
+    const h = harness([{ exitCode: 0, output: "" }]);
+    await expect(runRnSpm(paths, {} as never, h.deps)).rejects.toThrow(/project kind/);
+    expect(h.calls).toEqual([]);
+  });
+
+  it("scaffolds bare libraries through the driver, then retries the generate call", async () => {
+    const h = harness([
+      { exitCode: 2, output: missing("lib-a") },
+      { exitCode: 0, output: "" },
+      { exitCode: 0, output: "" },
+      { exitCode: 0, output: "" },
+    ]);
+    await runRnSpm(paths, { kind: "bare", rnArtifactsDir: "/art" }, h.deps);
+    const generate = rnSpmGenerateArgs(paths, { rnArtifactsDir: "/art" }, rnDir);
+    expect(h.calls.map((c) => c.args)).toEqual([
+      generate,
+      [...generate, "--scaffold"],
+      persistScaffoldArgv("lib-a")[1],
+      generate,
+    ]);
+    expect(rnSpmScaffoldArgs(paths, { rnArtifactsDir: "/art" }, rnDir)).toEqual([...generate, "--scaffold"]);
+    for (const c of [h.calls[0]!, h.calls[1]!, h.calls[3]!]) {
+      expect(c.cwd).toBe("/proj/ios");
+      expect(c.env).toEqual({ RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS });
+    }
+  });
+
+  it("keeps setup-apple-spm scaffold for the expo kind", async () => {
+    const h = harness([
+      { exitCode: 1, output: missing("lib-a") },
+      { exitCode: 0, output: "" },
+      { exitCode: 0, output: "" },
+      { exitCode: 0, output: "" },
+    ]);
+    await runRnSpm(paths, { kind: "expo" }, h.deps);
+    expect(h.calls.map((c) => c.args)).toEqual([
+      rnSpmArgs(paths, {}, rnDir),
+      scaffoldArgv(paths, {}, rnDir),
+      persistScaffoldArgv("lib-a")[1],
+      rnSpmArgs(paths, {}, rnDir),
+    ]);
+  });
+
   it("runs once on success", async () => {
     const h = harness([{ exitCode: 0, output: "" }]);
-    await runRnSpm(paths, {}, h.deps);
+    await runRnSpm(paths, { kind: "expo" }, h.deps);
     expect(h.calls).toHaveLength(1);
   });
 
@@ -105,7 +186,7 @@ describe("runRnSpm", () => {
       { exitCode: 0, output: "" },
       { exitCode: 0, output: "" },
     ]);
-    await runRnSpm(paths, {}, h.deps);
+    await runRnSpm(paths, { kind: "expo" }, h.deps);
     expect(h.calls).toHaveLength(5);
     expect(h.calls[1]!.args[1]).toBe("scaffold");
     expect(h.calls[1]!.cwd).toBe("/proj/ios");
@@ -123,7 +204,7 @@ describe("runRnSpm", () => {
       { exitCode: 0, output: "" },
       { exitCode: 0, output: "" },
     ]);
-    await runRnSpm(paths, {}, h.deps);
+    await runRnSpm(paths, { kind: "expo" }, h.deps);
     const rnRuns = h.calls.filter((c) => c.cmd === "node");
     expect(rnRuns.map((c) => c.args[1])).toEqual([expect.stringMatching(/add|update/), "scaffold", expect.stringMatching(/add|update/)]);
     for (const c of rnRuns) expect(c.env).toEqual({ RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS });
@@ -138,7 +219,7 @@ describe("runRnSpm", () => {
       { exitCode: 0, output: "" },
       { exitCode: 0, output: "" },
     ]);
-    await runRnSpm(paths, { rnArtifactsDir: "/art" }, h.deps);
+    await runRnSpm(paths, { kind: "expo", rnArtifactsDir: "/art" }, h.deps);
     expect(h.calls[1]!.args[1]).toBe("scaffold");
     expect(h.calls[1]!.args).toContain("--artifacts");
   });
@@ -150,7 +231,7 @@ describe("runRnSpm", () => {
       { exitCode: 0, output: "" },
       { exitCode: 1, output: "boom" },
     ]);
-    await expect(runRnSpm(paths, {}, h.deps)).rejects.toThrow(
+    await expect(runRnSpm(paths, { kind: "expo" }, h.deps)).rejects.toThrow(
       /lib-a[\s\S]*boom/,
     );
     expect(h.calls).toHaveLength(4);
@@ -163,7 +244,7 @@ describe("runRnSpm", () => {
       { exitCode: 1, output: "\n**ERROR** no lockfile\nmore" },
       { exitCode: 0, output: "" },
     ]);
-    await expect(runRnSpm(paths, {}, h.deps)).resolves.toBeUndefined();
+    await expect(runRnSpm(paths, { kind: "expo" }, h.deps)).resolves.toBeUndefined();
     expect(h.calls).toHaveLength(4);
     expect(h.logs).toContain(
       "⚠ Could not persist lib-a's Package.swift to patches/ (**ERROR** no lockfile). The build continues; it will be re-scaffolded on the next fresh install.",
@@ -182,7 +263,7 @@ describe("runRnSpm", () => {
       if (calls.length === 3) throw new Error("spawn ENOENT\nstack");
       return results.shift() ?? { exitCode: 0, output: "" };
     };
-    await runRnSpm(paths, {}, { runner, log: (s) => logs.push(s), rnDir });
+    await runRnSpm(paths, { kind: "expo" }, { runner, log: (s) => logs.push(s), rnDir });
     expect(calls).toHaveLength(4);
     expect(logs.some((l) => l.startsWith("⚠") && l.includes("spawn ENOENT"))).toBe(true);
   });
@@ -194,7 +275,7 @@ describe("runRnSpm", () => {
       { exitCode: 0, output: "✔ Created file patches/lib-a+1.2.3.patch\n" },
       { exitCode: 0, output: "" },
     ]);
-    await runRnSpm(paths, {}, h.deps);
+    await runRnSpm(paths, { kind: "expo" }, h.deps);
     expect(h.logs).toContain("✔ scaffold — persisted patches/lib-a+1.2.3.patch");
   });
 
@@ -205,13 +286,13 @@ describe("runRnSpm", () => {
       { exitCode: 0, output: "" },
       { exitCode: 0, output: "" },
     ]);
-    await runRnSpm(paths, {}, h.deps);
+    await runRnSpm(paths, { kind: "expo" }, h.deps);
     expect(h.logs).toContain("✔ scaffold — persisted patches/lib-a+unknown.patch");
   });
 
   it("throws RN's message without scaffolding when only no-podspec libs failed", async () => {
     const h = harness([{ exitCode: 1, output: noPodspec("np") }]);
-    await expect(runRnSpm(paths, {}, h.deps)).rejects.toThrow(/ships no podspec/);
+    await expect(runRnSpm(paths, { kind: "expo" }, h.deps)).rejects.toThrow(/ships no podspec/);
     expect(h.calls).toHaveLength(1);
   });
 
@@ -222,13 +303,13 @@ describe("runRnSpm", () => {
       { exitCode: 0, output: "" },
       { exitCode: 1, output: noPodspec("np") },
     ]);
-    await expect(runRnSpm(paths, {}, h.deps)).rejects.toThrow(/lib-a/);
+    await expect(runRnSpm(paths, { kind: "expo" }, h.deps)).rejects.toThrow(/lib-a/);
     expect(h.calls[2]!.args[1]).toBe("lib-a");
   });
 
   it("throws without scaffolding on unrelated failures", async () => {
     const h = harness([{ exitCode: 2, output: "something else" }]);
-    await expect(runRnSpm(paths, {}, h.deps)).rejects.toThrow(/something else/);
+    await expect(runRnSpm(paths, { kind: "expo" }, h.deps)).rejects.toThrow(/something else/);
     expect(h.calls).toHaveLength(1);
   });
 });

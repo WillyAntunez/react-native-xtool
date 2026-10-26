@@ -61,8 +61,8 @@ export function buildProgram(): Command {
     );
   program
     .command("build")
-    .description("Prebuild if needed, run the SwiftPM pipeline and build with xtool")
-    .option("--clean", "re-run expo prebuild --clean")
+    .description("Prebuild if needed (Expo), run the SwiftPM pipeline and build with xtool")
+    .option("--clean", "re-run expo prebuild --clean (Expo) or remove ios/build and ios-xtool (bare)")
     .action(
       action(async (o: { clean?: boolean }) => {
         await build(process.cwd(), { clean: o.clean });
@@ -71,7 +71,7 @@ export function buildProgram(): Command {
   program
     .command("start")
     .description("Start Metro on the port and LAN IP the app was built for")
-    .option("--clear", "start Metro with --clear (reset its cache)")
+    .option("--clear", "reset Metro's cache (expo start --clear, react-native start --reset-cache)")
     .action(
       action(async (o: { clear?: boolean }) => {
         await start(process.cwd(), { clear: o.clear });
@@ -80,7 +80,7 @@ export function buildProgram(): Command {
   program
     .command("run")
     .description("Build and install when needed, then start Metro")
-    .option("--clean", "re-run expo prebuild --clean (always rebuilds)")
+    .option("--clean", "clean like build --clean (always rebuilds)")
     .option("--force", "always rebuild and reinstall")
     .option("--network [ip]", "install over Wi‑Fi (see install --network)")
     .option("--udid <udid>", "which paired iPhone to use over Wi‑Fi")

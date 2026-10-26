@@ -10,6 +10,8 @@ export interface ProjectPaths {
   expoDir: string;
   generatedIos: string;
   iosXtool: string;
+  /** Per-run staging dir of bundled patches selected for the installed packages. */
+  patchesDir: string;
   sources: string;
   frameworks: string;
   jsiOut: string;
@@ -31,6 +33,7 @@ export function projectPaths(root: string): ProjectPaths {
     expoDir: join(autolinking, "expo"),
     generatedIos: join(iosBuild, "generated", "ios"),
     iosXtool,
+    patchesDir: join(iosXtool, ".patches"),
     sources: join(iosXtool, "Sources", "App"),
     frameworks: join(iosXtool, "Frameworks"),
     jsiOut: join(iosXtool, "jsi-out"),

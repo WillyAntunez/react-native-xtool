@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readlink, rm, writeFile } from "node:fs/promises";
 import { existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -12,6 +12,8 @@ import {
   genericPatchFailureMessage,
   outputNamesPackage,
   parsePatchFileName,
+  selectBundledPatches,
+  stageBundledPatches,
   patchFailureMessage,
   patchPackageOutputFailed,
 } from "../src/pipeline/patches.js";
@@ -80,15 +82,61 @@ describe("patches", () => {
     for (const f of files) expect(f).toMatch(/^[^+]+\+\d+\.\d+\.\d+\.patch$/);
   });
 
-  it("applyPatchesArgv uses a relative patch dir from the project root", () => {
+  it("applyPatchesArgv passes the staged dir relative to the project root", () => {
     const root = path.join(packageRoot(), "..", "proj");
-    const [cmd, args] = applyPatchesArgv(root);
+    const staged = projectPaths(root).patchesDir;
+    const [cmd, args] = applyPatchesArgv(root, staged);
     expect(cmd).toBe(process.execPath);
     expect(cmd).not.toBe("npx");
     expect(existsSync(args[0]!)).toBe(true);
     expect(args[1]).toBe("--patch-dir");
     expect(path.isAbsolute(args[2]!)).toBe(false);
-    expect(path.resolve(root, args[2]!)).toBe(path.join(packageRoot(), "patches"));
+    expect(path.resolve(root, args[2]!)).toBe(staged);
+  });
+});
+
+async function installPkg(root: string, pkg: string, version = "1.0.0") {
+  const dir = path.join(root, "node_modules", pkg);
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, "package.json"), JSON.stringify({ version }));
+}
+
+describe("bundled patch selection", () => {
+  const bundled = path.join(packageRoot(), "patches");
+
+  it("selects only patches whose package is installed", async () => {
+    const { root } = await tempProject();
+    await installPkg(root, "react-native");
+    expect(selectBundledPatches(root, bundled)).toEqual(["react-native+0.88.0.patch"]);
+  });
+
+  it("stages the selection as symlinks", async () => {
+    const { root, patchesDir } = await tempProject();
+    await installPkg(root, "react-native");
+    await mkdir(patchesDir, { recursive: true });
+    await writeFile(path.join(patchesDir, "stale.patch"), "");
+    expect(await stageBundledPatches(root, patchesDir)).toEqual(["react-native+0.88.0.patch"]);
+    expect(readdirSync(patchesDir)).toEqual(["react-native+0.88.0.patch"]);
+    const link = path.join(patchesDir, "react-native+0.88.0.patch");
+    expect((await lstat(link)).isSymbolicLink()).toBe(true);
+    expect(await readlink(link)).toBe(path.join(bundled, "react-native+0.88.0.patch"));
+  });
+
+  it("applyPatches skips bundled patches when none apply", async () => {
+    const { root, patchesDir } = await tempProject();
+    const calls: string[][] = [];
+    await applyPatches(root, async (_c, args) => (calls.push(args), { exitCode: 0 }));
+    expect(calls).toHaveLength(0);
+    expect(existsSync(patchesDir) ? readdirSync(patchesDir) : []).toEqual([]);
+  });
+
+  it("applyPatches runs patch-package on the staged dir", async () => {
+    const { root, patchesDir } = await tempProject();
+    await installPkg(root, "react-native", "0.88.0");
+    const calls: string[][] = [];
+    await applyPatches(root, async (_c, args) => (calls.push(args), { exitCode: 0 }));
+    expect(calls).toHaveLength(1);
+    expect(path.resolve(root, calls[0]![2]!)).toBe(patchesDir);
   });
 });
 
@@ -198,9 +246,14 @@ describe("genericPatchFailureMessage", () => {
 
 describe("applyPatches with project patches", () => {
   const ok = async () => ({ exitCode: 0 });
+  async function bundledProject() {
+    const paths = await tempProject();
+    await installPkg(paths.root, "react-native", "0.88.0");
+    return paths;
+  }
 
   it("applies only the bundled patches when the project has no patches dir", async () => {
-    const { root } = await tempProject();
+    const { root } = await bundledProject();
     const calls: string[][] = [];
     await applyPatches(root, async (_c, args) => (calls.push(args), { exitCode: 0 }));
     expect(calls).toHaveLength(1);
@@ -208,7 +261,7 @@ describe("applyPatches with project patches", () => {
   });
 
   it("ignores an empty project patches dir", async () => {
-    const { root } = await tempProject();
+    const { root } = await bundledProject();
     await mkdir(path.join(root, "patches"));
     const calls: string[][] = [];
     await applyPatches(root, async (_c, args) => (calls.push(args), { exitCode: 0 }));
@@ -216,20 +269,20 @@ describe("applyPatches with project patches", () => {
   });
 
   it("applies the project's patches second, from the project root", async () => {
-    const { root } = await tempProject();
+    const { root } = await bundledProject();
     await mkdir(path.join(root, "patches"));
     await writeFile(path.join(root, "patches", "lib+1.0.0.patch"), "");
     const calls: { args: string[]; cwd: string }[] = [];
     await applyPatches(root, async (_c, args, cwd) => (calls.push({ args, cwd }), { exitCode: 0 }));
     expect(calls).toHaveLength(2);
-    expect(calls[0]!.args.slice(1)).toEqual(applyPatchesArgv(root)[1].slice(1));
+    expect(calls[0]!.args.slice(1)).toEqual(applyPatchesArgv(root, projectPaths(root).patchesDir)[1].slice(1));
     expect(calls[1]!.args.slice(1)).toEqual(["--patch-dir", "patches", "--error-on-fail"]);
     expect(calls[1]!.args).toEqual(projectPatchesArgv()[1]);
     expect(calls[1]!.cwd).toBe(root);
   });
 
   it("throws when the project's patches fail to apply", async () => {
-    const { root } = await tempProject();
+    const { root } = await bundledProject();
     await mkdir(path.join(root, "patches"));
     await writeFile(path.join(root, "patches", "lib+1.0.0.patch"), "");
     let n = 0;
@@ -241,7 +294,7 @@ describe("applyPatches with project patches", () => {
 
 describe("patch-package failure detection", () => {
   it("passes --error-on-fail in both apply argv builders", () => {
-    expect(applyPatchesArgv("/proj")[1]).toContain("--error-on-fail");
+    expect(applyPatchesArgv("/proj", "/proj/ios-xtool/.patches")[1]).toContain("--error-on-fail");
     expect(projectPatchesArgv()[1]).toContain("--error-on-fail");
   });
 
@@ -255,6 +308,7 @@ describe("patch-package failure detection", () => {
   it("applyPatches throws on exit 0 with failure output", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "xtool-pf-"));
     tempDirs.push(root);
+    await installPkg(root, "react-native", "0.88.0");
     const exec = async () => ({ exitCode: 0, all: "**ERROR** Failed to apply patch for foo" });
     await expect(applyPatches(root, exec)).rejects.toThrow(/patch-package failed/);
   });
@@ -264,6 +318,7 @@ describe("patch-package failure detection", () => {
     tempDirs.push(root);
     await mkdir(path.join(root, "patches"));
     await writeFile(path.join(root, "patches", "a+b+1.0.0.patch"), "x");
+    await installPkg(root, "react-native", "0.88.0");
     let n = 0;
     const exec = async () => ({
       exitCode: 0,

@@ -1,7 +1,7 @@
 {
   "name": "expo-xtool",
   "version": "0.1.0-alpha.1",
-  "description": "Build Expo iOS dev builds on Linux via xtool",
+  "description": "Build Expo and bare React Native iOS dev builds on Linux via xtool",
   "keywords": [
     "expo",
     "ios",
@@ -54,7 +54,8 @@
     "execa": "^10.2.1",
     "patch-package": "^8.0.1",
     "plist": "^5.0.0",
-    "signal-exit": "^4.1.0"
+    "signal-exit": "^4.1.0",
+    "xcode": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
