@@ -1,5 +1,10 @@
+import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { run as runCommand } from "../src/commands/run.js";
+import { depsFingerprint } from "../src/deps.js";
 import {
   ipMismatchMessage,
   metroCommand,
@@ -271,6 +276,21 @@ describe("run", () => {
     const start2 = vi.fn(async () => {});
     await runCommand("/p", {}, { ...skipped.overrides, start: start2 });
     expect(start2).toHaveBeenLastCalledWith("/p", {});
+  });
+
+  it("rebuilds a bare project after an edit to its native code", async () => {
+    const root = mkdtempSync(join(tmpdir(), "run-bare-"));
+    cpSync(fileURLToPath(new URL("./fixtures/bare", import.meta.url)), root, { recursive: true });
+    const fp = await depsFingerprint(root);
+    const built = { ...state, depsFingerprint: fp, installedFingerprint: fp };
+    const before = fresh({ readState: async () => built, depsFingerprint });
+    await runCommand(root, {}, before.overrides);
+    expect(before.calls).toEqual(["start"]);
+    mkdirSync(join(root, "ios", "HelloWorld"), { recursive: true });
+    writeFileSync(join(root, "ios", "HelloWorld", "AppDelegate.swift"), "// edited\n");
+    const after = fresh({ readState: async () => built, depsFingerprint });
+    await runCommand(root, {}, after.overrides);
+    expect(after.calls).toEqual(["build:undefined", "install", "start"]);
   });
 
   it("skips build and install when up to date", async () => {
