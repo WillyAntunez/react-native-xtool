@@ -311,7 +311,12 @@ export function readTargetContent(p: Pbxproj, iosDir: string): BareTargetContent
 
   const unsupported: string[] = [];
   for (const uuid of phaseFiles(objs, target, "PBXSourcesBuildPhase", variants)) {
-    if (!objs.PBXFileReference[uuid]) continue;
+    if (!objs.PBXFileReference[uuid]) {
+      // A compiled entry that is not a file, e.g. a Core Data model (`.xcdatamodeld`, an XCVersionGroup).
+      const other = objs.XCVersionGroup?.[uuid];
+      if (other) unsupported.push(unquote(String(other.path ?? other.name ?? uuid)));
+      continue;
+    }
     const file = fileOf(uuid);
     if (SWIFT.test(file.relPath)) swiftSources.push(file);
     else if (C_SOURCE.test(file.relPath)) cSources.push(file);

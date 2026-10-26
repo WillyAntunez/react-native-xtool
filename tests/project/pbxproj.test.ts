@@ -215,6 +215,32 @@ describe("readTargetContent", () => {
     expect(content).toThrow(/unsupported source type.*HelloWorld\/Shader\.metal/);
   });
 
+  it("rejects a Core Data model (an XCVersionGroup) in the Sources phase", async () => {
+    const src = (await withObjc())
+      .replace(
+        "/* End PBXFileReference section */",
+        '\t\tC4000000000000000000000B = {isa = PBXFileReference; path = Model.xcdatamodel; sourceTree = "<group>"; };\n/* End PBXFileReference section */',
+      )
+      .replace(
+        "/* End PBXBuildFile section */",
+        "\t\tC4000000000000000000000C = {isa = PBXBuildFile; fileRef = C4000000000000000000000A; };\n/* End PBXBuildFile section */",
+      )
+      .replace(
+        /(isa = PBXSourcesBuildPhase;\n\t\t\tbuildActionMask = 2147483647;\n\t\t\tfiles = \(\n)/,
+        "$1\t\t\t\tC4000000000000000000000C,\n",
+      )
+      .replace(
+        "/* End XCConfigurationList section */",
+        "/* End XCConfigurationList section */\n\n/* Begin XCVersionGroup section */\n" +
+          "\t\tC4000000000000000000000A = {\n\t\t\tisa = XCVersionGroup;\n\t\t\tchildren = (\n\t\t\t\tC4000000000000000000000B,\n\t\t\t);\n" +
+          "\t\t\tcurrentVersion = C4000000000000000000000B;\n\t\t\tpath = Model.xcdatamodeld;\n\t\t\tsourceTree = \"<group>\";\n" +
+          "\t\t\tversionGroupType = wrapper.xcdatamodel;\n\t\t};\n/* End XCVersionGroup section */",
+      );
+    expect(src).toContain("C4000000000000000000000C,\n");
+    const { content } = await read(src);
+    expect(content).toThrow(/unsupported source type in the app target: Model\.xcdatamodeld/);
+  });
+
   it("rejects a phase file missing from the group tree", async () => {
     const src = addFile(await withObjc(), { path: "Lost.swift", phase: "Sources" });
     const { content } = await read(src);
