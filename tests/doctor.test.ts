@@ -158,6 +158,22 @@ describe("doctorWithProbes", () => {
     });
   });
 
+  it("tells dynamic-config users to add the bundle identifier themselves", async () => {
+    const r = await doctorWithProbes(
+      {
+        ...good,
+        expoProject: async () => {
+          throw new MissingBundleIdentifierError("com.anonymous.demo", "app.config.js");
+        },
+      },
+      "/p",
+    );
+    expect(r.checks.find((c) => c.name === "expo-sdk")).toMatchObject({
+      status: "warn",
+      detail: expect.stringContaining("add \"com.anonymous.demo\" (or your own) to it"),
+    });
+  });
+
   it("fails expo-sdk with the thrown message and warns on missing build state", async () => {
     const r = await doctorWithProbes(
       {

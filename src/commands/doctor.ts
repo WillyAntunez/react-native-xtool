@@ -292,7 +292,9 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
         if (!(err instanceof MissingBundleIdentifierError)) throw err;
         return {
           status: "warn",
-          detail: `ios.bundleIdentifier is missing in ${err.configFile}; expo-xtool build writes "${err.suggestion}" there`,
+          detail: err.configFile.endsWith(".json")
+            ? `ios.bundleIdentifier is missing in ${err.configFile}; expo-xtool build writes "${err.suggestion}" there`
+            : `ios.bundleIdentifier is missing in ${err.configFile}; add "${err.suggestion}" (or your own) to it`,
         };
       }
       return { status: "ok", detail: "supported Expo project" };
