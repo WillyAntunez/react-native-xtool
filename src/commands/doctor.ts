@@ -50,7 +50,7 @@ export interface DoctorProbes {
   configLanIp: () => string | undefined;
   /** Reads the project without writing anything; rejects with the detect/read error. */
   project: (root: string) => Promise<ProjectProbe>;
-  buildState: (root: string) => Promise<{ metroPort: number; lanIp: string; depsFingerprint?: string } | undefined>;
+  buildState: (root: string) => Promise<{ metroPort: number; lanIp: string; depsFingerprint?: string; kind?: ProjectKind } | undefined>;
   depsFingerprint: (root: string) => Promise<string>;
   portFree: (port: number) => Promise<boolean>;
   /** Wi‑Fi install readiness; read-only (never caches or changes anything). */
@@ -368,12 +368,13 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
         : { status: "warn", detail: "no build yet — run expo-xtool build" };
     });
     if ("state" in stateResult && stateResult.state) {
-      const { metroPort, depsFingerprint } = stateResult.state;
+      const { metroPort, depsFingerprint, kind } = stateResult.state;
+      const changed = kind === "bare" ? "native project or dependencies changed" : "dependencies changed";
       await add("deps", async () => {
         if (depsFingerprint === undefined) return { status: "warn", detail: NO_FINGERPRINT_WARNING };
         return depsFingerprint === (await p.depsFingerprint(root))
           ? { status: "ok", detail: "unchanged since last build" }
-          : { status: "warn", detail: "dependencies changed since last build — run expo-xtool build && expo-xtool install" };
+          : { status: "warn", detail: `${changed} since last build — run expo-xtool build && expo-xtool install` };
       });
       await add("metro-port", async () =>
         (await p.portFree(metroPort))

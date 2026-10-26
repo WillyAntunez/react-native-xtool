@@ -374,6 +374,14 @@ describe("deps check", () => {
     expect(find(r)?.status).toBe("warn");
     expect(find(r)?.detail).toContain("expo-xtool build && expo-xtool install");
   });
+  it("names native edits for a bare build", async () => {
+    const r = await doctorWithProbes(
+      { ...good, depsFingerprint: async () => "other", buildState: async () => ({ metroPort: 8081, lanIp: "1.2.3.4", depsFingerprint: "fp", kind: "bare" as const }) },
+      "/p",
+    );
+    expect(find(r)?.status).toBe("warn");
+    expect(find(r)?.detail).toMatch(/^native project or dependencies changed since last build — run expo-xtool build && expo-xtool install$/);
+  });
   it("warns when the state has no fingerprint", async () => {
     const r = await doctorWithProbes({ ...good, buildState: async () => ({ metroPort: 8081, lanIp: "1.2.3.4" }) }, "/p");
     expect(find(r)?.status).toBe("warn");

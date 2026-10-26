@@ -177,6 +177,12 @@ describe("start and dependency changes", () => {
     expect(exec).toHaveBeenCalledWith("npx", ["expo", "start", "--lan", "--port", "8081", "--clear"], { cwd: "/p" });
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Dependencies changed since the last build"));
   });
+  it("names native edits when a bare project's fingerprint differs", async () => {
+    const { deps, log } = makeDeps({ depsFingerprint: async () => "other", readState: async () => ({ ...state, kind: "bare" as const }) });
+    await start("/p", {}, deps);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("Native project or dependencies changed since the last build"));
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("Dependencies changed"));
+  });
   it("warns and clears when the state has no fingerprint", async () => {
     const { depsFingerprint: _omit, ...old } = state;
     const { deps, exec, log } = makeDeps({ readState: async () => old });
@@ -297,7 +303,7 @@ describe("run", () => {
     const { calls, log, overrides } = fresh();
     await runCommand("/p", {}, overrides);
     expect(calls).toEqual(["start"]);
-    expect(log).toHaveBeenCalledWith("Native app is up to date (no dependency changes); skipping build and install.");
+    expect(log).toHaveBeenCalledWith("Native app is up to date (nothing changed since the last build); skipping build and install.");
   });
 
   it.each([

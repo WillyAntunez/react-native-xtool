@@ -64,8 +64,12 @@ const realDeps: StartDeps = {
 export const NO_FINGERPRINT_WARNING =
   "No dependency fingerprint recorded; run expo-xtool build to enable change detection.";
 
-export const DEPS_CHANGED_WARNING =
-  "Dependencies changed since the last build; the installed app may miss native modules. Run `expo-xtool build && expo-xtool install` (or `expo-xtool run`).";
+/** Bare fingerprints also cover the native project in ios/ (see `depsFingerprint`), so say so. */
+export function changedSinceBuildWarning(kind: ProjectKind): string {
+  return kind === "bare"
+    ? "Native project or dependencies changed since the last build; the installed app may be out of date. Run `expo-xtool build && expo-xtool install` (or `expo-xtool run`)."
+    : "Dependencies changed since the last build; the installed app may miss native modules. Run `expo-xtool build && expo-xtool install` (or `expo-xtool run`).";
+}
 
 export async function start(
   root: string,
@@ -96,7 +100,7 @@ export async function start(
   const missing = state.depsFingerprint === undefined;
   const depsChanged = !missing && state.depsFingerprint !== (await d.depsFingerprint(root));
   if (missing) d.log(`⚠ ${NO_FINGERPRINT_WARNING}`);
-  else if (depsChanged) d.log(`⚠ ${DEPS_CHANGED_WARNING}`);
+  else if (depsChanged) d.log(`⚠ ${changedSinceBuildWarning(state.kind ?? "expo")}`);
   const clear = opts.clear === true || missing || depsChanged;
   const [cmd, args] = metroCommand(state.kind ?? "expo", state.metroPort, clear);
   await d.run(cmd, args, { cwd: root });
