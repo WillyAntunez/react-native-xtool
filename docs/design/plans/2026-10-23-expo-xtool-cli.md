@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 20+, TypeScript (strict), `commander`, `vitest`, `plist` (npm), `@expo/config`, `patch-package`, `execa`. Bash scripts already in `scripts/`.
 
-**Spec:** `docs/superpowers/specs/2026-10-23-expo-xtool-design.md`
+**Spec:** `docs/design/specs/2026-10-23-expo-xtool-design.md`
 
 ## Global Constraints
 

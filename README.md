@@ -159,7 +159,7 @@ must be CommonJS (`module.exports = {...}`) unless your project is ESM. Both are
 6. `xtool` builds, signs and installs it; Metro serves JS to the phone over Wi-Fi.
 
 Details and file locations: [docs/recipe.md](docs/recipe.md). Design:
-[docs/superpowers/specs/2026-10-23-expo-xtool-design.md](docs/superpowers/specs/2026-10-23-expo-xtool-design.md).
+[docs/design/specs/2026-10-23-expo-xtool-design.md](docs/design/specs/2026-10-23-expo-xtool-design.md).
 
 ## Bare React Native projects
 
