@@ -28,6 +28,11 @@ far with their fixes. Wi‑Fi install problems have their own list in [wifi-inst
 - **Firewall:** ufw blocks Metro by default: `sudo ufw allow <port>/tcp`.
 - **LAN IP changed (new network, DHCP):** `start` detects it and tells you; rebuild and reinstall, or pin `lanIp`.
 
+- **After adding a native library: `TurboModuleRegistry.getEnforcing(...) could not be found`** (the app was not
+  rebuilt) **or `Metro has encountered an error while trying to resolve module`** (stale Metro cache): use
+  `rn-xtool run`, which rebuilds, reinstalls and starts Metro with `--clear` whenever dependencies changed; `run --force`
+  and `start --clear` force it.
+
 ## Metro port
 
 - **Metro already running on 8081:** `build` keeps the port when a Metro already serves `packager-status:running` there

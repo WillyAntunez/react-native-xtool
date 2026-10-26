@@ -3,7 +3,8 @@
 rn-xtool does not reimplement Xcode. It patches the official React Native 0.88 and Expo SDK 58 SwiftPM pipeline so it
 runs on Linux, generates a SwiftPM package for your app in `ios-xtool/`, and hands it to
 [xtool](https://github.com/xtool-org/xtool), which builds, signs and installs it with the Darwin SDK extracted from your
-own `Xcode.xip`. This page is the overview; [recipe.md](recipe.md) has every step with file locations.
+own `Xcode.xip`. This page is the overview (toolchain, patches, build steps, rebuild detection, scaffolded libraries);
+[recipe.md](recipe.md) has every step with file locations.
 
 [Back to README](../README.md)
 
@@ -45,6 +46,28 @@ own `Xcode.xip`. This page is the overview; [recipe.md](recipe.md) has every ste
 
 Bare React Native projects follow the same steps with a few differences (no `expo prebuild`, no injection into your
 Xcode project, ExpoModulesJSI only with Expo modules): see [bare-react-native.md](bare-react-native.md).
+
+## Rebuild detection
+
+`rn-xtool run` fingerprints your installed dependencies (every `dependencies`/`devDependencies` entry at its installed
+version, plus `patches/*.patch`) and compares that with the fingerprints stored by the last successful `build` and
+`install`:
+
+- **Unchanged** (built and installed for the current dependencies, and the baked Metro port and LAN IP still work): it
+  prints `Native app is up to date`, skips build and install and starts Metro without clearing its cache.
+- **Changed** (for example after `npx expo install <native lib>`), or never installed, or the port or LAN IP no longer
+  match: it rebuilds, reinstalls and starts Metro with `--clear` (every rebuild clears the cache), so a new native
+  module and new Babel plugins are picked up. Without this you get `TurboModuleRegistry.getEnforcing(...) could not be
+  found` (app not rebuilt) or `Metro has encountered an error while trying to resolve module` (stale cache).
+
+There is no native/JS distinction: any dependency change rebuilds. JS-only changes also need a Metro cache reset, and
+telling native dependencies apart reliably needs the autolinking pass. The cable is needed only when `run` reinstalls,
+or never with [Wi‑Fi installs](wifi-install.md) (`install --network`).
+
+- `rn-xtool start` warns and adds `--clear` itself when dependencies changed since the last build;
+  `rn-xtool start --clear` forces a cache reset.
+- `rn-xtool run --force` always rebuilds and reinstalls (`--clean` does too).
+- `rn-xtool doctor` reports a `deps` warning when the app is out of date.
 
 ## Mixed-language manifests
 
