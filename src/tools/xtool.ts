@@ -74,20 +74,46 @@ export async function authStatus(bin: string, timeoutMs?: number): Promise<AuthS
   return parseAuthStatus(output);
 }
 
+export interface ListDevicesOptions {
+  /**
+   * Keep asking until at least one device answers or `timeoutMs` passes (USB enumeration takes a
+   * moment after plugging in or unlocking). Off by default: `doctor` wants one quick look.
+   */
+  waitForDevice?: boolean;
+  /** Pause between polls when waiting. */
+  pollMs?: number;
+  /** Clock, injectable for tests. */
+  now?: () => number;
+}
+
 /**
- * `xtool devices --no-wait` returns at once with no device. The timeout is a safety net, and it kills
- * the whole process group: the AppImage runtime runs xtool in a child, and killing only the launcher
- * leaves that child holding stdout, so the call would never return.
+ * Lists devices with `xtool devices --no-wait`, which returns at once with none connected. The
+ * timeout is a safety net, and it kills the whole process group: the AppImage runtime runs xtool in
+ * a child, and killing only the launcher leaves that child holding stdout, so the call would never
+ * return. The group is also killed when this process exits, since a detached child outlives it.
  */
-export async function listDevices(bin: string, timeoutMs = 30000): Promise<Device[]> {
+export async function listDevices(bin: string, timeoutMs = 30000, opts: ListDevicesOptions = {}): Promise<Device[]> {
+  const now = opts.now ?? Date.now;
+  const deadline = now() + timeoutMs;
+  for (;;) {
+    const remaining = Math.max(deadline - now(), 1);
+    const devices = await listDevicesOnce(bin, remaining);
+    if (devices.length > 0 || !opts.waitForDevice || now() + (opts.pollMs ?? 2000) >= deadline) return devices;
+    await new Promise((r) => setTimeout(r, opts.pollMs ?? 2000));
+  }
+}
+
+async function listDevicesOnce(bin: string, timeoutMs: number): Promise<Device[]> {
   const subprocess = execa(bin, ["devices", "--no-wait"], {
     env: toolEnv(),
     extendEnv: false,
     detached: true,
     timeout: timeoutMs,
   });
+  let killed = false;
   const killGroup = (): void => {
     if (subprocess.pid === undefined) return;
+    killed = true;
     try {
       process.kill(-subprocess.pid, "SIGKILL");
     } catch {
@@ -95,17 +121,19 @@ export async function listDevices(bin: string, timeoutMs = 30000): Promise<Devic
     }
   };
   const timer = setTimeout(killGroup, timeoutMs);
+  process.once("exit", killGroup);
   try {
     const r = await subprocess;
     return parseDevices(r.stdout);
   } catch (err) {
-    if ((err as { timedOut?: boolean; isTerminated?: boolean }).timedOut || (err as { isTerminated?: boolean }).isTerminated) {
+    if ((err as { timedOut?: boolean }).timedOut || killed) {
       killGroup();
       return [];
     }
     throw err;
   } finally {
     clearTimeout(timer);
+    process.removeListener("exit", killGroup);
   }
 }
 

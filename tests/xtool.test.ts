@@ -76,6 +76,27 @@ describe("listDevices", () => {
     await expect(listDevices(fake, 200)).resolves.toEqual([]);
     expect(Date.now() - t0).toBeLessThan(1500);
   });
+  it("polls until a device appears when asked to wait", async () => {
+    const dir = tmp();
+    const fake = join(dir, "fake-xtool");
+    // Empty on the first two calls, one device on the third.
+    writeFileSync(
+      fake,
+      `#!/bin/sh\nn=$(cat "${dir}/n" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "${dir}/n"\n[ $n -ge 3 ] && echo "Phone [usb]: 00001111-AAAA"\nexit 0\n`,
+    );
+    chmodSync(fake, 0o755);
+    const devices = await listDevices(fake, 5000, { waitForDevice: true, pollMs: 20 });
+    expect(devices).toEqual([{ name: "Phone", transport: "usb", udid: "00001111-AAAA" }]);
+    expect(readFileSync(join(dir, "n"), "utf8").trim()).toBe("3");
+  });
+  it("gives up waiting at the deadline", async () => {
+    const fake = join(tmp(), "fake-xtool");
+    writeFileSync(fake, "#!/bin/sh\nexit 0\n");
+    chmodSync(fake, 0o755);
+    const t0 = Date.now();
+    await expect(listDevices(fake, 300, { waitForDevice: true, pollMs: 50 })).resolves.toEqual([]);
+    expect(Date.now() - t0).toBeLessThan(1500);
+  });
   it("asks xtool not to wait for a device", async () => {
     const fake = join(tmp(), "fake-xtool");
     writeFileSync(fake, '#!/bin/sh\necho "$@" > "$(dirname "$0")/args"\n');
