@@ -89,6 +89,17 @@ describe("listDevices", () => {
     expect(devices).toEqual([{ name: "Phone", transport: "usb", udid: "00001111-AAAA" }]);
     expect(readFileSync(join(dir, "n"), "utf8").trim()).toBe("3");
   });
+  it("keeps waiting for the requested transport while another device answers", async () => {
+    const dir = tmp();
+    const fake = join(dir, "fake-xtool");
+    writeFileSync(
+      fake,
+      `#!/bin/sh\nn=$(cat "${dir}/n" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "${dir}/n"\necho "Phone [network]: 00001111-AAAA"\n[ $n -ge 2 ] && echo "Phone [usb]: 00001111-AAAA"\nexit 0\n`,
+    );
+    chmodSync(fake, 0o755);
+    const devices = await listDevices(fake, 5000, { waitForDevice: "usb", pollMs: 20 });
+    expect(devices.map((d) => d.transport)).toEqual(["network", "usb"]);
+  });
   it("gives up waiting at the deadline", async () => {
     const fake = join(tmp(), "fake-xtool");
     writeFileSync(fake, "#!/bin/sh\nexit 0\n");

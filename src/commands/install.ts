@@ -137,7 +137,7 @@ export async function install(root: string, deps: InstallDeps = {}, opts: Instal
   const x = deps.xtool ?? {};
   const log = deps.log ?? ((s: string) => console.log(s));
   const { bin, auth } = await authenticated(x, root);
-  const devices = (await (x.listDevices ?? ((b) => listDevices(b, 30000, { waitForDevice: true })))(bin)).filter(
+  const devices = (await (x.listDevices ?? ((b) => listDevices(b, 30000, { waitForDevice: "usb" })))(bin)).filter(
     (d) => d.transport === "usb",
   );
   if (devices.length === 0) {
