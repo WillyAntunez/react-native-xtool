@@ -1010,9 +1010,9 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
         return root;
       };
 
-      it("emits the expo-xtool-scaffold-revision marker next to AUTO-SCAFFOLDED-VERSION", () => {
+      it("emits the rn-xtool-scaffold-revision marker next to AUTO-SCAFFOLDED-VERSION", () => {
         const pkg = readFileSync(path.join(fresh(), "Package.swift"), "utf8");
-        expect(pkg).toMatch(/^\/\/ AUTO-SCAFFOLDED-VERSION: \d+\n\/\/ expo-xtool-scaffold-revision: 1$/m);
+        expect(pkg).toMatch(/^\/\/ AUTO-SCAFFOLDED-VERSION: \d+\n\/\/ rn-xtool-scaffold-revision: 1$/m);
       });
 
       it("keeps a scaffold that carries the current marker", () => {
@@ -1022,10 +1022,10 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       it("regenerates a scaffold from an older revision (marker missing)", () => {
         const root = fresh();
         const file = path.join(root, "Package.swift");
-        writeFileSync(file, readFileSync(file, "utf8").replace(/^\/\/ expo-xtool-scaffold-revision: \d+\n/m, "").replace("exact:", "from:"));
+        writeFileSync(file, readFileSync(file, "utf8").replace(/^\/\/ rn-xtool-scaffold-revision: \d+\n/m, "").replace("exact:", "from:"));
         expect(scaffoldAgain(root)).toBe("written");
         const pkg = readFileSync(file, "utf8");
-        expect(pkg).toContain("expo-xtool-scaffold-revision: 1");
+        expect(pkg).toContain("rn-xtool-scaffold-revision: 1");
         expect(pkg).toContain('exact: "1.5.0"');
       });
 

@@ -844,11 +844,11 @@ index cf7e587..7456e17 100644
  const SCAFFOLDER_VERSION = 20;
  const SCAFFOLDER_VERSION_LINE_RE = /^\/\/ AUTO-SCAFFOLDED-VERSION: (\d+)$/m;
  
-+// expo-xtool's own revision of this patched scaffolder, independent of
++// rn-xtool's own revision of this patched scaffolder, independent of
 +// upstream's SCAFFOLDER_VERSION. A scaffold without the marker (emitted by an
 +// older revision) or with a lower number is regenerated.
-+const EXPO_XTOOL_SCAFFOLD_REVISION = 1;
-+const EXPO_XTOOL_SCAFFOLD_REVISION_RE = /^\/\/ expo-xtool-scaffold-revision: (\d+)$/m;
++const RN_XTOOL_SCAFFOLD_REVISION = 1;
++const RN_XTOOL_SCAFFOLD_REVISION_RE = /^\/\/ rn-xtool-scaffold-revision: (\d+)$/m;
 +
 +// CocoaPods pods (not React Native / Expo modules, not autolinked siblings) whose
 +// SwiftPM package is known: a podspec `s.dependency "<pod>"` becomes
@@ -1554,7 +1554,7 @@ index cf7e587..7456e17 100644
  ${SCAFFOLDER_MARKER}
 -// AUTO-SCAFFOLDED-VERSION: ${SCAFFOLDER_VERSION}${slotComment}
 +// AUTO-SCAFFOLDED-VERSION: ${SCAFFOLDER_VERSION}
-+// expo-xtool-scaffold-revision: ${EXPO_XTOOL_SCAFFOLD_REVISION}${slotComment}
++// rn-xtool-scaffold-revision: ${RN_XTOOL_SCAFFOLD_REVISION}${slotComment}
  // Edit the contents below if needed and re-run \`npx patch-package <dep-name>\`
  // to persist across \`npm install\`. To regenerate from the podspec, remove
  // this file (or just this marker) and re-run \`npx react-native spm scaffold\`.
@@ -1650,9 +1650,9 @@ index cf7e587..7456e17 100644
        const vMatch = existing.match(SCAFFOLDER_VERSION_LINE_RE);
        const existingVersion = vMatch != null ? parseInt(vMatch[1], 10) : 1;
 -      const versionStale = existingVersion < SCAFFOLDER_VERSION;
-+      const rMatch = existing.match(EXPO_XTOOL_SCAFFOLD_REVISION_RE);
++      const rMatch = existing.match(RN_XTOOL_SCAFFOLD_REVISION_RE);
 +      const existingRevision = rMatch != null ? parseInt(rMatch[1], 10) : 0;
-+      const revisionStale = existingRevision < EXPO_XTOOL_SCAFFOLD_REVISION;
++      const revisionStale = existingRevision < RN_XTOOL_SCAFFOLD_REVISION;
 +      const versionStale =
 +        existingVersion < SCAFFOLDER_VERSION || revisionStale;
        if (!ctx.force && !versionStale) {
@@ -1663,7 +1663,7 @@ index cf7e587..7456e17 100644
        if (versionStale) {
          log(
 -          `Re-scaffolding ${depName} (format v${existingVersion} → v${SCAFFOLDER_VERSION})`,
-+          `Re-scaffolding ${depName} (format v${existingVersion}/r${existingRevision} → v${SCAFFOLDER_VERSION}/r${EXPO_XTOOL_SCAFFOLD_REVISION})`,
++          `Re-scaffolding ${depName} (format v${existingVersion}/r${existingRevision} → v${SCAFFOLDER_VERSION}/r${RN_XTOOL_SCAFFOLD_REVISION})`,
          );
        }
        // Fall through: regenerate (force, slot changed, or version bumped).
@@ -1791,7 +1791,7 @@ index fc53136..dbeb2af 100644
        '// satisfies SPM, which requires at least one source file per target.\n' +
        'static int ReactAppHeadersStub __attribute__((unused)) = 0;\n',
    );
-+  // expo-xtool: an explicit, header-less module map. Without one SwiftPM makes the whole farm
++  // rn-xtool: an explicit, header-less module map. Without one SwiftPM makes the whole farm
 +  // an umbrella-directory module, so an Objective-C (.m) file importing one Objective-C header
 +  // from it (`<ReactAppDependencyProvider/RCTAppDependencyProvider.h>`) builds every C++
 +  // codegen header in Objective-C mode and fails ("'utility' file not found"). With it, the
