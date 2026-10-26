@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { loggedIn, planSetup, preflightSdk, setup, swiftlyDownloadUrl, xtoolDownloadUrl } from "../src/commands/setup.js";
+import { loggedIn, planSetup, preflightSdk, setup, swiftlyDownloadUrl, swiftPostInstallMessage, xtoolDownloadUrl } from "../src/commands/setup.js";
 
 const all = { hasSwift: true, hasXtool: true, hasSdk: true, loggedIn: true };
 
@@ -99,5 +99,20 @@ describe("login probe", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("swiftPostInstallMessage", () => {
+  it("returns nothing when swiftly wrote no post-install script", () => {
+    expect(swiftPostInstallMessage(undefined)).toBeUndefined();
+    expect(swiftPostInstallMessage("")).toBeUndefined();
+    expect(swiftPostInstallMessage("#!/bin/sh\n\n# nothing\n")).toBeUndefined();
+  });
+  it("tells the user to run the script as root and re-run setup", () => {
+    const script = "#!/bin/sh\napt-get -y install binutils libcurl4-openssl-dev\n";
+    const msg = swiftPostInstallMessage(script)!;
+    expect(msg).toContain("system packages");
+    expect(msg).toContain("sudo apt-get -y install binutils libcurl4-openssl-dev");
+    expect(msg).toContain("expo-xtool setup");
   });
 });

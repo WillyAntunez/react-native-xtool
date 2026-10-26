@@ -1,6 +1,6 @@
 import { execa } from "execa";
 import { accessSync, constants, existsSync } from "node:fs";
-import { mkdir, statfs } from "node:fs/promises";
+import { mkdir, readFile, rm, statfs } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { cacheDir } from "../paths.js";
@@ -99,6 +99,24 @@ export async function probeSetupState(bin: string): Promise<SetupState> {
   };
 }
 
+/**
+ * swiftly writes the system packages a toolchain needs (an `apt-get install ...` line on Ubuntu) to the
+ * `--post-install-file`; without that flag it prints them and exits non-zero. Turns that script into an
+ * instruction, or undefined when there is nothing to run.
+ */
+export function swiftPostInstallMessage(script: string | undefined): string | undefined {
+  const commands = (script ?? "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "" && !l.startsWith("#"));
+  if (commands.length === 0) return undefined;
+  return [
+    `Swift ${SWIFT_VERSION} is installed, but it needs system packages that only an administrator can install. Run:`,
+    ...commands.map((c) => `  sudo ${c}`),
+    "then run `expo-xtool setup` again.",
+  ].join("\n");
+}
+
 async function installSwift(): Promise<void> {
   const dir = path.join(cacheDir(), "swiftly");
   await mkdir(dir, { recursive: true });
@@ -108,7 +126,13 @@ async function installSwift(): Promise<void> {
   if (!existsSync(path.join(homedir(), ".local", "share", "swiftly", "bin", "swiftly"))) {
     await run("./swiftly", ["init", "--assume-yes", "--skip-install"], { cwd: dir });
   }
-  await run("swiftly", ["install", SWIFT_VERSION, "--use", "--assume-yes"], { cwd: dir });
+  const postInstall = path.join(dir, "post-install.sh");
+  await rm(postInstall, { force: true });
+  await run("swiftly", ["install", SWIFT_VERSION, "--use", "--assume-yes", "--post-install-file", postInstall], {
+    cwd: dir,
+  });
+  const message = swiftPostInstallMessage(existsSync(postInstall) ? await readFile(postInstall, "utf8") : undefined);
+  if (message) throw new Error(message);
 }
 
 export async function freeBytesForSdk(): Promise<number> {
