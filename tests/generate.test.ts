@@ -7,7 +7,7 @@ import { renderXtoolYml } from "../src/generate/xtoolYml.js";
 import { writeIosXtool } from "../src/generate/iosXtool.js";
 import { expoClangImporterInputs } from "../src/generate/expoImporter.js";
 import { projectPaths } from "../src/paths.js";
-import type { ExpoProject } from "../src/project.js";
+import type { ExpoProject } from "../src/project/index.js";
 import type { RuntimeFramework } from "../src/frameworks.js";
 
 const tmps: string[] = [];

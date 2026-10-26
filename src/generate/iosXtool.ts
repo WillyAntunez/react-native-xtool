@@ -3,7 +3,7 @@ import { dirname, join, relative } from "node:path";
 import type { RuntimeFramework } from "../frameworks.js";
 import { swiftHeadersDir, type ProjectPaths } from "../paths.js";
 import { transformInfoPlist } from "../plist.js";
-import { buildVars, type ExpoProject } from "../project.js";
+import { buildVars, type ExpoProject } from "../project/index.js";
 import { IOS_MIN } from "../versions.js";
 import { expoClangImporterInputs } from "./expoImporter.js";
 import { renderPackageSwift } from "./packageSwift.js";

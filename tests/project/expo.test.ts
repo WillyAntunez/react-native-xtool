@@ -3,9 +3,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildVars, defaultBundleIdentifier, MissingBundleIdentifierError, readExpoProject } from "../src/project.js";
+import { buildVars, defaultBundleIdentifier, MissingBundleIdentifierError, readExpoProject } from "../../src/project/index.js";
 
-const fixture = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "project");
+const fixture = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "project");
 
 const tempDirs: string[] = [];
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { doctorWithProbes, renderReport, wifiCheck, type DoctorProbes } from "../src/commands/doctor.js";
-import { MissingBundleIdentifierError } from "../src/project.js";
+import { MissingBundleIdentifierError } from "../src/project/index.js";
 import { XTOOL_SHA256, XTOOL_VERSION } from "../src/versions.js";
 
 const good: DoctorProbes = {

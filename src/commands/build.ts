@@ -9,7 +9,7 @@ import { generateAppConfig } from "../pipeline/appConfig.js";
 import { buildExpoModulesJsi } from "../pipeline/jsi.js";
 import { applyPatches } from "../pipeline/patches.js";
 import { runRnSpm } from "../pipeline/rnSpm.js";
-import { readExpoProject, type ExpoProject } from "../project.js";
+import { readExpoProject, type ExpoProject } from "../project/index.js";
 import { readState, writeState, type BuildState } from "../state.js";
 import { run } from "../tools/exec.js";
 import { devBuild, xtoolBin } from "../tools/xtool.js";

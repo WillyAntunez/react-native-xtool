@@ -3,7 +3,7 @@ import { depsFingerprint } from "../deps.js";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
 import { detectLanRoute, isPortFree, suspiciousLanRoute, tunnelWarning, type LanRoute } from "../net.js";
 import { projectPaths } from "../paths.js";
-import { MissingBundleIdentifierError, readExpoProject } from "../project.js";
+import { MissingBundleIdentifierError, readExpoProject } from "../project/index.js";
 import { readState } from "../state.js";
 import { NO_FINGERPRINT_WARNING } from "./start.js";
 import { sha256File } from "../tools/download.js";

@@ -9,6 +9,7 @@ export interface ExpoXtoolConfig {
   lanIp?: string;
   rnArtifactsDir?: string;
   xtoolPath?: string;
+  projectKind?: "expo" | "bare";
 }
 
 export async function loadConfig(projectRoot: string): Promise<ExpoXtoolConfig> {
