@@ -1,7 +1,7 @@
 {
   "name": "expo-xtool",
   "version": "0.1.0-alpha.1",
-  "description": "Build Expo iOS dev builds on Linux via xtool",
+  "description": "Build Expo and bare React Native iOS dev builds on Linux via xtool",
   "keywords": [
     "expo",
     "ios",
