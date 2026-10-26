@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { doctorWithProbes, renderReport, wifiCheck, type DoctorProbes } from "../src/commands/doctor.js";
+import { MissingBundleIdentifierError } from "../src/project.js";
 import { XTOOL_SHA256, XTOOL_VERSION } from "../src/versions.js";
 
 const good: DoctorProbes = {
@@ -139,6 +140,22 @@ describe("doctorWithProbes", () => {
     expect(statusOf(r, "build-state")).toBe("ok");
     expect(statusOf(r, "metro-port")).toBe("warn");
     expect(r.ok).toBe(true);
+  });
+
+  it("warns, not fails, when only the bundle identifier is missing", async () => {
+    const r = await doctorWithProbes(
+      {
+        ...good,
+        expoProject: async () => {
+          throw new MissingBundleIdentifierError("com.anonymous.demo", "app.json");
+        },
+      },
+      "/p",
+    );
+    expect(r.checks.find((c) => c.name === "expo-sdk")).toMatchObject({
+      status: "warn",
+      detail: expect.stringContaining('build writes "com.anonymous.demo"'),
+    });
   });
 
   it("fails expo-sdk with the thrown message and warns on missing build state", async () => {

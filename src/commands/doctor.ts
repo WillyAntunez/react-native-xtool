@@ -3,7 +3,7 @@ import { depsFingerprint } from "../deps.js";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
 import { detectLanRoute, isPortFree, suspiciousLanRoute, tunnelWarning, type LanRoute } from "../net.js";
 import { projectPaths } from "../paths.js";
-import { readExpoProject } from "../project.js";
+import { MissingBundleIdentifierError, readExpoProject } from "../project.js";
 import { readState } from "../state.js";
 import { NO_FINGERPRINT_WARNING } from "./start.js";
 import { sha256File } from "../tools/download.js";
@@ -286,7 +286,15 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
 
   if (root !== undefined && stateResult) {
     await add("expo-sdk", async () => {
-      await p.expoProject(root);
+      try {
+        await p.expoProject(root);
+      } catch (err) {
+        if (!(err instanceof MissingBundleIdentifierError)) throw err;
+        return {
+          status: "warn",
+          detail: `ios.bundleIdentifier is missing in ${err.configFile}; expo-xtool build writes "${err.suggestion}" there`,
+        };
+      }
       return { status: "ok", detail: "supported Expo project" };
     });
     await add("build-state", async () => {
