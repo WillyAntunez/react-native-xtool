@@ -288,6 +288,8 @@ describe("writeIosXtool", () => {
     expect(await at("HelloWorld-Bridging-Header.h")).toBe('#import "NativeModule.h"\n');
     // include/ forwards to the copy, so `#import "NativeModule.h"` resolves from anywhere to one file.
     expect(await at("include/NativeModule.h")).toBe('#import "../Native/NativeModule.h"\n');
+    // Objective-C imports the Swift header under Xcode's name (<ProductModuleName>-Swift.h); SwiftPM writes App-Swift.h.
+    expect(await at("include/HelloWorld-Swift.h")).toBe('#import "App-Swift.h"\n');
     expect((await readdir(paths.sources)).sort()).toEqual(
       ["AppDelegate.swift", "HelloWorld-Bridging-Header.h", "Native", "SceneDelegate.swift", "include"],
     );

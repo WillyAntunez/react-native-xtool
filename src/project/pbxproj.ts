@@ -96,19 +96,25 @@ export function buildSetting(p: Pbxproj, key: string, configuration = "Debug"): 
   return targetLevel(p, key, configuration) ?? projectLevel(p, key, configuration);
 }
 
+/** Xcode's `:c99extidentifier`: characters other than letters, digits and `_` become `_`, as does a leading digit. */
+function c99Identifier(value: string): string {
+  return value.replace(/[^A-Za-z0-9_]/g, "_").replace(/^[0-9]/, "_");
+}
+
 const REFERENCE = /\$\(([A-Za-z_][A-Za-z0-9_]*)(?::([A-Za-z0-9]+))?\)/g;
 
 /**
- * Expands `$(NAME)` and `$(NAME:rfc1034identifier)` using `lookup`. Any other reference (unknown name, unsupported
+ * Expands `$(NAME)`, `$(NAME:rfc1034identifier)` and `$(NAME:c99extidentifier)` using `lookup`. Any other reference (unknown name, unsupported
  * modifier, or a name `lookup` cannot answer) throws, naming the setting.
  */
 export function resolveBuildSettingValue(value: string, lookup: (key: string) => string | undefined): string {
   const out = value.replace(REFERENCE, (whole, name: string, modifier?: string) => {
-    if (modifier !== undefined && modifier !== "rfc1034identifier") {
+    if (modifier !== undefined && modifier !== "rfc1034identifier" && modifier !== "c99extidentifier") {
       throw new DetectError(`Unsupported build setting modifier ":${modifier}" in ${whole}`);
     }
     const found = lookup(name);
     if (found === undefined) throw new DetectError(`Cannot resolve build setting $(${name}) in "${value}"`);
+    if (modifier === "c99extidentifier") return c99Identifier(found);
     return modifier ? found.replace(/[^A-Za-z0-9-]/g, "-") : found;
   });
   const left = out.match(/\$\(([^)]*)\)/);
@@ -159,6 +165,8 @@ export interface BareTargetContent {
   ignoredSettings: string[];
   /** The target compiles C-family sources (cSources.length > 0). */
   mixed: boolean;
+  /** Xcode's module name for the target (PRODUCT_MODULE_NAME): Objective-C imports `<productModuleName>-Swift.h`. */
+  productModuleName: string;
 }
 
 interface ResolvedRef {
@@ -362,5 +370,8 @@ export function readTargetContent(p: Pbxproj, iosDir: string): BareTargetContent
     cxxStandard: resolveSetting(p, "CLANG_CXX_LANGUAGE_STANDARD")?.trim() || undefined,
     ignoredSettings,
     mixed: cSources.length > 0,
+    productModuleName:
+      resolveSetting(p, "PRODUCT_MODULE_NAME")?.trim() ||
+      c99Identifier(resolveSetting(p, "PRODUCT_NAME")?.trim() || p.appTarget.name),
   };
 }

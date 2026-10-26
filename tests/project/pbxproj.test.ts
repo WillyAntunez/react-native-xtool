@@ -244,6 +244,22 @@ describe("readTargetContent", () => {
     expect(rel(content().swiftSources)).toContain("HelloWorld/Real.swift");
   });
 
+  it("names the Swift module as Xcode does: PRODUCT_MODULE_NAME, else PRODUCT_NAME as a C identifier", async () => {
+    expect((await read(await withObjc())).content().productModuleName).toBe("HelloWorld");
+    const spaced = (await withObjc()).replaceAll("PRODUCT_NAME = HelloWorld;", 'PRODUCT_NAME = "Hello World-App";');
+    expect((await read(spaced)).content().productModuleName).toBe("Hello_World_App");
+    const explicit = (await withObjc()).replaceAll(
+      "PRODUCT_NAME = HelloWorld;",
+      "PRODUCT_NAME = HelloWorld;\n\t\t\t\tPRODUCT_MODULE_NAME = Greeting;",
+    );
+    expect((await read(explicit)).content().productModuleName).toBe("Greeting");
+    const derived = (await withObjc()).replaceAll(
+      "PRODUCT_NAME = HelloWorld;",
+      'PRODUCT_NAME = "Hello App";\n\t\t\t\tPRODUCT_MODULE_NAME = "$(PRODUCT_NAME:c99extidentifier)";',
+    );
+    expect((await read(derived)).content().productModuleName).toBe("Hello_App");
+  });
+
   it("includes app-folder headers that are in no build phase, and only those", async () => {
     let src = await withObjc();
     src = addFile(src, { path: "Bridge.hpp", group: HELLO });

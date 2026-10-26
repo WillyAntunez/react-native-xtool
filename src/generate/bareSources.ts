@@ -37,7 +37,8 @@ async function copyListed(file: TargetFile, dest: string): Promise<void> {
  * Copies the app target's code into `sourcesDir` (Sources/App), keeping its layout under the
  * target folder (`ios/<Target>/Native/X.m` → `Native/X.m`; files elsewhere in ios/ keep their
  * path from ios/), with one forwarding header per header in `include/` so `#import "X.h"` resolves
- * from any folder as Xcode's header maps allow. Resources are staged flat in `resourcesDir`, laid
+ * from any folder as Xcode's header maps allow, plus `<ProductModuleName>-Swift.h` forwarding to `App-Swift.h`
+ * in a mixed target. Resources are staged flat in `resourcesDir`, laid
  * out as Xcode copies them to the bundle root (xtool.yml lists each top-level entry).
  */
 export async function copyBareTarget(
@@ -96,6 +97,20 @@ export async function copyBareTarget(
     await writeFile(shim, `#import "../${dest}"\n`);
   }
 
+  // Xcode names the generated Swift header after the module (BareDemo-Swift.h); the SwiftPM target is App.
+  let swiftHeaderForward = false;
+  if (bare.mixed && bare.productModuleName !== "App") {
+    const name = `${bare.productModuleName}-Swift.h`;
+    const owner = forwarded.get(name);
+    if (owner !== undefined) {
+      log(`ℹ The app header ${owner} is named like Xcode's generated Swift header: #import "${name}" finds it, not App-Swift.h`);
+    } else {
+      await mkdir(path.join(sourcesDir, INCLUDE_DIR), { recursive: true });
+      await writeFile(path.join(sourcesDir, INCLUDE_DIR, name), `#import "App-Swift.h"\n`);
+      swiftHeaderForward = true;
+    }
+  }
+
   const staged = new Map<string, string>();
   // Resources may live outside ios/ (react-native-asset adds ../assets/fonts/*): bundlePath() keeps only the name.
   for (const file of bare.resources) {
@@ -120,7 +135,10 @@ export async function copyBareTarget(
 
   return {
     bridgingHeader: bare.bridgingHeader ? path.join(sourcesDir, codeDest.get(bare.bridgingHeader)!) : undefined,
-    headerSearchPaths: [...(forwarded.size > 0 ? [path.join(sourcesDir, INCLUDE_DIR)] : []), ...bare.headerSearchPaths],
+    headerSearchPaths: [
+      ...(forwarded.size > 0 || swiftHeaderForward ? [path.join(sourcesDir, INCLUDE_DIR)] : []),
+      ...bare.headerSearchPaths,
+    ],
     resources: [...new Set([...staged.keys()].map((d) => d.split("/")[0]!))].sort(),
   };
 }

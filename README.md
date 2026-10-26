@@ -187,7 +187,7 @@ Native's SwiftPM generation steps without injecting anything into your Xcode pro
   to `ios-xtool/`).
 - `SWIFT_OBJC_BRIDGING_HEADER`, `GCC_PREPROCESSOR_DEFINITIONS` (valued defines such as `FOO=1` work),
   `HEADER_SEARCH_PATHS` and `CLANG_CXX_LANGUAGE_STANDARD`.
-- Only `$(inherited)`, `$(TARGET_NAME)`, `$(PROJECT_NAME)`, the `:rfc1034identifier` modifier and settings defined in
+- Only `$(inherited)`, `$(TARGET_NAME)`, `$(PROJECT_NAME)`, the `:rfc1034identifier` and `:c99extidentifier` modifiers and settings defined in
   the pbxproj itself (for example `$(PRODUCT_NAME)`) are resolved. Any other `$(VAR)`, `$(SRCROOT)` and `$(PROJECT_DIR)`
   included, stops the build with `Cannot resolve build setting` naming it. Write paths in `HEADER_SEARCH_PATHS` and
   the bridging header relative to `ios/` (not `$(SRCROOT)/...`). `.xcconfig` files are ignored.
@@ -203,9 +203,12 @@ Sources outside `ios/` and two compiled files with the same name are errors.
 
 **Mixed Swift + Objective-C/C++ App target.** If the target compiles any `.m`, `.mm`, `.c` or `.cpp` file, it is built as
 one mixed-language target, the same mechanism as the scaffolded mixed libraries (the two manifests described in
-[How it works](#how-it-works)). The bridging header is passed with `-import-objc-header`, your header search paths and
-defines are applied, and Objective-C can `#import "<Target>-Swift.h"`. Verified on a device with an Objective-C module
-next to a Swift module.
+[How it works](#how-it-works)). The bridging header is passed with `-import-objc-header` and your header search paths and
+defines are applied. Verified on a device with an Objective-C module next to a Swift module. Swift Build names the
+generated Swift header `App-Swift.h` (the SwiftPM target is `App`), so `build` also writes
+`Sources/App/include/<Module>-Swift.h`, which imports it: Objective-C keeps `#import "<Module>-Swift.h"` as in Xcode,
+where `<Module>` is `PRODUCT_MODULE_NAME`, or `PRODUCT_NAME` with characters other than letters, digits and `_` turned
+into `_`.
 
 **Resources.** The Resources phase is copied to `ios-xtool/Resources` (by file name; `*.lproj/` and `*.bundle/` stay
 whole) and listed in `xtool.yml`, so they land at the app bundle root. Storyboards, asset catalogs and `.xib` files need
