@@ -2,7 +2,17 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { loggedIn, planSetup, preflightSdk, setup, swiftlyDownloadUrl, swiftPostInstallMessage, xtoolDownloadUrl } from "../src/commands/setup.js";
+import {
+  loggedIn,
+  packagesFromPostInstall,
+  pendingSwiftPackages,
+  planSetup,
+  preflightSdk,
+  setup,
+  swiftlyDownloadUrl,
+  swiftPostInstallMessage,
+  xtoolDownloadUrl,
+} from "../src/commands/setup.js";
 
 const all = { hasSwift: true, hasXtool: true, hasSdk: true, loggedIn: true };
 
@@ -114,5 +124,29 @@ describe("swiftPostInstallMessage", () => {
     expect(msg).toContain("system packages");
     expect(msg).toContain("sudo apt-get -y install binutils libcurl4-openssl-dev");
     expect(msg).toContain("expo-xtool setup");
+  });
+});
+
+describe("pending Swift system packages", () => {
+  const script = "#!/bin/sh\napt-get -y install binutils libcurl4-openssl-dev\n";
+  it("lists the packages named by the apt line", () => {
+    expect(packagesFromPostInstall(script)).toEqual(["binutils", "libcurl4-openssl-dev"]);
+    expect(packagesFromPostInstall("yum install foo")).toEqual(["foo"]);
+    expect(packagesFromPostInstall("")).toEqual([]);
+  });
+  it("reports only the packages still missing", async () => {
+    const isInstalled = async (pkg: string) => pkg === "binutils";
+    await expect(pendingSwiftPackages(script, isInstalled)).resolves.toEqual(["libcurl4-openssl-dev"]);
+  });
+  it("setup repeats the instruction while packages are missing, even when the toolchain probe is complete", async () => {
+    const log = vi.fn();
+    await expect(
+      setup({}, { probe: async () => all, log, checkSwiftPackages: async () => "Swift needs packages: run X" }),
+    ).rejects.toThrow("Swift needs packages");
+  });
+  it("setup proceeds when nothing is pending", async () => {
+    const log = vi.fn();
+    await setup({}, { probe: async () => all, log, checkSwiftPackages: async () => undefined });
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("Nothing to do"));
   });
 });

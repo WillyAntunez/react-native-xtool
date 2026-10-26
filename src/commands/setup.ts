@@ -20,6 +20,8 @@ export interface SetupDeps {
   probe: (xtoolBin: string) => Promise<SetupState>;
   preflightProbes: Parameters<typeof preflightSdk>[1];
   log: (line: string) => void;
+  /** Message to fail with while Swift's system packages from a previous run are still missing. */
+  checkSwiftPackages: () => Promise<string | undefined>;
 }
 
 const MIN_FREE_BYTES = 10 * 1024 ** 3;
@@ -117,6 +119,58 @@ export function swiftPostInstallMessage(script: string | undefined): string | un
   ].join("\n");
 }
 
+/** Package names from swiftly's post-install script (`apt-get -y install a b`, `yum install a`, …). */
+export function packagesFromPostInstall(script: string): string[] {
+  const packages: string[] = [];
+  for (const line of script.split("\n")) {
+    const m = /\binstall\b(.*)$/.exec(line.trim());
+    if (!m || line.trim().startsWith("#")) continue;
+    packages.push(...m[1]!.split(/\s+/).filter((t) => t !== "" && !t.startsWith("-")));
+  }
+  return packages;
+}
+
+export async function pendingSwiftPackages(
+  script: string,
+  isInstalled: (pkg: string) => Promise<boolean>,
+): Promise<string[]> {
+  const missing: string[] = [];
+  for (const pkg of packagesFromPostInstall(script)) if (!(await isInstalled(pkg))) missing.push(pkg);
+  return missing;
+}
+
+const postInstallFile = (): string => path.join(cacheDir(), "swiftly", "post-install.sh");
+
+async function dpkgInstalled(pkg: string): Promise<boolean> {
+  const r = await execa("dpkg-query", ["-W", "-f=${Status}", pkg], { reject: false });
+  if (r.exitCode === undefined) throw new Error("dpkg-query is not available");
+  return r.exitCode === 0 && /\binstalled\b/.test(r.stdout) && !/not-installed/.test(r.stdout);
+}
+
+/**
+ * A previous `setup` left swiftly's post-install script behind because its packages were missing.
+ * `swift --version` works without them, so the toolchain probe would otherwise skip the step and the
+ * failure would only surface later as linker errors. Re-checks them with dpkg until they are installed.
+ */
+export async function checkPendingSwiftPackages(): Promise<string | undefined> {
+  const file = postInstallFile();
+  if (!existsSync(file)) return undefined;
+  const script = await readFile(file, "utf8");
+  let missing: string[];
+  try {
+    missing = await pendingSwiftPackages(script, dpkgInstalled);
+  } catch {
+    // No dpkg: nothing to verify against, show the instruction one last time.
+    await rm(file, { force: true });
+    return swiftPostInstallMessage(script);
+  }
+  if (missing.length === 0) {
+    await rm(file, { force: true });
+    return undefined;
+  }
+  return swiftPostInstallMessage(script);
+}
+
 async function installSwift(): Promise<void> {
   const dir = path.join(cacheDir(), "swiftly");
   await mkdir(dir, { recursive: true });
@@ -126,7 +180,7 @@ async function installSwift(): Promise<void> {
   if (!existsSync(path.join(homedir(), ".local", "share", "swiftly", "bin", "swiftly"))) {
     await run("./swiftly", ["init", "--assume-yes", "--skip-install"], { cwd: dir });
   }
-  const postInstall = path.join(dir, "post-install.sh");
+  const postInstall = postInstallFile();
   await rm(postInstall, { force: true });
   await run("swiftly", ["install", SWIFT_VERSION, "--use", "--assume-yes", "--post-install-file", postInstall], {
     cwd: dir,
@@ -183,6 +237,8 @@ export async function setup(
   if (opts.xtoolPath && !state.hasXtool) {
     throw new Error(`xtoolPath is set to ${bin} but it does not exist or is not executable`);
   }
+  const pending = await (deps.checkSwiftPackages ?? checkPendingSwiftPackages)();
+  if (pending) throw new Error(pending);
   const actions = planSetup(state);
   if (actions.length === 0) {
     log("✔ Nothing to do: toolchain already set up");
