@@ -114,6 +114,11 @@ export function scanRefusal(route: LanRoute): string | undefined {
   return undefined;
 }
 
+/** What a dev-client user types in the launcher; nothing to type without expo-dev-client. */
+function logDevLauncherUrl(state: InstallState, log: (s: string) => void): void {
+  if (state.hasDevClient === true) log(`Metro URL for the dev launcher: http://${state.lanIp}:${state.metroPort}`);
+}
+
 async function authenticated(
   x: NonNullable<InstallDeps["xtool"]>,
   root: string,
@@ -155,7 +160,7 @@ export async function install(root: string, deps: InstallDeps = {}, opts: Instal
   await (x.writeState ?? writeState)(iosXtool, { ...(state as BuildState), ...installed });
   const id = installedBundleId(auth.teamId, state.bundleIdentifier);
   log(`Installed ${id} on ${devices[0]!.name}`);
-  log(`Metro URL for the dev launcher: http://${state.lanIp}:${state.metroPort}`);
+  logDevLauncherUrl(state, log);
   log(firstRunChecklist(auth.appleId));
 }
 
@@ -235,6 +240,6 @@ async function installNetwork(root: string, deps: InstallDeps, opts: InstallOpti
     `Installed ${bundleId}${version ? ` ${version}` : ""} on iPhone ${where.udid} over Wi‑Fi (${where.ip}) — ` +
       `upload ${secs(result.uploadMs)}, install ${secs(result.installMs)}`,
   );
-  log(`Metro URL for the dev launcher: http://${state.lanIp}:${state.metroPort}`);
+  logDevLauncherUrl(state, log);
   log(firstRunChecklist(auth.appleId));
 }

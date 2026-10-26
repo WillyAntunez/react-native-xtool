@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { run as runCommand } from "../src/commands/run.js";
 import {
   ipMismatchMessage,
+  metroCommand,
   portMismatchMessage,
   start,
   startDecision,
@@ -134,6 +135,33 @@ describe("start", () => {
     const { deps, exec } = makeDeps();
     await start("/p", {}, deps);
     expect(exec).toHaveBeenCalledWith("npx", ["expo", "start", "--lan", "--port", "8081"], { cwd: "/p" });
+  });
+
+  it("start runs react-native start for a bare state", async () => {
+    const { deps, exec } = makeDeps({ readState: async () => ({ ...state, kind: "bare" as const }) });
+    await start("/p", {}, deps);
+    expect(exec).toHaveBeenCalledWith("npx", ["react-native", "start", "--port", "8081"], { cwd: "/p" });
+    expect(exec.mock.calls[0]?.[1]).not.toContain("expo");
+  });
+
+  it("resets the bare Metro cache when dependencies changed", async () => {
+    const { deps, exec } = makeDeps({
+      readState: async () => ({ ...state, kind: "bare" as const }),
+      depsFingerprint: async () => "other",
+    });
+    await start("/p", {}, deps);
+    expect(exec).toHaveBeenCalledWith("npx", ["react-native", "start", "--port", "8081", "--reset-cache"], { cwd: "/p" });
+  });
+});
+
+describe("metroCommand", () => {
+  it("runs expo start on the LAN for expo", () => {
+    expect(metroCommand("expo", 8082, false)).toEqual(["npx", ["expo", "start", "--lan", "--port", "8082"]]);
+    expect(metroCommand("expo", 8082, true)).toEqual(["npx", ["expo", "start", "--lan", "--port", "8082", "--clear"]]);
+  });
+  it("runs react-native start for bare, with --reset-cache to clear", () => {
+    expect(metroCommand("bare", 8082, false)).toEqual(["npx", ["react-native", "start", "--port", "8082"]]);
+    expect(metroCommand("bare", 8082, true)).toEqual(["npx", ["react-native", "start", "--port", "8082", "--reset-cache"]]);
   });
 });
 

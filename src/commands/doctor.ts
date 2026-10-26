@@ -3,7 +3,8 @@ import { depsFingerprint } from "../deps.js";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
 import { detectLanRoute, isPortFree, suspiciousLanRoute, tunnelWarning, type LanRoute } from "../net.js";
 import { projectPaths } from "../paths.js";
-import { MissingBundleIdentifierError, readExpoProject } from "../project/index.js";
+import { MissingBundleIdentifierError, readProject, type ProjectKind } from "../project/index.js";
+import { openPbxproj } from "../project/pbxproj.js";
 import { readState } from "../state.js";
 import { NO_FINGERPRINT_WARNING } from "./start.js";
 import { sha256File } from "../tools/download.js";
@@ -12,6 +13,7 @@ import { authStatus, listDevices, defaultXtoolPath, xtoolBin, xtoolUnrunnableErr
 import { XTOOL_VERSION, XTOOL_SHA256, SWIFT_VERSION } from "../versions.js";
 import { isExecutable, sdkBundle, swiftAtLeast, swiftMeetsMin, swiftVersionText } from "./setup.js";
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { tcpProbe } from "../device/discover.js";
 import { LOCKDOWN_PORT, LockdownClient } from "../device/lockdown.js";
 import { parsePairRecord } from "../device/pairRecord.js";
@@ -46,13 +48,58 @@ export interface DoctorProbes {
   lanRoute: () => Promise<LanRoute>;
   /** The lanIp pinned in expo-xtool.config.json, if any. */
   configLanIp: () => string | undefined;
-  /** Resolves when the project is a supported Expo project; rejects with the reason otherwise. */
-  expoProject: (root: string) => Promise<unknown>;
+  /** Reads the project without writing anything; rejects with the detect/read error. */
+  project: (root: string) => Promise<ProjectProbe>;
   buildState: (root: string) => Promise<{ metroPort: number; lanIp: string; depsFingerprint?: string } | undefined>;
   depsFingerprint: (root: string) => Promise<string>;
   portFree: (port: number) => Promise<boolean>;
   /** Wi‑Fi install readiness; read-only (never caches or changes anything). */
   wifi: (root?: string) => Promise<WifiProbe>;
+}
+
+export interface ProjectProbe {
+  kind: ProjectKind;
+  rnVersion: string;
+  sdkVersion?: number;
+  bundleIdentifier: string;
+  hasExpoModules: boolean;
+  /** bare: the app target and the `.xcodeproj` it lives in. */
+  target?: { name: string; xcodeproj: string };
+  /** Warnings the reader logged, e.g. expo-modules-core installed without `use_expo_modules!` in the Podfile. */
+  warnings: string[];
+}
+
+/** The real `project` probe: `readProject` in read-only mode, its warnings captured instead of printed. */
+export async function readProjectProbe(root: string): Promise<ProjectProbe> {
+  const warnings: string[] = [];
+  const info = await readProject(root, { writeDefaults: false, log: (line) => warnings.push(line.replace(/^⚠ /, "")) });
+  return {
+    kind: info.kind,
+    rnVersion: info.rnVersion,
+    ...(info.sdkVersion !== undefined && { sdkVersion: info.sdkVersion }),
+    bundleIdentifier: info.bundleIdentifier,
+    hasExpoModules: info.hasExpoModules,
+    ...(info.kind === "bare" && {
+      target: { name: info.iosTargetName, xcodeproj: `${openPbxproj(join(root, "ios")).projectName}.xcodeproj` },
+    }),
+    warnings,
+  };
+}
+
+function projectSummary(p: ProjectProbe): string {
+  if (p.kind === "expo") return `expo SDK ${p.sdkVersion ?? "unknown"}, React Native ${p.rnVersion}`;
+  const kind = p.hasExpoModules ? "bare + expo modules, React Native" : "bare React Native";
+  return `${kind} ${p.rnVersion}${p.target ? `, target ${p.target.name} (${p.target.xcodeproj})` : ""}`;
+}
+
+function missingBundleIdDetail(err: MissingBundleIdentifierError): string {
+  if (err.configFile === "project.pbxproj") {
+    // Bare projects are never written to: the user sets it in Xcode or in the pbxproj.
+    return `PRODUCT_BUNDLE_IDENTIFIER is missing for the app target in ${err.configFile}; add "${err.suggestion}" (or your own) to it`;
+  }
+  return err.configFile.endsWith(".json")
+    ? `ios.bundleIdentifier is missing in ${err.configFile}; expo-xtool build writes "${err.suggestion}" there`
+    : `ios.bundleIdentifier is missing in ${err.configFile}; add "${err.suggestion}" (or your own) to it`;
 }
 
 export interface WifiProbe {
@@ -109,7 +156,7 @@ export function realProbes(config: ExpoXtoolConfig): DoctorProbes {
     },
     lanRoute: () => detectLanRoute(),
     configLanIp: () => config.lanIp,
-    expoProject: (root) => readExpoProject(root, { writeDefaults: false }),
+    project: (root) => readProjectProbe(root),
     buildState: (root) => readState(projectPaths(root).iosXtool),
     depsFingerprint: (root) => depsFingerprint(root),
     portFree: (port) => isPortFree(port),
@@ -285,19 +332,30 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
   });
 
   if (root !== undefined && stateResult) {
-    await add("expo-sdk", async () => {
-      try {
-        await p.expoProject(root);
-      } catch (err) {
-        if (!(err instanceof MissingBundleIdentifierError)) throw err;
-        return {
-          status: "warn",
-          detail: err.configFile.endsWith(".json")
-            ? `ios.bundleIdentifier is missing in ${err.configFile}; expo-xtool build writes "${err.suggestion}" there`
-            : `ios.bundleIdentifier is missing in ${err.configFile}; add "${err.suggestion}" (or your own) to it`,
-        };
+    const projectResult = await Promise.resolve()
+      .then(() => p.project(root))
+      .then(
+        (info) => ({ info }),
+        (error: unknown) => ({ error }),
+      );
+    await add("project", async () => {
+      if ("error" in projectResult) {
+        if (projectResult.error instanceof MissingBundleIdentifierError) {
+          return { status: "info", detail: "kind and versions are shown once the bundle identifier is set (see project-config)" };
+        }
+        throw projectResult.error;
       }
-      return { status: "ok", detail: "supported Expo project" };
+      const { info } = projectResult;
+      return info.warnings.length > 0
+        ? { status: "warn", detail: [projectSummary(info), ...info.warnings].join("; ") }
+        : { status: "ok", detail: projectSummary(info) };
+    });
+    await add("project-config", async () => {
+      if ("info" in projectResult) return { status: "ok", detail: `bundle identifier ${projectResult.info.bundleIdentifier}` };
+      const err = projectResult.error;
+      return err instanceof MissingBundleIdentifierError
+        ? { status: "warn", detail: missingBundleIdDetail(err) }
+        : { status: "info", detail: "not checked: the project could not be read (see project)" };
     });
     await add("build-state", async () => {
       if ("error" in stateResult) {

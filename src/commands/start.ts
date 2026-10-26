@@ -2,6 +2,7 @@ import { depsFingerprint } from "../deps.js";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
 import { detectLanIp, findFreePort, isMetroRunning, isPortFree } from "../net.js";
 import { projectPaths } from "../paths.js";
+import type { ProjectKind } from "../project/index.js";
 import { readState, type BuildState } from "../state.js";
 import { run } from "../tools/exec.js";
 
@@ -26,6 +27,14 @@ export function startDecision(input: {
   if (!input.portFree && input.metroRunning) return "metro-running";
   if (!input.portFree) return "port-mismatch";
   return "ok";
+}
+
+/** The Metro command for the project kind; `clear` drops Metro's cache. */
+export function metroCommand(kind: ProjectKind, port: number, clear: boolean): [string, string[]] {
+  if (kind === "bare") {
+    return ["npx", ["react-native", "start", "--port", String(port), ...(clear ? ["--reset-cache"] : [])]];
+  }
+  return ["npx", ["expo", "start", "--lan", "--port", String(port), ...(clear ? ["--clear"] : [])]];
 }
 
 export interface StartDeps {
@@ -89,7 +98,6 @@ export async function start(
   if (missing) d.log(`⚠ ${NO_FINGERPRINT_WARNING}`);
   else if (depsChanged) d.log(`⚠ ${DEPS_CHANGED_WARNING}`);
   const clear = opts.clear === true || missing || depsChanged;
-  await d.run("npx", ["expo", "start", "--lan", "--port", String(state.metroPort), ...(clear ? ["--clear"] : [])], {
-    cwd: root,
-  });
+  const [cmd, args] = metroCommand(state.kind ?? "expo", state.metroPort, clear);
+  await d.run(cmd, args, { cwd: root });
 }
