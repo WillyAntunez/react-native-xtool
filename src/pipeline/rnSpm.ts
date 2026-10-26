@@ -195,9 +195,13 @@ function tail(output: string): string {
 
 export async function runRnSpm(
   paths: ProjectPaths,
-  opts: { rnArtifactsDir?: string; kind?: ProjectKind },
+  opts: { rnArtifactsDir?: string; kind: ProjectKind },
   deps: Partial<RnSpmDeps> = {},
 ): Promise<void> {
+  // Expo runs `setup-apple-spm.js add --yes`, which may edit the xcodeproj: never pick it by default.
+  if (opts.kind !== "bare" && opts.kind !== "expo") {
+    throw new Error(`runRnSpm needs the project kind ("expo" or "bare"), got ${String(opts.kind)}`);
+  }
   const runner = deps.runner ?? streamingRunner;
   const log = deps.log ?? ((s: string) => console.log(s));
   const rnDir = deps.rnDir ?? resolveRnDir(paths);

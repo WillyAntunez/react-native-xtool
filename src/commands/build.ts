@@ -81,7 +81,7 @@ export interface BuildDeps {
   remove: (path: string) => Promise<void>;
   prebuild: (root: string, clean: boolean) => Promise<void>;
   applyPatches: (root: string) => Promise<void>;
-  runRnSpm: (paths: ProjectPaths, opts: { rnArtifactsDir?: string; kind?: ProjectKind }) => Promise<void>;
+  runRnSpm: (paths: ProjectPaths, opts: { rnArtifactsDir?: string; kind: ProjectKind }) => Promise<void>;
   buildJsi: (paths: ProjectPaths) => Promise<RuntimeFramework>;
   generateAppConfig: (paths: ProjectPaths) => Promise<void>;
   readFrameworks: (dir: string, flavor: "debug" | "release") => RuntimeFramework[];
