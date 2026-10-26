@@ -4,6 +4,8 @@ import { readExpoProject } from "./expo.js";
 import type { ProjectInfo, ReadProjectOptions } from "./types.js";
 
 export type { ExpoProject, ProjectInfo, ProjectKind, ReadProjectOptions } from "./types.js";
+export type { BareTargetContent, TargetFile } from "./pbxproj.js";
+export { readTargetContent } from "./pbxproj.js";
 export { DetectError, detectProjectKind } from "./detect.js";
 export { buildVars, defaultBundleIdentifier, isInstalled, MissingBundleIdentifierError, readExpoProject } from "./expo.js";
 

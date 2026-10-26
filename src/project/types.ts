@@ -1,3 +1,5 @@
+import type { BareTargetContent } from "./pbxproj.js";
+
 export type ProjectKind = "expo" | "bare";
 
 export interface ProjectInfo {
@@ -19,7 +21,7 @@ export interface ProjectInfo {
   hasExpoModules: boolean;
   hasExpoConstants: boolean;
   hasDevClient: boolean;
-  bare?: unknown;
+  bare?: BareTargetContent;
 }
 
 /** Alias kept for the migration. */

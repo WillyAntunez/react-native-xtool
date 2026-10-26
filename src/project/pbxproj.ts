@@ -27,7 +27,10 @@ function unquote(value: string): string {
 
 function toText(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
-  if (Array.isArray(value)) return value.map((v) => unquote(String(v))).join(" ");
+  if (Array.isArray(value)) {
+    // An element with whitespace stays one word: re-quote it for the shell-style word split in `shellWords`.
+    return value.map((v) => unquote(String(v))).map((v) => (/\s/.test(v) ? `"${v}"` : v)).join(" ");
+  }
   return unquote(String(value));
 }
 
@@ -132,4 +135,232 @@ export function resolveSetting(p: Pbxproj, key: string, configuration = "Debug")
     return targetRaw === undefined ? (projectRaw === undefined ? undefined : inherited) : expand(targetRaw, k, inherited, stack);
   };
   return resolveKey(key, []);
+}
+
+export interface TargetFile {
+  absPath: string;
+  /** Relative to `ios/`, forward slashes. */
+  relPath: string;
+}
+
+export interface BareTargetContent {
+  swiftSources: TargetFile[];
+  cSources: TargetFile[];
+  headers: TargetFile[];
+  resources: TargetFile[];
+  /** storyboard / xcassets / xib: not compiled by the generated project. */
+  skippedResources: TargetFile[];
+  bridgingHeader?: TargetFile;
+  defines: string[];
+  /** Absolute paths. */
+  headerSearchPaths: string[];
+  cxxStandard?: string;
+  /** Names of settings that are set but not carried over. */
+  ignoredSettings: string[];
+  /** The target compiles C-family sources (cSources.length > 0). */
+  mixed: boolean;
+}
+
+interface ResolvedRef {
+  uuid: string;
+  /** Path relative to `ios/` (or absolute for `<absolute>`); undefined for trees we cannot place (SDKROOT, BUILT_PRODUCTS_DIR...). */
+  path?: string;
+}
+
+const SWIFT = /\.swift$/i;
+const C_SOURCE = /\.(m|mm|c|cc|cxx|cpp)$/i;
+const HEADER = /\.(h|hpp)$/i;
+const SKIPPED_RESOURCE = /\.(storyboard|xcassets|xib)$/i;
+const IGNORABLE_FLAGS = ["OTHER_CFLAGS", "OTHER_LDFLAGS", "OTHER_SWIFT_FLAGS"];
+/** Flags the template sets that the generated project already provides. */
+const BENIGN_FLAGS = new Set(["$(inherited)", "-ObjC", "-lc++"]);
+
+/** Splits a build setting like Xcode: whitespace separates words, `"…"` groups, `\\x` is a literal x. */
+function shellWords(value: string): string[] {
+  const out: string[] = [];
+  let word = "";
+  let started = false;
+  let quoted = false;
+  for (let i = 0; i < value.length; i++) {
+    const c = value[i]!;
+    if (c === "\\" && i + 1 < value.length) {
+      word += value[++i];
+      started = true;
+    } else if (c === '"') {
+      quoted = !quoted;
+      started = true;
+    } else if (!quoted && /\s/.test(c)) {
+      if (started) out.push(word);
+      word = "";
+      started = false;
+    } else {
+      word += c;
+      started = true;
+    }
+  }
+  if (started) out.push(word);
+  return out;
+}
+
+/** The uuid of a list entry: `{ value, comment }`, or a bare string when the entry has no comment. */
+function ref(entry: { value: string } | string): string {
+  return typeof entry === "string" ? entry : entry.value;
+}
+
+function joinPath(base: string, child: string | undefined): string {
+  if (!child) return base;
+  return base ? path.posix.join(base, child) : path.posix.normalize(child);
+}
+
+/** Walks the group tree from the main group, placing every file reference and recording group paths. */
+function walkGroups(objs: Record<string, any>, mainGroup: string) {
+  const groups = objs.PBXGroup ?? {};
+  const fileRefs = objs.PBXFileReference ?? {};
+  const variantGroups = objs.PBXVariantGroup ?? {};
+  const files = new Map<string, string | undefined>();
+  /** Variant group uuid -> its child file references. */
+  const variants = new Map<string, string[]>();
+  const groupPaths = new Map<string, { path: string; name?: string; files: string[] }>();
+
+  const place = (tree: string, own: string | undefined, parent: string | undefined): string | undefined => {
+    if (tree === "<absolute>") return own;
+    if (tree === "SOURCE_ROOT") return own ?? "";
+    if (tree === "<group>") return parent === undefined ? undefined : joinPath(parent, own);
+    return undefined;
+  };
+
+  const visit = (uuid: string, parent: string | undefined, seen: Set<string>): string[] => {
+    if (seen.has(uuid)) return [];
+    seen.add(uuid);
+    const g = groups[uuid];
+    const here = place(unquote(String(g.sourceTree ?? "<group>")), g.path === undefined ? undefined : unquote(String(g.path)), parent);
+    const collected: string[] = [];
+    const placeRef = (uuid: string, tree: string, parentPath: string | undefined) => {
+      const f = fileRefs[uuid];
+      files.set(uuid, parentPath === undefined ? undefined : place(unquote(String(f.sourceTree ?? tree)), f.path === undefined ? undefined : unquote(String(f.path)), parentPath));
+    };
+    for (const entry of (g.children ?? []) as ({ value: string } | string)[]) {
+      const child = { value: ref(entry) };
+      if (variantGroups[child.value]) {
+        const v = variantGroups[child.value];
+        const vhere = here === undefined ? undefined : place(unquote(String(v.sourceTree ?? "<group>")), v.path === undefined ? undefined : unquote(String(v.path)), here);
+        const kids = ((v.children ?? []) as ({ value: string } | string)[]).map(ref).filter((c) => fileRefs[c]);
+        for (const k of kids) placeRef(k, "<group>", vhere);
+        variants.set(child.value, kids);
+      } else if (groups[child.value]) {
+        collected.push(...visit(child.value, here, seen));
+      } else if (fileRefs[child.value]) {
+        placeRef(child.value, "<group>", here);
+        collected.push(child.value);
+      }
+    }
+    groupPaths.set(uuid, { path: here ?? "", name: g.name === undefined ? undefined : unquote(String(g.name)), files: collected });
+    return collected;
+  };
+  visit(mainGroup, "", new Set());
+  return { files, groupPaths, variants };
+}
+
+function phaseFiles(objs: Record<string, any>, target: any, section: string, variants: Map<string, string[]>): string[] {
+  const phases = objs[section] ?? {};
+  const out: string[] = [];
+  for (const entry of (target.buildPhases ?? []) as ({ value: string } | string)[]) {
+    const phase = phases[ref(entry)];
+    if (!phase) continue;
+    for (const f of (phase.files ?? []) as ({ value: string } | string)[]) {
+      const buildFile = objs.PBXBuildFile?.[ref(f)];
+      if (buildFile?.fileRef) out.push(...(variants.get(String(buildFile.fileRef)) ?? [String(buildFile.fileRef)]));
+    }
+  }
+  return out;
+}
+
+export function readTargetContent(p: Pbxproj, iosDir: string): BareTargetContent {
+  const objs = p.project.hash.project.objects as Record<string, any>;
+  const target = objs.PBXNativeTarget[p.appTarget.uuid];
+  const mainGroup = p.project.getFirstProject().firstProject.mainGroup as string;
+  const { files, groupPaths, variants } = walkGroups(objs, mainGroup);
+
+  const toFile = (rel: string): TargetFile => {
+    const abs = path.isAbsolute(rel) ? rel : path.join(iosDir, rel);
+    const relPath = path.relative(iosDir, abs).split(path.sep).join("/");
+    return { absPath: abs, relPath };
+  };
+  const fileOf = (uuid: string): TargetFile => {
+    const placed = files.get(uuid);
+    if (placed === undefined) {
+      const name = unquote(String(objs.PBXFileReference[uuid]?.path ?? uuid));
+      throw new DetectError(`Cannot locate ${name} (${uuid}) in the pbxproj group tree`);
+    }
+    return toFile(placed);
+  };
+
+  const swiftSources: TargetFile[] = [];
+  const cSources: TargetFile[] = [];
+  const headers: TargetFile[] = [];
+  const resources: TargetFile[] = [];
+  const skippedResources: TargetFile[] = [];
+
+  const unsupported: string[] = [];
+  for (const uuid of phaseFiles(objs, target, "PBXSourcesBuildPhase", variants)) {
+    if (!objs.PBXFileReference[uuid]) continue;
+    const file = fileOf(uuid);
+    if (SWIFT.test(file.relPath)) swiftSources.push(file);
+    else if (C_SOURCE.test(file.relPath)) cSources.push(file);
+    else if (HEADER.test(file.relPath)) headers.push(file);
+    else unsupported.push(file.relPath);
+  }
+  if (unsupported.length > 0) {
+    throw new DetectError(`unsupported source type in the app target: ${unsupported.join(", ")}`);
+  }
+  for (const uuid of phaseFiles(objs, target, "PBXResourcesBuildPhase", variants)) {
+    if (!objs.PBXFileReference[uuid]) continue;
+    const file = fileOf(uuid);
+    (SKIPPED_RESOURCE.test(file.relPath) ? skippedResources : resources).push(file);
+  }
+
+  // Headers are rarely in a build phase: take every header under the app target's folder group.
+  const infoPlist = resolveSetting(p, "INFOPLIST_FILE");
+  const folder = infoPlist ? path.posix.dirname(infoPlist) : undefined;
+  if (folder && folder !== ".") {
+    const group =
+      [...groupPaths.entries()].find(([uuid, g]) => uuid !== mainGroup && g.path === folder) ??
+      [...groupPaths.entries()].find(([uuid, g]) => uuid !== mainGroup && g.path === "" && g.name === folder);
+    for (const uuid of group?.[1].files ?? []) {
+      const file = fileOf(uuid);
+      if (!HEADER.test(file.relPath)) continue;
+      if (!headers.some((h) => h.relPath === file.relPath)) headers.push(file);
+    }
+  }
+
+  const seen = new Map<string, string>();
+  for (const f of [...swiftSources, ...cSources]) {
+    const base = path.posix.basename(f.relPath);
+    const first = seen.get(base);
+    if (first !== undefined) {
+      throw new DetectError(`Two compiled sources share the name ${base} (${first} and ${f.relPath}); the generated target needs unique file names`);
+    }
+    seen.set(base, f.relPath);
+  }
+
+  const bridging = resolveSetting(p, "SWIFT_OBJC_BRIDGING_HEADER")?.trim();
+  const words = (value: string | undefined): string[] => shellWords(value ?? "").filter((w) => w && w !== "$(inherited)");
+
+  const ignoredSettings = IGNORABLE_FLAGS.filter((name) =>
+    words(buildSetting(p, name)).some((w) => !BENIGN_FLAGS.has(w)),
+  );
+
+  return {
+    swiftSources,
+    cSources,
+    headers,
+    resources,
+    skippedResources,
+    bridgingHeader: bridging ? toFile(bridging) : undefined,
+    defines: words(resolveSetting(p, "GCC_PREPROCESSOR_DEFINITIONS")),
+    headerSearchPaths: words(resolveSetting(p, "HEADER_SEARCH_PATHS")).map((w) => path.resolve(iosDir, w)),
+    cxxStandard: resolveSetting(p, "CLANG_CXX_LANGUAGE_STANDARD")?.trim() || undefined,
+    ignoredSettings,
+    mixed: cSources.length > 0,
+  };
 }
