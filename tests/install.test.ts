@@ -82,15 +82,15 @@ describe("install", () => {
     ).rejects.toThrow("No build found. Run `expo-xtool build` first.");
     expect(devRun).not.toHaveBeenCalled();
   });
-  it("install does not print the dev launcher URL when hasDevClient is false", async () => {
-    for (const hasDevClient of [false, undefined]) {
+  it("install does not print the dev launcher URL without the dev client", async () => {
+    for (const st of [{ hasDevClient: false }, { kind: "expo" as const }, { kind: "bare" as const }]) {
       const logs: string[] = [];
       await install("/p", {
         xtool: {
           ...base,
           authStatus: async () => ({ loggedIn: true, teamId: "TEAM", appleId: "a@b.c" }),
           listDevices: async () => [{ name: "Phone", udid: "u", transport: "usb" }],
-          readState: async () => ({ bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20", hasDevClient }),
+          readState: async () => ({ bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20", ...st }),
           devRun: async () => {},
           writeState: async () => {},
         },
@@ -100,6 +100,21 @@ describe("install", () => {
       expect(logs.join("\n")).not.toContain("dev launcher");
       expect(logs.join("\n")).toContain("First-run checklist");
     }
+  });
+  it("install prints the dev launcher URL for a state written before bare support (no kind, no hasDevClient)", async () => {
+    const logs: string[] = [];
+    await install("/p", {
+      xtool: {
+        ...base,
+        authStatus: async () => ({ loggedIn: true, teamId: "TEAM", appleId: "a@b.c" }),
+        listDevices: async () => [{ name: "Phone", udid: "u", transport: "usb" }],
+        readState: async () => ({ bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20" }),
+        devRun: async () => {},
+        writeState: async () => {},
+      },
+      log: (s) => logs.push(s),
+    });
+    expect(logs).toContain("Metro URL for the dev launcher: http://192.168.1.20:8082");
   });
   it("runs, then logs bundle id and checklist", async () => {
     const logs: string[] = [];

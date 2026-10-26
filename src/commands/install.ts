@@ -114,9 +114,13 @@ export function scanRefusal(route: LanRoute): string | undefined {
   return undefined;
 }
 
-/** What a dev-client user types in the launcher; nothing to type without expo-dev-client. */
+/**
+ * What a dev-client user types in the launcher; nothing to type without expo-dev-client. A state
+ * written before bare support has neither `kind` nor `hasDevClient`: it is an Expo build, so print it.
+ */
 function logDevLauncherUrl(state: InstallState, log: (s: string) => void): void {
-  if (state.hasDevClient === true) log(`Metro URL for the dev launcher: http://${state.lanIp}:${state.metroPort}`);
+  const preBare = state.kind === undefined && state.hasDevClient === undefined;
+  if (state.hasDevClient === true || preBare) log(`Metro URL for the dev launcher: http://${state.lanIp}:${state.metroPort}`);
 }
 
 async function authenticated(
