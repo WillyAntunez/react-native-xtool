@@ -1,8 +1,16 @@
 # Expo SwiftPM plugin: build mixed, Objective-C-only and placeholder modules; skip meta pods; dev client
 
 Target: `expo/expo`, `packages/expo/scripts/spm/` (`classify.js`, `podspec.js`, `plugin.js`, `manifests.js`,
-`diagnostics.js`). Seen with expo 58.0.17. The full diff is `patches/expo+58.0.17.patch` (every hunk marked
+`diagnostics.js`). Seen with expo 58.0.17. The full diff is `patches/expo+58.0.19.patch` (every hunk marked
 `expo-xtool`).
+
+**Status at 58.0.19:** upstream still refuses these modules (`mixed-no-manifest`), so every hunk is kept. 58.0.19
+reworked `plugin.js` around a new `buildFromSource` autolinking option (both passes re-run until no pod falls back
+to its precompiled XCFramework) and "direct" packages for checked-in manifests that depend on
+`ExpoModulesCoreHeaders` (`direct.js`); the `plugin.js` hunks were re-anchored onto that code without changing
+their behaviour. The Linux macro-plugin lookup now sits in the new `macroPluginTool`, which direct packages use
+too. One addition: `SOURCE_BUILD_BLOCKERS` (the `buildFromSource` error text) gains a `vendored-sources`
+entry, so an exact `buildFromSource` entry for expo-sqlite names the real cause.
 
 ## What the plugin refuses today
 

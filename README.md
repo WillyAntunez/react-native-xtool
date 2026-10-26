@@ -119,7 +119,7 @@ must be CommonJS (`module.exports = {...}`) unless your project is ESM. Both are
 
 1. Applies four patches to `node_modules` with patch-package. Two are one-liners (the `@ExpoModule` scanner gate in
    expo-modules-autolinking, a Swift 6.4 access-level error in expo-modules-jsi). The other two are large:
-   - **Expo** (`patches/expo+58.0.17.patch`, files under `expo/scripts/spm/`): finds the Swift macro plugin on Linux;
+   - **Expo** (`patches/expo+58.0.19.patch`, files under `expo/scripts/spm/`): finds the Swift macro plugin on Linux;
      gives pure-Swift modules the Foundation/UIKit imports CocoaPods' umbrella header provides
      ([docs/upstream/expo-spm-plugin-umbrella.md](docs/upstream/expo-spm-plugin-umbrella.md)); builds Expo modules
      that mix Swift and Objective-C or are Objective-C only, such as expo-application and the dev client chain; skips

@@ -1,8 +1,8 @@
 diff --git a/node_modules/expo/scripts/spm/classify.js b/node_modules/expo/scripts/spm/classify.js
-index 10d157f..7f01275 100644
+index 8193364..f3d0f85 100644
 --- a/node_modules/expo/scripts/spm/classify.js
 +++ b/node_modules/expo/scripts/spm/classify.js
-@@ -102,6 +102,65 @@ function walkSourceTree(dir) {
+@@ -104,6 +104,65 @@ function walkSourceTree(dir) {
  
  const REACT_SCANNED_RX = /\.(swift|m|mm|c|h|hpp|cpp|cc)$/;
  const NON_SWIFT_SOURCE_RX = /\.(m|mm|c|cpp|cc)$/;
@@ -68,7 +68,7 @@ index 10d157f..7f01275 100644
  
  function fileImportsReact(file) {
    try {
-@@ -124,16 +183,40 @@ function scanAppleSources(moduleRoot) {
+@@ -126,16 +185,40 @@ function scanAppleSources(moduleRoot) {
    let pureSwift = true;
    let importsReact = false;
    let ignoredDirs = [];
@@ -111,7 +111,7 @@ index 10d157f..7f01275 100644
  }
  
  /**
-@@ -157,4 +240,7 @@ module.exports = {
+@@ -159,4 +242,7 @@ module.exports = {
    findModuleRoot,
    moduleNeedsReact,
    scanAppleSources,
@@ -120,10 +120,10 @@ index 10d157f..7f01275 100644
 +  walkSourceTree,
  };
 diff --git a/node_modules/expo/scripts/spm/diagnostics.js b/node_modules/expo/scripts/spm/diagnostics.js
-index 0ac5e9e..ee17fdb 100644
+index 2554a75..502a66c 100644
 --- a/node_modules/expo/scripts/spm/diagnostics.js
 +++ b/node_modules/expo/scripts/spm/diagnostics.js
-@@ -214,6 +214,23 @@ function renderBlock(header, lines, moduleRoot) {
+@@ -232,6 +232,23 @@ function renderBlock(header, lines, moduleRoot) {
    return [header, ...lines.map((line) => `  ${line}`), `  Module path: ${moduleRoot}`].join('\n');
  }
  
@@ -147,9 +147,19 @@ index 0ac5e9e..ee17fdb 100644
  function renderMixedNoManifest({ podName, packageName, moduleRoot }) {
    return renderBlock(
      `error: Expo module "${packageName}" (pod ${podName}) mixes Swift and Objective-C/C++ sources but ships neither a Package.swift nor an spm.config.json, so it cannot be built with Swift Package Manager.`,
-@@ -627,6 +644,9 @@ const REFUSALS = new Map(
-   [
-     ['duplicate-pod-name', { render: renderDuplicatePodName }],
+@@ -285,6 +302,9 @@ const SOURCE_BUILD_BLOCKERS = {
+     `Its Package.swift exports no "${productName}" library product.`,
+   'partially-precompiled': ({ precompiledSiblings }) =>
+     `Other pods of the module are linked precompiled (${precompiledSiblings.join(', ')}), and building the module from source would link them a second time.`,
++  // expo-xtool: see `renderVendoredSources`.
++  'vendored-sources': ({ vendorSources }) =>
++    `Its podspec builds C sources from its vendor/ directory (${vendorSources.join(', ')}), which a generated Swift Package Manager target cannot include, and it ships no Package.swift.`,
+ };
+ 
+ function renderBuildFromSourceUnsupported({
+@@ -706,6 +726,9 @@ const REFUSALS = new Map(
+     ['build-from-source-unsupported', { render: renderBuildFromSourceUnsupported }],
+     ['build-from-source-fallback-incomplete', { render: renderBuildFromSourceFallbackIncomplete }],
      ['partially-precompiled', { render: renderPartiallyPrecompiled }],
 +    // expo-xtool: above prebuild-available, which an spm.config.json adds to every uncovered
 +    // pod: a vendored-C module (expo-sqlite) needs a manifest, and only this report says so.
@@ -157,7 +167,7 @@ index 0ac5e9e..ee17fdb 100644
      ['prebuild-available', { render: renderPrebuildAvailable }],
      ['needs-manifest-for-linkage', { render: renderNeedsManifestForLinkage }],
      ['unsupported-target-dependency', { render: renderUnsupportedTargetDependency }],
-@@ -703,6 +723,24 @@ function renderXcconfigLinkerWarning(entries) {
+@@ -782,6 +805,24 @@ function renderXcconfigLinkerWarning(entries) {
      .join('\n\n');
  }
  
@@ -182,7 +192,7 @@ index 0ac5e9e..ee17fdb 100644
  /** The sync does not fail, so this warning is the only place the mismatch shows. */
  function renderRootConflictWarning(entries) {
    if (!entries.length) return '';
-@@ -816,6 +854,7 @@ module.exports = {
+@@ -919,6 +960,7 @@ module.exports = {
    renderUnmappedDependencyWarning,
    renderLeftOutCompanionWarning,
    renderXcconfigLinkerWarning,
@@ -191,7 +201,7 @@ index 0ac5e9e..ee17fdb 100644
    renderPartlyProvidedPackageWarning,
    renderExtraPodsWarning,
 diff --git a/node_modules/expo/scripts/spm/manifests.js b/node_modules/expo/scripts/spm/manifests.js
-index b1454bc..16fac63 100644
+index c42928b..5bc429d 100644
 --- a/node_modules/expo/scripts/spm/manifests.js
 +++ b/node_modules/expo/scripts/spm/manifests.js
 @@ -9,7 +9,7 @@
@@ -201,9 +211,9 @@ index b1454bc..16fac63 100644
 -const { appleSourceDir, scanAppleSources } = require('./classify');
 +const { appleSourceDir, scanAppleSources, walkSourceTree } = require('./classify');
  const { reactProductDependencies, reactPackageDeclarations } = require('./react-descriptor');
- const { runDumpPackage } = require('./cli');
  const { pluginError } = require('./diagnostics');
-@@ -559,7 +559,7 @@ function renderSourceManifest({
+ 
+@@ -558,7 +558,7 @@ function renderSourceManifest({
        return `        .target(
              name: "${t.name}",
              dependencies: [${depsSwift}],
@@ -212,7 +222,7 @@ index b1454bc..16fac63 100644
          )`;
      })
      .join(',\n');
-@@ -577,14 +577,30 @@ function renderSourceManifest({
+@@ -576,14 +576,30 @@ function renderSourceManifest({
  
    const origin = manifest.pureSwift
      ? `// Pure-Swift source consumption package for "${manifest.name}".`
@@ -246,7 +256,7 @@ index b1454bc..16fac63 100644
  let package = Package(
      name: "${manifest.name}",
      platforms: ${renderPlatforms(manifest.iosDeploymentTarget)},
-@@ -645,6 +661,7 @@ function pureSwiftManifest({
+@@ -644,6 +660,7 @@ function pureSwiftManifest({
    iosDeploymentTarget = null,
    hasPrivacyManifest = false,
    packages = [],
@@ -254,7 +264,7 @@ index b1454bc..16fac63 100644
  }) {
    const target = {
      name: product,
-@@ -657,11 +674,15 @@ function pureSwiftManifest({
+@@ -656,11 +673,15 @@ function pureSwiftManifest({
      // .process may rename or transform what it puts in the bundle.
      resources: hasPrivacyManifest ? [{ path: PRIVACY_MANIFEST, rule: { copy: {} } }] : [],
      settings: [],
@@ -275,7 +285,7 @@ index b1454bc..16fac63 100644
    };
    return {
      name: product,
-@@ -670,7 +691,11 @@ function pureSwiftManifest({
+@@ -669,7 +690,11 @@ function pureSwiftManifest({
      products: [{ name: product, targets: [product] }],
      targets: [target],
      packageDeps: packages,
@@ -288,7 +298,7 @@ index b1454bc..16fac63 100644
    };
  }
  
-@@ -682,7 +707,13 @@ function escapeSwiftString(value) {
+@@ -681,7 +706,13 @@ function escapeSwiftString(value) {
   * A target's `*Settings:` arguments: Expo's binary-free interface tree first, then
   * whatever the module itself declared, in its own order.
   */
@@ -303,7 +313,7 @@ index b1454bc..16fac63 100644
    const unsafeFlags = (flags) =>
      `.unsafeFlags([${flags.map((f) => `"${escapeSwiftString(f)}"`).join(', ')}])`;
    const interfaceFlags = unsafeFlags(['-F', frameworkSearchPath]);
-@@ -701,7 +732,9 @@ function renderTargetSettings(frameworkSearchPath, settings, targetName, extraSw
+@@ -700,7 +731,9 @@ function renderTargetSettings(frameworkSearchPath, settings, targetName, extraSw
        .filter((s) => s.tool === tool)
        .map((s) => renderSetting(s, targetName));
      const injected = tool === 'swift' ? swiftInterfaceFlags : interfaceFlags;
@@ -314,7 +324,7 @@ index b1454bc..16fac63 100644
      return values.length ? `\n            ${label}: [${values.join(', ')}],` : '';
    }).join('');
  }
-@@ -848,6 +881,70 @@ function withoutSatisfiedProducts(manifest, satisfiedDependencies) {
+@@ -847,6 +880,70 @@ function withoutSatisfiedProducts(manifest, satisfiedDependencies) {
    return { manifest: { ...manifest, targets, packageDeps }, partlyProvidedPackages };
  }
  
@@ -385,7 +395,7 @@ index b1454bc..16fac63 100644
  /**
   * Render `manifest` against Expo's binary-free framework interface tree, with RN's
   * invariant React products injected and its floor raised to the minimum, and write it
-@@ -873,24 +970,63 @@ function emitPackage(
+@@ -872,24 +969,63 @@ function emitPackage(
      manifest,
      satisfiedDependencies
    );
@@ -453,7 +463,7 @@ index b1454bc..16fac63 100644
    return {
      ok: {
        packageDep: { name: manifest.name, path: pkgDir },
-@@ -1011,14 +1147,159 @@ function emitPureSwiftSourcePackage(
+@@ -1012,14 +1148,159 @@ function emitPureSwiftSourcePackage(
      iosDeploymentTarget = null,
      spmPackages = [],
      sources = scanAppleSources(moduleRoot),
@@ -614,7 +624,7 @@ index b1454bc..16fac63 100644
      iosDeploymentTarget,
      hasPrivacyManifest: fs.existsSync(path.join(srcDir, PRIVACY_MANIFEST)),
      packages: spmPackages.map(documentedPackage),
-@@ -1037,5 +1318,8 @@ module.exports = {
+@@ -1038,5 +1319,8 @@ module.exports = {
    raiseFloor,
    emitSourceManifestPackage,
    emitPureSwiftSourcePackage,
@@ -624,38 +634,40 @@ index b1454bc..16fac63 100644
    emitExpoModulesJSIHeadersPackage,
  };
 diff --git a/node_modules/expo/scripts/spm/plugin.js b/node_modules/expo/scripts/spm/plugin.js
-index 1141e7c..edea31d 100644
+index 00a7c98..f08bbb0 100644
 --- a/node_modules/expo/scripts/spm/plugin.js
 +++ b/node_modules/expo/scripts/spm/plugin.js
-@@ -68,6 +68,7 @@ const {
+@@ -69,6 +69,7 @@ const {
    renderRootConflictWarning,
    renderUnmappedDependencyWarning,
    renderXcconfigLinkerWarning,
 +  renderDroppedResourceWarning,
    reportUnsupported,
-   unmappedPodDependencies,
- } = require('./diagnostics');
-@@ -84,6 +85,7 @@ const {
- } = require('./flavored-frameworks');
+   BUILD_FROM_SOURCE_OPTION,
+   rerunSpmUpdate,
+@@ -98,6 +99,7 @@ const {
+ } = require('./direct');
  const {
    emitExpoModulesJSIHeadersPackage,
 +  emitGeneratedSourcePackage,
    emitPureSwiftSourcePackage,
    emitSourceManifestPackage,
  } = require('./manifests');
-@@ -298,8 +300,8 @@ function uncoveredPod(identity, ...refusals) {
+@@ -319,9 +321,9 @@ function uncoveredPod(identity, ...refusals) {
  /**
   * What the passes decided for each pod, keyed by pod name: CocoaPods pod names are
   * unique, so a name two packages list is one pod. `linkedAs` is `'build-phase'`,
-- * `'precompiled'`, `'manifest'`, `'pure-swift'` or null. A precompiled record carries its
-- * `framework`.
+- * `'precompiled'`, `'manifest'`, `'pure-swift'` or null. ExpoModulesJSI starts as
+- * `'build-phase'` (see `linkExpoModulesJSI`). A precompiled record carries its
+- * `framework`; `linkPrecompiledPods` documents `buildFromSource`.
 + * `'precompiled'`, `'manifest'`, `'pure-swift'`, `'mixed'`, `'clang'`, `'meta'` (the last three from
-+ * expo-xtool) or null. A precompiled record carries its `framework`.
++ * expo-xtool) or null. ExpoModulesJSI starts as `'build-phase'` (see `linkExpoModulesJSI`). A
++ * precompiled record carries its `framework`; `linkPrecompiledPods` documents `buildFromSource`.
   */
  function podRecords(identities) {
    const records = new Map();
-@@ -382,22 +384,105 @@ function linkPrecompiledPods(identities, records, cacheDir) {
-   return linked;
+@@ -553,17 +555,84 @@ function resolveCoreHeaders(core, coreSource, cacheDir) {
+   return headers.xcframework;
  }
  
 +/**
@@ -682,22 +694,10 @@ index 1141e7c..edea31d 100644
 +  return sources.hasSources ? 'pure-swift' : null;
 +}
 +
- /**
-  * Emits the source package of the module whose first pod is `identity`: its
-- * checked-in manifest mirrored, or else one Swift target over its sources. A
-- * pure-Swift module is refused when its podspec declares linkage, because the
-- * emitted package would link less than the podspec does. Returns null for a module
-- * with no sources: the pod's own `no-apple-sources` report covers it.
-+ * checked-in manifest mirrored, or else one generated target over its sources
-+ * (see `sourceLayout`). A module is refused when its podspec declares linkage,
-+ * because the emitted package would link less than the podspec does. Returns null
-+ * for a module with no sources: the pod's own `no-apple-sources` report covers it.
-+ */
 +/**
 + * expo-xtool: the Swift module a generated package builds for a pod — CocoaPods' module name
 + * (`module_name`, else `header_dir`, else the pod name), which is what its dependents import.
-  */
--function emitSourceModule(identity, hasManifest, emitContext) {
++ */
 +function generatedModuleName(identity) {
 +  return identity.podspec.moduleName ?? identity.podName;
 +}
@@ -729,9 +729,34 @@ index 1141e7c..edea31d 100644
 +  return index;
 +}
 +
-+function emitSourceModule(identity, hasManifest, emitContext, generatedPackages = new Map()) {
-   const { moduleRoot, podName, iosDeploymentTarget, spmPackages, sources, podspec } = identity;
-   if (hasManifest) return emitSourceManifestPackage(moduleRoot, emitContext);
+ /**
+  * Emits the source package of the module whose first pod is `identity`: its checked-in
+  * manifest as it stands when that depends on ExpoModulesCoreHeaders (`direct` is then
+- * set), else that manifest mirrored, or else one Swift target over its sources. A
+- * pure-Swift module is refused when its podspec declares linkage, because the
+- * emitted package would link less than the podspec does. Returns null for a module
+- * with no sources: the pod's own `no-apple-sources` report covers it.
++ * set), else that manifest mirrored, or else one generated target over its sources
++ * (see `sourceLayout`, expo-xtool). A module without a manifest is refused when its
++ * podspec declares linkage, because the emitted package would link less than the
++ * podspec does. Returns null for a module with no sources: the pod's own
++ * `no-apple-sources` report covers it.
+  *
+  * @param dumpManifest `dumpModuleManifest`, run at most once per real module root.
++ * @param generatedPackages `generatedPackageIndex`'s result (expo-xtool).
+  */
+-function emitSourceModule(identity, hasManifest, emitContext, dumpManifest) {
++function emitSourceModule(
++  identity,
++  hasManifest,
++  emitContext,
++  dumpManifest,
++  generatedPackages = new Map()
++) {
+   const { moduleRoot, packageName, podName, iosDeploymentTarget, spmPackages, sources, podspec } =
+     identity;
+   if (hasManifest) {
+@@ -585,9 +654,33 @@ function emitSourceModule(identity, hasManifest, emitContext, dumpManifest) {
    if (podspec.linkage != null) {
      return { refusal: { reason: 'needs-manifest-for-linkage', ...podspec.linkage } };
    }
@@ -768,7 +793,7 @@ index 1141e7c..edea31d 100644
      emitContext
    );
  }
-@@ -422,16 +507,20 @@ function linkSourceModules(modules, identities, records, emitContext) {
+@@ -614,16 +707,20 @@ function linkSourceModules(modules, identities, records, emitContext, dumpManife
      refusals.set(root, (refusals.get(root) ?? new Map()).set(reason, refusalFor));
    const linkedAs = (identity) => records.get(identity.podName).linkedAs;
    const manifestProductsByRoot = new Map();
@@ -791,7 +816,7 @@ index 1141e7c..edea31d 100644
        // Both source branches build the whole module, so emitting it would link
        // the precompiled pods a second time, from source.
        const siblings = {
-@@ -457,16 +546,20 @@ function linkSourceModules(modules, identities, records, emitContext) {
+@@ -649,16 +746,26 @@ function linkSourceModules(modules, identities, records, emitContext, dumpManife
        if (covered.some(linkedAs)) continue;
        // A module with no sources at all scans as pure Swift too, so it reaches
        // emitSourceModule for the podspec linkage check that outranks it.
@@ -802,20 +827,26 @@ index 1141e7c..edea31d 100644
 +        continue;
 +      }
  
--      const emission = emitSourceModule(first, hasManifest, emitContext);
-+      const emission = emitSourceModule(first, hasManifest, emitContext, generatedPackages);
+-      const emission = emitSourceModule(first, hasManifest, emitContext, dumpManifest);
++      const emission = emitSourceModule(
++        first,
++        hasManifest,
++        emitContext,
++        dumpManifest,
++        generatedPackages
++      );
        if (emission == null) continue;
-       const { refusal, ok } = emission;
+       const { refusal, ok, direct = false } = emission;
        if (refusal != null) {
          refuse(moduleRoot, refusal.reason, () => refusal);
          continue;
        }
 -      const kind = hasManifest ? 'manifest' : 'pure-swift';
 +      const kind = hasManifest ? 'manifest' : layout;
-       emitted.push({ identity: first, linkedAs: kind, emission: ok });
+       emitted.push({ identity: first, linkedAs: kind, direct, emission: ok });
        if (!hasManifest) {
          Object.assign(records.get(first.podName), { identity: first, linkedAs: kind });
-@@ -541,7 +634,9 @@ function summarizeRecords(
+@@ -851,7 +958,9 @@ function summarizeRecords(
      autolinkGate,
    }
  ) {
@@ -826,7 +857,7 @@ index 1141e7c..edea31d 100644
    const refusalsFor = (identity) =>
      [...(refusals.get(identity.moduleRoot)?.values() ?? [])].map((refusalFor) =>
        refusalFor(identity)
-@@ -601,11 +696,24 @@ function summarizeRecords(
+@@ -917,10 +1026,23 @@ function summarizeRecords(
        emission.partlyProvidedPackages.map((pkg) => ({ packageName, moduleRoot, ...pkg }))
      ),
      xcconfigLinkage,
@@ -839,9 +870,8 @@ index 1141e7c..edea31d 100644
 +        resources: identity.sources.appleOnlyResources,
 +      })),
      precompiledPods: podNames(precompiled),
-     manifestPackages: emitted
-       .filter((r) => r.linkedAs === 'manifest')
-       .map((r) => r.identity.packageName),
+     manifestPackages: packageNames(fromManifests),
+     directPackages: packageNames(fromManifests.filter((r) => r.direct)),
 -    pureSwiftPods: podNames(pureSwift),
 +    pureSwiftPods: podNames(pureSwift.filter((r) => r.linkedAs === 'pure-swift')),
 +    mixedPods: podNames(pureSwift.filter((r) => r.linkedAs === 'mixed')),
@@ -852,7 +882,7 @@ index 1141e7c..edea31d 100644
      reactWiredPods: podNames(reactWired),
    };
  }
-@@ -656,7 +764,11 @@ function macroPluginFlags(coreModuleRoot) {
+@@ -971,7 +1093,11 @@ function macroPluginTool(coreModuleRoot) {
        { cause: error }
      );
    }
@@ -865,9 +895,9 @@ index 1141e7c..edea31d 100644
    if (!fs.existsSync(tool)) {
      throw pluginError(
        macroPluginFault(`The Expo Swift macro plugin is missing its executable at ${tool}.`, 'it')
-@@ -784,6 +896,9 @@ module.exports = function expoSpmPlugin(context) {
-   logListed('paired runtime frameworks', summary.precompiledPods);
+@@ -1123,6 +1249,9 @@ module.exports = function expoSpmPlugin(context) {
    logListed('source via checked-in manifest', summary.manifestPackages);
+   logListed('source via direct checked-in manifest', summary.directPackages);
    logListed('source pure-Swift', summary.pureSwiftPods);
 +  logListed('source mixed Swift + Objective-C', summary.mixedPods);
 +  logListed('source Objective-C', summary.clangPods);
@@ -875,7 +905,7 @@ index 1141e7c..edea31d 100644
    logListed('React wired into', summary.reactWiredPods);
    logListed('gated off', summary.gatedOffProducts);
    logListed(
-@@ -799,6 +914,9 @@ module.exports = function expoSpmPlugin(context) {
+@@ -1148,6 +1277,9 @@ module.exports = function expoSpmPlugin(context) {
    if (summary.xcconfigLinkage.length > 0) {
      console.warn(renderXcconfigLinkerWarning(summary.xcconfigLinkage));
    }
@@ -885,7 +915,7 @@ index 1141e7c..edea31d 100644
    if (summary.leftOutCompanions.length > 0) {
      console.warn(renderLeftOutCompanionWarning(summary.leftOutCompanions));
    }
-@@ -895,3 +1013,5 @@ module.exports = function expoSpmPlugin(context) {
+@@ -1245,3 +1377,5 @@ module.exports = function expoSpmPlugin(context) {
  module.exports.macroPluginFlags = macroPluginFlags;
  module.exports.resolvePodIdentities = resolvePodIdentities;
  module.exports.uncoveredPod = uncoveredPod;
