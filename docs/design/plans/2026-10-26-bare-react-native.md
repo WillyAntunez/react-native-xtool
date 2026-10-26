@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript (Node 20, ESM), vitest, `xcode` 4.0.0 (pbxproj parser), `@expo/config`, patch-package, React Native 0.88 `scripts/spm/*`, xtool 1.23.0, Swift 6.4.
 
-**Spec:** `docs/superpowers/specs/2026-10-26-bare-react-native-design.md`
+**Spec:** `docs/design/specs/2026-10-26-bare-react-native-design.md`
 
 ## Global Constraints
 
