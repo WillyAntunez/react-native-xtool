@@ -199,7 +199,7 @@ beyond `-ObjC` and `-lc++`, `build` logs them by name as not carried over.
 **Sources.** The target's Sources phase is copied to `ios-xtool/Sources/App` keeping its layout: `.swift`, `.m`, `.mm`, `.c`,
 `.cpp`/`.cc`/`.cxx` and headers (every header in the app folder too), with `.lproj` variant groups. Any other source
 type (`.xcdatamodeld`, `.intentdefinition`, `.s`, ...) stops the build with `unsupported source type in the app target`.
-Files outside `ios/` and two compiled files with the same name are errors.
+Sources outside `ios/` and two compiled files with the same name are errors.
 
 **Mixed Swift + Objective-C/C++ App target.** If the target compiles any `.m`, `.mm`, `.c` or `.cpp` file, it is built as
 one mixed-language target, the same mechanism as the scaffolded mixed libraries (the two manifests described in

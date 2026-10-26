@@ -382,6 +382,22 @@ describe("writeIosXtool", () => {
     await expect(readFile(join(paths.iosXtool, "Package.swift"), "utf8")).rejects.toThrow();
   });
 
+  it("copies an app resource from outside ios/ (fonts added by react-native-asset)", async () => {
+    const { root, paths, ctx } = await bareProject({
+      pbxproj: (src) =>
+        src.replace(
+          'path = Inter.ttf; sourceTree = "<group>";',
+          "path = ../assets/fonts/Inter.ttf; sourceTree = SOURCE_ROOT;",
+        ),
+    });
+    expect(ctx.project.bare!.resources.map((f) => f.relPath)).toContain("../assets/fonts/Inter.ttf");
+    await mkdir(join(root, "assets", "fonts"), { recursive: true });
+    await writeFile(join(root, "assets", "fonts", "Inter.ttf"), "outside font");
+    await writeIosXtool(ctx);
+    expect(await readFile(join(paths.iosXtool, "Resources", "Inter.ttf"), "utf8")).toBe("outside font");
+    expect(await readFile(join(paths.iosXtool, "xtool.yml"), "utf8")).toContain("  - Resources/Inter.ttf\n");
+  });
+
   it("refuses a header that would land among the include/ forwards", async () => {
     const { app, ctx } = await bareProject();
     await mkdir(join(app, "include"), { recursive: true });

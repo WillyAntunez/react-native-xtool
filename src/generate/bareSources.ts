@@ -52,7 +52,7 @@ export async function copyBareTarget(
   const place = (file: TargetFile): string => {
     if (path.posix.isAbsolute(file.relPath) || file.relPath.split("/").includes("..")) {
       throw new Error(
-        `${file.absPath} is outside ios/: expo-xtool copies only files under ios/ into the generated project; move it into ios/`,
+        `${file.absPath} is outside ios/: expo-xtool copies only sources under ios/ into the generated project; move it into ios/`,
       );
     }
     const inTarget = targetRel !== "" && !targetRel.startsWith("..") && file.relPath.startsWith(`${targetRel}/`);
@@ -97,8 +97,8 @@ export async function copyBareTarget(
   }
 
   const staged = new Map<string, string>();
+  // Resources may live outside ios/ (react-native-asset adds ../assets/fonts/*): bundlePath() keeps only the name.
   for (const file of bare.resources) {
-    place(file);
     const dest = bundlePath(file.relPath);
     for (const [other, owner] of staged) {
       if (other === dest || other.startsWith(`${dest}/`) || dest.startsWith(`${other}/`)) {
