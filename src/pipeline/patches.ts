@@ -1,7 +1,9 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { mkdir, rm, symlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { execa } from "execa";
+import { projectPaths } from "../paths.js";
 import { packageRoot, toolEnv } from "../tools/exec.js";
 
 /** The patch-package pinned in this CLI's own dependencies, not whatever npx would fetch. */
@@ -11,9 +13,9 @@ export function patchPackageScript(): string {
 }
 
 /** patch-package rejects absolute --patch-dir, so pass it relative to the project. */
-export function applyPatchesArgv(projectRoot: string): [string, string[]] {
-  const patchDir = path.relative(path.resolve(projectRoot), path.join(packageRoot(), "patches"));
-  return [process.execPath, [patchPackageScript(), "--patch-dir", patchDir, "--error-on-fail"]];
+export function applyPatchesArgv(projectRoot: string, patchDir: string): [string, string[]] {
+  const rel = path.relative(path.resolve(projectRoot), patchDir);
+  return [process.execPath, [patchPackageScript(), "--patch-dir", rel, "--error-on-fail"]];
 }
 
 export interface PatchFileInfo {
@@ -62,6 +64,26 @@ function readVersion(pkgDir: string): string | undefined {
 export function installedVersion(projectRoot: string, pkg: string): string | undefined {
   const modules = path.join(projectRoot, "node_modules");
   return readVersion(path.join(modules, pkg)) ?? readVersion(path.join(modules, "expo", "node_modules", pkg));
+}
+
+/** Bundled patch files whose package is installed in the project (bare RN has no expo packages). */
+export function selectBundledPatches(projectRoot: string, bundledDir: string): string[] {
+  return readdirSync(bundledDir)
+    .filter((name) => {
+      const info = parsePatchFileName(name);
+      return info !== undefined && installedVersion(projectRoot, info.pkg) !== undefined;
+    })
+    .sort();
+}
+
+/** Empties `dest` and symlinks the selected bundled patches into it; returns their names. */
+export async function stageBundledPatches(projectRoot: string, dest: string): Promise<string[]> {
+  const bundledDir = path.join(packageRoot(), "patches");
+  const names = selectBundledPatches(projectRoot, bundledDir);
+  await rm(dest, { recursive: true, force: true });
+  await mkdir(dest, { recursive: true });
+  for (const name of names) await symlink(path.join(bundledDir, name), path.join(dest, name));
+  return names;
 }
 
 /** Finds a bundled patch whose package is installed at a different version. */
@@ -145,13 +167,17 @@ const execPatchPackage: PatchExec = (cmd, args, cwd) =>
  * The order does not matter: the project's patches only hold library Package.swift files.
  */
 export async function applyPatches(projectRoot: string, exec: PatchExec = execPatchPackage): Promise<void> {
-  const [cmd, args] = applyPatchesArgv(projectRoot);
-  const r = await exec(cmd, args, projectRoot);
-  const output = r.all ?? `${r.stdout}\n${r.stderr}`;
-  if (r.exitCode !== 0 || r.failed || patchPackageOutputFailed(output)) {
-    const mismatch = findPatchMismatch(projectRoot, path.join(packageRoot(), "patches"), output);
-    if (mismatch) throw new Error(patchFailureMessage({ ...mismatch, output }));
-    throw new Error(genericPatchFailureMessage(r, output));
+  const patchesDir = projectPaths(projectRoot).patchesDir;
+  const staged = await stageBundledPatches(projectRoot, patchesDir);
+  if (staged.length > 0) {
+    const [cmd, args] = applyPatchesArgv(projectRoot, patchesDir);
+    const r = await exec(cmd, args, projectRoot);
+    const output = r.all ?? `${r.stdout}\n${r.stderr}`;
+    if (r.exitCode !== 0 || r.failed || patchPackageOutputFailed(output)) {
+      const mismatch = findPatchMismatch(projectRoot, path.join(packageRoot(), "patches"), output);
+      if (mismatch) throw new Error(patchFailureMessage({ ...mismatch, output }));
+      throw new Error(genericPatchFailureMessage(r, output));
+    }
   }
   if (!hasProjectPatches(projectRoot)) return;
   const [pcmd, pargs] = projectPatchesArgv();
