@@ -71,7 +71,10 @@ export class MissingBundleIdentifierError extends Error {
     readonly configFile: string,
   ) {
     super(
-      `ios.bundleIdentifier is missing in ${configFile}. Add "ios": { "bundleIdentifier": "${suggestion}" } to the expo config, or run \`rn-xtool build\`, which writes that default into a static app.json.`,
+      configFile === "project.pbxproj"
+        ? // Bare projects have no expo config and are never written to.
+          `PRODUCT_BUNDLE_IDENTIFIER is missing for the app target in the Xcode project (${configFile}). Set PRODUCT_BUNDLE_IDENTIFIER in the Xcode project, for example to "${suggestion}".`
+        : `ios.bundleIdentifier is missing in ${configFile}. Add "ios": { "bundleIdentifier": "${suggestion}" } to the expo config, or run \`rn-xtool build\`, which writes that default into a static app.json.`,
     );
     this.name = "MissingBundleIdentifierError";
   }

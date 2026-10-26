@@ -104,6 +104,17 @@ describe("readBareProject", () => {
     });
     expect(await readFile(pbx, "utf8")).toBe(text);
   });
+
+  it("tells bare users to set PRODUCT_BUNDLE_IDENTIFIER in the Xcode project, never the expo config", async () => {
+    const dir = await tempBare();
+    const pbx = path.join(dir, "ios", "HelloWorld.xcodeproj", "project.pbxproj");
+    await writeFile(pbx, (await readFile(pbx, "utf8")).replace(/PRODUCT_BUNDLE_IDENTIFIER = .*;\n/g, ""));
+    const err = (await readBareProject(dir).catch((e: unknown) => e)) as Error;
+    expect(err.message).toContain("PRODUCT_BUNDLE_IDENTIFIER");
+    expect(err.message).toContain("Xcode project");
+    expect(err.message).toContain("com.anonymous.helloworld");
+    expect(err.message).not.toMatch(/expo config|app\.json|ios\.bundleIdentifier|rn-xtool build/);
+  });
 });
 
 describe("readProject", () => {

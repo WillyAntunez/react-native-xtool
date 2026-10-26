@@ -147,6 +147,8 @@ describe("readExpoProject", () => {
     expect(err).toBeInstanceOf(MissingBundleIdentifierError);
     expect((err as MissingBundleIdentifierError).suggestion).toBe("com.anonymous.app");
     expect((err as Error).message).toMatch(/bundleIdentifier/);
+    expect((err as Error).message).toContain("to the expo config, or run `rn-xtool build`");
+    expect((err as Error).message).not.toContain("expo-xtool");
   });
 
   it("throws with instructions when the config is dynamic", async () => {
