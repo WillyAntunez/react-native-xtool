@@ -1,4 +1,5 @@
 import { execa } from "execa";
+import { onExit } from "signal-exit";
 import { accessSync, constants } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ExpoXtoolConfig } from "../config.js";
@@ -74,14 +75,70 @@ export async function authStatus(bin: string, timeoutMs?: number): Promise<AuthS
   return parseAuthStatus(output);
 }
 
-/** `xtool devices` hangs forever with no device, so it is killed after `timeoutMs` and yields []. */
-export async function listDevices(bin: string, timeoutMs = 30000): Promise<Device[]> {
+export interface ListDevicesOptions {
+  /**
+   * Keep asking until a device answers (`true`: any; a transport name: one of that transport) or
+   * `timeoutMs` passes. USB enumeration takes a moment after plugging in or unlocking. Off by
+   * default: `doctor` wants one quick look.
+   */
+  waitForDevice?: boolean | Device["transport"];
+  /** Pause between polls when waiting. */
+  pollMs?: number;
+  /** Clock, injectable for tests. */
+  now?: () => number;
+}
+
+/**
+ * Lists devices with `xtool devices --no-wait`, which returns at once with none connected. The
+ * timeout is a safety net, and it kills the whole process group: the AppImage runtime runs xtool in
+ * a child, and killing only the launcher leaves that child holding stdout, so the call would never
+ * return. The group is also killed when this process exits or dies from a signal (Ctrl+C), since a
+ * detached child would outlive it.
+ */
+export async function listDevices(bin: string, timeoutMs = 30000, opts: ListDevicesOptions = {}): Promise<Device[]> {
+  const now = opts.now ?? Date.now;
+  const deadline = now() + timeoutMs;
+  for (;;) {
+    const remaining = Math.max(deadline - now(), 1);
+    const devices = await listDevicesOnce(bin, remaining);
+    const wanted = opts.waitForDevice;
+    const found = typeof wanted === "string" ? devices.some((d) => d.transport === wanted) : devices.length > 0;
+    if (found || !wanted || now() + (opts.pollMs ?? 2000) >= deadline) return devices;
+    await new Promise((r) => setTimeout(r, opts.pollMs ?? 2000));
+  }
+}
+
+async function listDevicesOnce(bin: string, timeoutMs: number): Promise<Device[]> {
+  const subprocess = execa(bin, ["devices", "--no-wait"], {
+    env: toolEnv(),
+    extendEnv: false,
+    detached: true,
+    timeout: timeoutMs,
+  });
+  let killed = false;
+  const killGroup = (): void => {
+    if (subprocess.pid === undefined) return;
+    killed = true;
+    try {
+      process.kill(-subprocess.pid, "SIGKILL");
+    } catch {
+      // group already gone
+    }
+  };
+  const timer = setTimeout(killGroup, timeoutMs);
+  const removeExitHook = onExit(killGroup);
   try {
-    const r = await execa(bin, ["devices"], { env: toolEnv(), extendEnv: false, timeout: timeoutMs });
+    const r = await subprocess;
     return parseDevices(r.stdout);
   } catch (err) {
-    if ((err as { timedOut?: boolean }).timedOut) return [];
+    if ((err as { timedOut?: boolean }).timedOut || killed) {
+      killGroup();
+      return [];
+    }
     throw err;
+  } finally {
+    clearTimeout(timer);
+    removeExitHook();
   }
 }
 
