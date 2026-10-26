@@ -1,6 +1,6 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   authStatus,
@@ -67,6 +67,21 @@ describe("listDevices", () => {
     const t0 = Date.now();
     await expect(listDevices(fake, 200)).resolves.toEqual([]);
     expect(Date.now() - t0).toBeLessThan(1000);
+  });
+  it("resolves [] when a grandchild keeps stdout open after the timeout (AppImage runtime)", async () => {
+    const fake = join(tmp(), "fake-xtool");
+    writeFileSync(fake, "#!/bin/sh\nsleep 60 &\nwait\n");
+    chmodSync(fake, 0o755);
+    const t0 = Date.now();
+    await expect(listDevices(fake, 200)).resolves.toEqual([]);
+    expect(Date.now() - t0).toBeLessThan(1500);
+  });
+  it("asks xtool not to wait for a device", async () => {
+    const fake = join(tmp(), "fake-xtool");
+    writeFileSync(fake, '#!/bin/sh\necho "$@" > "$(dirname "$0")/args"\n');
+    chmodSync(fake, 0o755);
+    await listDevices(fake, 2000);
+    expect(readFileSync(join(dirname(fake), "args"), "utf8").trim()).toBe("devices --no-wait");
   });
 });
 

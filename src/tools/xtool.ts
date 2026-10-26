@@ -74,14 +74,38 @@ export async function authStatus(bin: string, timeoutMs?: number): Promise<AuthS
   return parseAuthStatus(output);
 }
 
-/** `xtool devices` hangs forever with no device, so it is killed after `timeoutMs` and yields []. */
+/**
+ * `xtool devices --no-wait` returns at once with no device. The timeout is a safety net, and it kills
+ * the whole process group: the AppImage runtime runs xtool in a child, and killing only the launcher
+ * leaves that child holding stdout, so the call would never return.
+ */
 export async function listDevices(bin: string, timeoutMs = 30000): Promise<Device[]> {
+  const subprocess = execa(bin, ["devices", "--no-wait"], {
+    env: toolEnv(),
+    extendEnv: false,
+    detached: true,
+    timeout: timeoutMs,
+  });
+  const killGroup = (): void => {
+    if (subprocess.pid === undefined) return;
+    try {
+      process.kill(-subprocess.pid, "SIGKILL");
+    } catch {
+      // group already gone
+    }
+  };
+  const timer = setTimeout(killGroup, timeoutMs);
   try {
-    const r = await execa(bin, ["devices"], { env: toolEnv(), extendEnv: false, timeout: timeoutMs });
+    const r = await subprocess;
     return parseDevices(r.stdout);
   } catch (err) {
-    if ((err as { timedOut?: boolean }).timedOut) return [];
+    if ((err as { timedOut?: boolean; isTerminated?: boolean }).timedOut || (err as { isTerminated?: boolean }).isTerminated) {
+      killGroup();
+      return [];
+    }
     throw err;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
