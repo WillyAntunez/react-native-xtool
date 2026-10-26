@@ -49,6 +49,9 @@ cd my-app
 expo-xtool run
 ```
 
+A project straight out of `create-expo-app` works as is: when `app.json` has no `ios.bundleIdentifier`, `build` writes
+`com.anonymous.<slug>` into it and tells you (change it there if you want another; `expo prebuild` would ask you for one).
+
 `run` = `build` + `install` + `start`, but it skips the build and install when
 nothing changed since the last build. The cable is needed only when it reinstalls, or never with
 [Wi‑Fi installs](#wi-fi-installs) (`install --network`).
