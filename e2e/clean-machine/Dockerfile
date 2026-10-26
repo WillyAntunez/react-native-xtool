@@ -17,11 +17,12 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
   && rm -rf /var/lib/apt/lists/*
 
 # A regular user with sudo, like a fresh Ubuntu install.
-RUN useradd -m -s /bin/bash dev && echo 'dev ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/dev
+RUN useradd -m -s /bin/bash me && echo 'me ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/me
 
-# Docker denies FUSE mounts to the container by default; the AppImage runtime extracts itself instead.
+# Docker denies FUSE mounts to an unprivileged container; the AppImage runtime extracts itself instead.
+# (So the libfuse2 path of the README is not exercised here.)
 ENV APPIMAGE_EXTRACT_AND_RUN=1
 
-USER dev
-WORKDIR /home/dev
+USER me
+WORKDIR /home/me
 CMD ["sleep", "infinity"]
