@@ -7,17 +7,25 @@ import type { BuildVars } from "../plist.js";
 import { MIN_EXPO_SDK } from "../versions.js";
 import type { ProjectInfo, ReadProjectOptions } from "./types.js";
 
-/** True when `pkg` resolves from the project root. */
+/** True when `pkg` resolves from the project root or from the `expo` package directory (npm may nest it there). */
 export function isInstalled(root: string, pkg: string): boolean {
+  const req = createRequire(path.join(root, "noop.js"));
   try {
-    createRequire(path.join(root, "noop.js")).resolve(`${pkg}/package.json`, { paths: [root] });
+    req.resolve(`${pkg}/package.json`, { paths: [root] });
+    return true;
+  } catch {
+    // fall through to the expo package directory
+  }
+  try {
+    const expoDir = path.dirname(req.resolve("expo/package.json", { paths: [root] }));
+    req.resolve(`${pkg}/package.json`, { paths: [expoDir] });
     return true;
   } catch {
     return false;
   }
 }
 
-async function installedRnVersion(root: string): Promise<string> {
+export async function installedRnVersion(root: string): Promise<string> {
   try {
     const file = createRequire(path.join(root, "noop.js")).resolve("react-native/package.json", { paths: [root] });
     return JSON.parse(await readFile(file, "utf8")).version ?? "unknown";
