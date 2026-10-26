@@ -55,7 +55,7 @@ export async function chooseMetroPort(i: MetroPortInput): Promise<{ port: number
 
 export interface BuildDeps {
   loadConfig: (root: string) => Promise<ExpoXtoolConfig>;
-  readProject: (root: string) => Promise<ExpoProject>;
+  readProject: (root: string, opts?: { log?: (s: string) => void }) => Promise<ExpoProject>;
   exists: (path: string) => boolean;
   prebuild: (root: string, clean: boolean) => Promise<void>;
   applyPatches: (root: string) => Promise<void>;
@@ -119,7 +119,7 @@ export async function build(
     d.log(`⚠ Ignoring unreadable build state (${e instanceof Error ? e.message : String(e)}); a fresh one will be written.`);
   }
   const config = await d.loadConfig(root);
-  const project = await d.readProject(root);
+  const project = await d.readProject(root, { log: d.log });
 
   const step = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
     d.log(`▸ ${name}`);

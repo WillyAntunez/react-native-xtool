@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildVars, defaultBundleIdentifier, readExpoProject } from "../src/project.js";
+import { buildVars, defaultBundleIdentifier, MissingBundleIdentifierError, readExpoProject } from "../src/project.js";
 
 const fixture = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "project");
 
@@ -99,11 +99,41 @@ describe("readExpoProject", () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining("com.anonymous.my-demo-app"));
   });
 
-  it("throws instead of writing when asked to be read-only", async () => {
+  it("keeps a flat app.json (no expo wrapper) flat and intact", async () => {
     const dir = await tempProject((app) => {
       delete app.expo.ios.bundleIdentifier;
     });
-    await expect(readExpoProject(dir, { writeDefaults: false })).rejects.toThrow(/bundleIdentifier/);
+    const wrapped = JSON.parse(await readFile(path.join(dir, "app.json"), "utf8"));
+    await writeFile(path.join(dir, "app.json"), JSON.stringify({ ...wrapped.expo, scheme: "demo" }));
+    const p = await readExpoProject(dir, { log: vi.fn() });
+    expect(p.bundleIdentifier).toBe(`com.anonymous.${wrapped.expo.slug}`);
+    const app = JSON.parse(await readFile(path.join(dir, "app.json"), "utf8"));
+    expect(app.expo).toBeUndefined();
+    expect(app.name).toBe(wrapped.expo.name);
+    expect(app.scheme).toBe("demo");
+    expect(app.ios).toMatchObject({ supportsTablet: true, bundleIdentifier: p.bundleIdentifier });
+  });
+
+  it("accepts a JSON5 app.json (comments, trailing commas)", async () => {
+    const dir = await tempProject((app) => {
+      delete app.expo.ios.bundleIdentifier;
+    });
+    const app = JSON.parse(await readFile(path.join(dir, "app.json"), "utf8"));
+    const json5 = `{\n  // the app\n  "expo": ${JSON.stringify(app.expo)},\n}\n`;
+    await writeFile(path.join(dir, "app.json"), json5);
+    const p = await readExpoProject(dir, { log: vi.fn() });
+    expect(p.bundleIdentifier).toBe(`com.anonymous.${app.expo.slug}`);
+    expect(JSON.parse(await readFile(path.join(dir, "app.json"), "utf8")).expo.ios.bundleIdentifier).toBe(p.bundleIdentifier);
+  });
+
+  it("throws a MissingBundleIdentifierError instead of writing when asked to be read-only", async () => {
+    const dir = await tempProject((app) => {
+      delete app.expo.ios.bundleIdentifier;
+    });
+    const err = await readExpoProject(dir, { writeDefaults: false }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MissingBundleIdentifierError);
+    expect((err as MissingBundleIdentifierError).suggestion).toBe("com.anonymous.app");
+    expect((err as Error).message).toMatch(/bundleIdentifier/);
   });
 
   it("throws with instructions when the config is dynamic", async () => {

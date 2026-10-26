@@ -1,6 +1,6 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { getConfig } from "@expo/config";
+import { getConfig, modifyConfigAsync } from "@expo/config";
 import { IOSConfig } from "@expo/config-plugins";
 import type { BuildVars } from "./plist.js";
 import { MIN_EXPO_SDK } from "./versions.js";
@@ -49,29 +49,47 @@ export interface ReadProjectOptions {
   log?: (line: string) => void;
 }
 
+/** Thrown in read-only mode (doctor) when the config has no `ios.bundleIdentifier`; `build` would write `suggestion`. */
+export class MissingBundleIdentifierError extends Error {
+  constructor(
+    readonly suggestion: string,
+    readonly configFile: string,
+  ) {
+    super(
+      `ios.bundleIdentifier is missing in ${configFile}. Add "ios": { "bundleIdentifier": "${suggestion}" } to the expo config, or run \`expo-xtool build\`, which writes that default into a static app.json.`,
+    );
+    this.name = "MissingBundleIdentifierError";
+  }
+}
+
+/**
+ * Resolves the bundle identifier, writing a default into a static `app.json` when it is missing.
+ * The write goes through Expo's own `modifyConfigAsync`, so flat and `{ "expo": … }` layouts, JSON5
+ * syntax and dynamic configs are handled the way `expo prebuild` does (a dynamic config is not written).
+ */
 async function resolveBundleIdentifier(
   root: string,
-  exp: { slug: string; ios?: { bundleIdentifier?: string } },
-  config: { staticConfigPath: string | null; dynamicConfigPath: string | null },
+  config: ReturnType<typeof getConfig>,
   opts: ReadProjectOptions,
 ): Promise<string> {
+  const { exp } = config;
   if (exp.ios?.bundleIdentifier) return exp.ios.bundleIdentifier;
   const suggestion = defaultBundleIdentifier(exp.slug);
-  const appJson = config.dynamicConfigPath === null ? config.staticConfigPath : null;
-  if (opts.writeDefaults !== false && appJson && path.basename(appJson) === "app.json") {
-    const app = JSON.parse(await readFile(appJson, "utf8")) as { expo?: Record<string, unknown> };
-    const expo = (app.expo ??= {});
-    expo.ios = { ...((expo.ios as Record<string, unknown> | undefined) ?? {}), bundleIdentifier: suggestion };
-    await writeFile(appJson, `${JSON.stringify(app, null, 2)}\n`);
-    (opts.log ?? console.log)(
-      `ℹ ios.bundleIdentifier was missing: set it to "${suggestion}" in app.json (edit it there if you prefer another; the app must be rebuilt after a change)`,
+  const configFile = path.basename(config.dynamicConfigPath ?? config.staticConfigPath ?? "app.json");
+  if (opts.writeDefaults === false) throw new MissingBundleIdentifierError(suggestion, configFile);
+  const raw = (config.rootConfig as { expo?: { ios?: object } } | undefined)?.expo ?? config.rootConfig;
+  const ios = { ...((raw as { ios?: object } | undefined)?.ios ?? {}), bundleIdentifier: suggestion };
+  const result = await modifyConfigAsync(root, { ios }, { skipSDKVersionRequirement: true });
+  if (result.type !== "success") {
+    throw new Error(
+      `ios.bundleIdentifier is missing in ${configFile} and expo-xtool could not write a default` +
+        `${result.message ? ` (${result.message})` : ""}. Add "ios": { "bundleIdentifier": "${suggestion}" } to the expo config and run again.`,
     );
-    return suggestion;
   }
-  const file = path.basename(config.dynamicConfigPath ?? config.staticConfigPath ?? "app.json");
-  throw new Error(
-    `ios.bundleIdentifier is missing in ${file}. Add "ios": { "bundleIdentifier": "${suggestion}" } to the expo config and run again.`,
+  (opts.log ?? console.log)(
+    `ℹ ios.bundleIdentifier was missing: set it to "${suggestion}" in ${configFile} (edit it there if you prefer another; the app must be rebuilt after a change)`,
   );
+  return suggestion;
 }
 
 export async function readExpoProject(root: string, opts: ReadProjectOptions = {}): Promise<ExpoProject> {
@@ -86,7 +104,7 @@ export async function readExpoProject(root: string, opts: ReadProjectOptions = {
       `Expo SDK ${sdkVersion} is not supported; expo-xtool requires SDK ${MIN_EXPO_SDK} or newer`,
     );
   }
-  const bundleIdentifier = await resolveBundleIdentifier(root, exp, config, opts);
+  const bundleIdentifier = await resolveBundleIdentifier(root, config, opts);
   const iosTargetName = IOSConfig.XcodeUtils.sanitizedName(exp.name);
   return {
     root,
