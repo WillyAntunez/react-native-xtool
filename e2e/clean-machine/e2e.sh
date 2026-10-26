@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Clean-machine end-to-end test of expo-xtool inside a throwaway Ubuntu container.
+#
+# The container shares the host network (to reach the iPhone over Wi‑Fi and serve Metro) and gets
+# /dev/fuse for the xtool AppImage. Everything else is a fresh home directory on a Docker volume.
+#
+#   e2e.sh up                      build the image, start the container
+#   e2e.sh install [<npm spec>]    install expo-xtool (default: github:WillyAntunez/expo-xtool)
+#   e2e.sh setup                   expo-xtool setup --xcode-xip (the slow part: Swift, xtool, Darwin SDK)
+#   e2e.sh auth                    copy the host's xtool login and the iPhone pair record into the container
+#   e2e.sh project [<name>]        npx create-expo-app <name> (default: demo)
+#   e2e.sh sh [<cmd...>]           run a command (or a shell) as the test user, in the project dir if it exists
+#   e2e.sh down                    remove the container and its home volume
+#
+# Environment: XCODE_XIP (default ~/Downloads/Xcode_27.1.xip), E2E_NAME (default expo-xtool-e2e),
+# E2E_UDID (pair record to copy; default: every record in ~/.cache/expo-xtool/pair-records).
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NAME="${E2E_NAME:-expo-xtool-e2e}"
+IMAGE="$NAME:ubuntu-24.04"
+VOLUME="$NAME-home"
+XIP="${XCODE_XIP:-$HOME/Downloads/Xcode_27.1.xip}"
+PROJECT_FILE="$HOME/.cache/$NAME.project"
+
+as_dev() { docker exec -i -u dev -e HOME=/home/dev -w "${1}" "$NAME" bash -lc "${2}"; }
+
+cmd_up() {
+  [ -f "$XIP" ] || { echo "Xcode xip not found: $XIP (set XCODE_XIP)"; exit 1; }
+  docker build -t "$IMAGE" "$HERE"
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  docker volume create "$VOLUME" >/dev/null
+  docker run -d --name "$NAME" \
+    --network host \
+    --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor:unconfined \
+    -v "$VOLUME:/home/dev" \
+    -v "$XIP:/xcode/$(basename "$XIP"):ro" \
+    "$IMAGE" >/dev/null
+  # A fresh volume is owned by root; hand it to the test user.
+  docker exec -u root "$NAME" chown dev:dev /home/dev
+  echo "container $NAME up (home volume: $VOLUME)"
+}
+
+cmd_install() {
+  local spec="${1:-github:WillyAntunez/expo-xtool}"
+  if [ -f "$spec" ]; then
+    docker cp "$spec" "$NAME:/home/dev/$(basename "$spec")"
+    spec="/home/dev/$(basename "$spec")"
+  fi
+  as_dev /home/dev "sudo npm i -g '$spec' && expo-xtool --version"
+}
+
+cmd_setup() {
+  as_dev /home/dev "expo-xtool setup --xcode-xip '/xcode/$(basename "$XIP")'"
+}
+
+cmd_auth() {
+  as_dev /home/dev "mkdir -p ~/.config/xtool ~/.cache/expo-xtool/pair-records && chmod 700 ~/.cache/expo-xtool/pair-records"
+  docker cp "$HOME/.config/xtool/data" "$NAME:/home/dev/.config/xtool/data"
+  local records=("$HOME"/.cache/expo-xtool/pair-records/*.plist)
+  [ -n "${E2E_UDID:-}" ] && records=("$HOME/.cache/expo-xtool/pair-records/$E2E_UDID.plist")
+  for r in "${records[@]}"; do docker cp "$r" "$NAME:/home/dev/.cache/expo-xtool/pair-records/"; done
+  docker exec -u root "$NAME" bash -c 'chown -R dev:dev /home/dev/.config /home/dev/.cache && chmod 600 /home/dev/.cache/expo-xtool/pair-records/*.plist'
+  as_dev /home/dev '~/.cache/expo-xtool/xtool-*.AppImage auth status'
+}
+
+cmd_project() {
+  local name="${1:-demo}"
+  as_dev /home/dev "npx --yes create-expo-app@latest '$name' --template blank-typescript"
+  echo "$name" > "$PROJECT_FILE"
+}
+
+cmd_sh() {
+  local dir=/home/dev
+  [ -f "$PROJECT_FILE" ] && dir="/home/dev/$(cat "$PROJECT_FILE")"
+  if [ $# -eq 0 ]; then docker exec -it -u dev -e HOME=/home/dev -w "$dir" "$NAME" bash -l; else as_dev "$dir" "$*"; fi
+}
+
+cmd_down() {
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+  docker volume rm "$VOLUME" >/dev/null 2>&1 || true
+  rm -f "$PROJECT_FILE"
+  echo "removed $NAME and $VOLUME (image $IMAGE kept; docker rmi it to free space)"
+}
+
+case "${1:-}" in
+  up|install|setup|auth|project|sh|down) fn="cmd_$1"; shift; "$fn" "$@" ;;
+  *) sed -n '2,20p' "$0"; exit 1 ;;
+esac
