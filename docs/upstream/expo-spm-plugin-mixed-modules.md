@@ -2,7 +2,7 @@
 
 Target: `expo/expo`, `packages/expo/scripts/spm/` (`classify.js`, `podspec.js`, `plugin.js`, `manifests.js`,
 `diagnostics.js`). Seen with expo 58.0.17. The full diff is `patches/expo+58.0.19.patch` (every hunk marked
-`expo-xtool`).
+`rn-xtool`).
 
 **Status at 58.0.19:** upstream still refuses these modules (`mixed-no-manifest`), so every hunk is kept. 58.0.19
 reworked `plugin.js` around a new `buildFromSource` autolinking option (both passes re-run until no pod falls back
@@ -46,7 +46,7 @@ needs no knowledge of which language depends on which. It works in both directio
 - Objective-C → Swift (`#import "<Pod>-Swift.h"` / `<Pod/Pod-Swift.h>`): Swift Build writes `<Target>-Swift.h`
   into one directory of the root build (`.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos`). The
   manifest reads it from `RN_SPM_SWIFT_HEADERS_DIR` (the same variable React Native's scaffolder uses for mixed
-  libraries; expo-xtool sets it) and passes `-I` to clang. A forwarder `pod-headers/<Pod>/<Pod>-Swift.h`
+  libraries; rn-xtool sets it) and passes `-I` to clang. A forwarder `pod-headers/<Pod>/<Pod>-Swift.h`
   covers the framework form (see "Dev client chain" below for the rest of `pod-headers`).
 
 ## Changes
@@ -138,17 +138,17 @@ they were classified correctly, but the build failed in four places; each fix be
    only to that target's own consumers' Swift compiles, not to another package's clang. A mixed target's Swift
    compile gets the same paths as `-Xcc` flags, because its umbrella (bridging header) includes those headers.
 
-Outside the plugin, two more pieces were needed (both in expo-xtool's `patches/` or generator):
+Outside the plugin, two more pieces were needed (both in rn-xtool's `patches/` or generator):
 
 - React Native's per-app header farm (`ReactAppHeaders`) was an umbrella module of C++ headers, so
   `EXDevLauncherController.m` (Objective-C) importing `<ReactAppDependencyProvider/RCTAppDependencyProvider.h>`
   failed; see `docs/upstream/react-native-scaffolder.md` #12.
 - A Swift module compiled with a bridging header carries it: every module importing `EXDevLauncher` re-reads
   `umbrella.h`, so the app's Swift (ExpoModulesProvider.swift) needs the same header search paths and module
-  maps. expo-xtool adds them to the app target (`src/generate/expoImporter.ts`), from the Expo packages the
+  maps. rn-xtool adds them to the app target (`src/generate/expoImporter.ts`), from the Expo packages the
   autolinking manifest references, only when one of them is mixed. CocoaPods does the same through
   `user_target_xcconfig` / the Pods' public header search paths. ExpoModulesProvider also registers
-  debug-only modules under `#if EXPO_CONFIGURATION_DEBUG`, which CocoaPods defines for the app; expo-xtool's
+  debug-only modules under `#if EXPO_CONFIGURATION_DEBUG`, which CocoaPods defines for the app; rn-xtool's
   app target now defines `EXPO_CONFIGURATION_DEBUG` / `EXPO_CONFIGURATION_RELEASE` per configuration.
 
 ## Verified
@@ -159,7 +159,7 @@ Outside the plugin, two more pieces were needed (both in expo-xtool's `patches/`
 - Real build (Swift 6.4.1, swiftbuild, Darwin SDK on Linux): an Expo SDK 58 app with expo-notifications
   builds and links; expo-application is emitted as one mixed target, `_OBJC_CLASS_$_EXProvisioningProfile` and
   `ExpoApplication.ApplicationModule` are in the app binary.
-- Real build of the dev client (expo-dev-client 58.0.15): `expo-xtool build` exits 0; the app binary holds
+- Real build of the dev client (expo-dev-client 58.0.15): `rn-xtool build` exits 0; the app binary holds
   `_OBJC_CLASS_$_EXDevLauncherController`, `EXDevLauncher.DevLauncherModule`,
   `ExpoDevLauncherAppDelegateSubscriber`, `EXDevMenu.DevMenuModule`; ExpoModulesProvider.o references the
   dev-launcher and dev-menu module types (registered in Debug).
@@ -184,7 +184,7 @@ Swift does not reference their own Objective-C, or keep refusing.
   emitted but unverified.
   **Deferred:** Swift 6.5 behaviour of mixed manifests (possible double import via `-import-objc-header` plus
   the SE-0541 underlying module) is unverified; needs a 6.5 toolchain.
-- **Swift header path**: outside expo-xtool, `RN_SPM_SWIFT_HEADERS_DIR` is unset and the fallback points into
+- **Swift header path**: outside rn-xtool, `RN_SPM_SWIFT_HEADERS_DIR` is unset and the fallback points into
   the generated package's own `.build`, which is wrong for an app build; an Objective-C file importing
   `<Pod>-Swift.h` then fails with "file not found". Upstream, the plugin could pass the path the build will use.
 - **Public headers** are the whole source directory. `<Pod/Header.h>` resolves only when headers live in
@@ -209,5 +209,5 @@ Swift does not reference their own Objective-C, or keep refusing.
   list dynamically without a `*.source_files` line would be taken for one.
 - **Cross-module Swift headers** (expo-dev-launcher imports `EXUpdatesInterface-Swift.h` and
   `EXManifests-Swift.h`): reachable through `RN_SPM_SWIFT_HEADERS_DIR` and the dependencies' `pod-headers`;
-  built in the real app. The app-side flags (bridging header re-read by importers) are expo-xtool's; another
+  built in the real app. The app-side flags (bridging header re-read by importers) are rn-xtool's; another
   SwiftPM host needs the equivalent.

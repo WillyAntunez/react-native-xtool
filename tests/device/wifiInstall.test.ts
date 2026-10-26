@@ -12,7 +12,7 @@ let dev: FakeDevice | undefined;
 let dir: string;
 let ipa: string;
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), "expo-xtool-wifi-"));
+  dir = await mkdtemp(join(tmpdir(), "rn-xtool-wifi-"));
   ipa = join(dir, "App.ipa");
   await writeFile(ipa, Buffer.alloc(300_000, 7));
 });
@@ -38,8 +38,8 @@ async function run(opts: FakeDeviceOptions, over: Partial<WifiInstallOptions> = 
 
 describe("stagingPath", () => {
   it("is one fixed, safe name per app under /PublicStaging", () => {
-    expect(stagingPath("XTL-T.com.a.b")).toBe("/PublicStaging/expo-xtool-XTL-T.com.a.b.ipa");
-    expect(stagingPath("a/b c")).toBe("/PublicStaging/expo-xtool-a_b_c.ipa");
+    expect(stagingPath("XTL-T.com.a.b")).toBe("/PublicStaging/rn-xtool-XTL-T.com.a.b.ipa");
+    expect(stagingPath("a/b c")).toBe("/PublicStaging/rn-xtool-a_b_c.ipa");
   });
 });
 

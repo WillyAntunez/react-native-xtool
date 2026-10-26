@@ -4,20 +4,20 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
 
-/** Root of the expo-xtool package (holds shims/, patches/, scripts/). */
+/** Root of the rn-xtool package (holds shims/, patches/, scripts/). */
 export function packageRoot(): string {
   let dir = path.dirname(fileURLToPath(import.meta.url));
   for (;;) {
     const pkg = path.join(dir, "package.json");
     if (existsSync(pkg)) {
       try {
-        if (JSON.parse(readFileSync(pkg, "utf8")).name === "expo-xtool") return dir;
+        if (JSON.parse(readFileSync(pkg, "utf8")).name === "react-native-xtool") return dir;
       } catch {
         // unreadable package.json: keep walking up
       }
     }
     const parent = path.dirname(dir);
-    if (parent === dir) throw new Error("expo-xtool package root not found");
+    if (parent === dir) throw new Error("rn-xtool package root not found");
     dir = parent;
   }
 }

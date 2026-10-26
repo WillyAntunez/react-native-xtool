@@ -18,7 +18,7 @@ export interface Device {
   transport: string;
 }
 
-/** Where `expo-xtool setup` downloads the pinned xtool AppImage. */
+/** Where `rn-xtool setup` downloads the pinned xtool AppImage. */
 export function defaultXtoolPath(): string {
   return join(cacheDir(), `xtool-${XTOOL_VERSION}.AppImage`);
 }
@@ -28,7 +28,7 @@ export function xtoolBin(config: ExpoXtoolConfig): string {
   try {
     accessSync(bin, constants.X_OK);
   } catch {
-    throw new Error(`xtool not found at ${bin}. Run \`expo-xtool setup\` first.`);
+    throw new Error(`xtool not found at ${bin}. Run \`rn-xtool setup\` first.`);
   }
   return bin;
 }

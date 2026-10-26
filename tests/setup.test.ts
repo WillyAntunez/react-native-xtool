@@ -84,7 +84,7 @@ describe("setup config handling", () => {
     const log = vi.fn();
     await setup({ xtoolPath: "/opt/xtool" }, { checkSwiftPackages: noPending, probe, log });
     expect(probe).toHaveBeenCalledWith("/opt/xtool");
-    expect(log).toHaveBeenCalledWith("Run: /opt/xtool auth login");
+    expect(log).toHaveBeenCalledWith("Run: rn-xtool auth login");
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining("xtool 1.23.0"));
   });
   it("fails when the configured xtoolPath is not executable", async () => {
@@ -123,8 +123,16 @@ describe("swiftPostInstallMessage", () => {
     const script = "#!/bin/sh\napt-get -y install binutils libcurl4-openssl-dev\n";
     const msg = swiftPostInstallMessage(script)!;
     expect(msg).toContain("system packages");
-    expect(msg).toContain("sudo apt-get -y install binutils libcurl4-openssl-dev");
-    expect(msg).toContain("expo-xtool setup");
+    expect(msg).toContain("  sudo apt-get update && sudo apt-get -y install binutils libcurl4-openssl-dev");
+    expect(msg).toContain("rn-xtool setup");
+  });
+});
+
+describe("swiftPostInstallMessage for other package managers", () => {
+  it("does not prefix non-apt lines with apt-get update", () => {
+    const msg = swiftPostInstallMessage("#!/bin/sh\nyum install foo\n")!;
+    expect(msg).toContain("  sudo yum install foo");
+    expect(msg).not.toContain("apt-get update");
   });
 });
 

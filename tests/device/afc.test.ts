@@ -69,7 +69,7 @@ describe("AfcClient against a fake iPhone", () => {
   let hb: Heartbeat | undefined;
   let dir: string;
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), "expo-xtool-afc-"));
+    dir = await mkdtemp(join(tmpdir(), "rn-xtool-afc-"));
   });
   afterEach(async () => {
     hb?.stop();

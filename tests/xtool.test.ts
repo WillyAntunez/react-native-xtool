@@ -126,7 +126,7 @@ describe("xtoolBin", () => {
   });
   it("throws pointing to setup when missing", () => {
     expect(() => xtoolBin({ xtoolPath: "/nonexistent/xtool" })).toThrow(
-      "xtool not found at /nonexistent/xtool. Run `expo-xtool setup` first.",
+      "xtool not found at /nonexistent/xtool. Run `rn-xtool setup` first.",
     );
   });
 });

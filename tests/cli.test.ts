@@ -6,7 +6,7 @@ const pkg = createRequire(import.meta.url)("../package.json") as { version: stri
 
 describe("buildProgram", () => {
   it("names the program in help output", () => {
-    expect(buildProgram().helpInformation()).toContain("expo-xtool");
+    expect(buildProgram().helpInformation()).toContain("rn-xtool");
   });
 
   it("reports the package.json version", () => {

@@ -6,7 +6,7 @@ import type { ProjectKind } from "../project/index.js";
 import { readState, type BuildState } from "../state.js";
 import { run } from "../tools/exec.js";
 
-const REMEDY = "`expo-xtool build && expo-xtool install`";
+const REMEDY = "`rn-xtool build && rn-xtool install`";
 
 export function portMismatchMessage(built: number, wanted: number): string {
   return `App was built for Metro port ${built}, but that port is busy (not a Metro bundler). Free port ${built}, or run ${REMEDY} to rebuild for port ${wanted}.`;
@@ -62,13 +62,13 @@ const realDeps: StartDeps = {
 };
 
 export const NO_FINGERPRINT_WARNING =
-  "No dependency fingerprint recorded; run expo-xtool build to enable change detection.";
+  "No dependency fingerprint recorded; run rn-xtool build to enable change detection.";
 
 /** Bare fingerprints also cover the native project in ios/ (see `depsFingerprint`), so say so. */
 export function changedSinceBuildWarning(kind: ProjectKind): string {
   return kind === "bare"
-    ? "Native project or dependencies changed since the last build; the installed app may be out of date. Run `expo-xtool build && expo-xtool install` (or `expo-xtool run`)."
-    : "Dependencies changed since the last build; the installed app may miss native modules. Run `expo-xtool build && expo-xtool install` (or `expo-xtool run`).";
+    ? "Native project or dependencies changed since the last build; the installed app may be out of date. Run `rn-xtool build && rn-xtool install` (or `rn-xtool run`)."
+    : "Dependencies changed since the last build; the installed app may miss native modules. Run `rn-xtool build && rn-xtool install` (or `rn-xtool run`).";
 }
 
 export async function start(
@@ -78,7 +78,7 @@ export async function start(
 ): Promise<void> {
   const d: StartDeps = { ...realDeps, ...overrides };
   const state = await d.readState(projectPaths(root).iosXtool).catch(() => undefined);
-  if (!state) throw new Error("No build state found. Run `expo-xtool build` first.");
+  if (!state) throw new Error("No build state found. Run `rn-xtool build` first.");
   const portFree = await d.isPortFree(state.metroPort);
   const config = await d.loadConfig(root);
   const currentIp = config.lanIp ?? (await d.detectLanIp());

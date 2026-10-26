@@ -24,7 +24,7 @@ export interface BuildState {
   deviceUdid?: string;
 }
 
-const STATE_FILE = ".expo-xtool-state.json";
+const STATE_FILE = ".rn-xtool-state.json";
 
 export async function writeState(iosXtoolDir: string, state: BuildState): Promise<void> {
   await mkdir(iosXtoolDir, { recursive: true });
@@ -47,7 +47,7 @@ export async function readState(iosXtoolDir: string): Promise<BuildState | undef
     throw new Error(`Could not parse ${file}: ${e instanceof Error ? e.message : String(e)}`);
   }
   if (parsed.version !== 1) {
-    throw new Error(`Unsupported state version ${String(parsed.version)} in ${file}; expected 1. Run expo-xtool build.`);
+    throw new Error(`Unsupported state version ${String(parsed.version)} in ${file}; expected 1. Run rn-xtool build.`);
   }
   return parsed as BuildState;
 }

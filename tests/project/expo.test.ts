@@ -16,7 +16,7 @@ afterEach(async () => {
 async function tempProject(
   mutate: (app: { expo: Record<string, any> }, pkg: Record<string, any>) => void,
 ): Promise<string> {
-  const dir = await mkdtemp(path.join(tmpdir(), "expo-xtool-project-"));
+  const dir = await mkdtemp(path.join(tmpdir(), "rn-xtool-project-"));
   tempDirs.push(dir);
   await cp(fixture, dir, { recursive: true });
   const app = JSON.parse(await readFile(path.join(dir, "app.json"), "utf8"));
@@ -147,6 +147,8 @@ describe("readExpoProject", () => {
     expect(err).toBeInstanceOf(MissingBundleIdentifierError);
     expect((err as MissingBundleIdentifierError).suggestion).toBe("com.anonymous.app");
     expect((err as Error).message).toMatch(/bundleIdentifier/);
+    expect((err as Error).message).toContain("to the expo config, or run `rn-xtool build`");
+    expect((err as Error).message).not.toContain("expo-xtool");
   });
 
   it("throws with instructions when the config is dynamic", async () => {

@@ -1,4 +1,4 @@
-# A bare Ubuntu 24.04 desktop-like machine for end-to-end tests of expo-xtool from scratch:
+# A bare Ubuntu 24.04 desktop-like machine for end-to-end tests of rn-xtool from scratch:
 # nothing from the host toolchain, only what the README asks a user to have.
 FROM ubuntu:24.04
 

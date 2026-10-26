@@ -9,7 +9,7 @@ index 8193364..f3d0f85 100644
 +const CXX_SOURCE_RX = /\.(mm|cpp|cc)$/;
 +
 +/**
-+ * expo-xtool: whether a C-family file compiles to nothing — empty or comments only. CocoaPods
++ * rn-xtool: whether a C-family file compiles to nothing — empty or comments only. CocoaPods
 + * static frameworks need one non-Swift file to generate a module map, so some pure-Swift
 + * modules ship a placeholder (expo-updates-interface's `noop-file.m`); it must not make the
 + * module count as mixed.
@@ -24,7 +24,7 @@ index 8193364..f3d0f85 100644
 +}
 +
 +/**
-+ * expo-xtool: C-family source files under the module's `vendor/` directory, relative to the
++ * rn-xtool: C-family source files under the module's `vendor/` directory, relative to the
 + * module root. They only count when the podspec says so (`podspec.js#referencesVendor`):
 + * expo-sqlite's podspec copies `vendor/sqlite3/sqlite3.c` into `ios/` at `pod install`.
 + */
@@ -36,14 +36,14 @@ index 8193364..f3d0f85 100644
 +    .sort();
 +}
 +
-+// expo-xtool: resources SwiftPM processes on its own when they sit in a target's directory, with
++// rn-xtool: resources SwiftPM processes on its own when they sit in a target's directory, with
 +// compilers that only ship with Xcode (actool, ibtool, momc, metal, coremlc). Swift Build cannot
 +// run them on Linux, so the build fails at planning ("actool is not an executable file").
 +const APPLE_ONLY_RESOURCE_RX =
 +  /\.(xcassets|xib|storyboard|xcdatamodel|xcdatamodeld|xcmappingmodel|metal|mlmodel|mlpackage)$/;
 +
 +/**
-+ * expo-xtool: the resources under `dir` that only Xcode's tools can compile, relative to `dir`,
++ * rn-xtool: the resources under `dir` that only Xcode's tools can compile, relative to `dir`,
 + * sorted. Outside the ignored directories (their excludes already cover them) and not descended
 + * into (an asset catalog is one resource).
 + */
@@ -72,7 +72,7 @@ index 8193364..f3d0f85 100644
    let pureSwift = true;
    let importsReact = false;
    let ignoredDirs = [];
-+  // expo-xtool: what the source directory compiles, so a module without a Package.swift can
++  // rn-xtool: what the source directory compiles, so a module without a Package.swift can
 +  // be emitted as a Swift, mixed Swift + Objective-C, or Clang-only target.
 +  let hasSwift = false;
 +  let hasCxx = false;
@@ -128,7 +128,7 @@ index 2554a75..502a66c 100644
  }
  
 +/**
-+ * expo-xtool: the podspec compiles C sources from the module's `vendor/` directory, which a
++ * rn-xtool: the podspec compiles C sources from the module's `vendor/` directory, which a
 + * generated target over `ios/` would leave out (expo-sqlite copies its SQLite amalgamation in at
 + * `pod install`). Emitting the module would fail to link far from here, so it is refused.
 + */
@@ -151,7 +151,7 @@ index 2554a75..502a66c 100644
      `Its Package.swift exports no "${productName}" library product.`,
    'partially-precompiled': ({ precompiledSiblings }) =>
      `Other pods of the module are linked precompiled (${precompiledSiblings.join(', ')}), and building the module from source would link them a second time.`,
-+  // expo-xtool: see `renderVendoredSources`.
++  // rn-xtool: see `renderVendoredSources`.
 +  'vendored-sources': ({ vendorSources }) =>
 +    `Its podspec builds C sources from its vendor/ directory (${vendorSources.join(', ')}), which a generated Swift Package Manager target cannot include, and it ships no Package.swift.`,
  };
@@ -161,7 +161,7 @@ index 2554a75..502a66c 100644
      ['build-from-source-unsupported', { render: renderBuildFromSourceUnsupported }],
      ['build-from-source-fallback-incomplete', { render: renderBuildFromSourceFallbackIncomplete }],
      ['partially-precompiled', { render: renderPartiallyPrecompiled }],
-+    // expo-xtool: above prebuild-available, which an spm.config.json adds to every uncovered
++    // rn-xtool: above prebuild-available, which an spm.config.json adds to every uncovered
 +    // pod: a vendored-C module (expo-sqlite) needs a manifest, and only this report says so.
 +    ['vendored-sources', { render: renderVendoredSources }],
      ['prebuild-available', { render: renderPrebuildAvailable }],
@@ -172,7 +172,7 @@ index 2554a75..502a66c 100644
  }
  
 +/**
-+ * expo-xtool: resources a generated target leaves out because only Xcode's tools compile them.
++ * rn-xtool: resources a generated target leaves out because only Xcode's tools compile them.
 + * The build succeeds; what reads them at runtime finds nothing, so this warning is the only trace.
 + */
 +function renderDroppedResourceWarning(entries) {
@@ -235,7 +235,7 @@ index c42928b..5bc429d 100644
 +        ? `// Objective-C source consumption package for "${manifest.name}".`
 +        : `// Source consumption package for "${manifest.name}": mirrors the module's checked-in
  // Package.swift targets and injects invariant React compile dependencies.`;
-+  // expo-xtool: SwiftPM builds a target that mixes Swift and C-family sources only in
++  // rn-xtool: SwiftPM builds a target that mixes Swift and C-family sources only in
 +  // experimental multi-language mode (Swift 6.4); SE-0541 makes it standard in tools-version 6.5.
 +  const toolsVersion = manifest.language === 'mixed' ? '6.4;(experimentalMultiLang)' : '6.0';
 +  const preamble =
@@ -279,7 +279,7 @@ index c42928b..5bc429d 100644
 +        package: pkg.identity,
 +        platforms: [],
 +      })),
-+      // expo-xtool: sibling generated packages the podspec depends on.
++      // rn-xtool: sibling generated packages the podspec depends on.
 +      ...localDeps.map((dep) => ({ product: dep.name, package: dep.name, platforms: [] })),
 +    ],
    };
@@ -318,7 +318,7 @@ index c42928b..5bc429d 100644
        .map((s) => renderSetting(s, targetName));
      const injected = tool === 'swift' ? swiftInterfaceFlags : interfaceFlags;
 -    const values = tool === 'linker' ? own : [injected, ...own];
-+    // expo-xtool: settings a generated target renders itself (see `generatedSourceManifest`).
++    // rn-xtool: settings a generated target renders itself (see `generatedSourceManifest`).
 +    const raw = rawSettings[tool] ?? [];
 +    const values = tool === 'linker' ? own : [injected, ...raw, ...own];
      return values.length ? `\n            ${label}: [${values.join(', ')}],` : '';
@@ -329,7 +329,7 @@ index c42928b..5bc429d 100644
  }
  
 +/**
-+ * Whether a podspec under the module assigns `SWIFT_OBJC_BRIDGING_HEADER` (expo-xtool).
++ * Whether a podspec under the module assigns `SWIFT_OBJC_BRIDGING_HEADER` (rn-xtool).
 + * Limitation: a plain text scan of `*.podspec` files in the module root, `ios/` and `apple/`;
 + * the podspec is not evaluated, so an assignment built dynamically or living elsewhere is missed.
 + */
@@ -348,7 +348,7 @@ index c42928b..5bc429d 100644
 +}
 +
 +/**
-+ * expo-xtool: `<pkgDir>/pod-headers`, the include paths CocoaPods gives a pod and its dependents,
++ * rn-xtool: `<pkgDir>/pod-headers`, the include paths CocoaPods gives a pod and its dependents,
 + * as forwarding headers:
 + * - `<Pod>/<Pod>-Swift.h` → the flat `<Pod>-Swift.h` Swift Build writes (named after the target),
 + *   for every package with Swift;
@@ -401,7 +401,7 @@ index c42928b..5bc429d 100644
    );
 +  const pkgDir = path.join(outDir, 'expo-source', manifest.name);
 +  fs.mkdirSync(pkgDir, { recursive: true });
-+  // expo-xtool: CocoaPods gives every Swift file an implicit `import <Pod>` whose umbrella
++  // rn-xtool: CocoaPods gives every Swift file an implicit `import <Pod>` whose umbrella
 +  // header pulls in Foundation and UIKit; a pure-Swift SwiftPM target has no such module, so
 +  // files without imports (e.g. ExpoImagePicker) fail. Mirror it with a bridging header kept
 +  // beside the manifest (not under root/, so it is not a source). A module that sets its own
@@ -445,7 +445,7 @@ index c42928b..5bc429d 100644
    } catch {}
    fs.symlinkSync(moduleRoot, rootLink);
    fs.writeFileSync(path.join(pkgDir, 'Package.swift'), manifestSwift);
-+  // expo-xtool: SE-0541 makes mixed-language targets standard in tools-version 6.5, which does
++  // rn-xtool: SE-0541 makes mixed-language targets standard in tools-version 6.5, which does
 +  // not read the experimental flag. SwiftPM 6.5+ picks this versioned manifest, older ones
 +  // ignore it; a package that is no longer mixed drops it.
 +  const manifest65 = path.join(pkgDir, 'Package@swift-6.5.swift');
@@ -476,7 +476,7 @@ index c42928b..5bc429d 100644
 +    localDeps,
 +    product,
 +    srcRel: path.relative(moduleRoot, srcDir),
-+    // expo-xtool: an empty placeholder `.m` would make SwiftPM see a mixed target, and an asset
++    // rn-xtool: an empty placeholder `.m` would make SwiftPM see a mixed target, and an asset
 +    // catalog (or another Xcode-only resource) needs a compiler Linux does not have.
 +    excludes: [
 +      ...sources.ignoredDirs,
@@ -491,7 +491,7 @@ index c42928b..5bc429d 100644
 +}
 +
 +// ---------------------------------------------------------------------------
-+// expo-xtool: mixed Swift + Objective-C and Objective-C-only modules without a Package.swift
++// rn-xtool: mixed Swift + Objective-C and Objective-C-only modules without a Package.swift
 +// ---------------------------------------------------------------------------
 +
 +// Headers Swift cannot import: C++ outside `#if(def) __cplusplus` guards, or React/JSI C++ trees.
@@ -661,7 +661,7 @@ index 00a7c98..f08bbb0 100644
 - * `'build-phase'` (see `linkExpoModulesJSI`). A precompiled record carries its
 - * `framework`; `linkPrecompiledPods` documents `buildFromSource`.
 + * `'precompiled'`, `'manifest'`, `'pure-swift'`, `'mixed'`, `'clang'`, `'meta'` (the last three from
-+ * expo-xtool) or null. ExpoModulesJSI starts as `'build-phase'` (see `linkExpoModulesJSI`). A
++ * rn-xtool) or null. ExpoModulesJSI starts as `'build-phase'` (see `linkExpoModulesJSI`). A
 + * precompiled record carries its `framework`; `linkPrecompiledPods` documents `buildFromSource`.
   */
  function podRecords(identities) {
@@ -671,7 +671,7 @@ index 00a7c98..f08bbb0 100644
  }
  
 +/**
-+ * expo-xtool: how a module without a checked-in Package.swift is built from its sources.
++ * rn-xtool: how a module without a checked-in Package.swift is built from its sources.
 + *
 + * - `'pure-swift'`: Swift only (an empty placeholder `.m` does not count) — one Swift target.
 + * - `'mixed'`: Swift and Objective-C/C/C++ — one mixed-language target. SwiftPM builds those
@@ -695,7 +695,7 @@ index 00a7c98..f08bbb0 100644
 +}
 +
 +/**
-+ * expo-xtool: the Swift module a generated package builds for a pod — CocoaPods' module name
++ * rn-xtool: the Swift module a generated package builds for a pod — CocoaPods' module name
 + * (`module_name`, else `header_dir`, else the pod name), which is what its dependents import.
 + */
 +function generatedModuleName(identity) {
@@ -703,7 +703,7 @@ index 00a7c98..f08bbb0 100644
 +}
 +
 +/**
-+ * expo-xtool: the pods `linkSourceModules` will emit as generated packages (no checked-in
++ * rn-xtool: the pods `linkSourceModules` will emit as generated packages (no checked-in
 + * manifest, no linkage, not precompiled, a buildable layout), by pod name, with the package each
 + * one is written to. A generated package depends on the ones its podspec's `dependency`s name,
 + * as CocoaPods links a pod against its dependencies (expo-dev-launcher → expo-dev-menu).
@@ -737,13 +737,13 @@ index 00a7c98..f08bbb0 100644
 - * emitted package would link less than the podspec does. Returns null for a module
 - * with no sources: the pod's own `no-apple-sources` report covers it.
 + * set), else that manifest mirrored, or else one generated target over its sources
-+ * (see `sourceLayout`, expo-xtool). A module without a manifest is refused when its
++ * (see `sourceLayout`, rn-xtool). A module without a manifest is refused when its
 + * podspec declares linkage, because the emitted package would link less than the
 + * podspec does. Returns null for a module with no sources: the pod's own
 + * `no-apple-sources` report covers it.
   *
   * @param dumpManifest `dumpModuleManifest`, run at most once per real module root.
-+ * @param generatedPackages `generatedPackageIndex`'s result (expo-xtool).
++ * @param generatedPackages `generatedPackageIndex`'s result (rn-xtool).
   */
 -function emitSourceModule(identity, hasManifest, emitContext, dumpManifest) {
 +function emitSourceModule(
@@ -797,7 +797,7 @@ index 00a7c98..f08bbb0 100644
      refusals.set(root, (refusals.get(root) ?? new Map()).set(reason, refusalFor));
    const linkedAs = (identity) => records.get(identity.podName).linkedAs;
    const manifestProductsByRoot = new Map();
-+  // expo-xtool: emission order does not matter; every generated package's directory is known.
++  // rn-xtool: emission order does not matter; every generated package's directory is known.
 +  const generatedPackages = generatedPackageIndex(modules, identities, records, emitContext.outDir);
    for (const mod of modules) {
      const pods = (mod.pods ?? []).map((pod) => identities.get(pod));
@@ -808,7 +808,7 @@ index 00a7c98..f08bbb0 100644
 +    const { moduleRoot } = first;
      const hasManifest = fs.existsSync(path.join(moduleRoot, 'Package.swift'));
  
-+    // expo-xtool: every generated layout builds the whole module, as a pure-Swift one did.
++    // rn-xtool: every generated layout builds the whole module, as a pure-Swift one did.
 +    const layout = hasManifest ? null : sourceLayout(first);
      const precompiledSiblings = pods.filter((p) => linkedAs(p) === 'precompiled');
 -    if (precompiledSiblings.length > 0 && (hasManifest || sources.pureSwift)) {
@@ -821,7 +821,7 @@ index 00a7c98..f08bbb0 100644
        // A module with no sources at all scans as pure Swift too, so it reaches
        // emitSourceModule for the podspec linkage check that outranks it.
 -      if (!hasManifest && !sources.pureSwift) continue;
-+      // expo-xtool: a meta pod (no sources, no `source_files`) links as nothing at all.
++      // rn-xtool: a meta pod (no sources, no `source_files`) links as nothing at all.
 +      if (layout === 'meta' && first.podspec.linkage == null) {
 +        Object.assign(records.get(first.podName), { identity: first, linkedAs: 'meta' });
 +        continue;
@@ -851,7 +851,7 @@ index 00a7c98..f08bbb0 100644
    }
  ) {
 -  const pureSwift = emitted.filter((r) => r.linkedAs === 'pure-swift');
-+  // expo-xtool: mixed and Clang-only packages are generated like pure-Swift ones, so the same
++  // rn-xtool: mixed and Clang-only packages are generated like pure-Swift ones, so the same
 +  // checks apply to them.
 +  const pureSwift = emitted.filter((r) => r.linkedAs !== 'manifest');
    const refusalsFor = (identity) =>
@@ -861,7 +861,7 @@ index 00a7c98..f08bbb0 100644
        emission.partlyProvidedPackages.map((pkg) => ({ packageName, moduleRoot, ...pkg }))
      ),
      xcconfigLinkage,
-+    // expo-xtool: Xcode-only resources the generated targets exclude.
++    // rn-xtool: Xcode-only resources the generated targets exclude.
 +    droppedResources: pureSwift
 +      .filter(({ identity }) => (identity.sources.appleOnlyResources ?? []).length > 0)
 +      .map(({ identity }) => ({
@@ -887,7 +887,7 @@ index 00a7c98..f08bbb0 100644
      );
    }
 -  const tool = path.join(path.dirname(pkgJsonPath), 'apple', 'ExpoModulesMacros');
-+  // expo-xtool: on Linux/Windows the macro plugin is the per-platform scanner binary.
++  // rn-xtool: on Linux/Windows the macro plugin is the per-platform scanner binary.
 +  const tool =
 +    process.platform === 'darwin'
 +      ? path.join(path.dirname(pkgJsonPath), 'apple', 'ExpoModulesMacros')
@@ -930,14 +930,14 @@ index 44117ae..cfa56fd 100644
  }
  
 +/**
-+ * expo-xtool: whether a podspec compiles anything of its own (`source_files`), and whether it
++ * rn-xtool: whether a podspec compiles anything of its own (`source_files`), and whether it
 + * points at the module's `vendor/` directory — in `source_files` or in a path it builds, as
 + * expo-sqlite's podspec copies `vendor/sqlite3` into `ios/`. Text-only, like the rest.
 + */
 +const SOURCE_FILES_RX = /^\s*\w+\.(?:ios\.)?source_files\b/;
 +const VENDOR_PATH_RX = /['"/]vendor['"/]/;
 +
-+// expo-xtool: CocoaPods names a pod's module `module_name`, else its `header_dir`, else its name
++// rn-xtool: CocoaPods names a pod's module `module_name`, else its `header_dir`, else its name
 +// (each made a C99 identifier): expo-dev-menu is `EXDevMenu`, the name its dependents import.
 +const HEADER_DIR_RX = /^\s*\w+\.header_dir\s*=\s*['"]([^'"]+)['"]/;
 +const MODULE_NAME_RX = /^\s*\w+\.module_name\s*=\s*['"]([^'"]+)['"]/;
@@ -975,7 +975,7 @@ index 44117ae..cfa56fd 100644
      podspecsIn(podspecDir).flatMap((file) => podspecDependencies(readText(file) ?? ''))
    );
 -  return { ...readPodspecs(podName, dirs), dependencies: [...dependencies] };
-+  // expo-xtool: no podspec found counts as declaring sources, so nothing is taken for a meta pod.
++  // rn-xtool: no podspec found counts as declaring sources, so nothing is taken for a meta pod.
 +  const texts = podspecFiles(podName, dirs).map((file) => readText(file) ?? '');
 +  const facts = texts.map(sourceFacts);
 +  return {

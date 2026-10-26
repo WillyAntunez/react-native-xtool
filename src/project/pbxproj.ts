@@ -49,7 +49,7 @@ export function openPbxproj(iosDir: string): Pbxproj {
   const projects = entries.filter((n) => n.endsWith(".xcodeproj")).sort();
   if (projects.length === 0) throw new DetectError(`${iosDir} has no .xcodeproj`);
   if (projects.length > 1) {
-    throw new DetectError(`${iosDir} holds more than one .xcodeproj (${projects.join(", ")}); expo-xtool needs exactly one`);
+    throw new DetectError(`${iosDir} holds more than one .xcodeproj (${projects.join(", ")}); rn-xtool needs exactly one`);
   }
   const file = path.join(iosDir, projects[0]!, "project.pbxproj");
   const project = xcode.project(file);
@@ -64,7 +64,7 @@ export function openPbxproj(iosDir: string): Pbxproj {
     throw new DetectError(`${file} has no application target (targets: ${targets.map((t) => t.name).join(", ") || "none"})`);
   }
   if (apps.length > 1) {
-    throw new DetectError(`${file} has more than one application target (${apps.map((t) => t.name).join(", ")}); expo-xtool needs exactly one`);
+    throw new DetectError(`${file} has more than one application target (${apps.map((t) => t.name).join(", ")}); rn-xtool needs exactly one`);
   }
   return { path: file, projectName: projects[0]!.slice(0, -".xcodeproj".length), appTarget: apps[0]!, targets, project };
 }

@@ -34,7 +34,7 @@ describe("installErrorMessage", () => {
   it("maps ApplicationVerificationFailed to an expired/invalid signature and re-run hint", () => {
     const m = installErrorMessage("ApplicationVerificationFailed", "Failed to verify code signature");
     expect(m).toContain("expired");
-    expect(m).toContain("Re-run `expo-xtool install --network`");
+    expect(m).toContain("Re-run `rn-xtool install --network`");
     expect(m).toContain("first one over USB");
     expect(m).toContain("installd: ApplicationVerificationFailed: Failed to verify code signature");
   });

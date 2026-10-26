@@ -1,7 +1,7 @@
 # pymobiledevice3: `create_using_tcp` needs a heartbeat for services over Wi‑Fi
 
 Candidate upstream issue for [doronz88/pymobiledevice3](https://github.com/doronz88/pymobiledevice3).
-Found while building expo-xtool's `install --network` (spike: `docs/research/wifi-install-spike.md`).
+Found while building rn-xtool's `install --network` (spike: `docs/research/wifi-install-spike.md`).
 Checked with pymobiledevice3 11.43.1, iPhone (A13) on iOS 26.5, Linux host.
 
 ## Symptom

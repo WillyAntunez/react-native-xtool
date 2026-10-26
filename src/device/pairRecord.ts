@@ -83,7 +83,7 @@ export class PairRecordMissingError extends Error {
   constructor(udid: string, cachePath: string) {
     super(
       [
-        `No pair record for iPhone ${udid}. Pair it once over USB: connect the cable, tap Trust on the iPhone, then run \`expo-xtool setup --wifi\`.`,
+        `No pair record for iPhone ${udid}. Pair it once over USB: connect the cable, tap Trust on the iPhone, then run \`rn-xtool setup --wifi\`.`,
         `On WSL2 or another machine: copy ${LOCKDOWN_DIR}/${udid}.plist from a Linux host where the iPhone is paired to ${cachePath}, or pass --pair-record <file>.`,
       ].join("\n"),
     );

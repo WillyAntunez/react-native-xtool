@@ -21,7 +21,7 @@ async function addPackage(dir: string, name: string, version = "1.0.0"): Promise
 }
 
 async function tempBare(opts: { rn?: string; expo?: boolean; modulesCore?: boolean; useExpoModules?: boolean } = {}): Promise<string> {
-  const dir = await mkdtemp(path.join(tmpdir(), "expo-xtool-bare-"));
+  const dir = await mkdtemp(path.join(tmpdir(), "rn-xtool-bare-"));
   tempDirs.push(dir);
   await cp(path.join(fixtures, "bare"), dir, { recursive: true });
   await addPackage(dir, "react-native", opts.rn ?? "0.88.0");
@@ -103,6 +103,17 @@ describe("readBareProject", () => {
       configFile: "project.pbxproj",
     });
     expect(await readFile(pbx, "utf8")).toBe(text);
+  });
+
+  it("tells bare users to set PRODUCT_BUNDLE_IDENTIFIER in the Xcode project, never the expo config", async () => {
+    const dir = await tempBare();
+    const pbx = path.join(dir, "ios", "HelloWorld.xcodeproj", "project.pbxproj");
+    await writeFile(pbx, (await readFile(pbx, "utf8")).replace(/PRODUCT_BUNDLE_IDENTIFIER = .*;\n/g, ""));
+    const err = (await readBareProject(dir).catch((e: unknown) => e)) as Error;
+    expect(err.message).toContain("PRODUCT_BUNDLE_IDENTIFIER");
+    expect(err.message).toContain("Xcode project");
+    expect(err.message).toContain("com.anonymous.helloworld");
+    expect(err.message).not.toMatch(/expo config|app\.json|ios\.bundleIdentifier|rn-xtool build/);
   });
 });
 

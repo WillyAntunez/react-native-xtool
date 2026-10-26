@@ -399,10 +399,10 @@ supported; and drop or reword the "cannot compile mixed-language sources" error 
 features are ignored silently there, so the 6.4 form must not be the only manifest once 6.5 ships.
 
 The autolinker still prints its "has mixed Swift + Objective-C/C++ sources" error for a mixed library
-that has no manifest yet; expo-xtool treats that message like "Package.swift is missing" and runs
+that has no manifest yet; rn-xtool treats that message like "Package.swift is missing" and runs
 `scaffold`, which now writes the manifest.
 
-Builders must export `RN_SPM_SWIFT_HEADERS_DIR` wherever SwiftPM evaluates the manifest (expo-xtool sets
+Builders must export `RN_SPM_SWIFT_HEADERS_DIR` wherever SwiftPM evaluates the manifest (rn-xtool sets
 it for the `rn-spm` runs and for `xtool dev build` / `dev run`). Verified on fixtures for both
 directions and the circular case (compiled with Swift 6.4.1 and the swiftbuild backend for
 `arm64-apple-ios16.4`; the products hold both the Objective-C and the Swift classes) and on
@@ -469,7 +469,7 @@ from scratch, it builds with no hand edit.
 
 A Swift module built with a bridging header (every mixed target) makes each Swift importer re-read that
 header, so the importer needs the same `-Xcc -I` paths (`RN_SPM_SWIFT_HEADERS_DIR`, the module's
-`pod-headers/`, `-fmodule-map-file=` for its Swift dependencies). expo-xtool passes them to the app target and
+`pod-headers/`, `-fmodule-map-file=` for its Swift dependencies). rn-xtool passes them to the app target and
 to generated mixed targets only. A pure-Swift package (scaffolded or generated) that imports a mixed Expo
 module does not get them and fails with "`<Module>-Swift.h` file not found". No library in the reference app
 does this today. **Ruling: deferred** (documented limitation; fix when a real library needs it, by giving
@@ -478,6 +478,6 @@ every generated or scaffolded Swift target that depends on a mixed module the sa
 ## Tests
 
 `tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks the
-fixes against fixtures (skipped when the reference app is not present; set `EXPO_XTOOL_REF_APP` to point at it). It also
+fixes against fixtures (skipped when the reference app is not present; set `RN_XTOOL_REF_APP` to point at it). It also
 asserts that each hunk is present in the installed RN files. Upstream, equivalent tests belong in
 RN's own `__tests__` next to `read-podspec` and `scaffold-package-swift`.

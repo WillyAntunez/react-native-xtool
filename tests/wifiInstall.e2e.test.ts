@@ -1,8 +1,8 @@
 /**
  * Opt-in E2E against a real iPhone on the LAN (it installs an app on it):
  *
- *   EXPO_XTOOL_E2E_WIFI=1 EXPO_XTOOL_E2E_WIFI_IP=192.168.1.10 \
- *   EXPO_XTOOL_E2E_WIFI_IPA=/path/App.ipa EXPO_XTOOL_E2E_WIFI_BUNDLE_ID=XTL-<team>.<bundle id> \
+ *   RN_XTOOL_E2E_WIFI=1 RN_XTOOL_E2E_WIFI_IP=192.168.1.10 \
+ *   RN_XTOOL_E2E_WIFI_IPA=/path/App.ipa RN_XTOOL_E2E_WIFI_BUNDLE_ID=XTL-<team>.<bundle id> \
  *   npx vitest run tests/wifiInstall.e2e.test.ts
  *
  * The iPhone must be paired with this computer (usbmuxd record or our cache) and have Wi‑Fi
@@ -15,22 +15,22 @@ import { readPairRecordFromUsbmux } from "../src/device/usbmux.js";
 import { installOverWifi } from "../src/device/wifiInstall.js";
 
 const env = process.env;
-const enabled = env.EXPO_XTOOL_E2E_WIFI === "1";
+const enabled = env.RN_XTOOL_E2E_WIFI === "1";
 
 describe.skipIf(!enabled)("Wi‑Fi install on a real iPhone", () => {
   it("installs the signed ipa and finds it with Lookup", async () => {
-    const ip = env.EXPO_XTOOL_E2E_WIFI_IP;
-    const ipaPath = env.EXPO_XTOOL_E2E_WIFI_IPA;
-    const bundleId = env.EXPO_XTOOL_E2E_WIFI_BUNDLE_ID;
+    const ip = env.RN_XTOOL_E2E_WIFI_IP;
+    const ipaPath = env.RN_XTOOL_E2E_WIFI_IPA;
+    const bundleId = env.RN_XTOOL_E2E_WIFI_BUNDLE_ID;
     if (!ip || !ipaPath || !bundleId) {
-      throw new Error("Set EXPO_XTOOL_E2E_WIFI_IP, EXPO_XTOOL_E2E_WIFI_IPA and EXPO_XTOOL_E2E_WIFI_BUNDLE_ID");
+      throw new Error("Set RN_XTOOL_E2E_WIFI_IP, RN_XTOOL_E2E_WIFI_IPA and RN_XTOOL_E2E_WIFI_BUNDLE_ID");
     }
     const t0 = Date.now();
     const result = await retryWhileUnreachable(
       async () => {
         const load = (u: string) => loadPairRecord(u, { fromUsbmux: (x) => readPairRecordFromUsbmux(x) });
         const udid =
-          env.EXPO_XTOOL_E2E_WIFI_UDID ??
+          env.RN_XTOOL_E2E_WIFI_UDID ??
           (await identify(ip, { candidates: async () => pairCandidates(await pairedUdids(), load) }));
         const { record, source } = await load(udid);
         console.log(`iPhone ${udid} at ${ip}, pair record from ${source}`);

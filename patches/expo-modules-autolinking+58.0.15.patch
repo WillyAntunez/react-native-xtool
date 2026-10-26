@@ -9,7 +9,7 @@ diff --git a/node_modules/expo-modules-autolinking/build/platforms/apple/apple.j
 -    if (process.platform !== 'darwin') {
 -        return null;
 -    }
-+    // expo-xtool: the scanner also ships Linux/Windows binaries (@expo/modules-macros-<platform>-<arch>).
++    // rn-xtool: the scanner also ships Linux/Windows binaries (@expo/modules-macros-<platform>-<arch>).
      // Without expo-modules-core nothing can use the macro.
      const coreRevision = searchResults['expo-modules-core'];
      if (!coreRevision) {

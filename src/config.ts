@@ -15,13 +15,13 @@ export interface ExpoXtoolConfig {
 export async function loadConfig(projectRoot: string): Promise<ExpoXtoolConfig> {
   let config: ExpoXtoolConfig = { metroPort: 8081 };
 
-  const jsonPath = join(projectRoot, "expo-xtool.config.json");
+  const jsonPath = join(projectRoot, "rn-xtool.config.json");
   if (existsSync(jsonPath)) {
     const raw = await readFile(jsonPath, "utf8");
     config = { ...config, ...(JSON.parse(raw) as Partial<ExpoXtoolConfig>) };
   }
 
-  const jsPath = join(projectRoot, "expo-xtool.config.js");
+  const jsPath = join(projectRoot, "rn-xtool.config.js");
   if (existsSync(jsPath)) {
     const mod = (await import(pathToFileURL(jsPath).href)) as { default?: Partial<ExpoXtoolConfig> };
     config = { ...config, ...mod.default };

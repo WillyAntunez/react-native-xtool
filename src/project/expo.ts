@@ -71,7 +71,10 @@ export class MissingBundleIdentifierError extends Error {
     readonly configFile: string,
   ) {
     super(
-      `ios.bundleIdentifier is missing in ${configFile}. Add "ios": { "bundleIdentifier": "${suggestion}" } to the expo config, or run \`expo-xtool build\`, which writes that default into a static app.json.`,
+      configFile === "project.pbxproj"
+        ? // Bare projects have no expo config and are never written to.
+          `PRODUCT_BUNDLE_IDENTIFIER is missing for the app target in the Xcode project (${configFile}). Set PRODUCT_BUNDLE_IDENTIFIER in the Xcode project, for example to "${suggestion}".`
+        : `ios.bundleIdentifier is missing in ${configFile}. Add "ios": { "bundleIdentifier": "${suggestion}" } to the expo config, or run \`rn-xtool build\`, which writes that default into a static app.json.`,
     );
     this.name = "MissingBundleIdentifierError";
   }
@@ -96,7 +99,7 @@ async function resolveBundleIdentifier(
   const result = await modifyConfigAsync(root, { ios: { bundleIdentifier: suggestion } }, { skipSDKVersionRequirement: true });
   if (result.type !== "success") {
     throw new Error(
-      `ios.bundleIdentifier is missing in ${configFile} and expo-xtool could not write a default` +
+      `ios.bundleIdentifier is missing in ${configFile} and rn-xtool could not write a default` +
         `${result.message ? ` (${result.message})` : ""}. Add "ios": { "bundleIdentifier": "${suggestion}" } to the expo config and run again.`,
     );
   }
@@ -115,7 +118,7 @@ export async function readExpoProject(root: string, opts: ReadProjectOptions = {
   }
   if (sdkVersion < MIN_EXPO_SDK) {
     throw new Error(
-      `Expo SDK ${sdkVersion} is not supported; expo-xtool requires SDK ${MIN_EXPO_SDK} or newer`,
+      `Expo SDK ${sdkVersion} is not supported; rn-xtool requires SDK ${MIN_EXPO_SDK} or newer`,
     );
   }
   const bundleIdentifier = await resolveBundleIdentifier(root, config, opts);

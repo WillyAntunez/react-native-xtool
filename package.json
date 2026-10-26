@@ -1,5 +1,5 @@
 {
-  "name": "expo-xtool",
+  "name": "react-native-xtool",
   "version": "0.1.0-alpha.1",
   "description": "Build Expo and bare React Native iOS dev builds on Linux via xtool",
   "keywords": [
@@ -11,19 +11,19 @@
     "swiftpm",
     "cli"
   ],
-  "homepage": "https://github.com/WillyAntunez/expo-xtool",
+  "homepage": "https://github.com/WillyAntunez/react-native-xtool",
   "bugs": {
-    "url": "https://github.com/WillyAntunez/expo-xtool/issues"
+    "url": "https://github.com/WillyAntunez/react-native-xtool/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/WillyAntunez/expo-xtool.git"
+    "url": "git+https://github.com/WillyAntunez/react-native-xtool.git"
   },
   "license": "MIT",
   "author": "Willy Antunez",
   "type": "module",
   "bin": {
-    "expo-xtool": "bin/expo-xtool.js"
+    "rn-xtool": "bin/rn-xtool.js"
   },
   "files": [
     "bin",

@@ -219,7 +219,7 @@ describe("build", () => {
     const t = setup({ route: { ip: "10.8.0.2", dev: "tun0" } });
     await build(t.root, {}, t.deps);
     expect(t.logs).toContain(
-      '⚠ Detected LAN IP 10.8.0.2 on tun0 looks like a VPN/tunnel address; the iPhone may not reach Metro. Set "lanIp" in expo-xtool.config.json to your Wi‑Fi address if it fails.',
+      '⚠ Detected LAN IP 10.8.0.2 on tun0 looks like a VPN/tunnel address; the iPhone may not reach Metro. Set "lanIp" in rn-xtool.config.json to your Wi‑Fi address if it fails.',
     );
     expect(t.calls).toContain("xtool-build");
   });
@@ -293,7 +293,7 @@ describe("build corrupt state", () => {
     const t = setup();
     const dir = join(t.root, "ios-xtool");
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, ".expo-xtool-state.json"), "{not json");
+    writeFileSync(join(dir, ".rn-xtool-state.json"), "{not json");
     await build(t.root, {}, t.deps);
     expect(t.logs.some((l) => l.startsWith("⚠ Ignoring unreadable build state (") && l.endsWith("a fresh one will be written."))).toBe(true);
     expect(t.calls).toEqual(buildSteps({ ...expoFlags, hasIos: false, clean: false }));

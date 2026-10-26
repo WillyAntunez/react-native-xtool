@@ -1,4 +1,4 @@
-# OSS survey: mixed Swift + Objective-C modules for expo-xtool
+# OSS survey: mixed Swift + Objective-C modules for rn-xtool
 
 Date: 2026-10-23. Toolchain: Swift 6.4.1 (swiftly), xtool 1.23.0 (+3 commits, local clone at `952a7ff`),
 Darwin SDK iPhoneOS 27.1 at `~/.swiftpm/swift-sdks/darwin.artifactbundle`.
@@ -141,9 +141,9 @@ toolchain (`swiftly list-available main-snapshot` lists `main-snapshot-2026-10-1
 - `Sources/PackLib/BuildSettings.swift`: `BuildSystem.default()` = `.swiftBuild` when Swift >= 6.4
   (`SwiftVersion.supportsSwiftBuild`). It passes `--triple`, `--toolset <sdk>/toolset-swb.json`, the env
   `XCODE_EXTRA_PLATFORM_FOLDERS`, `PATH=<sdk>/toolset/bin:...`, and `SDKROOT=nil`. Env is **inherited**
-  (`.inherit.updating(sdkEnvironment)`), so expo-xtool can pass variables such as the generated-header directory.
+  (`.inherit.updating(sdkEnvironment)`), so rn-xtool can pass variables such as the generated-header directory.
   `DevCommand.swift:57` builds `BuildSettings(..., options: [])`: there is **no CLI hook** for extra `swift build`
-  flags or extra targets. Injection has to go through the root `Package.swift` (which expo-xtool already generates)
+  flags or extra targets. Injection has to go through the root `Package.swift` (which rn-xtool already generates)
   and the libraries' manifests.
 - `Packer.swift`: writes `xtool/.xtool-tmp/Package.swift` (tools 6.0, `.executableTarget` per product depending on
   `RootPackage` by path) and builds with `--scratch-path .build`. In the reference app the generated headers land in
@@ -212,8 +212,8 @@ Emit what CocoaPods does: one target holding all of the pod's Swift + ObjC sourc
 - `Package.swift`: `// swift-tools-version: 6.4;(experimentalMultiLang)`, one `.target` with all sources, plus:
   - `swiftSettings: .unsafeFlags(["-import-objc-header", "<generated umbrella.h>"])`: an umbrella of the pod's
     public ObjC headers (the same technique `patches/expo+58.0.17.patch` already uses). This gives A.
-  - `cSettings`/`cxxSettings: .unsafeFlags(["-I" + (Context.environment["EXPO_XTOOL_SWIFT_HEADERS"] ?? ...)])`, with
-    expo-xtool exporting `<ios-xtool>/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos` before `xtool dev
+  - `cSettings`/`cxxSettings: .unsafeFlags(["-I" + (Context.environment["RN_XTOOL_SWIFT_HEADERS"] ?? ...)])`, with
+    rn-xtool exporting `<ios-xtool>/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos` before `xtool dev
     build` (xtool inherits env). This gives B. The committed patch holds no absolute path.
   - `.headerSearchPath` for the pod's own header directories (the scaffolder already computes them).
 - `Package@swift-6.5.swift`: the clean SE-0541 form (tools 6.5, `publicHeadersPath`, `.bridgingHeader(..., visibility: .internal)`, no unsafe flags).
@@ -280,5 +280,5 @@ hand-written PIF: needs a source build of swift-build and a PIF generator, with 
    order in a mixed target): only toy modules were proven.
 2. A Swift toolchain upgrade to 6.5 silently changes which manifest is used (`Package@swift-6.5.swift`), so
    persisted patches need both variants tested.
-3. `Context.environment` in a persisted manifest: if expo-xtool forgets the variable (or SwiftPM caches a stale
+3. `Context.environment` in a persisted manifest: if rn-xtool forgets the variable (or SwiftPM caches a stale
    manifest), ObjC fails with "-Swift.h not found" far from the cause. `doctor` or the build step should assert it.

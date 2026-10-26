@@ -53,7 +53,7 @@ export async function copyBareTarget(
   const place = (file: TargetFile): string => {
     if (path.posix.isAbsolute(file.relPath) || file.relPath.split("/").includes("..")) {
       throw new Error(
-        `${file.absPath} is outside ios/: expo-xtool copies only sources under ios/ into the generated project; move it into ios/`,
+        `${file.absPath} is outside ios/: rn-xtool copies only sources under ios/ into the generated project; move it into ios/`,
       );
     }
     const inTarget = targetRel !== "" && !targetRel.startsWith("..") && file.relPath.startsWith(`${targetRel}/`);

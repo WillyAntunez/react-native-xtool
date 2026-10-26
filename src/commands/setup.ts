@@ -114,8 +114,8 @@ export function swiftPostInstallMessage(script: string | undefined): string | un
   if (commands.length === 0) return undefined;
   return [
     `Swift ${SWIFT_VERSION} is installed, but it needs system packages that only an administrator can install. Run:`,
-    ...commands.map((c) => `  sudo ${c}`),
-    "then run `expo-xtool setup` again.",
+    ...commands.map((c) => (/^apt-get\s/.test(c) ? `  sudo apt-get update && sudo ${c}` : `  sudo ${c}`)),
+    "then run `rn-xtool setup` again.",
   ].join("\n");
 }
 
@@ -261,7 +261,7 @@ export async function setup(
         await step("Darwin SDK", log, () => installSdk(bin, opts.xcodeXip!, log));
         break;
       case "login-hint":
-        log(`Run: ${bin} auth login`);
+        log("Run: rn-xtool auth login");
         break;
     }
   }

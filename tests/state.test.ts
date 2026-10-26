@@ -31,12 +31,12 @@ describe("state", () => {
   });
   it("throws on malformed JSON", async () => {
     const dir = mkdtempSync(join(tmpdir(), "state-"));
-    writeFileSync(join(dir, ".expo-xtool-state.json"), "{nope");
-    await expect(readState(dir)).rejects.toThrow(".expo-xtool-state.json");
+    writeFileSync(join(dir, ".rn-xtool-state.json"), "{nope");
+    await expect(readState(dir)).rejects.toThrow(".rn-xtool-state.json");
   });
   it("throws on wrong version", async () => {
     const dir = mkdtempSync(join(tmpdir(), "state-"));
-    writeFileSync(join(dir, ".expo-xtool-state.json"), JSON.stringify({ ...state, version: 2 }));
+    writeFileSync(join(dir, ".rn-xtool-state.json"), JSON.stringify({ ...state, version: 2 }));
     await expect(readState(dir)).rejects.toThrow("version");
   });
   it("remembers the Wi‑Fi device without touching the rest", async () => {

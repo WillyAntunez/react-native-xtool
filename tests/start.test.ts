@@ -14,7 +14,7 @@ import {
   type StartDeps,
 } from "../src/commands/start.js";
 
-const REMEDY = "expo-xtool build && expo-xtool install";
+const REMEDY = "rn-xtool build && rn-xtool install";
 const state = {
   version: 1 as const,
   metroPort: 8081,
@@ -83,13 +83,13 @@ describe("startDecision", () => {
 describe("start", () => {
   it("throws when there is no build state", async () => {
     const { deps, exec } = makeDeps({ readState: async () => undefined });
-    await expect(start("/p", {}, deps)).rejects.toThrow("No build state found. Run `expo-xtool build` first.");
+    await expect(start("/p", {}, deps)).rejects.toThrow("No build state found. Run `rn-xtool build` first.");
     expect(exec).not.toHaveBeenCalled();
   });
 
   it("treats an unreadable build state like a missing one", async () => {
     const { deps, exec } = makeDeps({ readState: async () => { throw new Error("bad json"); } });
-    await expect(start("/p", {}, deps)).rejects.toThrow("No build state found. Run `expo-xtool build` first.");
+    await expect(start("/p", {}, deps)).rejects.toThrow("No build state found. Run `rn-xtool build` first.");
     expect(exec).not.toHaveBeenCalled();
   });
 
@@ -188,7 +188,7 @@ describe("start and dependency changes", () => {
     const { deps, exec, log } = makeDeps({ readState: async () => old });
     await start("/p", {}, deps);
     expect(exec.mock.calls[0]?.[1]).toContain("--clear");
-    expect(log).toHaveBeenCalledWith("⚠ No dependency fingerprint recorded; run expo-xtool build to enable change detection.");
+    expect(log).toHaveBeenCalledWith("⚠ No dependency fingerprint recorded; run rn-xtool build to enable change detection.");
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining("Dependencies changed"));
   });
   it("does not clear or warn when equal", async () => {
