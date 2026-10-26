@@ -12,7 +12,7 @@ Version 0.x, alpha (npm tag `alpha`).
 - Linux x86_64 (arm64 should work, untested). Node 20+.
 - `libfuse2` (runs the xtool AppImage): `sudo apt install libfuse2` on Ubuntu.
 - Swift's system packages. `setup` installs Swift itself (via swiftly) and, when packages are missing, prints the
-  exact `sudo apt-get install ...` line to run before running `setup` again (on Ubuntu 24.04: `binutils zip gnupg2 libc6-dev
+  exact `sudo apt-get update && sudo apt-get -y install ...` line to run before running `setup` again (on Ubuntu 24.04: `binutils zip gnupg2 libc6-dev
   libcurl4-openssl-dev libedit2 libgcc-13-dev libpython3-dev libstdc++-13-dev libxml2-dev libncurses-dev libz3-dev pkg-config zlib1g-dev`).
 - `python3` (used by the `plutil` / `otool` shims) and `iproute2` (the `ip` command, to detect the LAN IP).
 - Package manager: npm or Yarn classic. patch-package needs a flat `node_modules`; pnpm and Yarn PnP are not supported.
