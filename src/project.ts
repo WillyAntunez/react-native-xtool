@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getConfig } from "@expo/config";
 import { IOSConfig } from "@expo/config-plugins";
@@ -32,8 +32,51 @@ async function declaredExpoRange(root: string): Promise<string | undefined> {
   }
 }
 
-export async function readExpoProject(root: string): Promise<ExpoProject> {
-  const { exp } = getConfig(root, { skipSDKVersionRequirement: true });
+/** The id `expo prebuild` would suggest: reverse-DNS, from the slug, only letters, digits and hyphens. */
+export function defaultBundleIdentifier(slug: string): string {
+  const name = slug
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+  return `com.anonymous.${name || "app"}`;
+}
+
+export interface ReadProjectOptions {
+  /** Write a default `ios.bundleIdentifier` into a static app.json when it is missing (default true). */
+  writeDefaults?: boolean;
+  log?: (line: string) => void;
+}
+
+async function resolveBundleIdentifier(
+  root: string,
+  exp: { slug: string; ios?: { bundleIdentifier?: string } },
+  config: { staticConfigPath: string | null; dynamicConfigPath: string | null },
+  opts: ReadProjectOptions,
+): Promise<string> {
+  if (exp.ios?.bundleIdentifier) return exp.ios.bundleIdentifier;
+  const suggestion = defaultBundleIdentifier(exp.slug);
+  const appJson = config.dynamicConfigPath === null ? config.staticConfigPath : null;
+  if (opts.writeDefaults !== false && appJson && path.basename(appJson) === "app.json") {
+    const app = JSON.parse(await readFile(appJson, "utf8")) as { expo?: Record<string, unknown> };
+    const expo = (app.expo ??= {});
+    expo.ios = { ...((expo.ios as Record<string, unknown> | undefined) ?? {}), bundleIdentifier: suggestion };
+    await writeFile(appJson, `${JSON.stringify(app, null, 2)}\n`);
+    (opts.log ?? console.log)(
+      `ℹ ios.bundleIdentifier was missing: set it to "${suggestion}" in app.json (edit it there if you prefer another; the app must be rebuilt after a change)`,
+    );
+    return suggestion;
+  }
+  const file = path.basename(config.dynamicConfigPath ?? config.staticConfigPath ?? "app.json");
+  throw new Error(
+    `ios.bundleIdentifier is missing in ${file}. Add "ios": { "bundleIdentifier": "${suggestion}" } to the expo config and run again.`,
+  );
+}
+
+export async function readExpoProject(root: string, opts: ReadProjectOptions = {}): Promise<ExpoProject> {
+  const config = getConfig(root, { skipSDKVersionRequirement: true });
+  const { exp } = config;
   const sdkVersion = majorOf(exp.sdkVersion) ?? majorOf(await declaredExpoRange(root));
   if (sdkVersion === undefined) {
     throw new Error("Could not determine Expo SDK version");
@@ -43,10 +86,7 @@ export async function readExpoProject(root: string): Promise<ExpoProject> {
       `Expo SDK ${sdkVersion} is not supported; expo-xtool requires SDK ${MIN_EXPO_SDK} or newer`,
     );
   }
-  const bundleIdentifier = exp.ios?.bundleIdentifier;
-  if (!bundleIdentifier) {
-    throw new Error("ios.bundleIdentifier is missing in app.json");
-  }
+  const bundleIdentifier = await resolveBundleIdentifier(root, exp, config, opts);
   const iosTargetName = IOSConfig.XcodeUtils.sanitizedName(exp.name);
   return {
     root,

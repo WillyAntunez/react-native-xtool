@@ -2,8 +2,8 @@ import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
-import { buildVars, readExpoProject } from "../src/project.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { buildVars, defaultBundleIdentifier, readExpoProject } from "../src/project.js";
 
 const fixture = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "project");
 
@@ -85,11 +85,43 @@ describe("readExpoProject", () => {
     },
   );
 
-  it("throws when bundleIdentifier is missing", async () => {
+  it("writes a default bundleIdentifier into app.json when it is missing", async () => {
+    const dir = await tempProject((app) => {
+      delete app.expo.ios.bundleIdentifier;
+      app.expo.slug = "My Demo_app";
+    });
+    const log = vi.fn();
+    const p = await readExpoProject(dir, { log });
+    expect(p.bundleIdentifier).toBe("com.anonymous.my-demo-app");
+    const app = JSON.parse(await readFile(path.join(dir, "app.json"), "utf8"));
+    expect(app.expo.ios.bundleIdentifier).toBe("com.anonymous.my-demo-app");
+    expect(app.expo.ios.supportsTablet).toBe(true);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("com.anonymous.my-demo-app"));
+  });
+
+  it("throws instead of writing when asked to be read-only", async () => {
     const dir = await tempProject((app) => {
       delete app.expo.ios.bundleIdentifier;
     });
-    await expect(readExpoProject(dir)).rejects.toThrow(/bundleIdentifier/);
+    await expect(readExpoProject(dir, { writeDefaults: false })).rejects.toThrow(/bundleIdentifier/);
+  });
+
+  it("throws with instructions when the config is dynamic", async () => {
+    const dir = await tempProject((app) => {
+      delete app.expo.ios.bundleIdentifier;
+    });
+    const app = JSON.parse(await readFile(path.join(dir, "app.json"), "utf8"));
+    await rm(path.join(dir, "app.json"));
+    await writeFile(path.join(dir, "app.config.js"), `module.exports = ${JSON.stringify(app)};`);
+    await expect(readExpoProject(dir)).rejects.toThrow(/bundleIdentifier.*app\.config\.js/s);
+  });
+});
+
+describe("defaultBundleIdentifier", () => {
+  it("builds a valid reverse-DNS id from the slug", () => {
+    expect(defaultBundleIdentifier("demo")).toBe("com.anonymous.demo");
+    expect(defaultBundleIdentifier("  ¡Ñandú! app  ")).toBe("com.anonymous.nandu-app");
+    expect(defaultBundleIdentifier("---")).toBe("com.anonymous.app");
   });
 });
 

@@ -109,7 +109,7 @@ export function realProbes(config: ExpoXtoolConfig): DoctorProbes {
     },
     lanRoute: () => detectLanRoute(),
     configLanIp: () => config.lanIp,
-    expoProject: (root) => readExpoProject(root),
+    expoProject: (root) => readExpoProject(root, { writeDefaults: false }),
     buildState: (root) => readState(projectPaths(root).iosXtool),
     depsFingerprint: (root) => depsFingerprint(root),
     portFree: (port) => isPortFree(port),
