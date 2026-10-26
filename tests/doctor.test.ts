@@ -419,11 +419,28 @@ describe("wifi check", () => {
 
 describe("readProjectProbe", () => {
   const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
+  it("warns that @react-native-community/cli is missing from a bare project", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "doctor-bare-"));
+    try {
+      await cp(path.join(fixtures, "bare"), dir, { recursive: true });
+      await mkdir(path.join(dir, "node_modules", "react-native"), { recursive: true });
+      await writeFile(path.join(dir, "node_modules", "react-native", "package.json"), JSON.stringify({ version: "0.88.0" }));
+      const probe = await readProjectProbe(dir);
+      expect(probe.warnings).toEqual([expect.stringMatching(/^@react-native-community\/cli is not installed.*npm install --save-dev/)]);
+      const project = (await doctorWithProbes({ ...good, project: async () => probe }, "/p")).checks.find((c) => c.name === "project");
+      expect(project?.status).toBe("warn");
+      expect(project?.detail).toContain("@react-native-community/cli is not installed");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
   it("reads a bare project read-only and reports the Podfile warning", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "doctor-bare-"));
     try {
       await cp(path.join(fixtures, "bare"), dir, { recursive: true });
-      for (const [name, version] of [["react-native", "0.88.0"], ["expo-modules-core", "1.0.0"], ["expo", "58.0.0"]]) {
+      for (const [name, version] of [
+        ["react-native", "0.88.0"], ["expo-modules-core", "1.0.0"], ["expo", "58.0.0"], ["@react-native-community/cli", "20.2.0"],
+      ]) {
         await mkdir(path.join(dir, "node_modules", name!), { recursive: true });
         await writeFile(path.join(dir, "node_modules", name!, "package.json"), JSON.stringify({ name, version }));
       }

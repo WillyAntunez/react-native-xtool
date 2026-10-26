@@ -2,11 +2,17 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { DetectError } from "./detect.js";
-import { defaultBundleIdentifier, installedRnVersion, isInstalled, MissingBundleIdentifierError } from "./expo.js";
+import { defaultBundleIdentifier, installedRnVersion, isInstalled, MissingBundleIdentifierError, resolvesFromRoot } from "./expo.js";
 import { buildSetting, openPbxproj, readTargetContent, resolveSetting } from "./pbxproj.js";
 import type { ProjectInfo, ReadProjectOptions } from "./types.js";
 
 const MIN_RN_MINOR = 88;
+
+/** Shown by doctor (warn) and build (error) when a bare project lacks the React Native CLI. */
+export const RN_CLI_MISSING =
+  "@react-native-community/cli is not installed: React Native reads the native modules (autolinking) and runs Metro " +
+  "through it. Install it with `npm install --save-dev @react-native-community/cli` (the React Native template has it " +
+  "as a devDependency; `npm ci --omit=dev` leaves it out)";
 
 function checkRnVersion(version: string): void {
   const match = version.match(/^(\d+)\.(\d+)/);
@@ -69,6 +75,7 @@ export async function readBareProject(root: string, opts: ReadProjectOptions = {
     hasExpoModules,
     hasExpoConstants: isInstalled(root, "expo-constants"),
     hasDevClient: isInstalled(root, "expo-dev-client"),
+    hasRnCli: resolvesFromRoot(root, "@react-native-community/cli"),
     bare: readTargetContent(pbx, iosDir),
   };
 }

@@ -3,7 +3,7 @@ import { depsFingerprint } from "../deps.js";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
 import { detectLanRoute, isPortFree, suspiciousLanRoute, tunnelWarning, type LanRoute } from "../net.js";
 import { projectPaths } from "../paths.js";
-import { MissingBundleIdentifierError, readProject, type ProjectKind } from "../project/index.js";
+import { MissingBundleIdentifierError, readProject, RN_CLI_MISSING, type ProjectKind } from "../project/index.js";
 import { openPbxproj } from "../project/pbxproj.js";
 import { readState } from "../state.js";
 import { NO_FINGERPRINT_WARNING } from "./start.js";
@@ -73,6 +73,7 @@ export interface ProjectProbe {
 export async function readProjectProbe(root: string): Promise<ProjectProbe> {
   const warnings: string[] = [];
   const info = await readProject(root, { writeDefaults: false, log: (line) => warnings.push(line.replace(/^⚠ /, "")) });
+  if (info.kind === "bare" && info.hasRnCli === false) warnings.push(RN_CLI_MISSING);
   return {
     kind: info.kind,
     rnVersion: info.rnVersion,

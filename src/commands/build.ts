@@ -10,7 +10,7 @@ import { generateAppConfig } from "../pipeline/appConfig.js";
 import { buildExpoModulesJsi } from "../pipeline/jsi.js";
 import { applyPatches } from "../pipeline/patches.js";
 import { runRnSpm } from "../pipeline/rnSpm.js";
-import { readProject, type ProjectInfo, type ProjectKind, type ReadProjectOptions } from "../project/index.js";
+import { readProject, RN_CLI_MISSING, type ProjectInfo, type ProjectKind, type ReadProjectOptions } from "../project/index.js";
 import { readState, writeState, type BuildState } from "../state.js";
 import { run } from "../tools/exec.js";
 import { devBuild, xtoolBin } from "../tools/xtool.js";
@@ -143,6 +143,8 @@ export async function build(
   }
   const config = await d.loadConfig(root);
   const project = await d.readProject(root, { log: d.log });
+  // Bare rn-spm runs RN's default autolinking config command, `npx --no-install @react-native-community/cli config`.
+  if (project.kind === "bare" && project.hasRnCli === false) throw new Error(RN_CLI_MISSING);
 
   const step = async <T>(name: string, fn: () => Promise<T>): Promise<T> => {
     d.log(`▸ ${name}`);

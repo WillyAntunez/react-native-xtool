@@ -77,6 +77,13 @@ describe("readBareProject", () => {
     await expect(readBareProject(dir)).rejects.toThrow(/install-expo-modules/);
   });
 
+  it("says whether @react-native-community/cli resolves from the project root", async () => {
+    const dir = await tempBare();
+    expect((await readBareProject(dir)).hasRnCli).toBe(false);
+    await addPackage(dir, "@react-native-community/cli", "20.2.0");
+    expect((await readBareProject(dir)).hasRnCli).toBe(true);
+  });
+
   it("does not modify the ios directory when the bundle id is missing", async () => {
     const dir = await tempBare();
     const pbx = path.join(dir, "ios", "HelloWorld.xcodeproj", "project.pbxproj");

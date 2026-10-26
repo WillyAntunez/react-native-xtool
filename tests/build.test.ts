@@ -45,7 +45,7 @@ describe("buildSteps", () => {
   });
 });
 
-type ProjectOver = { kind?: "expo" | "bare"; hasExpoModules?: boolean; hasExpoConstants?: boolean; hasDevClient?: boolean };
+type ProjectOver = { kind?: "expo" | "bare"; hasExpoModules?: boolean; hasExpoConstants?: boolean; hasDevClient?: boolean; hasRnCli?: boolean };
 
 function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunning?: (p: number) => Promise<boolean>; hasIos?: boolean; cfg?: object; route?: { ip?: string; dev?: string }; project?: ProjectOver } = {}) {
   const root = mkdtempSync(join(tmpdir(), "build-"));
@@ -167,6 +167,13 @@ describe("build", () => {
     const u = setup({ project: { kind: "bare", hasExpoModules: true, hasExpoConstants: true } });
     await build(u.root, {}, u.deps);
     expect(u.calls).toContain("app-config");
+  });
+  it("stops a bare build before any step when @react-native-community/cli is missing", async () => {
+    const t = setup({ hasIos: true, project: { kind: "bare", hasRnCli: false } });
+    await expect(build(t.root, { clean: true }, t.deps)).rejects.toThrow(
+      /@react-native-community\/cli is not installed.*npm install --save-dev @react-native-community\/cli/s,
+    );
+    expect(t.calls).toEqual([]);
   });
   it("cleans ios/build and ios-xtool instead of prebuilding a bare project", async () => {
     const t = setup({ hasIos: true, project: { kind: "bare" } });

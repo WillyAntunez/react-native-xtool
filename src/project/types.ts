@@ -21,6 +21,8 @@ export interface ProjectInfo {
   hasExpoModules: boolean;
   hasExpoConstants: boolean;
   hasDevClient: boolean;
+  /** bare: `@react-native-community/cli` resolves from the root (RN's autolinking config command and Metro run it). */
+  hasRnCli?: boolean;
   bare?: BareTargetContent;
 }
 

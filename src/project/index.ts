@@ -8,6 +8,7 @@ export type { ExpoProject, ProjectInfo, ProjectKind, ReadProjectOptions } from "
 export type { BareTargetContent, TargetFile } from "./pbxproj.js";
 export { readTargetContent } from "./pbxproj.js";
 export { DetectError, detectProjectKind } from "./detect.js";
+export { RN_CLI_MISSING } from "./bare.js";
 export { buildVars, defaultBundleIdentifier, isInstalled, MissingBundleIdentifierError, readExpoProject } from "./expo.js";
 
 export async function readProject(root: string, opts: ReadProjectOptions = {}): Promise<ProjectInfo> {
