@@ -49,6 +49,14 @@ describe("readBareProject", () => {
     expect(p.bare!.swiftSources.length).toBe(2);
   });
 
+  it("says react-native is not installed, and how to install it, instead of an unknown version", async () => {
+    const dir = await tempBare();
+    await rm(path.join(dir, "node_modules", "react-native"), { recursive: true });
+    const err = await readBareProject(dir).catch((e: unknown) => e);
+    expect(String(err)).toMatch(/react-native is not installed.*npm install/);
+    expect(String(err)).not.toContain("unknown");
+  });
+
   it("rejects react-native below 0.88", async () => {
     const dir = await tempBare({ rn: "0.87.0" });
     await expect(readBareProject(dir)).rejects.toThrow(/0\.87\.0.*0\.88/);

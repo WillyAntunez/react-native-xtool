@@ -33,6 +33,12 @@ async function appJsonName(root: string): Promise<string | undefined> {
 
 export async function readBareProject(root: string, opts: ReadProjectOptions = {}): Promise<ProjectInfo> {
   const iosDir = path.join(root, "ios");
+  if (!resolvesFromRoot(root, "react-native")) {
+    throw new DetectError(
+      `react-native is not installed in ${root}: run \`npm install\` (a fresh clone has no node_modules yet), or add it ` +
+        `with \`npm install react-native@0.${MIN_RN_MINOR}.0\``,
+    );
+  }
   const rnVersion = await installedRnVersion(root);
   checkRnVersion(rnVersion);
 
