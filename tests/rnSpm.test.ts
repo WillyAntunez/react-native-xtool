@@ -4,11 +4,15 @@ import {
   parseMissingPackageSwift,
   persistScaffoldArgv,
   rnSpmArgs,
+  rnSpmGenerateArgs,
+  rnSpmScaffoldArgs,
   runRnSpm,
   scaffoldArgv,
   type RnRunner,
 } from "../src/pipeline/rnSpm.js";
 import type { ProjectPaths } from "../src/paths.js";
+import { packageRoot } from "../src/tools/exec.js";
+import path from "node:path";
 
 const paths = { root: "/proj", ios: "/proj/ios", iosXtool: "/proj/ios-xtool" } as unknown as ProjectPaths;
 const SWIFT_HEADERS = "/proj/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos";
@@ -90,7 +94,81 @@ describe("argv helpers", () => {
   });
 });
 
+describe("rnSpmGenerateArgs", () => {
+  it("rnSpmGenerateArgs points at the driver with the artifacts flags", () => {
+    const a = rnSpmGenerateArgs(paths, {}, rnDir);
+    expect(a[0]).toBe(path.join(packageRoot(), "scripts", "rn-spm-generate.js"));
+    expect(a.slice(1)).toEqual(["--rn-dir", rnDir, "--app-root", "/proj"]);
+    expect(a).not.toContain("--artifacts");
+    expect(rnSpmGenerateArgs(paths, { rnArtifactsDir: "/art" }, rnDir).slice(1)).toEqual([
+      "--rn-dir",
+      rnDir,
+      "--app-root",
+      "/proj",
+      "--artifacts",
+      "/art",
+    ]);
+  });
+});
+
 describe("runRnSpm", () => {
+  it("runRnSpm uses the generate driver for bare and setup-apple-spm for expo", async () => {
+    const bare = harness([{ exitCode: 0, output: "" }]);
+    await runRnSpm(paths, { kind: "bare" }, bare.deps);
+    expect(bare.calls).toEqual([
+      {
+        cmd: "node",
+        args: rnSpmGenerateArgs(paths, {}, rnDir),
+        cwd: "/proj/ios",
+        env: { RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS },
+      },
+    ]);
+    const expo = harness([{ exitCode: 0, output: "" }]);
+    await runRnSpm(paths, { kind: "expo" }, expo.deps);
+    expect(expo.calls[0]!.args).toEqual(rnSpmArgs(paths, {}, rnDir));
+    const byDefault = harness([{ exitCode: 0, output: "" }]);
+    await runRnSpm(paths, {}, byDefault.deps);
+    expect(byDefault.calls[0]!.args).toEqual(rnSpmArgs(paths, {}, rnDir));
+  });
+
+  it("scaffolds bare libraries through the driver, then retries the generate call", async () => {
+    const h = harness([
+      { exitCode: 2, output: missing("lib-a") },
+      { exitCode: 0, output: "" },
+      { exitCode: 0, output: "" },
+      { exitCode: 0, output: "" },
+    ]);
+    await runRnSpm(paths, { kind: "bare", rnArtifactsDir: "/art" }, h.deps);
+    const generate = rnSpmGenerateArgs(paths, { rnArtifactsDir: "/art" }, rnDir);
+    expect(h.calls.map((c) => c.args)).toEqual([
+      generate,
+      [...generate, "--scaffold"],
+      persistScaffoldArgv("lib-a")[1],
+      generate,
+    ]);
+    expect(rnSpmScaffoldArgs(paths, { rnArtifactsDir: "/art" }, rnDir)).toEqual([...generate, "--scaffold"]);
+    for (const c of [h.calls[0]!, h.calls[1]!, h.calls[3]!]) {
+      expect(c.cwd).toBe("/proj/ios");
+      expect(c.env).toEqual({ RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS });
+    }
+  });
+
+  it("keeps setup-apple-spm scaffold for the expo kind", async () => {
+    const h = harness([
+      { exitCode: 1, output: missing("lib-a") },
+      { exitCode: 0, output: "" },
+      { exitCode: 0, output: "" },
+      { exitCode: 0, output: "" },
+    ]);
+    await runRnSpm(paths, { kind: "expo" }, h.deps);
+    expect(h.calls.map((c) => c.args)).toEqual([
+      rnSpmArgs(paths, {}, rnDir),
+      scaffoldArgv(paths, {}, rnDir),
+      persistScaffoldArgv("lib-a")[1],
+      rnSpmArgs(paths, {}, rnDir),
+    ]);
+  });
+
   it("runs once on success", async () => {
     const h = harness([{ exitCode: 0, output: "" }]);
     await runRnSpm(paths, {}, h.deps);
