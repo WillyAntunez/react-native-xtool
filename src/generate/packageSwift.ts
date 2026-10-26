@@ -91,10 +91,19 @@ function appSwiftSettings(app: AppTargetInputs): string {
   return settingLines([flags(["-import-objc-header", app.bridgingHeader, ...clang.flatMap((f) => ["-Xcc", f])])]);
 }
 
-/** Objective-C/C++ settings; `-I swiftHeadersDir` lets them `#import "App-Swift.h"`. */
-function appClangSettings(app: AppTargetInputs): string {
+/**
+ * Objective-C/C++ settings; `-I swiftHeadersDir` lets them `#import "App-Swift.h"`. In a hybrid project that header
+ * does `@import Expo;`, so they also get what Swift's clang importer gets (as clang flags, without `-Xcc`): the
+ * compile-interfaces frameworks (`<ExpoModulesCore/Platform.h>`) and the importer's include dirs and module maps.
+ */
+function appClangSettings(app: AppTargetInputs, expo: ExpoPackageInputs | undefined): string {
   if (!app.mixed) return "";
-  const includes = [...app.headerSearchPaths, app.swiftHeadersDir].flatMap((p) => ["-I", p]);
+  const importer = expo?.clangImporter;
+  const includes = [
+    ...[...app.headerSearchPaths, app.swiftHeadersDir, ...(importer?.includeDirs ?? [])].flatMap((p) => ["-I", p]),
+    ...(importer?.moduleMaps ?? []).map((m) => `-fmodule-map-file=${m}`),
+    ...(expo ? ["-F", expo.compileInterfacesDir] : []),
+  ];
   const body = settingLines([...app.defines.map(cDefine), flags(includes)]);
   return ["cSettings", "cxxSettings"].map((name) => `            ${name}: [\n${body}            ],\n`).join("");
 }
@@ -141,7 +150,7 @@ ${jsiPackage}    ],
                 .product(name: "Autolinked", package: "Autolinked"),
 ${jsiProduct}            ],
             path: "Sources/App",
-${appClangSettings(app)}            swiftSettings: [
+${appClangSettings(app, expo)}            swiftSettings: [
                 .define("DEBUG", .when(configuration: .debug)),
 ${expo ? expoSwiftSettings(expo) : ""}${appSwiftSettings(app)}            ],
             linkerSettings: [

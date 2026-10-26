@@ -167,6 +167,34 @@ describe("renderPackageSwift", () => {
       expect(swift).not.toContain('to: "1"');
     });
 
+    it("gives Objective-C/C++ the Expo importer paths in a hybrid project (App-Swift.h does @import Expo)", () => {
+      const app = {
+        mixed: true, defines: [], headerSearchPaths: ["/x/Sources/App/include"], swiftHeadersDir: "/h",
+      };
+      const clangImporter = { swiftHeadersDir: "/h", includeDirs: ["/e/ExpoObjC/include", "/e/Core/include"], moduleMaps: ["/h/Expo.modulemap"] };
+      const hybrid = renderPackageSwift({ iosDir: "/p/ios", frameworks, iosMin: "16.4", expo: expoInputs({ clangImporter }), app });
+      const section = (name: string) => {
+        const start = hybrid.manifest.indexOf(`${name}: [`);
+        expect(start).toBeGreaterThan(-1);
+        return hybrid.manifest.slice(start + name.length, hybrid.manifest.indexOf("            ],", start));
+      };
+      for (const name of ["cSettings", "cxxSettings"]) {
+        expect(section(name)).toContain(
+          '.unsafeFlags(["-I", "/x/Sources/App/include", "-I", "/h", "-I", "/e/ExpoObjC/include", "-I", "/e/Core/include", ' +
+            '"-fmodule-map-file=/h/Expo.modulemap", "-F", "/p/ci"])',
+        );
+        expect(section(name)).not.toContain("-Xcc");
+      }
+      // Without a mixed Expo package there is no importer, but <ExpoModulesCore/Platform.h> still needs compile-interfaces.
+      const noImporter = renderPackageSwift({ iosDir: "/p/ios", frameworks, iosMin: "16.4", expo: expoInputs(), app }).manifest;
+      expect(noImporter).toContain('.unsafeFlags(["-I", "/x/Sources/App/include", "-I", "/h", "-F", "/p/ci"]),');
+      expect(noImporter).not.toContain("-fmodule-map-file");
+      // Pure bare: the C settings stay as they were.
+      const plain = renderPackageSwift({ iosDir: "/p/ios", frameworks, iosMin: "16.4", app }).manifest;
+      expect(plain).toContain('.unsafeFlags(["-I", "/x/Sources/App/include", "-I", "/h"]),');
+      expect(plain).not.toContain('"-F", "/p/ci"');
+    });
+
     it("maps the C++ standard and falls back to C++20", () => {
       const std = (cxxStandard?: string) =>
         renderPackageSwift({ iosDir: "/p/ios", frameworks: [], iosMin: "16.4", app: { ...noApp, mixed: true, cxxStandard } })
