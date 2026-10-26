@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { getConfig } from "@expo/config";
+import { getConfig, modifyConfigAsync } from "@expo/config";
 import { IOSConfig } from "@expo/config-plugins";
 import type { BuildVars } from "./plist.js";
 import { MIN_EXPO_SDK } from "./versions.js";
@@ -32,8 +32,68 @@ async function declaredExpoRange(root: string): Promise<string | undefined> {
   }
 }
 
-export async function readExpoProject(root: string): Promise<ExpoProject> {
-  const { exp } = getConfig(root, { skipSDKVersionRequirement: true });
+/** The id `expo prebuild` would suggest: reverse-DNS, from the slug, only letters, digits and hyphens. */
+export function defaultBundleIdentifier(slug: string): string {
+  const name = slug
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
+  return `com.anonymous.${name || "app"}`;
+}
+
+export interface ReadProjectOptions {
+  /** Write a default `ios.bundleIdentifier` into a static app.json when it is missing (default true). */
+  writeDefaults?: boolean;
+  log?: (line: string) => void;
+}
+
+/** Thrown in read-only mode (doctor) when the config has no `ios.bundleIdentifier`; `build` would write `suggestion`. */
+export class MissingBundleIdentifierError extends Error {
+  constructor(
+    readonly suggestion: string,
+    readonly configFile: string,
+  ) {
+    super(
+      `ios.bundleIdentifier is missing in ${configFile}. Add "ios": { "bundleIdentifier": "${suggestion}" } to the expo config, or run \`expo-xtool build\`, which writes that default into a static app.json.`,
+    );
+    this.name = "MissingBundleIdentifierError";
+  }
+}
+
+/**
+ * Resolves the bundle identifier, writing a default into a static `app.json` when it is missing.
+ * The write goes through Expo's own `modifyConfigAsync`, so flat and `{ "expo": … }` layouts, JSON5
+ * syntax and dynamic configs are handled the way `expo prebuild` does (a dynamic config is not written).
+ */
+async function resolveBundleIdentifier(
+  root: string,
+  config: ReturnType<typeof getConfig>,
+  opts: ReadProjectOptions,
+): Promise<string> {
+  const { exp } = config;
+  if (exp.ios?.bundleIdentifier) return exp.ios.bundleIdentifier;
+  const suggestion = defaultBundleIdentifier(exp.slug);
+  const configFile = path.basename(config.dynamicConfigPath ?? config.staticConfigPath ?? "app.json");
+  if (opts.writeDefaults === false) throw new MissingBundleIdentifierError(suggestion, configFile);
+  // Expo deep-merges the modification into the existing config (arrays are appended), so send only the new key.
+  const result = await modifyConfigAsync(root, { ios: { bundleIdentifier: suggestion } }, { skipSDKVersionRequirement: true });
+  if (result.type !== "success") {
+    throw new Error(
+      `ios.bundleIdentifier is missing in ${configFile} and expo-xtool could not write a default` +
+        `${result.message ? ` (${result.message})` : ""}. Add "ios": { "bundleIdentifier": "${suggestion}" } to the expo config and run again.`,
+    );
+  }
+  (opts.log ?? console.log)(
+    `ℹ ios.bundleIdentifier was missing: set it to "${suggestion}" in ${configFile} (edit it there if you prefer another; the app must be rebuilt after a change)`,
+  );
+  return suggestion;
+}
+
+export async function readExpoProject(root: string, opts: ReadProjectOptions = {}): Promise<ExpoProject> {
+  const config = getConfig(root, { skipSDKVersionRequirement: true });
+  const { exp } = config;
   const sdkVersion = majorOf(exp.sdkVersion) ?? majorOf(await declaredExpoRange(root));
   if (sdkVersion === undefined) {
     throw new Error("Could not determine Expo SDK version");
@@ -43,10 +103,7 @@ export async function readExpoProject(root: string): Promise<ExpoProject> {
       `Expo SDK ${sdkVersion} is not supported; expo-xtool requires SDK ${MIN_EXPO_SDK} or newer`,
     );
   }
-  const bundleIdentifier = exp.ios?.bundleIdentifier;
-  if (!bundleIdentifier) {
-    throw new Error("ios.bundleIdentifier is missing in app.json");
-  }
+  const bundleIdentifier = await resolveBundleIdentifier(root, config, opts);
   const iosTargetName = IOSConfig.XcodeUtils.sanitizedName(exp.name);
   return {
     root,

@@ -3,7 +3,7 @@ import { depsFingerprint } from "../deps.js";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
 import { detectLanRoute, isPortFree, suspiciousLanRoute, tunnelWarning, type LanRoute } from "../net.js";
 import { projectPaths } from "../paths.js";
-import { readExpoProject } from "../project.js";
+import { MissingBundleIdentifierError, readExpoProject } from "../project.js";
 import { readState } from "../state.js";
 import { NO_FINGERPRINT_WARNING } from "./start.js";
 import { sha256File } from "../tools/download.js";
@@ -109,7 +109,7 @@ export function realProbes(config: ExpoXtoolConfig): DoctorProbes {
     },
     lanRoute: () => detectLanRoute(),
     configLanIp: () => config.lanIp,
-    expoProject: (root) => readExpoProject(root),
+    expoProject: (root) => readExpoProject(root, { writeDefaults: false }),
     buildState: (root) => readState(projectPaths(root).iosXtool),
     depsFingerprint: (root) => depsFingerprint(root),
     portFree: (port) => isPortFree(port),
@@ -286,7 +286,17 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
 
   if (root !== undefined && stateResult) {
     await add("expo-sdk", async () => {
-      await p.expoProject(root);
+      try {
+        await p.expoProject(root);
+      } catch (err) {
+        if (!(err instanceof MissingBundleIdentifierError)) throw err;
+        return {
+          status: "warn",
+          detail: err.configFile.endsWith(".json")
+            ? `ios.bundleIdentifier is missing in ${err.configFile}; expo-xtool build writes "${err.suggestion}" there`
+            : `ios.bundleIdentifier is missing in ${err.configFile}; add "${err.suggestion}" (or your own) to it`,
+        };
+      }
       return { status: "ok", detail: "supported Expo project" };
     });
     await add("build-state", async () => {
