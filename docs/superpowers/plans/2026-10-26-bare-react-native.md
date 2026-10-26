@@ -62,7 +62,7 @@
   ```
 - `readExpoProject` fills `hasExpoModules: true`, `hasExpoConstants`/`hasDevClient` via `isInstalled`, `moduleName: "main"`, `rnVersion` from `react-native/package.json`.
 
-- [ ] **Step 1: Write failing detection tests** in `tests/project/detect.test.ts`, each on a temp dir built from `tests/fixtures/project` (Expo) or a new `tests/fixtures/bare` (copied from the RN 0.88 template: `package.json`, `app.json`, `ios/HelloWorld.xcodeproj/project.pbxproj`, `ios/HelloWorld/{AppDelegate.swift,SceneDelegate.swift,Info.plist,PrivacyInfo.xcprivacy,LaunchScreen.storyboard}`, `ios/Podfile`; the template lives unpacked at `/home/willy/.cache/bun-tmp/claude-1000/-home-willy-Desktop-willy/7d78ce0e-5f57-4e54-a4f3-af12f364a53c/scratchpad/rntpl/t/package/template`, or re-fetch with `npm pack @react-native-community/template@0.88.0`):
+- [ ] **Step 1: Write failing detection tests** in `tests/project/detect.test.ts`, each on a temp dir built from `tests/fixtures/project` (Expo) or a new `tests/fixtures/bare` (copied from the RN 0.88 template: `package.json`, `app.json`, `ios/HelloWorld.xcodeproj/project.pbxproj`, `ios/HelloWorld/{AppDelegate.swift,SceneDelegate.swift,Info.plist,PrivacyInfo.xcprivacy,LaunchScreen.storyboard}`, `ios/Podfile`; re-fetch with `npm pack @react-native-community/template@0.88.0`):
   - `detects an Expo project (expo dep + app.json with expo key)` → `"expo"`
   - `detects app.config.js as Expo` (expo dep, no app.json, `app.config.js`) → `"expo"`
   - `treats the template app.json as no Expo config` (bare fixture + `expo` added to dependencies) → `"bare"`
@@ -226,8 +226,8 @@
 ### Task 9: Bare reference app on the iPhone (pure template)
 
 **Files:**
-- Create: `/home/willy/Desktop/willy/expo-ios-linux/app-bare` (own git repo, like `app/`): `npx @react-native-community/cli init BareDemo --version 0.88.0 --skip-install --directory app-bare`, `npm install`, `expo-xtool.config.json` with `{ "metroPort": 8082 }` (8081 is held by Docker on this machine), `App.tsx` showing a "Bare RN on Linux" title. Commit `chore: bare React Native 0.88 reference app`.
-- Uses the worktree CLI: `node /home/willy/Desktop/willy/expo-ios-linux/expo-xtool-bare/bin/expo-xtool.js <cmd>` from `app-bare/` (after `npm run build` in the worktree).
+- Create: `../app-bare` (own git repo, like `app/`): `npx @react-native-community/cli init BareDemo --version 0.88.0 --skip-install --directory app-bare`, `npm install`, `expo-xtool.config.json` with `{ "metroPort": 8082 }` (8081 is held by Docker on this machine), `App.tsx` showing a "Bare RN on Linux" title. Commit `chore: bare React Native 0.88 reference app`.
+- Uses the worktree CLI: `node ../expo-xtool-bare/bin/expo-xtool.js <cmd>` from `app-bare/` (after `npm run build` in the worktree).
 
 - [ ] **Step 1:** `doctor` → `project` check reports `bare React Native 0.88.0, target BareDemo`.
 - [ ] **Step 2:** `build` → exit 0; `ios-xtool/xtool/App.app` exists; `git -C app-bare status --short` shows only `ios-xtool/` (ignored) and `expo-xtool.config.json`/`App.tsx`; `ios/BareDemo.xcodeproj/project.pbxproj` unchanged (`git diff --quiet -- ios`).

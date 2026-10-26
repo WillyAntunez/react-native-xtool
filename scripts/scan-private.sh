@@ -9,7 +9,7 @@ scan() { # $1 = grep flags, $2 = pattern
   out=$(git ls-files -z | xargs -0 grep -nIP"$1" -e "$2" -- 2>/dev/null | grep -vE "^(\./)?($self|docs/RELEASING\.md):")
   if [ -n "$out" ]; then echo "$out"; hits=1; fi
 }
-scan i '/home/(?!me\b)|doktu|grescup|bella|iPhone de|00008030-0016|willyantunez(?!/expo-xtool)|towerhouse'
+scan i '/home/(?!me\b)|doktu|grescup|bella|iPhone de(?!veloper)|00008030-0016|willyantunez(?!/expo-xtool)|towerhouse'
 scan "" '\bTHS\b|G7T6C5W9ZU'
 if [ "$hits" -ne 0 ]; then echo "scan-private: private identifiers found" >&2; exit 1; fi
 echo "scan-private: clean"
