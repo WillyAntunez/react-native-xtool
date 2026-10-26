@@ -32,7 +32,6 @@ cmd_up() {
   docker volume create "$VOLUME" >/dev/null
   docker run -d --name "$NAME" \
     --network host \
-    --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor:unconfined \
     -v "$VOLUME:/home/me" \
     -v "$XIP:/xcode/$(basename "$XIP"):ro" \
     "$IMAGE" >/dev/null
