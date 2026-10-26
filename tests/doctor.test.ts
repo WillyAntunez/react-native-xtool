@@ -119,10 +119,10 @@ describe("doctorWithProbes", () => {
     expect(r.ok).toBe(false);
   });
 
-  it("prints the full binary path in the login hint", async () => {
+  it("points the login hint at rn-xtool auth login", async () => {
     const r = await doctorWithProbes({ ...good, authStatus: async () => ({ loggedIn: false }) });
     expect(r.checks.find((c) => c.name === "apple-login")?.detail).toContain(
-      "/cache/xtool.AppImage auth login",
+      "run rn-xtool auth login",
     );
   });
 

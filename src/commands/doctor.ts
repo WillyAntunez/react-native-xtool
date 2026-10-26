@@ -276,7 +276,7 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
     const a = await p.authStatus();
     return a.loggedIn
       ? { status: "ok", detail: `Apple ID ${a.appleId ?? "unknown"}, Team ID ${a.teamId ?? "unknown"}` }
-      : { status: "fail", detail: `logged out — run ${p.xtoolPath()} auth login` };
+      : { status: "fail", detail: `logged out — run rn-xtool auth login` };
   });
   await add("device", async () => {
     if (!p.xtoolInstalled()) return { status: "warn", detail: "xtool not installed" };

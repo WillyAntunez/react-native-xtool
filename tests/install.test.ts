@@ -17,7 +17,7 @@ describe("install", () => {
     const listDevices = vi.fn();
     await expect(
       install("/p", { xtool: { ...base, authStatus: async () => ({ loggedIn: false }), listDevices } }),
-    ).rejects.toThrow("Not logged in to Apple Developer Services. Run: /bin/xtool auth login");
+    ).rejects.toThrow("Not logged in to Apple Developer Services. Run: rn-xtool auth login");
     expect(listDevices).not.toHaveBeenCalled();
   });
   it("fails when login succeeded but the team id is missing", async () => {

@@ -131,11 +131,11 @@ async function authenticated(
   const bin = (x.bin ?? xtoolBin)(config);
   const auth = await (x.authStatus ?? authStatus)(bin);
   if (!auth.loggedIn) {
-    throw new Error(`Not logged in to Apple Developer Services. Run: ${bin} auth login`);
+    throw new Error(`Not logged in to Apple Developer Services. Run: rn-xtool auth login`);
   }
   if (!auth.teamId) {
     throw new Error(
-      `Could not determine the Apple Team ID from \`xtool auth status\`; run \`${bin} auth login\` again.`,
+      `Could not determine the Apple Team ID from \`xtool auth status\`; run \`rn-xtool auth login\` again.`,
     );
   }
   return { config, bin, auth: auth as AuthStatus & { teamId: string } };

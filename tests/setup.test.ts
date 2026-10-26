@@ -84,7 +84,7 @@ describe("setup config handling", () => {
     const log = vi.fn();
     await setup({ xtoolPath: "/opt/xtool" }, { checkSwiftPackages: noPending, probe, log });
     expect(probe).toHaveBeenCalledWith("/opt/xtool");
-    expect(log).toHaveBeenCalledWith("Run: /opt/xtool auth login");
+    expect(log).toHaveBeenCalledWith("Run: rn-xtool auth login");
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining("xtool 1.23.0"));
   });
   it("fails when the configured xtoolPath is not executable", async () => {

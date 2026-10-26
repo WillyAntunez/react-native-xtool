@@ -261,7 +261,7 @@ export async function setup(
         await step("Darwin SDK", log, () => installSdk(bin, opts.xcodeXip!, log));
         break;
       case "login-hint":
-        log(`Run: ${bin} auth login`);
+        log("Run: rn-xtool auth login");
         break;
     }
   }
