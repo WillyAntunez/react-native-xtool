@@ -15,6 +15,7 @@ import {
 } from "../src/commands/setup.js";
 
 const all = { hasSwift: true, hasXtool: true, hasSdk: true, loggedIn: true };
+const noPending = async () => undefined;
 
 describe("planSetup", () => {
   it("returns nothing when everything is present", () => {
@@ -49,7 +50,7 @@ describe("download urls", () => {
 describe("setup", () => {
   it("does nothing when the probe reports a complete state", async () => {
     const log = vi.fn();
-    await setup({}, { probe: async () => all, log });
+    await setup({}, { checkSwiftPackages: noPending, probe: async () => all, log });
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Nothing to do"));
   });
 });
@@ -71,7 +72,7 @@ describe("preflightSdk", () => {
   it("setup fails before running any action when the xip is missing", async () => {
     const log = vi.fn();
     await expect(
-      setup({}, { probe: async () => ({ ...all, hasSwift: false, hasSdk: false }), log }),
+      setup({}, { checkSwiftPackages: noPending, probe: async () => ({ ...all, hasSwift: false, hasSdk: false }), log }),
     ).rejects.toThrow("--xcode-xip");
     expect(log).not.toHaveBeenCalled();
   });
@@ -81,19 +82,19 @@ describe("setup config handling", () => {
   it("probes and hints with the configured xtoolPath and skips the download", async () => {
     const probe = vi.fn(async () => ({ ...all, loggedIn: false }));
     const log = vi.fn();
-    await setup({ xtoolPath: "/opt/xtool" }, { probe, log });
+    await setup({ xtoolPath: "/opt/xtool" }, { checkSwiftPackages: noPending, probe, log });
     expect(probe).toHaveBeenCalledWith("/opt/xtool");
     expect(log).toHaveBeenCalledWith("Run: /opt/xtool auth login");
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining("xtool 1.23.0"));
   });
   it("fails when the configured xtoolPath is not executable", async () => {
     const probe = async () => ({ ...all, hasXtool: false });
-    await expect(setup({ xtoolPath: "/opt/xtool" }, { probe, log: vi.fn() })).rejects.toThrow("/opt/xtool");
+    await expect(setup({ xtoolPath: "/opt/xtool" }, { checkSwiftPackages: noPending, probe, log: vi.fn() })).rejects.toThrow("/opt/xtool");
   });
   it("uses the xip passed in opts for the preflight", async () => {
     const preflightProbes = { exists: () => false, freeBytes: async () => 20 * 1024 ** 3 };
     await expect(
-      setup({ xcodeXip: "/cfg.xip" }, { probe: async () => ({ ...all, hasSdk: false }), preflightProbes, log: vi.fn() }),
+      setup({ xcodeXip: "/cfg.xip" }, { checkSwiftPackages: noPending, probe: async () => ({ ...all, hasSdk: false }), preflightProbes, log: vi.fn() }),
     ).rejects.toThrow("Xcode xip not found: /cfg.xip");
   });
 });
