@@ -114,6 +114,19 @@ describe("readExpoProject", () => {
     expect(app.ios).toMatchObject({ supportsTablet: true, bundleIdentifier: p.bundleIdentifier });
   });
 
+  it("does not duplicate arrays under ios when writing the default", async () => {
+    const dir = await tempProject((app) => {
+      delete app.expo.ios.bundleIdentifier;
+      app.expo.ios.associatedDomains = ["applinks:example.com"];
+      app.expo.ios.infoPlist = { UIBackgroundModes: ["audio"] };
+    });
+    await readExpoProject(dir, { log: vi.fn() });
+    const app = JSON.parse(await readFile(path.join(dir, "app.json"), "utf8"));
+    expect(app.expo.ios.associatedDomains).toEqual(["applinks:example.com"]);
+    expect(app.expo.ios.infoPlist.UIBackgroundModes).toEqual(["audio"]);
+    expect(app.expo.ios.supportsTablet).toBe(true);
+  });
+
   it("accepts a JSON5 app.json (comments, trailing commas)", async () => {
     const dir = await tempProject((app) => {
       delete app.expo.ios.bundleIdentifier;

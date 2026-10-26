@@ -77,9 +77,8 @@ async function resolveBundleIdentifier(
   const suggestion = defaultBundleIdentifier(exp.slug);
   const configFile = path.basename(config.dynamicConfigPath ?? config.staticConfigPath ?? "app.json");
   if (opts.writeDefaults === false) throw new MissingBundleIdentifierError(suggestion, configFile);
-  const raw = (config.rootConfig as { expo?: { ios?: object } } | undefined)?.expo ?? config.rootConfig;
-  const ios = { ...((raw as { ios?: object } | undefined)?.ios ?? {}), bundleIdentifier: suggestion };
-  const result = await modifyConfigAsync(root, { ios }, { skipSDKVersionRequirement: true });
+  // Expo deep-merges the modification into the existing config (arrays are appended), so send only the new key.
+  const result = await modifyConfigAsync(root, { ios: { bundleIdentifier: suggestion } }, { skipSDKVersionRequirement: true });
   if (result.type !== "success") {
     throw new Error(
       `ios.bundleIdentifier is missing in ${configFile} and expo-xtool could not write a default` +
