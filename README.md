@@ -21,7 +21,9 @@ Demo video coming soon.
 | Production / App Store builds | ❌ use EAS |
 | macOS or Windows as the host | ❌ (WSL2 on x86_64 works as Linux) |
 
-CocoaPods is not needed: the `Podfile` is ignored. Library status: [docs/libraries.md](docs/libraries.md).
+CocoaPods is not needed: the `Podfile` is ignored. Any library with a podspec is tried automatically (CocoaPods-only
+ones get a generated `Package.swift`); [docs/libraries.md](docs/libraries.md) lists the ones verified on a device and
+what does not work yet (library resource bundles, vendored binaries, Xcode-only tools).
 
 ## Before you start
 
