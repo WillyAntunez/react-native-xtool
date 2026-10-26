@@ -3,6 +3,7 @@ import path from "node:path";
 import { Command } from "commander";
 import { existsSync } from "node:fs";
 import { loadConfig } from "./config.js";
+import { auth } from "./commands/auth.js";
 import { build } from "./commands/build.js";
 import { doctor, renderReport } from "./commands/doctor.js";
 import { install } from "./commands/install.js";
@@ -92,6 +93,17 @@ export function buildProgram(): Command {
           await run(process.cwd(), o);
         },
       ),
+    );
+  program
+    .command("auth")
+    .description("Run xtool auth <args...> (e.g. auth login); with no arguments, xtool auth status")
+    .argument("[args...]", "arguments passed to xtool auth")
+    .allowUnknownOption()
+    .helpOption(false)
+    .action(
+      action(async (args: string[]) => {
+        await auth(process.cwd(), args);
+      }),
     );
   program
     .command("doctor")

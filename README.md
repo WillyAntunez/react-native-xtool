@@ -46,7 +46,7 @@ npm ci && npm run build && npm link
 rn-xtool setup --xcode-xip ~/Downloads/Xcode_27.1.xip
 
 # Sign in with your Apple ID (interactive, handled by xtool)
-~/.cache/rn-xtool/xtool-1.23.0.AppImage auth login
+rn-xtool auth login
 
 # In your Expo project, with the iPhone plugged in
 cd my-app
