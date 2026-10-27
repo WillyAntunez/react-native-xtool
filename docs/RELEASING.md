@@ -15,6 +15,7 @@ work as Linux but is untested so far. arm64 Linux is untested (the xtool checksu
    - `LICENSE` is present and `package.json` says `MIT`.
    - No private names or paths: `npm run scan:private` (scans tracked files via `scripts/scan-private.sh`) must
      report clean.
+     The full check needs the maintainer's local, untracked `.scan-private.local` (private patterns, one per line); without it only generic patterns run.
 5. When `XTOOL_VERSION` changes, update `XTOOL_SHA256` in `src/versions.ts` for both architectures from the official
    release assets (`gh release download <version> -R xtool-org/xtool -p 'xtool-*.AppImage'`, then `sha256sum`).
 
