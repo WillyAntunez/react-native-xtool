@@ -1,10 +1,11 @@
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { getConfig, modifyConfigAsync } from "@expo/config";
 import { IOSConfig } from "@expo/config-plugins";
 import { createRequire } from "node:module";
 import type { BuildVars } from "../plist.js";
-import { MIN_EXPO_SDK } from "../versions.js";
+import { expoPinsFor, expoPluginFor, SUPPORTED_EXPO, type ExpoPinName } from "../versions.js";
 import type { ProjectInfo, ReadProjectOptions } from "./types.js";
 
 /** True when `pkg` resolves from the project root (Node's lookup: root/node_modules, then the parents'). */
@@ -27,6 +28,102 @@ export function isInstalled(root: string, pkg: string): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+/** The directory `pkg` resolves to from `from`, through `createRequire(<from>/package.json)` (symlinks resolved). */
+function packageDirFrom(from: string, pkg: string): string | undefined {
+  try {
+    return path.dirname(createRequire(path.join(from, "package.json")).resolve(`${pkg}/package.json`));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Where the build resolves a pinned Expo package: expo and react-native from the root, expo-modules-core from expo,
+ * expo-modules-jsi from core, expo-modules-autolinking from the root and else from expo (npx's order).
+ * The one copy of this chain: the gate and the JSI build use it.
+ */
+export function expoPackageDir(root: string, pkg: ExpoPinName): string | undefined {
+  const from = (parent: ExpoPinName): string | undefined => {
+    const dir = expoPackageDir(root, parent);
+    return dir === undefined ? undefined : packageDirFrom(dir, pkg);
+  };
+  switch (pkg) {
+    case "expo":
+    case "react-native":
+      return packageDirFrom(root, pkg);
+    case "expo-modules-autolinking":
+      return packageDirFrom(root, pkg) ?? from("expo");
+    case "expo-modules-core":
+      return from("expo");
+    case "expo-modules-jsi":
+      return from("expo-modules-core");
+  }
+}
+
+function versionAt(dir: string | undefined): string | undefined {
+  if (dir === undefined) return undefined;
+  try {
+    const version = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8"))?.version;
+    return typeof version === "string" ? version : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The installed version of each pinned package, read where the build resolves it (undefined: not installed). */
+export function readExpoPins(root: string): Record<ExpoPinName, string | undefined> {
+  const names = Object.keys(SUPPORTED_EXPO[57].pins) as ExpoPinName[];
+  return Object.fromEntries(names.map((name) => [name, versionAt(expoPackageDir(root, name))])) as Record<
+    ExpoPinName,
+    string | undefined
+  >;
+}
+
+/** The error when rn-xtool's expo-modules-macros has no Linux binary for the host (an `--omit=optional` install or another arch). */
+export function expoMacrosBinaryError(opts: { arch?: string; resolve?: (spec: string) => string } = {}): string | undefined {
+  const arch = opts.arch ?? process.arch;
+  const binaryPackage = `@expo/modules-macros-linux-${arch}`;
+  const resolve =
+    opts.resolve ??
+    ((spec: string) => {
+      const macrosDir = path.dirname(createRequire(import.meta.url).resolve("expo-modules-macros/package.json"));
+      return createRequire(path.join(macrosDir, "package.json")).resolve(spec);
+    });
+  try {
+    resolve(`${binaryPackage}/ExpoModulesMacros`);
+    return undefined;
+  } catch {
+    return `expo-modules-macros 0.22.0 has no Linux binary for ${arch} (${binaryPackage}); reinstall react-native-xtool without --omit=optional.`;
+  }
+}
+
+/** "a, b and c" */
+function andList(items: string[]): string {
+  return items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+/** The SDK's exact pins, each read where the build resolves it; then expo-modules-jsi must be the top-level copy. */
+function checkExpoPins(root: string, sdk: number, pins: Readonly<Record<ExpoPinName, string>>): void {
+  const installed = readExpoPins(root);
+  const names = Object.keys(pins) as ExpoPinName[];
+  const off = names.filter((name) => installed[name] !== pins[name]);
+  if (off.length > 0) {
+    const wanted = andList(names.map((name) => `${name} ${pins[name]}`));
+    const found = off.map((name) => `${name} ${installed[name] ?? "not installed"}`).join(", ");
+    throw new Error(`Expo SDK ${sdk} needs exactly ${wanted}; installed: ${found}. Pin those versions in package.json and reinstall.`);
+  }
+  // patch-package patches only node_modules/expo-modules-jsi; a nested copy would be built unpatched.
+  const jsiDir = expoPackageDir(root, "expo-modules-jsi")!;
+  const topLevel = path.join(root, "node_modules", "expo-modules-jsi");
+  if (!existsSync(topLevel) || realpathSync(topLevel) !== realpathSync(jsiDir)) {
+    throw new Error(
+      `expo-modules-jsi ${installed["expo-modules-jsi"]} resolves from ${path.relative(realpathSync(root), realpathSync(jsiDir))}, ` +
+        `not from the project's top-level node_modules: rn-xtool patches and builds only the top-level copy. ` +
+        `Pin expo-modules-jsi to ${pins["expo-modules-jsi"]} in package.json and reinstall (npm dedupe may also fix it).`,
+    );
   }
 }
 
@@ -116,10 +213,17 @@ export async function readExpoProject(root: string, opts: ReadProjectOptions = {
   if (sdkVersion === undefined) {
     throw new Error("Could not determine Expo SDK version");
   }
-  if (sdkVersion < MIN_EXPO_SDK) {
+  const expoPlugin = expoPluginFor(sdkVersion);
+  if (expoPlugin === undefined) {
     throw new Error(
-      `Expo SDK ${sdkVersion} is not supported; rn-xtool requires SDK ${MIN_EXPO_SDK} or newer`,
+      `Expo SDK ${sdkVersion} is not supported; rn-xtool supports SDK 57 (expo ${SUPPORTED_EXPO[57].pins.expo}) and SDK 58 or newer.`,
     );
+  }
+  const pins = expoPinsFor(sdkVersion);
+  if (pins) checkExpoPins(root, sdkVersion, pins);
+  if (expoPlugin === "vendored") {
+    const macros = expoMacrosBinaryError();
+    if (macros) throw new Error(macros);
   }
   const bundleIdentifier = await resolveBundleIdentifier(root, config, opts);
   const iosTargetName = IOSConfig.XcodeUtils.sanitizedName(exp.name);
@@ -137,7 +241,9 @@ export async function readExpoProject(root: string, opts: ReadProjectOptions = {
     infoPlistPath: path.join(root, "ios", iosTargetName, "Info.plist"),
     moduleName: "main",
     rnVersion: await installedRnVersion(root),
-    rnScripts: "installed",
+    // SDK 57's React Native (0.86.3) has no usable SwiftPM scripts: rn-xtool vendors them with the plugin.
+    rnScripts: expoPlugin === "vendored" ? "vendored" : "installed",
+    expoPlugin,
     hasExpoModules: true,
     hasExpoConstants: isInstalled(root, "expo-constants"),
     hasDevClient: isInstalled(root, "expo-dev-client"),

@@ -86,6 +86,7 @@ export async function readBareProject(root: string, opts: ReadProjectOptions = {
     infoPlistPath,
     rnVersion,
     rnScripts,
+    expoPlugin: "installed",
     hasExpoModules,
     hasExpoConstants: isInstalled(root, "expo-constants"),
     hasDevClient: isInstalled(root, "expo-dev-client"),

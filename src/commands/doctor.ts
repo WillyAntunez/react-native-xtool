@@ -10,7 +10,7 @@ import { NO_FINGERPRINT_WARNING } from "./start.js";
 import { sha256File } from "../tools/download.js";
 import { toolEnv } from "../tools/exec.js";
 import { authStatus, listDevices, defaultXtoolPath, xtoolBin, xtoolUnrunnableError, type AuthStatus, type Device } from "../tools/xtool.js";
-import { XTOOL_VERSION, XTOOL_SHA256, SWIFT_VERSION, type RnScripts } from "../versions.js";
+import { XTOOL_VERSION, XTOOL_SHA256, SWIFT_VERSION, type ExpoPlugin, type RnScripts } from "../versions.js";
 import { isExecutable, sdkBundle, swiftAtLeast, swiftMeetsMin, swiftVersionText } from "./setup.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -61,6 +61,7 @@ export interface ProjectProbe {
   kind: ProjectKind;
   rnVersion: string;
   rnScripts: RnScripts;
+  expoPlugin: ExpoPlugin;
   sdkVersion?: number;
   bundleIdentifier: string;
   hasExpoModules: boolean;
@@ -79,6 +80,7 @@ export async function readProjectProbe(root: string): Promise<ProjectProbe> {
     kind: info.kind,
     rnVersion: info.rnVersion,
     rnScripts: info.rnScripts,
+    expoPlugin: info.expoPlugin,
     ...(info.sdkVersion !== undefined && { sdkVersion: info.sdkVersion }),
     bundleIdentifier: info.bundleIdentifier,
     hasExpoModules: info.hasExpoModules,
@@ -90,7 +92,10 @@ export async function readProjectProbe(root: string): Promise<ProjectProbe> {
 }
 
 function projectSummary(p: ProjectProbe): string {
-  if (p.kind === "expo") return `expo SDK ${p.sdkVersion ?? "unknown"}, React Native ${p.rnVersion}`;
+  if (p.kind === "expo") {
+    const vendored = p.expoPlugin === "vendored" ? " (vendored Expo SwiftPM plugin and SwiftPM scripts)" : "";
+    return `expo SDK ${p.sdkVersion ?? "unknown"}, React Native ${p.rnVersion}${vendored}`;
+  }
   const kind = p.hasExpoModules ? "bare + expo modules, React Native" : "bare React Native";
   const scripts = p.rnScripts === "vendored" ? " (vendored SwiftPM scripts)" : "";
   return `${kind} ${p.rnVersion}${scripts}${p.target ? `, target ${p.target.name} (${p.target.xcodeproj})` : ""}`;

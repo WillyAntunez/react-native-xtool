@@ -10,7 +10,37 @@ export const XTOOL_SHA256: Record<string, string | undefined> = {
 };
 export const SWIFT_VERSION = "6.4";
 export const IOS_MIN = "16.4";
-export const MIN_EXPO_SDK = 58;
+
+/**
+ * Expo SDKs rn-xtool builds, and where their SwiftPM plugin comes from. SDK 57 builds only with these exact
+ * versions, through the Expo 58 plugin vendored in rn-xtool; SDK 58 and newer use the installed plugin.
+ */
+export const SUPPORTED_EXPO = {
+  57: {
+    plugin: "vendored",
+    pins: {
+      expo: "57.0.31",
+      "react-native": "0.86.3",
+      "expo-modules-core": "57.0.24",
+      "expo-modules-autolinking": "57.0.16",
+      "expo-modules-jsi": "57.1.3",
+    },
+  },
+  58: { plugin: "installed" },
+} as const;
+export type ExpoPlugin = "installed" | "vendored";
+export type ExpoPinName = keyof (typeof SUPPORTED_EXPO)[57]["pins"];
+
+/** SDK 58 and newer: the installed plugin; 57: the vendored one; older: unsupported. */
+export function expoPluginFor(sdk: number): ExpoPlugin | undefined {
+  if (sdk >= 58) return SUPPORTED_EXPO[58].plugin;
+  return sdk === 57 ? SUPPORTED_EXPO[57].plugin : undefined;
+}
+
+/** The exact versions an SDK needs, in the order the gate names them; undefined when the SDK pins nothing. */
+export function expoPinsFor(sdk: number): Readonly<Record<ExpoPinName, string>> | undefined {
+  return sdk === 57 ? SUPPORTED_EXPO[57].pins : undefined;
+}
 
 /** React Native versions rn-xtool builds as bare projects, and where their SwiftPM scripts come from. */
 export const SUPPORTED_RN = {

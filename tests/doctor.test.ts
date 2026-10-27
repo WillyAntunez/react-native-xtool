@@ -13,11 +13,13 @@ import {
 } from "../src/commands/doctor.js";
 import { MissingBundleIdentifierError } from "../src/project/index.js";
 import { XTOOL_SHA256, XTOOL_VERSION } from "../src/versions.js";
+import { fakeExpo57Modules } from "./support/expo57.js";
 
 const expoProbe: ProjectProbe = {
   kind: "expo",
   rnVersion: "0.88.0",
   rnScripts: "installed",
+  expoPlugin: "installed",
   sdkVersion: 58,
   bundleIdentifier: "com.example.app",
   hasExpoModules: true,
@@ -27,6 +29,7 @@ const bareProbe: ProjectProbe = {
   kind: "bare",
   rnVersion: "0.88.0",
   rnScripts: "installed",
+  expoPlugin: "installed",
   bundleIdentifier: "org.reactjs.native.example.HelloWorld",
   hasExpoModules: false,
   target: { name: "HelloWorld", xcodeproj: "HelloWorld.xcodeproj" },
@@ -300,6 +303,14 @@ describe("doctorWithProbes", () => {
     it("describes an expo project", async () => {
       expect(await detailOf(expoProbe)).toMatchObject({ status: "ok", detail: "expo SDK 58, React Native 0.88.0" });
     });
+    it("describes an Expo SDK 57 project", async () => {
+      expect(
+        await detailOf({ ...expoProbe, sdkVersion: 57, rnVersion: "0.86.3", rnScripts: "vendored", expoPlugin: "vendored" }),
+      ).toMatchObject({
+        status: "ok",
+        detail: "expo SDK 57, React Native 0.86.3 (vendored Expo SwiftPM plugin and SwiftPM scripts)",
+      });
+    });
     it("describes a bare project with its target and xcodeproj", async () => {
       expect(await detailOf(bareProbe)).toMatchObject({
         status: "ok",
@@ -435,6 +446,18 @@ describe("wifi check", () => {
 
 describe("readProjectProbe", () => {
   const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
+  it("reads an Expo SDK 57 project with the vendored plugin", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "doctor-expo57-"));
+    try {
+      await cp(path.join(fixtures, "expo-57"), dir, { recursive: true });
+      await fakeExpo57Modules(dir);
+      expect(await readProjectProbe(dir)).toMatchObject({
+        kind: "expo", sdkVersion: 57, rnVersion: "0.86.3", rnScripts: "vendored", expoPlugin: "vendored", warnings: [],
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
   it("warns that @react-native-community/cli is missing from a bare project", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "doctor-bare-"));
     try {
@@ -464,6 +487,7 @@ describe("readProjectProbe", () => {
       expect(probe).toMatchObject({
         kind: "bare",
         rnVersion: "0.88.0",
+        expoPlugin: "installed",
         bundleIdentifier: "org.reactjs.native.example.HelloWorld",
         hasExpoModules: false,
         target: { name: "HelloWorld", xcodeproj: "HelloWorld.xcodeproj" },
