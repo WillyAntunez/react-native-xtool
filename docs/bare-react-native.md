@@ -24,9 +24,9 @@ As of 2026-10-27, on a physical iPhone, 0.86.3 and 0.87.1 pass `doctor`, `build`
 Refresh, and the library matrix in [libraries.md](libraries.md) (reanimated/worklets only on 0.86.3). 0.86.2 is
 build-verified only: a throwaway template app downloaded and adapted its artifacts and produced `App.app`.
 
-On 0.86.3 the first build downloads about 1.3 GB of artifacts (about 3 minutes on this connection) and adapts them
-(about 2 s); later builds reuse the adapted slots (`rn-artifacts` 0.0 s). The library matrix build took about 4
-minutes with four auto-scaffolds.
+On 0.86.3 the first build downloads about 1.3 GB of artifacts (about 3 minutes in our test; it depends on the
+connection) and adapts them (about 2 s); later builds reuse the adapted slots (`rn-artifacts` 0.0 s). The library
+matrix build took about 4 minutes with four auto-scaffolds.
 
 Any other version (0.85 and older, 0.86.0, 0.86.1, 0.87.0, 0.88 prereleases, 0.88.x other than 0.88.0) stops `build`
 and `doctor` with one error naming this list and asking you to pin `react-native` to one of them. Hybrids (bare +
@@ -57,13 +57,19 @@ downloads the 0.86 artifacts and adapts them using only the downloaded files:
   (on Linux too). Both flavors are downloaded: about 1.3 GB in total for a 0.86 slot (debug about 1 GB, release about
   0.3 GB).
 - The adapted copies go to `ios/build/rn-artifacts/<version>/{debug,release}` and are mostly hard links into the raw
-  slot (a copy is made where hard links are not possible), so they add little disk. They are rebuilt when the adapter
-  changes or the raw slot's `artifacts.json` does; an incomplete raw slot is downloaded again.
+  slot. When the project is on the same filesystem as `~/Library/Caches` the hard links add little disk; a project on
+  another filesystem (a second partition, a mounted drive) gets full copies instead (about 1.1 GB for 0.86.3). They are
+  rebuilt when the adapter changes, the raw slot's `artifacts.json` changes or the project moves; an incomplete raw slot
+  is downloaded again.
 - 0.87.1 slots already have the new layout: they are used straight from the cache, nothing is
   adapted.
 - A slot layout the adapter does not recognise stops the build with an error rather than being worked around.
-- With `rnArtifactsDir` in `rn-xtool.config.json` the step does not run: the directory is handed to the scripts as it
-  is, so for 0.86 it must already hold slots in the adapted layout.
+- With `rnArtifactsDir` in `rn-xtool.config.json` the step does not run: the directory (holding `debug/` and
+  `release/` slots) is handed to the scripts as it is, so for 0.86 it must already hold slots in the adapted layout.
+  To get them, build once without `rnArtifactsDir` and point it at that project's `ios/build/rn-artifacts/<version>`;
+  use it where it is, since its `artifacts.json` holds absolute paths, and note that `build --clean` removes it. For
+  0.87.1 a headers-spec version directory from React Native's cache works as it is, for example
+  `~/Library/Caches/ReactNative/spm-artifacts/0.87.1`.
 
 ## Detection
 
