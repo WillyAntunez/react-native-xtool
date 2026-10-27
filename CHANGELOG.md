@@ -5,7 +5,15 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 
 ## [Unreleased]
 
+### Added
+- Bare React Native 0.86.2, 0.86.3 and 0.87.1, through vendored copies of React Native 0.88.0's SwiftPM scripts
+  (`vendor/rn-spm/`), a `rn-artifacts` build step that downloads and, for 0.86, adapts the prebuilt artifacts, and an
+  exact-version gate. 0.86.3 builds; 0.86.2 and 0.87.1 and device verification pending.
+  <!-- verification status: update after Tasks 10-12 -->
+
 ### Changed
+- A React Native version rn-xtool does not support now gets one error naming the supported list (0.86.2, 0.86.3,
+  0.87.1 and 0.88.0); 0.88 prereleases and 0.88.x other than 0.88.0 are refused.
 - README and docs mark WSL2 as "should work, not tested yet" instead of supported.
 
 ## [0.1.0-alpha.1] - 2026-10-26
@@ -27,7 +35,7 @@ First public release, as `react-native-xtool` (command `rn-xtool`).
   expo-notifications (local), expo-dev-client.
 
 ### Known limits
-- Expo SDK 57 and older, React Native 0.87 and older: not yet.
+- Expo SDK 57 and older, React Native 0.85 and older, 0.86.0, 0.87.0: not yet.
 - No iOS simulator, no production builds, Linux x86_64 only (arm64 and WSL2 untested).
 - No Xcode tools on Linux: asset catalogs, storyboards and Metal shaders are skipped; library resource bundles and
   vendored xcframeworks are not supported yet.

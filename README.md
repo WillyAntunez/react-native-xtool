@@ -18,12 +18,19 @@ Demo video coming soon.
 | Project or target | Status |
 | --- | --- |
 | Expo SDK 58 | ✅ |
-| Bare React Native 0.88 (`@react-native-community/cli init`) | ✅ [details](docs/bare-react-native.md) |
-| Bare React Native + Expo modules (hybrid) | ✅ [details](docs/bare-react-native.md#hybrid-bare--expo-modules) |
-| Expo SDK 57 and older, React Native 0.87 and older | ⏳ not yet |
+| Bare React Native 0.88.0 (`@react-native-community/cli init`) | ✅ [details](docs/bare-react-native.md) |
+| Bare React Native 0.86.2, 0.86.3 and 0.87.1 | ⏳ verification pending ([details](docs/bare-react-native.md#supported-react-native-versions)) |
+| Bare React Native + Expo modules (hybrid), React Native 0.88.0 | ✅ [details](docs/bare-react-native.md#hybrid-bare--expo-modules) |
+| Expo SDK 57 and older, React Native 0.85 and older, 0.86.0, 0.87.0 | ⏳ not yet |
 | iOS simulator | ❌ macOS only |
 | Production / App Store builds | ❌ use EAS |
 | macOS or Windows as the host | ❌ (WSL2 on x86_64 should work as Linux; not tested yet, reports welcome) |
+
+<!-- verification status: update after Tasks 10-12 -->
+Bare React Native versions: exactly 0.86.2, 0.86.3, 0.87.1 and 0.88.0 (0.88.0 is the one verified on a device; device
+verification of the others is pending; 0.86.3 builds with the real CLI, 0.86.2 and 0.87.1 are not verified yet), see
+[Supported React Native versions](docs/bare-react-native.md#supported-react-native-versions). Any other version stops
+with one error naming this list.
 
 CocoaPods is not needed: the `Podfile` is ignored. Any library with a podspec is tried automatically (CocoaPods-only
 ones get a generated `Package.swift`); [docs/libraries.md](docs/libraries.md) lists the ones verified on a device and
