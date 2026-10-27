@@ -106,13 +106,13 @@ describe("bundled patch selection", () => {
 
   it("selects only patches whose package is installed", async () => {
     const { root } = await tempProject();
-    await installPkg(root, "react-native");
+    await installPkg(root, "react-native", "0.88.0");
     expect(selectBundledPatches(root, bundled)).toEqual(["react-native+0.88.0.patch"]);
   });
 
   it("stages the selection as symlinks", async () => {
     const { root, patchesDir } = await tempProject();
-    await installPkg(root, "react-native");
+    await installPkg(root, "react-native", "0.88.0");
     await mkdir(patchesDir, { recursive: true });
     await writeFile(path.join(patchesDir, "stale.patch"), "");
     expect(await stageBundledPatches(root, patchesDir)).toEqual(["react-native+0.88.0.patch"]);
@@ -137,6 +137,58 @@ describe("bundled patch selection", () => {
     await applyPatches(root, async (_c, args) => (calls.push(args), { exitCode: 0 }));
     expect(calls).toHaveLength(1);
     expect(path.resolve(root, calls[0]![2]!)).toBe(patchesDir);
+  });
+});
+
+describe("react-native patch scope", () => {
+  const bundled = path.join(packageRoot(), "patches");
+
+  it("stages the react-native patch only for the version it was made for", async () => {
+    const a = await tempProject();
+    await installPkg(a.root, "react-native", "0.86.3");
+    expect(selectBundledPatches(a.root, bundled)).toEqual([]);
+    const b = await tempProject();
+    await installPkg(b.root, "react-native", "0.88.0");
+    expect(selectBundledPatches(b.root, bundled)).toEqual(["react-native+0.88.0.patch"]);
+  });
+
+  it("keeps staging the expo patches whatever their installed version", async () => {
+    const { root } = await tempProject();
+    await installPkg(root, "expo", "58.0.20");
+    expect(selectBundledPatches(root, bundled)).toEqual(["expo+58.0.19.patch"]);
+  });
+
+  it("stages exactly the four bundled patches for Expo 58 on React Native 0.88.0", async () => {
+    const { root } = await tempProject();
+    await installPkg(root, "expo", "58.0.19");
+    await installPkg(root, "expo-modules-autolinking", "58.0.15");
+    await installPkg(root, "expo-modules-jsi", "58.0.19");
+    await installPkg(root, "react-native", "0.88.0");
+    expect(selectBundledPatches(root, bundled)).toEqual([
+      "expo+58.0.19.patch",
+      "expo-modules-autolinking+58.0.15.patch",
+      "expo-modules-jsi+58.0.19.patch",
+      "react-native+0.88.0.patch",
+    ]);
+  });
+
+  it("runs no bundled patch for a vendored project", async () => {
+    const { root } = await tempProject();
+    await installPkg(root, "react-native", "0.86.3");
+    const calls: string[][] = [];
+    const exec = async (_c: string, args: string[]) => (calls.push(args), { exitCode: 0 });
+    await expect(applyPatches(root, exec, { rnScripts: "installed" })).rejects.toThrow(/pin "react-native" to 0\.88\.0/);
+    await expect(applyPatches(root, exec, { rnScripts: "vendored" })).resolves.toBeUndefined();
+    expect(calls).toHaveLength(0);
+  });
+
+  it("stops an installed-scripts project whose react-native differs from the patch", async () => {
+    const { root } = await tempProject();
+    await installPkg(root, "react-native", "0.88.1");
+    const calls: string[][] = [];
+    const exec = async (_c: string, args: string[]) => (calls.push(args), { exitCode: 0 });
+    await expect(applyPatches(root, exec, { rnScripts: "installed" })).rejects.toThrow(/pin "react-native" to 0\.88\.0/);
+    expect(calls).toHaveLength(0);
   });
 });
 

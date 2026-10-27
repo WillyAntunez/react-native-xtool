@@ -9,6 +9,7 @@ import { projectPaths, type ProjectPaths } from "../paths.js";
 import { generateAppConfig } from "../pipeline/appConfig.js";
 import { buildExpoModulesJsi } from "../pipeline/jsi.js";
 import { applyPatches } from "../pipeline/patches.js";
+import type { RnScripts } from "../versions.js";
 import { runRnSpm } from "../pipeline/rnSpm.js";
 import { readProject, RN_CLI_MISSING, type ProjectInfo, type ProjectKind, type ReadProjectOptions } from "../project/index.js";
 import { readState, writeState, type BuildState } from "../state.js";
@@ -80,7 +81,7 @@ export interface BuildDeps {
   /** Deletes a directory tree (no error when it is missing). */
   remove: (path: string) => Promise<void>;
   prebuild: (root: string, clean: boolean) => Promise<void>;
-  applyPatches: (root: string) => Promise<void>;
+  applyPatches: (root: string, rnScripts: RnScripts) => Promise<void>;
   runRnSpm: (paths: ProjectPaths, opts: { rnArtifactsDir?: string; kind: ProjectKind }) => Promise<void>;
   buildJsi: (paths: ProjectPaths) => Promise<RuntimeFramework>;
   generateAppConfig: (paths: ProjectPaths) => Promise<void>;
@@ -108,7 +109,7 @@ const realDeps: BuildDeps = {
     run("npx", ["expo", "prebuild", "--platform", "ios", "--no-install", ...(clean ? ["--clean"] : [])], {
       cwd: root,
     }),
-  applyPatches,
+  applyPatches: (root, rnScripts) => applyPatches(root, undefined, { rnScripts }),
   runRnSpm,
   buildJsi: buildExpoModulesJsi,
   generateAppConfig,
@@ -173,7 +174,7 @@ export async function build(
       await d.remove(paths.iosXtool);
     });
   }
-  await step("patches", () => d.applyPatches(paths.root));
+  await step("patches", () => d.applyPatches(paths.root, project.rnScripts));
   await step("rn-spm", () => d.runRnSpm(paths, { rnArtifactsDir: config.rnArtifactsDir, kind: project.kind }));
   const jsi = planned("jsi") ? await step("jsi", () => d.buildJsi(paths)) : undefined;
   if (planned("app-config")) await step("app-config", () => d.generateAppConfig(paths));
