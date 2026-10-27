@@ -308,8 +308,8 @@ function inspectSource(src: string, version: string): SourceLayout {
   let vfs: VfsEntry[];
   try {
     vfs = parseVfsTemplate(readFileSync(path.join(src, VFS_TEMPLATE), "utf8"));
-  } catch {
-    return fail(`a header tree ${VFS_TEMPLATE} recognises`);
+  } catch (err) {
+    return fail(VFS_TEMPLATE, `is in a form rn-xtool cannot read (${(err as Error).message})`);
   }
   if (vfs.length === 0) fail(`the header list in ${VFS_TEMPLATE}`);
   if (!vfs.some((e) => e.virtual.startsWith("React/"))) fail(`the React/ directory in ${VFS_TEMPLATE}`);

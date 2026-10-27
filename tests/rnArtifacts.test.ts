@@ -311,6 +311,18 @@ describe("adaptSlot", () => {
     }
   });
 
+  it("stops on a malformed VFS template with the parser's reason", async () => {
+    const { src, dest } = adaptCase();
+    const file = path.join(src, "React.xcframework", "React-VFS-template.yaml");
+    writeFileSync(file, readFileSync(file, "utf8").replace(/external-contents: '\$\{ROOT_PATH\}\/([^']*)'/, "external-contents: '/elsewhere/$1'"));
+    const run = adaptSlot(src, dest, "0.86.3");
+    await expect(run).rejects.toBeInstanceOf(ArtifactLayoutError);
+    await expect(run).rejects.toThrow(
+      /: React\.xcframework\/React-VFS-template\.yaml is in a form rn-xtool cannot read \(React-VFS-template\.yaml: \S+ maps outside \$\{ROOT_PATH\}: \/elsewhere\/\S+\)\. Report it/,
+    );
+    expect(existsSync(dest)).toBe(false);
+  });
+
   it("stops on a VFS template without React headers", async () => {
     for (const template of ["version: 0\nroots: []\n", null]) {
       const { src, dest } = adaptCase();
