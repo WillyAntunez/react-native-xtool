@@ -1,0 +1,164 @@
+--- a/spm/app-target.js
++++ b/spm/app-target.js
+@@ -8,15 +8,30 @@
+ 
+ 'use strict';
+ 
+-const { IOSConfig } = require('@expo/config-plugins');
+ const fs = require('fs');
++const { createRequire } = require('module');
+ const path = require('path');
+ 
+-// Not a dependency of this package; resolving it through config-plugins also
+-// yields the exact parser IOSConfig's helpers expect.
+-const xcode = require(
+-  require.resolve('xcode', { paths: [path.dirname(require.resolve('@expo/config-plugins'))] })
+-);
++/**
++ * rn-xtool P2: this copy runs from rn-xtool's install, so the app's @expo/config-plugins is
++ * resolved from the app root rn-xtool passes in RN_XTOOL_PROJECT_ROOT, never from here.
++ */
++function appPackages() {
++  const appRoot = process.env.RN_XTOOL_PROJECT_ROOT;
++  if (!appRoot) {
++    throw new Error(
++      "RN_XTOOL_PROJECT_ROOT is not set: rn-xtool's vendored Expo SwiftPM plugin resolves the app's packages from it"
++    );
++  }
++  const configPlugins = createRequire(path.join(appRoot, 'package.json')).resolve(
++    '@expo/config-plugins'
++  );
++  const { IOSConfig } = require(configPlugins);
++  // Not a dependency of this package; resolving it through config-plugins also
++  // yields the exact parser IOSConfig's helpers expect.
++  const xcode = require(require.resolve('xcode', { paths: [path.dirname(configPlugins)] }));
++  return { IOSConfig, xcode };
++}
+ 
+ const { spmUpdateCommand } = require('./commands');
+ const { pluginError } = require('./diagnostics');
+@@ -96,6 +111,7 @@
+ 
+ /** The native target the registry is generated for, with its project, or null. */
+ function findTarget(appRoot, projectPath, targetName) {
++  const { IOSConfig, xcode } = appPackages();
+   let project;
+   try {
+     if (projectPath == null) throw new Error('no .xcodeproj with a project.pbxproj was found');
+@@ -139,6 +155,7 @@
+   const found = findTarget(appRoot, projectPath, targetName);
+   if (found == null) return null;
+   const { project, target } = found;
++  const { IOSConfig } = appPackages();
+   const name = IOSConfig.XcodeUtils.unquote(String(target.name));
+ 
+   let configurations;
+@@ -249,4 +266,4 @@
+   );
+ }
+ 
+-module.exports = { readPodfileProperties, resolveAppTarget };
++module.exports = { appPackages, readPodfileProperties, resolveAppTarget };
+--- a/spm/flavored-frameworks.js
++++ b/spm/flavored-frameworks.js
+@@ -62,9 +62,14 @@
+ 
+ function precompiledBases(buildPath, moduleRoot, bundledPath) {
+   const envPath = process.env.EXPO_PRECOMPILED_MODULES_PATH;
++  // rn-xtool P2: where the installed copy's `__dirname/../../..` lands (the app's node_modules),
++  // never relative to this vendored copy.
++  const appRoot = process.env.RN_XTOOL_PROJECT_ROOT;
+   const dirs = {
+     env: envPath ? path.resolve(envPath, ...buildPath) : null,
+-    monorepo: path.resolve(__dirname, '..', '..', '..', 'precompile', '.build', ...buildPath),
++    monorepo: appRoot
++      ? path.resolve(appRoot, 'node_modules', 'precompile', '.build', ...buildPath)
++      : null,
+     bundled: moduleRoot != null ? path.join(moduleRoot, 'prebuilds', ...bundledPath) : null,
+   };
+   const bases = PRECOMPILED_SOURCE_KINDS.filter((kind) => dirs[kind] != null).map((kind) => ({
+@@ -94,10 +99,12 @@
+     encoding: 'utf8',
+     maxBuffer: 64 * 1024 * 1024,
+   });
++  // rn-xtool P5: macOS AppleDouble entries (`._*`) are metadata, not part of any product.
+   const entries = listing
+     .split('\n')
+     .map((entry) => entry.replace(/^\.\//, '').replace(/\/$/, ''))
+-    .filter(Boolean);
++    .filter(Boolean)
++    .filter((entry) => !path.basename(entry).startsWith('._'));
+   if (entries.length === 0) {
+     throw pluginError({ what: `${tarballPath} is empty` });
+   }
+@@ -159,7 +166,21 @@
+ 
+   validateTarEntries(sourcePath, frameworkName);
+   replaceDirectory(destination, (temp) => {
+-    execFileSync('tar', ['-xzf', sourcePath, '-C', temp], { stdio: 'pipe' });
++    // rn-xtool P5: without macOS AppleDouble files or the pax xattr headers GNU tar warns about.
++    execFileSync(
++      'tar',
++      [
++        '-xzf',
++        sourcePath,
++        '-C',
++        temp,
++        '--exclude=._*',
++        '--exclude=*/._*',
++        '--no-xattrs',
++        '--warning=no-unknown-keyword',
++      ],
++      { stdio: 'pipe' }
++    );
+     const extracted = path.join(temp, `${frameworkName}.xcframework`);
+     if (!fs.existsSync(path.join(extracted, 'Info.plist'))) {
+       throw incompleteXCFrameworkError(
+@@ -629,6 +650,7 @@
+   assertDistinctFlavoredFrameworks,
+   assertHeadersMatchSources,
+   byteOrder,
++  extractTarball,
+   frameworkSource,
+   hasPrecompiledArtifact,
+   headersXCFrameworkDirs,
+--- a/spm/manifests.js
++++ b/spm/manifests.js
+@@ -1237,6 +1237,12 @@
+     clang.push(`.unsafeFlags(["-I", "${escapeSwiftString(dir)}"])`);
+   }
+   for (const flag of swiftDepModuleMaps) clang.push(`.unsafeFlags([${flag}])`);
++  // rn-xtool P4: CocoaPods' generated prefix header (`<Pod>-prefix.pch`) imports UIKit into every
++  // Objective-C file; SDK 57 headers rely on it (expo's EXLegacyAppDelegateWrapper.h).
++  const prefixHeader = path.join(pkgDir, 'prefix.pch');
++  fs.mkdirSync(pkgDir, { recursive: true });
++  writeIfChanged(prefixHeader, '#ifdef __OBJC__\n#import <UIKit/UIKit.h>\n#endif\n');
++  clang.push(`.unsafeFlags(["-include", "${escapeSwiftString(prefixHeader)}"])`);
+   // SwiftPM 6.4 does not apply `cxxLanguageStandard` to a mixed target's Objective-C++.
+   const cxx = language === 'mixed' && hasCxx ? [...clang, '.unsafeFlags(["-std=c++20"])'] : clang;
+   // Swift reads the module's headers through the umbrella, so its Clang importer needs the
+@@ -1294,7 +1300,9 @@
+     language,
+     hasCxx: sources.hasCxx,
+     umbrellaHeaders,
+-    headerDir,
++    // rn-xtool P3: CocoaPods' default header_dir is the pod name (SDK 57's expo-constants keeps its
++    // headers flat in ios/ and imports <EXConstants/EXConstantsService.h>).
++    headerDir: headerDir ?? product,
+     headerDirHeaders: headers,
+     localDeps,
+     pkgDir: path.join(emitContext.outDir, 'expo-source', product),
+--- a/spm/plugin.js
++++ b/spm/plugin.js
+@@ -1080,8 +1080,10 @@
+   });
+   let pkgJsonPath;
+   try {
++    // rn-xtool P1: SDK 57's core depends on @expo/expo-modules-macros-plugin, which has no Linux
++    // binary; fall back to the expo-modules-macros rn-xtool installs next to this copy.
+     pkgJsonPath = require.resolve('expo-modules-macros/package.json', {
+-      paths: [coreModuleRoot],
++      paths: [coreModuleRoot, __dirname],
+     });
+   } catch (error) {
+     throw pluginError(
