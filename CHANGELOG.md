@@ -5,6 +5,8 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 
 ## [Unreleased]
 
+## [0.1.0-alpha.2] - 2026-10-27
+
 ### Added
 - Bare React Native 0.86.2, 0.86.3 and 0.87.1, through vendored copies of React Native 0.88.0's SwiftPM scripts
   (`vendor/rn-spm/`), a `rn-artifacts` build step that downloads and, for 0.86, adapts the prebuilt artifacts, and an
@@ -47,5 +49,6 @@ First public release, as `react-native-xtool` (command `rn-xtool`).
 - No Xcode tools on Linux: asset catalogs, storyboards and Metal shaders are skipped; library resource bundles and
   vendored xcframeworks are not supported yet.
 
-[Unreleased]: https://github.com/WillyAntunez/react-native-xtool/compare/v0.1.0-alpha.1...HEAD
+[Unreleased]: https://github.com/WillyAntunez/react-native-xtool/compare/v0.1.0-alpha.2...HEAD
+[0.1.0-alpha.2]: https://github.com/WillyAntunez/react-native-xtool/compare/v0.1.0-alpha.1...v0.1.0-alpha.2
 [0.1.0-alpha.1]: https://github.com/WillyAntunez/react-native-xtool/releases/tag/v0.1.0-alpha.1
