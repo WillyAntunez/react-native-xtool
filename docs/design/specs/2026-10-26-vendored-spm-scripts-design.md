@@ -224,3 +224,22 @@ will build on, and the route for 0.81 (SDK 54) if its artifacts allow.
 - Internal structure of the adapter module and its fake-slot fixtures; exact test names.
 - How the driver receives the RN root for the vendored scripts (env vs flag), as long as it is explicit.
 - Harness flag parsing; fixture construction details.
+
+## Amendments from planning (2026-10-27, controller's rulings)
+
+- **ReactNativeHeaders module map**: 0.88's map is not one module per directory (14 modules with explicit `header`
+  lines, no `hermes` module, `RCTAnimatedModuleProvider` is a directory). The adapter ships a committed table derived
+  from RN 0.88.0's map (data, MIT) and emits each module keeping only the headers present in the 0.86 slot. No 0.88
+  slot is read at build time, which was the requirement. Acceptance: on the real 0.86.3 slot the result equals 0.88's
+  map minus the four headers 0.86 lacks (the spike's proven map).
+- **Placeholder archives**: an empty `ar` archive is what the adapter writes; Task 10's device build verifies it links.
+  If the linker rejects it, the fallback is a stub object (as 0.88 ships); that change comes back as a decision.
+- **When `rn-artifacts` runs**: for every vendored project without `rnArtifactsDir`; a headers-spec slot (0.87.1) passes
+  through unadapted. The downloader (E4) also writes `artifacts.json` with the entries present; it is the stamp source.
+- **Expo projects on RN ≠ 0.88.0** keep today's behaviour: the bundled patch is staged and the "pin react-native"
+  mismatch error stops the build. The exact-version rule only decides what is staged for vendored projects.
+- **Versions**: the exact list refuses prereleases (`0.88.0-rc.1`, previously accepted by a test) and 0.88.x other than
+  0.88.0; the test changes accordingly.
+- **Expo modules on 0.86/0.87**: `React Native <v> with Expo modules is not supported. Expo SDK 58 needs React Native
+  0.88.0.`
+- **doctor**: the `project` line names the scripts source; build steps are not listed by doctor (as today).
