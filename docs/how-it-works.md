@@ -23,8 +23,11 @@ own `Xcode.xip`. This page is the overview (toolchain, patches, build steps, reb
 
 ## The build, step by step
 
-1. Applies four patches to `node_modules` with patch-package. Two are one-liners (the `@ExpoModule` scanner gate in
-   expo-modules-autolinking, a Swift 6.4 access-level error in expo-modules-jsi). The other two are large:
+1. Applies the bundled patches to `node_modules` with patch-package, on Expo projects and bare React Native 0.88.0
+   projects (each patch only when its package is installed, so a bare project without Expo modules gets only the React
+   Native one). Bare 0.86 and 0.87 projects get none: the fixes live in the vendored scripts. There are four patches.
+   Two are one-liners (the `@ExpoModule` scanner gate in expo-modules-autolinking, a Swift 6.4 access-level error in
+   expo-modules-jsi). The other two are large:
    - **Expo** (`patches/expo+58.0.19.patch`, files under `expo/scripts/spm/`): finds the Swift macro plugin on Linux;
      gives pure-Swift modules the Foundation/UIKit imports CocoaPods' umbrella header provides
      ([upstream/expo-spm-plugin-umbrella.md](upstream/expo-spm-plugin-umbrella.md)); builds Expo modules that mix Swift
