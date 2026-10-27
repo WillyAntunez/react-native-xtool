@@ -39,6 +39,10 @@ describe("readExpoProject", () => {
     expect(p.slug).toBe("app");
   });
 
+  it("an Expo project uses the installed scripts", async () => {
+    expect((await readExpoProject(fixture)).rnScripts).toBe("installed");
+  });
+
   it("sanitizes the target name like prebuild", async () => {
     const dir = await tempProject((app) => {
       app.expo.name = "Mi App Ñandú 2";

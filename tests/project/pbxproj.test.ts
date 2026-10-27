@@ -27,6 +27,12 @@ async function iosWith(names: string[], contents: string): Promise<string> {
 const templatePbxproj = () => readFile(path.join(templateIos, "HelloWorld.xcodeproj", "project.pbxproj"), "utf8");
 
 describe("pbxproj reader", () => {
+  it("the 0.86 and 0.87 templates target iOS 15.1", () => {
+    for (const f of ["bare-086", "bare-087"]) {
+      expect(buildSetting(openPbxproj(path.join(fixtures, f, "ios")), "IPHONEOS_DEPLOYMENT_TARGET")).toBe("15.1");
+    }
+  });
+
   it("finds the application target of the template", () => {
     const p = openPbxproj(templateIos);
     expect(p.appTarget.name).toBe("HelloWorld");

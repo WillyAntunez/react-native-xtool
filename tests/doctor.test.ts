@@ -17,6 +17,7 @@ import { XTOOL_SHA256, XTOOL_VERSION } from "../src/versions.js";
 const expoProbe: ProjectProbe = {
   kind: "expo",
   rnVersion: "0.88.0",
+  rnScripts: "installed",
   sdkVersion: 58,
   bundleIdentifier: "com.example.app",
   hasExpoModules: true,
@@ -25,6 +26,7 @@ const expoProbe: ProjectProbe = {
 const bareProbe: ProjectProbe = {
   kind: "bare",
   rnVersion: "0.88.0",
+  rnScripts: "installed",
   bundleIdentifier: "org.reactjs.native.example.HelloWorld",
   hasExpoModules: false,
   target: { name: "HelloWorld", xcodeproj: "HelloWorld.xcodeproj" },
@@ -302,6 +304,12 @@ describe("doctorWithProbes", () => {
       expect(await detailOf(bareProbe)).toMatchObject({
         status: "ok",
         detail: "bare React Native 0.88.0, target HelloWorld (HelloWorld.xcodeproj)",
+      });
+    });
+    it("describes a vendored bare project", async () => {
+      expect(await detailOf({ ...bareProbe, rnVersion: "0.86.3", rnScripts: "vendored" })).toMatchObject({
+        status: "ok",
+        detail: "bare React Native 0.86.3 (vendored SwiftPM scripts), target HelloWorld (HelloWorld.xcodeproj)",
       });
     });
     it("describes a bare project with expo modules", async () => {

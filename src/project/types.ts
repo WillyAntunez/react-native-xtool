@@ -1,3 +1,4 @@
+import type { RnScripts } from "../versions.js";
 import type { BareTargetContent } from "./pbxproj.js";
 
 export type ProjectKind = "expo" | "bare";
@@ -17,6 +18,8 @@ export interface ProjectInfo {
   /** expo: ios/<target>/Info.plist; bare: from INFOPLIST_FILE. */
   infoPlistPath: string;
   rnVersion: string;
+  /** Where the SwiftPM scripts come from: the installed react-native, or the copy vendored in rn-xtool. */
+  rnScripts: RnScripts;
   sdkVersion?: number;
   hasExpoModules: boolean;
   hasExpoConstants: boolean;
