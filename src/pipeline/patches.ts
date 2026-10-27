@@ -171,6 +171,45 @@ export function hasProjectPatches(projectRoot: string): boolean {
   }
 }
 
+const SCAFFOLD_MARKER = "rn-xtool-scaffold-revision";
+const SLOT_LABEL_RE = /^\+\/\/ Cache slot: (\S+)\/dual-flavor\s*$/m;
+
+/**
+ * Warnings for the project's persisted scaffold patches (`patches/*.patch` with rn-xtool's scaffold marker) whose
+ * cache-slot label names another React Native version than the installed one: their Package.swift was written for
+ * that version, and the scaffolder only regenerates it when the manifest is missing.
+ */
+export function scaffoldPatchWarnings(projectRoot: string): string[] {
+  const installed = installedVersion(projectRoot, "react-native");
+  if (installed === undefined) return [];
+  const dir = path.join(projectRoot, "patches");
+  let names: string[];
+  try {
+    names = readdirSync(dir).filter((n) => n.endsWith(".patch")).sort();
+  } catch {
+    return [];
+  }
+  const warnings: string[] = [];
+  for (const name of names) {
+    let text: string;
+    try {
+      text = readFileSync(path.join(dir, name), "utf8");
+    } catch {
+      continue;
+    }
+    if (!text.includes(SCAFFOLD_MARKER)) continue;
+    const slot = SLOT_LABEL_RE.exec(text)?.[1];
+    if (slot === undefined || slot === installed) continue;
+    const pkg = parsePatchFileName(name)?.pkg;
+    const reinstall = pkg === undefined ? "the library" : `node_modules/${pkg}`;
+    warnings.push(
+      `⚠ patches/${name} was scaffolded for React Native ${slot}; delete it so rn-xtool regenerates it for ${installed} ` +
+        `(also remove ${reinstall} and reinstall: that copy still has the old Package.swift)`,
+    );
+  }
+  return warnings;
+}
+
 type PatchExec = (cmd: string, args: string[], cwd: string) => Promise<ExecaResultLike>;
 interface ExecaResultLike {
   exitCode?: number | undefined;
@@ -193,7 +232,7 @@ const execPatchPackage: PatchExec = (cmd, args, cwd) =>
 export async function applyPatches(
   projectRoot: string,
   exec: PatchExec = execPatchPackage,
-  opts: { rnScripts: RnScripts } = { rnScripts: "installed" },
+  opts: { rnScripts: RnScripts; log?: (line: string) => void } = { rnScripts: "installed" },
 ): Promise<void> {
   if (opts.rnScripts === "installed") {
     const m = rnPatchMismatch(projectRoot, path.join(packageRoot(), "patches"));
@@ -215,6 +254,8 @@ export async function applyPatches(
     }
   }
   if (!hasProjectPatches(projectRoot)) return;
+  const log = opts.log ?? ((line: string) => console.log(line));
+  for (const warning of scaffoldPatchWarnings(projectRoot)) log(warning);
   const [pcmd, pargs] = projectPatchesArgv();
   const pr = await exec(pcmd, pargs, projectRoot);
   const poutput = pr.all ?? `${pr.stdout}\n${pr.stderr}`;

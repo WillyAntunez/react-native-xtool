@@ -379,3 +379,48 @@ describe("patch-package failure detection", () => {
     await expect(applyPatches(root, exec)).rejects.toThrow(/project's patches/);
   });
 });
+
+describe("scaffold patches from another React Native version", () => {
+  const scaffoldPatch = (slot: string, marker = true) =>
+    [
+      "diff --git a/node_modules/lib/Package.swift b/node_modules/lib/Package.swift",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/node_modules/lib/Package.swift",
+      "@@ -0,0 +1,5 @@",
+      "+// swift-tools-version: 6.0",
+      "+// AUTO-SCAFFOLDED-VERSION: 20",
+      ...(marker ? ["+// rn-xtool-scaffold-revision: 1"] : []),
+      `+// Cache slot: ${slot}/dual-flavor`,
+      "+import PackageDescription",
+      "",
+    ].join("\n");
+
+  it("warns once per scaffold patch whose cache slot names another version", async () => {
+    const { root } = await tempProject();
+    await installPkg(root, "react-native", "0.87.1");
+    await mkdir(path.join(root, "patches"));
+    await writeFile(path.join(root, "patches", "react-native-screens+4.30.0.patch"), scaffoldPatch("0.86.3"));
+    await writeFile(path.join(root, "patches", "@scope+lib+1.0.0.patch"), scaffoldPatch("0.88.0"));
+    await writeFile(path.join(root, "patches", "react-native-svg+15.16.0.patch"), scaffoldPatch("0.87.1"));
+    await writeFile(path.join(root, "patches", "hand-made+1.0.0.patch"), scaffoldPatch("0.86.3", false));
+    const lines: string[] = [];
+    await applyPatches(root, async () => ({ exitCode: 0 }), { rnScripts: "vendored", log: (l) => lines.push(l) });
+    expect(lines).toEqual([
+      "⚠ patches/@scope+lib+1.0.0.patch was scaffolded for React Native 0.88.0; delete it so rn-xtool regenerates it for 0.87.1 " +
+        "(also remove node_modules/@scope/lib and reinstall: that copy still has the old Package.swift)",
+      "⚠ patches/react-native-screens+4.30.0.patch was scaffolded for React Native 0.86.3; delete it so rn-xtool regenerates it for 0.87.1 " +
+        "(also remove node_modules/react-native-screens and reinstall: that copy still has the old Package.swift)",
+    ]);
+  });
+
+  it("stays quiet when every scaffold patch matches the installed version", async () => {
+    const { root } = await tempProject();
+    await installPkg(root, "react-native", "0.86.3");
+    await mkdir(path.join(root, "patches"));
+    await writeFile(path.join(root, "patches", "react-native-screens+4.30.0.patch"), scaffoldPatch("0.86.3"));
+    const lines: string[] = [];
+    await applyPatches(root, async () => ({ exitCode: 0 }), { rnScripts: "vendored", log: (l) => lines.push(l) });
+    expect(lines).toEqual([]);
+  });
+});

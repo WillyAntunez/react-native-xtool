@@ -11,6 +11,8 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   exact-version gate. 0.86.3 and 0.87.1 are verified on a physical iPhone (`doctor`, `build`, install over Wi‑Fi, Metro,
   Fast Refresh, and the library matrix in `docs/libraries.md`; reanimated/worklets only on 0.86.3); 0.86.2 is
   build-verified only.
+- The `patches` step warns about persisted scaffold patches made for another React Native version (for example after
+  moving from 0.86.3 to 0.87.1) and says which file to delete; it changes nothing on its own.
 
 ### Changed
 - An Expo project whose `react-native` is not 0.88.0 now stops at the `patches` step with a message to pin
