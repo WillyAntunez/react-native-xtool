@@ -382,3 +382,4 @@ SDK).
 - Shared-patch changes re-patch the Expo reference app `../app` in place (reverse the old patch, apply the new; only `scripts/spm` changes). Accepted: the main checkout's reference-app guard tests fail until this branch merges.
 - gesture-handler 2.32.0's scaffolder gaps count toward the same reanimated/worklets checkpoint.
 - The P1–P5 unit tests live in `tests/vendor-expo-spm.test.ts`; shared fixture helpers move to `tests/support/expoSpm.ts`.
+- Failure mode added: nested expo-modules-jsi (the copy the build resolves from core is not the top-level `node_modules/expo-modules-jsi`, the only copy patch-package patches) — handle (gate error, Task 2): `expo-modules-jsi <installed> resolves from <relative path>, not from the project's top-level node_modules: rn-xtool patches and builds only the top-level copy. Pin expo-modules-jsi to 57.1.3 in package.json and reinstall (npm dedupe may also fix it).`
