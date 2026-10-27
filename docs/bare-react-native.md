@@ -16,13 +16,17 @@ Exactly these versions, and nothing in between:
 | React Native | SwiftPM scripts | Status |
 | --- | --- | --- |
 | 0.88.0 | the installed copy (`node_modules/react-native/scripts`) | verified on a device |
-| 0.87.1 | [vendored](#vendored-swiftpm-scripts-086-087) | verification pending |
-| 0.86.3 | [vendored](#vendored-swiftpm-scripts-086-087), [older artifacts](#older-artifacts-086) | builds with the real CLI; device verification pending |
-| 0.86.2 | [vendored](#vendored-swiftpm-scripts-086-087), [older artifacts](#older-artifacts-086) | verification pending |
+| 0.87.1 | [vendored](#vendored-swiftpm-scripts-086-087) | verified on a device |
+| 0.86.3 | [vendored](#vendored-swiftpm-scripts-086-087), [older artifacts](#older-artifacts-086) | verified on a device |
+| 0.86.2 | [vendored](#vendored-swiftpm-scripts-086-087), [older artifacts](#older-artifacts-086) | build-verified only (not run on a device) |
 
-<!-- verification status: update after Tasks 10-12 -->
-As of 2026-10-27, 0.86.3 builds with the real CLI (`doctor`, `build`; `App.app` produced); 0.86.2 and 0.87.1 are not
-verified yet; none of the three is device-verified.
+As of 2026-10-27, on a physical iPhone, 0.86.3 and 0.87.1 pass `doctor`, `build`, install over Wi‑Fi, Metro and Fast
+Refresh, and the library matrix in [libraries.md](libraries.md) (reanimated/worklets only on 0.86.3). 0.86.2 is
+build-verified only: a throwaway template app downloaded and adapted its artifacts and produced `App.app`.
+
+On 0.86.3 the first build downloads about 1.3 GB of artifacts (about 3 minutes on this connection) and adapts them
+(about 2 s); later builds reuse the adapted slots (`rn-artifacts` 0.0 s). The library matrix build took about 4
+minutes with four auto-scaffolds.
 
 Any other version (0.85 and older, 0.86.0, 0.86.1, 0.87.0, 0.88 prereleases, 0.88.x other than 0.88.0) stops `build`
 and `doctor` with one error naming this list and asking you to pin `react-native` to one of them. Hybrids (bare +

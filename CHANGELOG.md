@@ -8,10 +8,13 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 ### Added
 - Bare React Native 0.86.2, 0.86.3 and 0.87.1, through vendored copies of React Native 0.88.0's SwiftPM scripts
   (`vendor/rn-spm/`), a `rn-artifacts` build step that downloads and, for 0.86, adapts the prebuilt artifacts, and an
-  exact-version gate. 0.86.3 builds; 0.86.2 and 0.87.1 and device verification pending.
-  <!-- verification status: update after Tasks 10-12 -->
+  exact-version gate. 0.86.3 and 0.87.1 are verified on a physical iPhone (`doctor`, `build`, install over Wi‑Fi, Metro,
+  Fast Refresh, and the library matrix in `docs/libraries.md`; reanimated/worklets only on 0.86.3); 0.86.2 is
+  build-verified only.
 
 ### Changed
+- Projects whose persisted scaffold patches carry the old `expo-xtool-scaffold-revision` marker are re-scaffolded once
+  by this version.
 - A React Native version rn-xtool does not support now gets one error naming the supported list (0.86.2, 0.86.3,
   0.87.1 and 0.88.0); 0.88 prereleases and 0.88.x other than 0.88.0 are refused.
 - README and docs mark WSL2 as "should work, not tested yet" instead of supported.
