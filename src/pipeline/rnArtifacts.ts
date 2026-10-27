@@ -201,9 +201,10 @@ export const ADAPTED_STAMP = ".rn-xtool-adapted.json";
 
 /** A React Native artifact slot whose layout the adapter does not know; never worked around. */
 export class ArtifactLayoutError extends Error {
-  constructor(version: string, slot: string, missing: string) {
+  /** `problem` completes the sentence about `what`, e.g. "is missing" or "is not a file". */
+  constructor(version: string, slot: string, what: string, problem = "is missing") {
     super(
-      `React Native ${version} artifacts in ${slot} have a layout rn-xtool does not recognise: ${missing} is missing. ` +
+      `React Native ${version} artifacts in ${slot} have a layout rn-xtool does not recognise: ${what} ${problem}. ` +
         "Report it at https://github.com/WillyAntunez/react-native-xtool/issues with this message.",
     );
     this.name = "ArtifactLayoutError";
@@ -261,11 +262,16 @@ interface SourceLayout {
 }
 
 function inspectSource(src: string, version: string): SourceLayout {
-  const fail = (missing: string): never => {
-    throw new ArtifactLayoutError(version, src, missing);
+  const fail = (what: string, problem?: string): never => {
+    throw new ArtifactLayoutError(version, src, what, problem);
   };
-  const need = (rel: string) => {
-    if (!existsSync(path.join(src, rel))) fail(rel);
+  /** A regular file (symlinks followed); a directory in its place is named as such. */
+  const needFile = (rel: string) => {
+    const abs = path.join(src, rel);
+    if (!isFile(abs)) fail(rel, existsSync(abs) ? "is not a file" : undefined);
+  };
+  const needDir = (rel: string) => {
+    if (!isDirectory(path.join(src, rel))) fail(rel);
   };
   const libsOf = (xc: string) => {
     try {
@@ -275,16 +281,16 @@ function inspectSource(src: string, version: string): SourceLayout {
     }
   };
 
-  need("React.xcframework/Info.plist");
-  need(VFS_TEMPLATE);
+  needFile("React.xcframework/Info.plist");
+  needFile(VFS_TEMPLATE);
   const reactLibs = libsOf("React.xcframework");
-  for (const lib of reactLibs) need(`React.xcframework/${lib.LibraryIdentifier}/React.framework/${UMBRELLA}`);
-  need("ReactNativeDependencies.xcframework/Info.plist");
-  need("ReactNativeDependencies.xcframework/Headers");
+  for (const lib of reactLibs) needFile(`React.xcframework/${lib.LibraryIdentifier}/React.framework/${UMBRELLA}`);
+  needFile("ReactNativeDependencies.xcframework/Info.plist");
+  needDir("ReactNativeDependencies.xcframework/Headers");
   const depsLibs = libsOf("ReactNativeDependencies.xcframework");
-  need("hermes-engine.xcframework");
-  need("hermes-headers/hermes");
-  need("artifacts.json");
+  needDir("hermes-engine.xcframework");
+  needDir("hermes-headers/hermes");
+  needFile("artifacts.json");
 
   const artifactsJson = readFileSync(path.join(src, "artifacts.json"));
   let parsed: Record<string, { url?: unknown } | undefined>;
@@ -308,7 +314,7 @@ function inspectSource(src: string, version: string): SourceLayout {
   if (vfs.length === 0) fail(`the header list in ${VFS_TEMPLATE}`);
   if (!vfs.some((e) => e.virtual.startsWith("React/"))) fail(`the React/ directory in ${VFS_TEMPLATE}`);
   // `${ROOT_PATH}` is the React.xcframework directory (see materialiseVirtualTree).
-  for (const { external } of vfs) need(`React.xcframework/${external.slice(ROOT_PATH.length + 1)}`);
+  for (const { external } of vfs) needFile(`React.xcframework/${external.slice(ROOT_PATH.length + 1)}`);
 
   return { vfs, reactLibs, depsLibs, artifacts, artifactsJsonSha256: sha256(artifactsJson) };
 }

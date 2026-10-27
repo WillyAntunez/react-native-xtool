@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { copyFile } from "node:fs/promises";
-import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
@@ -290,6 +290,23 @@ describe("adaptSlot", () => {
       await expect(run).rejects.toBeInstanceOf(ArtifactLayoutError);
       await expect(run).rejects.toThrow(message);
       await expect(run).rejects.toThrow("https://github.com/WillyAntunez/react-native-xtool/issues");
+      expect(existsSync(dest)).toBe(false);
+    }
+  });
+
+  it("stops when a directory stands where a file is expected, naming it", async () => {
+    const cases = [
+      "React.xcframework/Headers/Yoga/yoga/Yoga.h",
+      "React.xcframework/ios-arm64/React.framework/Headers/React_Core/React_Core-umbrella.h",
+      "React.xcframework/React-VFS-template.yaml",
+    ];
+    for (const rel of cases) {
+      const { src, dest } = adaptCase();
+      rmSync(path.join(src, rel));
+      mkdirSync(path.join(src, rel));
+      const run = adaptSlot(src, dest, "0.86.3");
+      await expect(run).rejects.toBeInstanceOf(ArtifactLayoutError);
+      await expect(run).rejects.toThrow(`0.86.3 artifacts in ${src} have a layout rn-xtool does not recognise: ${rel} is not a file.`);
       expect(existsSync(dest)).toBe(false);
     }
   });
