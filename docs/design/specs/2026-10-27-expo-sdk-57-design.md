@@ -367,3 +367,10 @@ SDK).
 - The `patch` strip level for the Expo provenance test, and the fixture construction.
 - Whether a stale revision-1 manifest in `node_modules` is re-scaffolded automatically when the scaffold step runs.
   The warning is required either way.
+
+## Amendments from the builder check (2026-10-27, controller's rulings)
+
+- **Matrix versions on SDK 57 = what `npx expo install` gives**, taken from `expo@57.0.31/bundledNativeModules.json`: react-native-worklets 0.10.1 (not 0.10.4), react-native-reanimated as pinned there, react-native-gesture-handler ~2.32 (CocoaPods-only → scaffolded; joins the matrix and the scaffolder work), screens and safe-area-context as pinned there. The reference app passes `npx expo install --check`. The podspec fixtures for scaffolder fixes 14–17 are taken from those exact versions. Separately, one build-and-launch check of expo-router with npm's default peers (reanimated 4.7.1 + worklets 0.13.1 + gesture-handler 3.4.0).
+- **Reanimated/worklets on 57 stay a merge blocker, with a checkpoint**: generic scaffolder gaps are fixed as found; after two working days on this stream, or a third distinct gap after the two known ones, the controller reports to Willy with the evidence and a proposal (continue, or ship the rest first). Never documented as broken without his decision.
+- **Kept as designed**: X6 (expo-router header paths) lands generically here and is proven with expo-router + screens on the SDK 58 reference app; the scaffold revision bump to 2 (persisted patches get the existing "scaffolded for another version / re-scaffold" path); the SceneDelegate rule applies on every SDK; SDK 58 and newer keep today's rule. Cost accepted: three extra device sessions (SDK 58 app, bare 0.86.3 and 0.88 lib-matrix rebuilds) before the merge.
+- Settled earlier by the controller: autolinking 58.0.15 and macros 0.22.0 as exact npm dependencies; X4/X5/P3/P4 stay vendored-only (57); the default-peer router pair gets build-and-launch only.
