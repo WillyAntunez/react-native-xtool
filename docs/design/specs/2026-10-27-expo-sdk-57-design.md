@@ -374,3 +374,11 @@ SDK).
 - **Reanimated/worklets on 57 stay a merge blocker, with a checkpoint**: generic scaffolder gaps are fixed as found; after two working days on this stream, or a third distinct gap after the two known ones, the controller reports to Willy with the evidence and a proposal (continue, or ship the rest first). Never documented as broken without his decision.
 - **Kept as designed**: X6 (expo-router header paths) lands generically here and is proven with expo-router + screens on the SDK 58 reference app; the scaffold revision bump to 2 (persisted patches get the existing "scaffolded for another version / re-scaffold" path); the SceneDelegate rule applies on every SDK; SDK 58 and newer keep today's rule. Cost accepted: three extra device sessions (SDK 58 app, bare 0.86.3 and 0.88 lib-matrix rebuilds) before the merge.
 - Settled earlier by the controller: autolinking 58.0.15 and macros 0.22.0 as exact npm dependencies; X4/X5/P3/P4 stay vendored-only (57); the default-peer router pair gets build-and-launch only.
+
+## Amendments from planning (2026-10-28, controller's rulings)
+
+- D1: the driver passes `skipDeps: ["expo"]` only when `--expo-plugin` is given (RN's plugin discovery is not exported; the Expo plugin is the only one today).
+- An `rnArtifactsDir` that does not hold adapted 0.86.3 slots stops at `jsi` with: `ExpoModulesJSI needs React Native's headers at <dir>, which does not exist. rnArtifactsDir must hold adapted 0.86.3 slots, as rn-xtool's rn-artifacts step writes them.`
+- Shared-patch changes re-patch the Expo reference app `../app` in place (reverse the old patch, apply the new; only `scripts/spm` changes). Accepted: the main checkout's reference-app guard tests fail until this branch merges.
+- gesture-handler 2.32.0's scaffolder gaps count toward the same reanimated/worklets checkpoint.
+- The P1–P5 unit tests live in `tests/vendor-expo-spm.test.ts`; shared fixture helpers move to `tests/support/expoSpm.ts`.
