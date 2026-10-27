@@ -13,8 +13,10 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   build-verified only.
 
 ### Changed
-- Projects whose persisted scaffold patches carry the old `expo-xtool-scaffold-revision` marker are re-scaffolded once
-  by this version.
+- An Expo project whose `react-native` is not 0.88.0 now stops at the `patches` step with a message to pin
+  `react-native` to 0.88.0 (before, a cleanly applying patch only warned).
+- Persisted scaffold patches that still carry the old `expo-xtool-scaffold-revision` marker are re-scaffolded once (the
+  marker became `rn-xtool-scaffold-revision` in 0.1.0-alpha.1); patches with the current marker are kept.
 - A React Native version rn-xtool does not support now gets one error naming the supported list (0.86.2, 0.86.3,
   0.87.1 and 0.88.0); 0.88 prereleases and 0.88.x other than 0.88.0 are refused.
 - README and docs mark WSL2 as "should work, not tested yet" instead of supported.
