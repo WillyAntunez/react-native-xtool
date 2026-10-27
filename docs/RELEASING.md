@@ -1,7 +1,7 @@
 # Releasing
 
-rn-xtool ships alpha builds under the npm `alpha` dist-tag. Supported platform: Linux x86_64, including WSL2 on
-x86_64. arm64 Linux is untested (the xtool checksum is pinned for it, but nothing else is verified).
+rn-xtool ships alpha builds under the npm `alpha` dist-tag. Supported platform: Linux x86_64. WSL2 on x86_64 should
+work as Linux but is untested so far. arm64 Linux is untested (the xtool checksum is pinned for it, but nothing else is verified).
 
 ## Before releasing
 

@@ -23,7 +23,7 @@ Demo video coming soon.
 | Expo SDK 57 and older, React Native 0.87 and older | ⏳ not yet |
 | iOS simulator | ❌ macOS only |
 | Production / App Store builds | ❌ use EAS |
-| macOS or Windows as the host | ❌ (WSL2 on x86_64 works as Linux) |
+| macOS or Windows as the host | ❌ (WSL2 on x86_64 should work as Linux; not tested yet, reports welcome) |
 
 CocoaPods is not needed: the `Podfile` is ignored. Any library with a podspec is tried automatically (CocoaPods-only
 ones get a generated `Package.swift`); [docs/libraries.md](docs/libraries.md) lists the ones verified on a device and
