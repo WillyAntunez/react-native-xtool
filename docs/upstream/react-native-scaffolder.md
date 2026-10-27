@@ -4,6 +4,15 @@ These bugs make `react-native spm scaffold` emit an invalid or incomplete `Packa
 CocoaPods-only libraries such as `react-native-gesture-handler`. The fixes live in
 `patches/react-native+0.88.0.patch` and are meant to be upstreamed to facebook/react-native.
 
+Where the fixes live in rn-xtool: in `patches/react-native+0.88.0.patch` (applied only to an installed
+react-native 0.88.0) and, for bare React Native 0.86.2, 0.86.3 and 0.87.1, already applied in the vendored copy of the
+0.88.0 scripts in `vendor/rn-spm/` ([README](../../vendor/rn-spm/README.md)).
+
+Refreshing for a new React Native 0.88.x: refresh `patches/react-native+0.88.0.patch` against it, regenerate
+`vendor/rn-spm` from the new tarball plus that patch plus `vendor/rn-spm/rn-xtool-edits.patch`, and update the pinned
+tarball and integrity in `tests/vendor-rn-spm.test.ts`. The supported-version list in `src/versions.ts` then needs the
+new version added.
+
 ## 1. `scripts/spm/read-podspec.js`: `getArrayField` ignores Ruby bare lists
 
 `s.source_files = "apple/**/*.{h,m,mm}", "shared/**/*.{h,cpp}"` (no brackets) is valid Ruby, but

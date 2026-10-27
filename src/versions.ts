@@ -11,3 +11,22 @@ export const XTOOL_SHA256: Record<string, string | undefined> = {
 export const SWIFT_VERSION = "6.4";
 export const IOS_MIN = "16.4";
 export const MIN_EXPO_SDK = 58;
+
+/** React Native versions rn-xtool builds as bare projects, and where their SwiftPM scripts come from. */
+export const SUPPORTED_RN = {
+  "0.86.2": "vendored",
+  "0.86.3": "vendored",
+  "0.87.1": "vendored",
+  "0.88.0": "installed",
+} as const;
+export type RnScripts = "installed" | "vendored";
+
+export function rnScriptsFor(version: string): RnScripts | undefined {
+  return Object.hasOwn(SUPPORTED_RN, version) ? SUPPORTED_RN[version as keyof typeof SUPPORTED_RN] : undefined;
+}
+
+/** "0.86.2, 0.86.3, 0.87.1 and 0.88.0" */
+export function supportedRnList(): string {
+  const all = Object.keys(SUPPORTED_RN);
+  return `${all.slice(0, -1).join(", ")} and ${all[all.length - 1]}`;
+}

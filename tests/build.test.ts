@@ -5,8 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 import { build, buildSteps, chooseMetroPort, type BuildDeps } from "../src/commands/build.js";
 import { readState, writeState } from "../src/state.js";
 
-const expoFlags = { kind: "expo" as const, hasExpoModules: true, hasExpoConstants: true };
-const bareFlags = { kind: "bare" as const, hasExpoModules: false, hasExpoConstants: false };
+const expoFlags = { kind: "expo" as const, hasExpoModules: true, hasExpoConstants: true, rnArtifacts: false };
+const bareFlags = { kind: "bare" as const, hasExpoModules: false, hasExpoConstants: false, rnArtifacts: false };
 
 describe("buildSteps", () => {
   it("starts with prebuild when ios/ is missing", () => {
@@ -43,11 +43,19 @@ describe("buildSteps", () => {
       "patches", "rn-spm", "jsi", "app-config", "frameworks", "generate", "xtool-build",
     ]);
   });
+  it("bare vendored: rn-artifacts between patches and rn-spm", () => {
+    expect(buildSteps({ ...bareFlags, rnArtifacts: true, hasIos: true, clean: false })).toEqual([
+      "patches", "rn-artifacts", "rn-spm", "frameworks", "generate", "xtool-build",
+    ]);
+  });
+  it("expo never gets rn-artifacts", () => {
+    expect(buildSteps({ ...expoFlags, rnArtifacts: true, hasIos: true, clean: false })).not.toContain("rn-artifacts");
+  });
 });
 
-type ProjectOver = { kind?: "expo" | "bare"; hasExpoModules?: boolean; hasExpoConstants?: boolean; hasDevClient?: boolean; hasRnCli?: boolean };
+type ProjectOver = { kind?: "expo" | "bare"; hasExpoModules?: boolean; hasExpoConstants?: boolean; hasDevClient?: boolean; hasRnCli?: boolean; rnVersion?: string };
 
-function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunning?: (p: number) => Promise<boolean>; hasIos?: boolean; cfg?: object; route?: { ip?: string; dev?: string }; project?: ProjectOver } = {}) {
+function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunning?: (p: number) => Promise<boolean>; hasIos?: boolean; cfg?: object; route?: { ip?: string; dev?: string }; project?: ProjectOver & { rnScripts?: "installed" | "vendored" }; applyPatches?: BuildDeps["applyPatches"] } = {}) {
   const root = mkdtempSync(join(tmpdir(), "build-"));
   const calls: string[] = [];
   const logs: string[] = [];
@@ -66,6 +74,8 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
         hasExpoModules: true,
         hasExpoConstants: true,
         hasDevClient: false,
+        rnVersion: "0.88.0",
+        rnScripts: "installed",
         ...over.project,
       }) as never,
     exists: () => over.hasIos ?? false,
@@ -75,7 +85,11 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
     prebuild: async (_r, clean) => {
       calls.push(clean ? "prebuild --clean" : "prebuild");
     },
-    applyPatches: rec("patches"),
+    applyPatches: over.applyPatches ?? rec("patches"),
+    prepareRnArtifacts: async (_paths, version) => {
+      calls.push("rn-artifacts");
+      return `/adapted/${version}`;
+    },
     runRnSpm: rec("rn-spm"),
     buildJsi: async () => {
       calls.push("jsi");
@@ -141,6 +155,13 @@ describe("build", () => {
     await build(t.root, { clean: true }, t.deps);
     expect(t.calls[0]).toBe("prebuild --clean");
   });
+  it("passes the scripts source to the patches step", async () => {
+    const applyPatches = vi.fn(async () => {});
+    const t = setup({ applyPatches, project: { kind: "bare", rnScripts: "vendored" } });
+    await build(t.root, {}, t.deps);
+    expect(applyPatches).toHaveBeenCalledWith(t.root, "vendored");
+  });
+
   it("build passes the kind to runRnSpm and skips prebuild for bare", async () => {
     const t = setup({ project: { kind: "bare", hasExpoModules: false, hasExpoConstants: false } });
     const runRnSpm = vi.fn(async () => {
@@ -148,15 +169,59 @@ describe("build", () => {
     });
     await build(t.root, {}, { ...t.deps, runRnSpm });
     expect(t.calls).toEqual(buildSteps({ ...bareFlags, hasIos: false, clean: false }));
-    expect(runRnSpm).toHaveBeenCalledWith(expect.objectContaining({ root: t.root }), { rnArtifactsDir: undefined, kind: "bare" });
+    expect(runRnSpm).toHaveBeenCalledWith(expect.objectContaining({ root: t.root }), { rnArtifactsDir: undefined, kind: "bare", rnScripts: "installed" });
     const ctx = (t.writeIosXtool.mock.calls[0] as unknown[])[0] as { frameworks: { name: string }[] };
     expect(ctx.frameworks.map((f) => f.name)).toEqual(["A"]);
   });
+  it("passes the scripts source to runRnSpm", async () => {
+    const t = setup({ project: { kind: "bare", rnScripts: "vendored" } });
+    const runRnSpm = vi.fn(async () => {});
+    await build(t.root, {}, { ...t.deps, runRnSpm });
+    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ rnScripts: "vendored" }));
+  });
+
+  it("runs rn-artifacts for a bare project on vendored scripts", async () => {
+    const t = setup({ project: { kind: "bare", rnScripts: "vendored", rnVersion: "0.86.3", hasExpoModules: false, hasExpoConstants: false } });
+    await build(t.root, {}, t.deps);
+    expect(t.calls).toEqual(["patches", "rn-artifacts", "rn-spm", "frameworks", "generate", "xtool-build"]);
+    expect(t.logs).toContain("▸ rn-artifacts");
+  });
+  it("passes the prepared artifacts root to runRnSpm", async () => {
+    const t = setup({ project: { kind: "bare", rnScripts: "vendored", rnVersion: "0.86.3" } });
+    const prepareRnArtifacts = vi.fn(async () => "/adapted/0.86.3");
+    const runRnSpm = vi.fn(async () => {});
+    await build(t.root, {}, { ...t.deps, prepareRnArtifacts, runRnSpm });
+    expect(prepareRnArtifacts).toHaveBeenCalledWith(expect.objectContaining({ root: t.root }), "0.86.3");
+    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: "/adapted/0.86.3", kind: "bare", rnScripts: "vendored" });
+  });
+  it("rnArtifactsDir bypasses rn-artifacts", async () => {
+    const t = setup({ cfg: { rnArtifactsDir: "/mine" }, project: { kind: "bare", rnScripts: "vendored", rnVersion: "0.86.3" } });
+    const prepareRnArtifacts = vi.fn(async () => "/adapted/0.86.3");
+    const runRnSpm = vi.fn(async () => {});
+    await build(t.root, {}, { ...t.deps, prepareRnArtifacts, runRnSpm });
+    expect(prepareRnArtifacts).not.toHaveBeenCalled();
+    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: "/mine", kind: "bare", rnScripts: "vendored" });
+    expect(t.logs).not.toContain("▸ rn-artifacts");
+  });
+  it("never runs rn-artifacts for installed scripts", async () => {
+    const prepareRnArtifacts = vi.fn(async () => "/adapted/x");
+    const bare = setup({ project: { kind: "bare", rnScripts: "installed" } });
+    await build(bare.root, {}, { ...bare.deps, prepareRnArtifacts });
+    const expo = setup();
+    await build(expo.root, {}, { ...expo.deps, prepareRnArtifacts });
+    expect(prepareRnArtifacts).not.toHaveBeenCalled();
+  });
+  it("records the React Native version in the state", async () => {
+    const t = setup({ project: { kind: "bare", rnScripts: "vendored", rnVersion: "0.86.3" } });
+    await build(t.root, {}, t.deps);
+    expect((await readState(join(t.root, "ios-xtool")))?.rnVersion).toBe("0.86.3");
+  });
+
   it("passes the expo kind to runRnSpm", async () => {
     const t = setup({ hasIos: true });
     const runRnSpm = vi.fn(async () => {});
     await build(t.root, {}, { ...t.deps, runRnSpm });
-    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: undefined, kind: "expo" });
+    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: undefined, kind: "expo", rnScripts: "installed" });
   });
   it("builds the JSI framework for a bare project with expo modules, app-config only with expo-constants", async () => {
     const t = setup({ project: { kind: "bare", hasExpoModules: true, hasExpoConstants: false } });

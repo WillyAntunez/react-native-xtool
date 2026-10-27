@@ -4,7 +4,7 @@
  * Runs React Native's SwiftPM pipeline (`setup-apple-spm.js add`, steps 1-5) without step 6, the
  * in-place injection into the app's .xcodeproj: rn-xtool never builds with the xcodeproj, and a
  * bare app's pbxproj is CocoaPods-integrated, which `add` refuses. Only `<app-root>/ios/build/` is
- * written. RN's own modules (required from --rn-dir) do the work; this file only sequences them.
+ * written. RN's own modules (required from --scripts-root) do the work; this file only sequences them.
  *
  * `--scaffold` instead runs RN's `scaffold` step alone: it writes a Package.swift into each autolinked
  * library that ships a podspec but no manifest. RN's own `setup-apple-spm.js scaffold` cannot be
@@ -18,7 +18,7 @@ const path = require('node:path');
 const {parseArgs} = require('node:util');
 
 const USAGE =
-  'Usage: node scripts/rn-spm-generate.js --rn-dir <abs> --app-root <abs> [--artifacts <root>] [--config-command <json>] [--scaffold]';
+  'Usage: node scripts/rn-spm-generate.js --rn-dir <abs> --app-root <abs> --scripts-root <abs> [--artifacts <root>] [--config-command <json>] [--scaffold]';
 
 function parseCli(argv) {
   let values;
@@ -28,6 +28,7 @@ function parseCli(argv) {
       options: {
         'rn-dir': {type: 'string'},
         'app-root': {type: 'string'},
+        'scripts-root': {type: 'string'},
         artifacts: {type: 'string'},
         'config-command': {type: 'string'},
         scaffold: {type: 'boolean'},
@@ -40,10 +41,18 @@ function parseCli(argv) {
   }
   const rnDir = values['rn-dir'];
   const appRoot = values['app-root'];
-  if (rnDir == null || appRoot == null) return null;
-  if (!path.isAbsolute(rnDir) || !path.isAbsolute(appRoot)) return null;
+  const scriptsRoot = values['scripts-root'];
+  if (rnDir == null || appRoot == null || scriptsRoot == null) return null;
+  if (
+    !path.isAbsolute(rnDir) ||
+    !path.isAbsolute(appRoot) ||
+    !path.isAbsolute(scriptsRoot)
+  ) {
+    return null;
+  }
   return {
     rnDir,
+    scriptsRoot,
     projectRoot: appRoot,
     artifacts: values.artifacts ?? null,
     configCommand: values['config-command'] ?? null,
@@ -52,7 +61,10 @@ function parseCli(argv) {
 }
 
 async function generate(cli) {
-  const rn = rel => require(path.join(cli.rnDir, 'scripts', rel));
+  // The scripts read the installed RN root from here (vendored copies cannot derive it from their
+  // own location). Set before the first require. No __dirname fallback: --scripts-root is required.
+  process.env.RN_SPM_RN_ROOT = cli.rnDir;
+  const rn = rel => require(path.join(cli.scriptsRoot, rel));
   const setup = rn('setup-apple-spm.js');
   const {generateAutolinkingConfig, parseConfigCommandJson} = rn(
     'spm/generate-spm-autolinking-config.js',

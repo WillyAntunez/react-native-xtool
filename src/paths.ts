@@ -5,6 +5,8 @@ export interface ProjectPaths {
   root: string;
   ios: string;
   iosBuild: string;
+  /** Pre-headers-spec React Native artifact slots adapted for the vendored scripts: `<v>/<flavor>`. */
+  rnArtifacts: string;
   xcframeworks: string;
   autolinking: string;
   expoDir: string;
@@ -28,6 +30,7 @@ export function projectPaths(root: string): ProjectPaths {
     root: r,
     ios,
     iosBuild,
+    rnArtifacts: join(iosBuild, "rn-artifacts"),
     xcframeworks: join(iosBuild, "xcframeworks"),
     autolinking,
     expoDir: join(autolinking, "expo"),

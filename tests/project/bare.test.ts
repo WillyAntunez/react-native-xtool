@@ -20,10 +20,10 @@ async function addPackage(dir: string, name: string, version = "1.0.0"): Promise
   await writeFile(path.join(d, "package.json"), JSON.stringify({ name, version }));
 }
 
-async function tempBare(opts: { rn?: string; expo?: boolean; modulesCore?: boolean; useExpoModules?: boolean } = {}): Promise<string> {
+async function tempBare(opts: { fixture?: string; rn?: string; expo?: boolean; modulesCore?: boolean; useExpoModules?: boolean } = {}): Promise<string> {
   const dir = await mkdtemp(path.join(tmpdir(), "rn-xtool-bare-"));
   tempDirs.push(dir);
-  await cp(path.join(fixtures, "bare"), dir, { recursive: true });
+  await cp(path.join(fixtures, opts.fixture ?? "bare"), dir, { recursive: true });
   await addPackage(dir, "react-native", opts.rn ?? "0.88.0");
   if (opts.modulesCore) await addPackage(dir, "expo-modules-core");
   if (opts.expo) await addPackage(dir, "expo");
@@ -47,6 +47,7 @@ describe("readBareProject", () => {
     expect(p.infoPlistPath.endsWith("ios/HelloWorld/Info.plist")).toBe(true);
     expect(p.hasExpoModules).toBe(false);
     expect(p.bare!.swiftSources.length).toBe(2);
+    expect(p.rnScripts).toBe("installed");
   });
 
   it("says react-native is not installed, and how to install it, instead of an unknown version", async () => {
@@ -57,14 +58,48 @@ describe("readBareProject", () => {
     expect(String(err)).not.toContain("unknown");
   });
 
-  it("rejects react-native below 0.88", async () => {
-    const dir = await tempBare({ rn: "0.87.0" });
-    await expect(readBareProject(dir)).rejects.toThrow(/0\.87\.0.*0\.88/);
+  it("accepts each supported version", async () => {
+    for (const [rn, scripts] of [["0.86.2", "vendored"], ["0.86.3", "vendored"], ["0.87.1", "vendored"], ["0.88.0", "installed"]] as const) {
+      const p = await readBareProject(await tempBare({ rn }));
+      expect(p.rnVersion).toBe(rn);
+      expect(p.rnScripts).toBe(scripts);
+    }
   });
 
-  it("accepts a 0.88 prerelease", async () => {
-    const dir = await tempBare({ rn: "0.88.0-rc.1" });
-    expect((await readBareProject(dir)).rnVersion).toBe("0.88.0-rc.1");
+  it("rejects unsupported versions with the supported list", async () => {
+    for (const rn of ["0.86.0", "0.86.1", "0.87.0", "0.85.0", "0.89.0", "0.88.1", "0.88.0-rc.1"]) {
+      await expect(readBareProject(await tempBare({ rn }))).rejects.toThrow(
+        `React Native ${rn} is not supported; rn-xtool supports 0.86.2, 0.86.3, 0.87.1 and 0.88.0 (bare). Pin react-native to one of them.`,
+      );
+    }
+  });
+
+  it("adds the Expo SDK sentence for an unsupported version with Expo modules", async () => {
+    const dir = await tempBare({ rn: "0.87.0", modulesCore: true, expo: true });
+    await expect(readBareProject(dir)).rejects.toThrow(
+      (
+        "React Native 0.87.0 is not supported; rn-xtool supports 0.86.2, 0.86.3, 0.87.1 and 0.88.0 (bare). Pin react-native to one of them. Expo SDK 58 needs React Native 0.88.0."
+      ),
+    );
+  });
+
+  it("rejects Expo modules on a vendored version", async () => {
+    const dir = await tempBare({ rn: "0.86.3", modulesCore: true, expo: true, useExpoModules: true });
+    await expect(readBareProject(dir)).rejects.toThrow(
+      "React Native 0.86.3 with Expo modules is not supported. Expo SDK 58 needs React Native 0.88.0.",
+    );
+    const noPodfileLine = await tempBare({ rn: "0.86.3", modulesCore: true, expo: true });
+    await expect(readBareProject(noPodfileLine)).rejects.toThrow(/with Expo modules is not supported/);
+  });
+
+  it.each([
+    ["bare-086", "0.86.3"],
+    ["bare-087", "0.87.1"],
+  ])("reads the %s template (React Native %s)", async (fixture, rn) => {
+    const p = await readBareProject(await tempBare({ fixture, rn }));
+    expect(p.bare!.swiftSources.map((f) => f.relPath)).toEqual(["HelloWorld/AppDelegate.swift"]);
+    expect(p.bundleIdentifier).toBe("org.reactjs.native.example.HelloWorld");
+    expect(p.rnScripts).toBe("vendored");
   });
 
   it("detects the hybrid shape", async () => {

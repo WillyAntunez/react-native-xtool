@@ -23,8 +23,11 @@ own `Xcode.xip`. This page is the overview (toolchain, patches, build steps, reb
 
 ## The build, step by step
 
-1. Applies four patches to `node_modules` with patch-package. Two are one-liners (the `@ExpoModule` scanner gate in
-   expo-modules-autolinking, a Swift 6.4 access-level error in expo-modules-jsi). The other two are large:
+1. Applies the bundled patches to `node_modules` with patch-package, on Expo projects and bare React Native 0.88.0
+   projects (each patch only when its package is installed, so a bare project without Expo modules gets only the React
+   Native one). Bare 0.86 and 0.87 projects get none: the fixes live in the vendored scripts. There are four patches.
+   Two are one-liners (the `@ExpoModule` scanner gate in expo-modules-autolinking, a Swift 6.4 access-level error in
+   expo-modules-jsi). The other two are large:
    - **Expo** (`patches/expo+58.0.19.patch`, files under `expo/scripts/spm/`): finds the Swift macro plugin on Linux;
      gives pure-Swift modules the Foundation/UIKit imports CocoaPods' umbrella header provides
      ([upstream/expo-spm-plugin-umbrella.md](upstream/expo-spm-plugin-umbrella.md)); builds Expo modules that mix Swift
@@ -37,7 +40,10 @@ own `Xcode.xip`. This page is the overview (toolchain, patches, build steps, reb
      the `spm scaffold` podspec reader and `Package.swift` generator, including mixed Swift + Objective-C/C++ targets
      and known CocoaPods dependencies mapped to SwiftPM packages, plus one to the per-app header farm
      ([upstream/react-native-scaffolder.md](upstream/react-native-scaffolder.md)).
-2. Runs React Native 0.88's SwiftPM pipeline and Expo's SPM plugin, with Linux shims for `plutil` and `otool`.
+2. Bare projects on React Native 0.86 or 0.87 first run the `rn-artifacts` step (downloads and, for 0.86, adapts the
+   prebuilt artifacts, see [bare-react-native.md](bare-react-native.md#older-artifacts-086)). Then runs React Native
+   0.88's SwiftPM pipeline (the vendored copy for 0.86 and 0.87, see [below](#vendored-swiftpm-scripts)) and Expo's SPM
+   plugin, with Linux shims for `plutil` and `otool`.
 3. Builds ExpoModulesJSI with the Darwin SDK and stages the runtime frameworks.
 4. Generates `ios-xtool/` (Package.swift, xtool.yml, Info.plist, ip.txt, app config). It is a regenerable artifact; do
    not edit it by hand.
@@ -46,6 +52,21 @@ own `Xcode.xip`. This page is the overview (toolchain, patches, build steps, reb
 
 Bare React Native projects follow the same steps with a few differences (no `expo prebuild`, no injection into your
 Xcode project, ExpoModulesJSI only with Expo modules): see [bare-react-native.md](bare-react-native.md).
+
+## Vendored SwiftPM scripts
+
+React Native 0.86 and 0.87 ship no `scripts/spm`. Rather than patching those installs, rn-xtool bundles the 0.88.0
+scripts in `vendor/rn-spm/` (the 13 scaffolder fixes already applied; provenance and how it is checked in
+[vendor/rn-spm/README.md](../vendor/rn-spm/README.md)) and the driver is given `--scripts-root` pointing at them. The
+installed React Native keeps its own codegen. Four edits to the vendored copy:
+
+- **E1**: the codegen template (`Package.swift.spm-template`, missing from 0.86) is read from the vendored copy.
+- **E2, E3**: the React Native root comes only from the `RN_SPM_RN_ROOT` environment variable (set by the driver to the
+  installed `react-native`), never from the scripts' own location.
+- **E4**: `download-spm-artifacts.js` accepts `--allow-pre-headers-spec`, so a 0.86 slot without the headers
+  xcframeworks is downloaded instead of rejected (the `rn-artifacts` step then adapts it).
+
+React Native 0.88.0 keeps using its installed scripts and the `patches/react-native+0.88.0.patch` patch.
 
 ## Rebuild detection
 

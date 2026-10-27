@@ -9,6 +9,8 @@ import { projectPaths, type ProjectPaths } from "../paths.js";
 import { generateAppConfig } from "../pipeline/appConfig.js";
 import { buildExpoModulesJsi } from "../pipeline/jsi.js";
 import { applyPatches } from "../pipeline/patches.js";
+import { prepareRnArtifacts } from "../pipeline/rnArtifactsStep.js";
+import type { RnScripts } from "../versions.js";
 import { runRnSpm } from "../pipeline/rnSpm.js";
 import { readProject, RN_CLI_MISSING, type ProjectInfo, type ProjectKind, type ReadProjectOptions } from "../project/index.js";
 import { readState, writeState, type BuildState } from "../state.js";
@@ -17,6 +19,7 @@ import { devBuild, xtoolBin } from "../tools/xtool.js";
 
 export const BUILD_STEP_NAMES = [
   "patches",
+  "rn-artifacts",
   "rn-spm",
   "jsi",
   "app-config",
@@ -31,23 +34,28 @@ export interface BuildPlanInput {
   clean: boolean;
   hasExpoModules: boolean;
   hasExpoConstants: boolean;
+  /** Vendored SwiftPM scripts without a user-supplied `rnArtifactsDir`: rn-xtool prepares the artifacts. */
+  rnArtifacts: boolean;
 }
 
 /**
- * Expo: every step, with `expo prebuild` first when `ios/` is missing or on `--clean`. Bare: never
- * prebuild (`--clean` removes the build outputs instead), ExpoModulesJSI only with Expo modules set
- * up, app-config only with expo-constants.
+ * Expo: every step but rn-artifacts, with `expo prebuild` first when `ios/` is missing or on `--clean`.
+ * Bare: never prebuild (`--clean` removes the build outputs instead), rn-artifacts only for the
+ * vendored scripts, ExpoModulesJSI only with Expo modules set up, app-config only with expo-constants.
  */
 export function buildSteps(state: BuildPlanInput): string[] {
   if (state.kind === "expo") {
-    const steps: string[] = [...BUILD_STEP_NAMES];
+    const steps: string[] = BUILD_STEP_NAMES.filter((s) => s !== "rn-artifacts");
     if (!state.hasIos || state.clean) steps.unshift(state.clean ? "prebuild --clean" : "prebuild");
     return steps;
   }
   return [
     ...(state.clean ? ["clean"] : []),
     ...BUILD_STEP_NAMES.filter(
-      (s) => (s !== "jsi" || state.hasExpoModules) && (s !== "app-config" || state.hasExpoConstants),
+      (s) =>
+        (s !== "rn-artifacts" || state.rnArtifacts) &&
+        (s !== "jsi" || state.hasExpoModules) &&
+        (s !== "app-config" || state.hasExpoConstants),
     ),
   ];
 }
@@ -80,8 +88,10 @@ export interface BuildDeps {
   /** Deletes a directory tree (no error when it is missing). */
   remove: (path: string) => Promise<void>;
   prebuild: (root: string, clean: boolean) => Promise<void>;
-  applyPatches: (root: string) => Promise<void>;
-  runRnSpm: (paths: ProjectPaths, opts: { rnArtifactsDir?: string; kind: ProjectKind }) => Promise<void>;
+  applyPatches: (root: string, rnScripts: RnScripts) => Promise<void>;
+  /** Downloads (and adapts when needed) RN's prebuilt artifacts; returns the root for `rn-spm --artifacts`. */
+  prepareRnArtifacts: (paths: ProjectPaths, rnVersion: string) => Promise<string>;
+  runRnSpm: (paths: ProjectPaths, opts: { rnArtifactsDir?: string; kind: ProjectKind; rnScripts: RnScripts }) => Promise<void>;
   buildJsi: (paths: ProjectPaths) => Promise<RuntimeFramework>;
   generateAppConfig: (paths: ProjectPaths) => Promise<void>;
   readFrameworks: (dir: string, flavor: "debug" | "release") => RuntimeFramework[];
@@ -108,7 +118,8 @@ const realDeps: BuildDeps = {
     run("npx", ["expo", "prebuild", "--platform", "ios", "--no-install", ...(clean ? ["--clean"] : [])], {
       cwd: root,
     }),
-  applyPatches,
+  applyPatches: (root, rnScripts) => applyPatches(root, undefined, { rnScripts }),
+  prepareRnArtifacts: (paths, rnVersion) => prepareRnArtifacts(paths, rnVersion),
   runRnSpm,
   buildJsi: buildExpoModulesJsi,
   generateAppConfig,
@@ -160,6 +171,7 @@ export async function build(
     clean,
     hasExpoModules: project.hasExpoModules,
     hasExpoConstants: project.hasExpoConstants,
+    rnArtifacts: project.rnScripts === "vendored" && !config.rnArtifactsDir,
   });
   const planned = (name: string): boolean => steps.includes(name);
 
@@ -173,8 +185,17 @@ export async function build(
       await d.remove(paths.iosXtool);
     });
   }
-  await step("patches", () => d.applyPatches(paths.root));
-  await step("rn-spm", () => d.runRnSpm(paths, { rnArtifactsDir: config.rnArtifactsDir, kind: project.kind }));
+  await step("patches", () => d.applyPatches(paths.root, project.rnScripts));
+  const preparedArtifacts = planned("rn-artifacts")
+    ? await step("rn-artifacts", () => d.prepareRnArtifacts(paths, project.rnVersion))
+    : undefined;
+  await step("rn-spm", () =>
+    d.runRnSpm(paths, {
+      rnArtifactsDir: preparedArtifacts ?? config.rnArtifactsDir,
+      kind: project.kind,
+      rnScripts: project.rnScripts,
+    }),
+  );
   const jsi = planned("jsi") ? await step("jsi", () => d.buildJsi(paths)) : undefined;
   if (planned("app-config")) await step("app-config", () => d.generateAppConfig(paths));
   const frameworks = await step("frameworks", async () => {
@@ -212,6 +233,7 @@ export async function build(
     builtAt: new Date().toISOString(),
     kind: project.kind,
     hasDevClient: project.hasDevClient,
+    rnVersion: project.rnVersion,
     ...(previousState?.deviceIp && { deviceIp: previousState.deviceIp }),
     ...(previousState?.deviceUdid && { deviceUdid: previousState.deviceUdid }),
   };

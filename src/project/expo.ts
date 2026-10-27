@@ -137,6 +137,7 @@ export async function readExpoProject(root: string, opts: ReadProjectOptions = {
     infoPlistPath: path.join(root, "ios", iosTargetName, "Info.plist"),
     moduleName: "main",
     rnVersion: await installedRnVersion(root),
+    rnScripts: "installed",
     hasExpoModules: true,
     hasExpoConstants: isInstalled(root, "expo-constants"),
     hasDevClient: isInstalled(root, "expo-dev-client"),
