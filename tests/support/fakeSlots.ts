@@ -96,6 +96,7 @@ export function makeFakeSlot086(dir: string): void {
     write(path.join(fw, "Info.plist"), frameworkInfoPlist("React"));
     writeReactHeaders086(path.join(fw, "Headers"));
   }
+  write(path.join(react, "ios-arm64", "React.framework", "_CodeSignature", "CodeResources"), "<plist/>\n");
 
   const deps = path.join(dir, "ReactNativeDependencies.xcframework");
   write(
