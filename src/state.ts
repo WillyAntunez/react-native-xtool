@@ -10,6 +10,8 @@ export interface BuildState {
   builtAt: string;
   /** Project kind the app was built from; absent in states written by older versions (= "expo"). */
   kind?: ProjectKind;
+  /** React Native version the app was built against; absent in states written by older versions. */
+  rnVersion?: string;
   /** expo-dev-client was installed at build time (the app opens the dev launcher). */
   hasDevClient?: boolean;
   /** Hash of the installed dependencies at build time; absent in states written by older versions. */
