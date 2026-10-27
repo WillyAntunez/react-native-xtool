@@ -76,9 +76,15 @@ describe("rnSpmArgs", () => {
 });
 
 describe("patches", () => {
-  it("has exactly 4 patch-package files", () => {
+  it("has exactly 5 patch-package files", () => {
     const files = readdirSync(path.join(packageRoot(), "patches")).filter((f) => f.endsWith(".patch"));
-    expect(files).toHaveLength(4);
+    expect(files.sort()).toEqual([
+      "expo+58.0.19.patch",
+      "expo-modules-autolinking+58.0.15.patch",
+      "expo-modules-jsi+57.1.3.patch",
+      "expo-modules-jsi+58.0.19.patch",
+      "react-native+0.88.0.patch",
+    ]);
     for (const f of files) expect(f).toMatch(/^[^+]+\+\d+\.\d+\.\d+\.patch$/);
   });
 
@@ -170,6 +176,67 @@ describe("react-native patch scope", () => {
       "expo-modules-jsi+58.0.19.patch",
       "react-native+0.88.0.patch",
     ]);
+  });
+
+  it("stages only the jsi patch on an SDK 57 project", async () => {
+    const { root } = await tempProject();
+    await installPkg(root, "expo", "57.0.31");
+    await installPkg(root, "expo-modules-autolinking", "57.0.16");
+    await installPkg(root, "expo-modules-jsi", "57.1.3");
+    await installPkg(root, "react-native", "0.86.3");
+    expect(selectBundledPatches(root, bundled, { exactOnly: true })).toEqual(["expo-modules-jsi+57.1.3.patch"]);
+  });
+
+  it("applyPatches stages only exact-version patches for the vendored Expo plugin", async () => {
+    const { root, patchesDir } = await tempProject();
+    await installPkg(root, "expo", "57.0.31");
+    await installPkg(root, "expo-modules-autolinking", "57.0.16");
+    await installPkg(root, "expo-modules-jsi", "57.1.3");
+    await installPkg(root, "react-native", "0.86.3");
+    const calls: string[][] = [];
+    const exec = async (_c: string, args: string[]) => (calls.push(args), { exitCode: 0 });
+    await applyPatches(root, exec, { rnScripts: "vendored", expoPlugin: "vendored" });
+    expect(calls).toHaveLength(1);
+    expect(readdirSync(patchesDir)).toEqual(["expo-modules-jsi+57.1.3.patch"]);
+  });
+
+  it("names only staged patches when the vendored plugin's patch fails", async () => {
+    const { root } = await tempProject();
+    await installPkg(root, "expo", "57.0.31");
+    await installPkg(root, "expo-modules-jsi", "57.1.3");
+    const output = "**ERROR** Failed to apply patch for package expo-modules-jsi at path\n    node_modules/expo-modules-jsi";
+    const exec = async () => ({ exitCode: 1, all: output });
+    const err = await applyPatches(root, exec, { rnScripts: "vendored", expoPlugin: "vendored" }).catch((e: Error) => e);
+    expect((err as Error).message).toMatch(/^patch-package failed \(exit 1\)/);
+    expect((err as Error).message).not.toMatch(/pin "/);
+  });
+
+  it("stages the highest patch when no version matches", async () => {
+    const { root } = await tempProject();
+    await installPkg(root, "expo", "58.0.19");
+    await installPkg(root, "expo-modules-jsi", "58.0.20");
+    expect(selectBundledPatches(root, bundled)).toEqual(["expo+58.0.19.patch", "expo-modules-jsi+58.0.19.patch"]);
+    const exec = async () => ({ exitCode: 1, all: "**ERROR** Failed to apply patch for package expo-modules-jsi" });
+    await expect(applyPatches(root, exec, { rnScripts: "installed", expoPlugin: "installed" })).rejects.toThrow(
+      /pin "expo-modules-jsi" to 58\.0\.19/,
+    );
+  });
+
+  it("keeps a bare 0.88 hybrid unchanged", async () => {
+    const { root, patchesDir } = await tempProject();
+    await installPkg(root, "expo", "58.0.19");
+    await installPkg(root, path.join("expo", "node_modules", "expo-modules-autolinking"), "58.0.15");
+    await installPkg(root, path.join("expo", "node_modules", "expo-modules-jsi"), "58.0.19");
+    await installPkg(root, "react-native", "0.88.0");
+    const expected = [
+      "expo+58.0.19.patch",
+      "expo-modules-autolinking+58.0.15.patch",
+      "expo-modules-jsi+58.0.19.patch",
+      "react-native+0.88.0.patch",
+    ];
+    expect(selectBundledPatches(root, bundled)).toEqual(expected);
+    await applyPatches(root, async () => ({ exitCode: 0 }), { rnScripts: "installed", expoPlugin: "installed" });
+    expect(readdirSync(patchesDir).sort()).toEqual(expected);
   });
 
   it("runs no bundled patch for a vendored project", async () => {

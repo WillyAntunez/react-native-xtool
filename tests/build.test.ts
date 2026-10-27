@@ -55,7 +55,7 @@ describe("buildSteps", () => {
 
 type ProjectOver = { kind?: "expo" | "bare"; hasExpoModules?: boolean; hasExpoConstants?: boolean; hasDevClient?: boolean; hasRnCli?: boolean; rnVersion?: string };
 
-function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunning?: (p: number) => Promise<boolean>; hasIos?: boolean; cfg?: object; route?: { ip?: string; dev?: string }; project?: ProjectOver & { rnScripts?: "installed" | "vendored" }; applyPatches?: BuildDeps["applyPatches"] } = {}) {
+function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunning?: (p: number) => Promise<boolean>; hasIos?: boolean; cfg?: object; route?: { ip?: string; dev?: string }; project?: ProjectOver & { rnScripts?: "installed" | "vendored"; expoPlugin?: "installed" | "vendored" }; applyPatches?: BuildDeps["applyPatches"] } = {}) {
   const root = mkdtempSync(join(tmpdir(), "build-"));
   const calls: string[] = [];
   const logs: string[] = [];
@@ -76,6 +76,7 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
         hasDevClient: false,
         rnVersion: "0.88.0",
         rnScripts: "installed",
+        expoPlugin: "installed",
         ...over.project,
       }) as never,
     exists: () => over.hasIos ?? false,
@@ -155,11 +156,19 @@ describe("build", () => {
     await build(t.root, { clean: true }, t.deps);
     expect(t.calls[0]).toBe("prebuild --clean");
   });
-  it("passes the scripts source to the patches step", async () => {
+  it("passes the scripts and plugin sources to the patches step", async () => {
     const applyPatches = vi.fn(async () => {});
     const t = setup({ applyPatches, project: { kind: "bare", rnScripts: "vendored" } });
     await build(t.root, {}, t.deps);
-    expect(applyPatches).toHaveBeenCalledWith(t.root, "vendored");
+    expect(applyPatches).toHaveBeenCalledWith(t.root, { rnScripts: "vendored", expoPlugin: "installed" });
+    const sdk57 = vi.fn(async () => {});
+    const t57 = setup({ applyPatches: sdk57, project: { kind: "expo", rnScripts: "vendored", expoPlugin: "vendored", rnVersion: "0.86.3" } });
+    await build(t57.root, {}, t57.deps);
+    expect(sdk57).toHaveBeenCalledWith(t57.root, { rnScripts: "vendored", expoPlugin: "vendored" });
+    const sdk58 = vi.fn(async () => {});
+    const t58 = setup({ applyPatches: sdk58, project: { kind: "expo" } });
+    await build(t58.root, {}, t58.deps);
+    expect(sdk58).toHaveBeenCalledWith(t58.root, { rnScripts: "installed", expoPlugin: "installed" });
   });
 
   it("build passes the kind to runRnSpm and skips prebuild for bare", async () => {

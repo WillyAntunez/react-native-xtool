@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { execa } from "execa";
 import { projectPaths } from "../paths.js";
-import type { RnScripts } from "../versions.js";
+import type { ExpoPlugin, RnScripts } from "../versions.js";
 import { packageRoot, toolEnv } from "../tools/exec.js";
 
 /** The patch-package pinned in this CLI's own dependencies, not whatever npx would fetch. */
@@ -67,27 +67,49 @@ export function installedVersion(projectRoot: string, pkg: string): string | und
   return readVersion(path.join(modules, pkg)) ?? readVersion(path.join(modules, "expo", "node_modules", pkg));
 }
 
+/** Numeric x.y.z comparison (anything after the patch number is ignored). */
+function compareVersions(a: string, b: string): number {
+  const parts = (v: string) => v.split(/[.-]/, 3).map((n) => Number.parseInt(n, 10) || 0);
+  const [pa, pb] = [parts(a), parts(b)];
+  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i]! - pb[i]!;
+  return 0;
+}
+
 /**
  * Bundled patch files whose package is installed in the project (bare RN has no expo packages).
  * The react-native patch is only for the exact version it was made against: other versions are
  * not patched, and the caller decides whether that is fine (vendored scripts) or a stop (see rnPatchMismatch).
+ * Other packages get the patch for their installed version when one is bundled, else the highest version
+ * (which then fails to apply with the "pin" message). With `exactOnly` every package needs an exact match.
  */
-export function selectBundledPatches(projectRoot: string, bundledDir: string): string[] {
-  return readdirSync(bundledDir)
-    .filter((name) => {
-      const info = parsePatchFileName(name);
-      if (info === undefined) return false;
-      const installed = installedVersion(projectRoot, info.pkg);
-      if (installed === undefined) return false;
-      return info.pkg !== "react-native" || installed === info.version;
-    })
-    .sort();
+export function selectBundledPatches(projectRoot: string, bundledDir: string, opts: { exactOnly?: boolean } = {}): string[] {
+  const byPkg = new Map<string, { name: string; version: string }[]>();
+  for (const name of readdirSync(bundledDir)) {
+    const info = parsePatchFileName(name);
+    if (info === undefined) continue;
+    byPkg.set(info.pkg, [...(byPkg.get(info.pkg) ?? []), { name, version: info.version }]);
+  }
+  const selected: string[] = [];
+  for (const [pkg, patches] of byPkg) {
+    const installed = installedVersion(projectRoot, pkg);
+    if (installed === undefined) continue;
+    const exact = patches.find((p) => p.version === installed);
+    if (exact !== undefined) selected.push(exact.name);
+    else if (!opts.exactOnly && pkg !== "react-native") {
+      selected.push(patches.reduce((hi, p) => (compareVersions(p.version, hi.version) > 0 ? p : hi)).name);
+    }
+  }
+  return selected.sort();
 }
 
 /** Empties `dest` and symlinks the selected bundled patches into it; returns their names. */
-export async function stageBundledPatches(projectRoot: string, dest: string): Promise<string[]> {
+export async function stageBundledPatches(
+  projectRoot: string,
+  dest: string,
+  opts: { exactOnly?: boolean } = {},
+): Promise<string[]> {
   const bundledDir = path.join(packageRoot(), "patches");
-  const names = selectBundledPatches(projectRoot, bundledDir);
+  const names = selectBundledPatches(projectRoot, bundledDir, opts);
   await rm(dest, { recursive: true, force: true });
   await mkdir(dest, { recursive: true });
   for (const name of names) await symlink(path.join(bundledDir, name), path.join(dest, name));
@@ -227,12 +249,13 @@ const execPatchPackage: PatchExec = (cmd, args, cwd) =>
 /**
  * patch-package is idempotent for already-applied patches and exits non-zero on failure.
  * Applies rn-xtool's bundled patches first, then the project's own `patches/` when present.
+ * With the vendored Expo plugin (SDK 57) only exact-version bundled patches are staged.
  * The order does not matter: the project's patches only hold library Package.swift files.
  */
 export async function applyPatches(
   projectRoot: string,
   exec: PatchExec = execPatchPackage,
-  opts: { rnScripts: RnScripts; log?: (line: string) => void } = { rnScripts: "installed" },
+  opts: { rnScripts: RnScripts; expoPlugin?: ExpoPlugin; log?: (line: string) => void } = { rnScripts: "installed" },
 ): Promise<void> {
   if (opts.rnScripts === "installed") {
     const m = rnPatchMismatch(projectRoot, path.join(packageRoot(), "patches"));
@@ -242,13 +265,14 @@ export async function applyPatches(
     }
   }
   const patchesDir = projectPaths(projectRoot).patchesDir;
-  const staged = await stageBundledPatches(projectRoot, patchesDir);
+  const staged = await stageBundledPatches(projectRoot, patchesDir, { exactOnly: opts.expoPlugin === "vendored" });
   if (staged.length > 0) {
     const [cmd, args] = applyPatchesArgv(projectRoot, patchesDir);
     const r = await exec(cmd, args, projectRoot);
     const output = r.all ?? `${r.stdout}\n${r.stderr}`;
     if (r.exitCode !== 0 || r.failed || patchPackageOutputFailed(output)) {
-      const mismatch = findPatchMismatch(projectRoot, path.join(packageRoot(), "patches"), output);
+      // Only what was staged: a bundled patch that was left out is not the one that failed.
+      const mismatch = findPatchMismatch(projectRoot, patchesDir, output);
       if (mismatch) throw new Error(patchFailureMessage({ ...mismatch, output }));
       throw new Error(genericPatchFailureMessage(r, output));
     }

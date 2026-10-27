@@ -10,7 +10,7 @@ import { generateAppConfig } from "../pipeline/appConfig.js";
 import { buildExpoModulesJsi } from "../pipeline/jsi.js";
 import { applyPatches } from "../pipeline/patches.js";
 import { prepareRnArtifacts } from "../pipeline/rnArtifactsStep.js";
-import type { RnScripts } from "../versions.js";
+import type { ExpoPlugin, RnScripts } from "../versions.js";
 import { runRnSpm } from "../pipeline/rnSpm.js";
 import { readProject, RN_CLI_MISSING, type ProjectInfo, type ProjectKind, type ReadProjectOptions } from "../project/index.js";
 import { readState, writeState, type BuildState } from "../state.js";
@@ -88,7 +88,7 @@ export interface BuildDeps {
   /** Deletes a directory tree (no error when it is missing). */
   remove: (path: string) => Promise<void>;
   prebuild: (root: string, clean: boolean) => Promise<void>;
-  applyPatches: (root: string, rnScripts: RnScripts) => Promise<void>;
+  applyPatches: (root: string, sources: { rnScripts: RnScripts; expoPlugin: ExpoPlugin }) => Promise<void>;
   /** Downloads (and adapts when needed) RN's prebuilt artifacts; returns the root for `rn-spm --artifacts`. */
   prepareRnArtifacts: (paths: ProjectPaths, rnVersion: string) => Promise<string>;
   runRnSpm: (paths: ProjectPaths, opts: { rnArtifactsDir?: string; kind: ProjectKind; rnScripts: RnScripts }) => Promise<void>;
@@ -118,7 +118,7 @@ const realDeps: BuildDeps = {
     run("npx", ["expo", "prebuild", "--platform", "ios", "--no-install", ...(clean ? ["--clean"] : [])], {
       cwd: root,
     }),
-  applyPatches: (root, rnScripts) => applyPatches(root, undefined, { rnScripts }),
+  applyPatches: (root, sources) => applyPatches(root, undefined, sources),
   prepareRnArtifacts: (paths, rnVersion) => prepareRnArtifacts(paths, rnVersion),
   runRnSpm,
   buildJsi: buildExpoModulesJsi,
@@ -185,7 +185,9 @@ export async function build(
       await d.remove(paths.iosXtool);
     });
   }
-  await step("patches", () => d.applyPatches(paths.root, project.rnScripts));
+  await step("patches", () =>
+    d.applyPatches(paths.root, { rnScripts: project.rnScripts, expoPlugin: project.expoPlugin }),
+  );
   const preparedArtifacts = planned("rn-artifacts")
     ? await step("rn-artifacts", () => d.prepareRnArtifacts(paths, project.rnVersion))
     : undefined;
