@@ -1,0 +1,196 @@
+/**
+ * The modules of `ReactNativeHeaders.xcframework/<slice>/Headers/module.modulemap`, transcribed once from
+ * React Native 0.88.0 (react-native-artifacts-0.88.0-reactnative-core-debug, `ios-arm64` slice; all slices ship the
+ * same map). React Native is MIT-licensed, Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * Older RN artifacts (0.86.x) predate this xcframework; the adapter renders its module map from this table, keeping
+ * only the headers the older slot ships. Modules and headers are in the 0.88.0 file's order.
+ */
+export const RN_HEADERS_MODULES: readonly { readonly name: string; readonly headers: readonly string[] }[] = [
+  {
+    name: "CoreModules",
+    headers: [
+      "CoreModules/CoreModulesPlugins.h",
+      "CoreModules/RCTAccessibilityManager.h",
+      "CoreModules/RCTActionSheetManager.h",
+      "CoreModules/RCTAlertController.h",
+      "CoreModules/RCTAlertManager.h",
+      "CoreModules/RCTAppState.h",
+      "CoreModules/RCTAppearance.h",
+      "CoreModules/RCTClipboard.h",
+      "CoreModules/RCTDevLoadingView.h",
+      "CoreModules/RCTDevMenu.h",
+      "CoreModules/RCTDevMenuConfigurationDecorator.h",
+      "CoreModules/RCTDevSettings.h",
+      "CoreModules/RCTDevToolsRuntimeSettingsModule.h",
+      "CoreModules/RCTDeviceInfo.h",
+      "CoreModules/RCTEventDispatcher.h",
+      "CoreModules/RCTExceptionsManager.h",
+      "CoreModules/RCTFPSGraph.h",
+      "CoreModules/RCTI18nManager.h",
+      "CoreModules/RCTInspectorWebSocketReporter.h",
+      "CoreModules/RCTKeyboardObserver.h",
+      "CoreModules/RCTLogBox.h",
+      "CoreModules/RCTLogBoxView.h",
+      "CoreModules/RCTPlatform.h",
+      "CoreModules/RCTRedBox.h",
+      "CoreModules/RCTSourceCode.h",
+      "CoreModules/RCTStatusBarManager.h",
+      "CoreModules/RCTTiming.h",
+      "CoreModules/RCTWebSocketModule.h",
+    ],
+  },
+  {
+    name: "RCTAnimation",
+    headers: [
+      "RCTAnimation/RCTAdditionAnimatedNode.h",
+      "RCTAnimation/RCTAnimatedNode.h",
+      "RCTAnimation/RCTAnimationDriver.h",
+      "RCTAnimation/RCTAnimationPlugins.h",
+      "RCTAnimation/RCTAnimationUtils.h",
+      "RCTAnimation/RCTColorAnimatedNode.h",
+      "RCTAnimation/RCTDecayAnimation.h",
+      "RCTAnimation/RCTDiffClampAnimatedNode.h",
+      "RCTAnimation/RCTDivisionAnimatedNode.h",
+      "RCTAnimation/RCTEventAnimation.h",
+      "RCTAnimation/RCTFrameAnimation.h",
+      "RCTAnimation/RCTInterpolationAnimatedNode.h",
+      "RCTAnimation/RCTModuloAnimatedNode.h",
+      "RCTAnimation/RCTMultiplicationAnimatedNode.h",
+      "RCTAnimation/RCTNativeAnimatedModule.h",
+      "RCTAnimation/RCTNativeAnimatedNodesManager.h",
+      "RCTAnimation/RCTNativeAnimatedTurboModule.h",
+      "RCTAnimation/RCTObjectAnimatedNode.h",
+      "RCTAnimation/RCTPropsAnimatedNode.h",
+      "RCTAnimation/RCTSpringAnimation.h",
+      "RCTAnimation/RCTStyleAnimatedNode.h",
+      "RCTAnimation/RCTSubtractionAnimatedNode.h",
+      "RCTAnimation/RCTTrackingAnimatedNode.h",
+      "RCTAnimation/RCTTransformAnimatedNode.h",
+      "RCTAnimation/RCTValueAnimatedNode.h",
+    ],
+  },
+  {
+    name: "RCTBlob",
+    headers: [
+      "RCTBlob/RCTBlobManager.h",
+      "RCTBlob/RCTBlobPlugins.h",
+      "RCTBlob/RCTFileReaderModule.h",
+    ],
+  },
+  {
+    name: "RCTDeprecation",
+    headers: [
+      "RCTDeprecation/RCTDeprecation.h",
+    ],
+  },
+  {
+    name: "RCTImage",
+    headers: [
+      "RCTImage/RCTAnimatedImage.h",
+      "RCTImage/RCTBundleAssetImageLoader.h",
+      "RCTImage/RCTDisplayWeakRefreshable.h",
+      "RCTImage/RCTGIFImageDecoder.h",
+      "RCTImage/RCTImageBlurUtils.h",
+      "RCTImage/RCTImageCache.h",
+      "RCTImage/RCTImageDataDecoder.h",
+      "RCTImage/RCTImageEditingManager.h",
+      "RCTImage/RCTImageLoader.h",
+      "RCTImage/RCTImageLoaderLoggable.h",
+      "RCTImage/RCTImageLoaderProtocol.h",
+      "RCTImage/RCTImagePlugins.h",
+      "RCTImage/RCTImageStoreManager.h",
+      "RCTImage/RCTImageURLLoader.h",
+      "RCTImage/RCTImageUtils.h",
+      "RCTImage/RCTLocalAssetImageLoader.h",
+      "RCTImage/RCTResizeMode.h",
+      "RCTImage/RCTUIImageViewAnimated.h",
+    ],
+  },
+  {
+    name: "RCTSettings",
+    headers: [
+      "RCTSettings/RCTSettingsManager.h",
+      "RCTSettings/RCTSettingsPlugins.h",
+    ],
+  },
+  {
+    name: "RCTSwiftUIWrapper",
+    headers: [
+      "RCTSwiftUIWrapper/RCTSwiftUIContainerViewWrapper.h",
+    ],
+  },
+  {
+    name: "RCTText",
+    headers: [
+      "RCTText/RCTBackedTextInputDelegate.h",
+      "RCTText/RCTBackedTextInputDelegateAdapter.h",
+      "RCTText/RCTBackedTextInputViewProtocol.h",
+      "RCTText/RCTDynamicTypeRamp.h",
+      "RCTText/RCTTextSelection.h",
+      "RCTText/RCTTextTransform.h",
+      "RCTText/RCTUITextField.h",
+      "RCTText/RCTUITextView.h",
+    ],
+  },
+  {
+    name: "RCTVibration",
+    headers: [
+      "RCTVibration/RCTVibration.h",
+      "RCTVibration/RCTVibrationPlugins.h",
+    ],
+  },
+  {
+    name: "ReactCommon",
+    headers: [
+      "ReactCommon/RCTPerformanceLoggerUtils.h",
+      "ReactCommon/RCTTurboModuleWithJSIBindings.h",
+    ],
+  },
+  {
+    name: "React_RCTAppDelegate",
+    headers: [
+      "React_RCTAppDelegate/RCTAppDelegate.h",
+      "React_RCTAppDelegate/RCTAppSetupUtils.h",
+      "React_RCTAppDelegate/RCTDefaultReactNativeFactoryDelegate.h",
+      "React_RCTAppDelegate/RCTDependencyProvider.h",
+      "React_RCTAppDelegate/RCTJSRuntimeConfiguratorProtocol.h",
+      "React_RCTAppDelegate/RCTReactNativeFactory.h",
+      "React_RCTAppDelegate/RCTRootViewFactory.h",
+      "React_RCTAppDelegate/RCTUIConfiguratorProtocol.h",
+      "React_RCTAppDelegate/React_RCTAppDelegate-umbrella.h",
+    ],
+  },
+  {
+    name: "ReactNativeHeaders_react",
+    headers: [
+      "react/cxxstableapi/FrameworksGuard.h",
+      "react/cxxstableapi/PrivateGuard.h",
+      "react/cxxstableapi/UmbrellaGuard.h",
+      "react/debug/flags.h",
+      "react/renderer/debug/flags.h",
+      "react/runtime/JSRuntimeFactory.h",
+      "react/runtime/JSRuntimeFactoryCAPI.h",
+    ],
+  },
+  {
+    name: "reactperflogger",
+    headers: [
+      "reactperflogger/ReactPerfettoCategories.h",
+    ],
+  },
+  {
+    name: "yoga",
+    headers: [
+      "yoga/YGConfig.h",
+      "yoga/YGEnums.h",
+      "yoga/YGMacros.h",
+      "yoga/YGNode.h",
+      "yoga/YGNodeLayout.h",
+      "yoga/YGNodeStyle.h",
+      "yoga/YGPixelGrid.h",
+      "yoga/YGValue.h",
+      "yoga/Yoga.h",
+    ],
+  },
+];
