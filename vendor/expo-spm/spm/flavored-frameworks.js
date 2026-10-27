@@ -64,7 +64,9 @@ function precompiledBases(buildPath, moduleRoot, bundledPath) {
   const envPath = process.env.EXPO_PRECOMPILED_MODULES_PATH;
   // rn-xtool P2: where the installed copy's `__dirname/../../..` lands (the app's node_modules),
   // never relative to this vendored copy.
-  const appRoot = process.env.RN_XTOOL_PROJECT_ROOT;
+  const appRoot = process.env.RN_XTOOL_PROJECT_ROOT
+    ? path.resolve(process.env.RN_XTOOL_PROJECT_ROOT)
+    : null;
   const dirs = {
     env: envPath ? path.resolve(envPath, ...buildPath) : null,
     monorepo: appRoot

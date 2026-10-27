@@ -1,6 +1,6 @@
 --- a/spm/app-target.js
 +++ b/spm/app-target.js
-@@ -8,15 +8,30 @@
+@@ -8,15 +8,34 @@
  
  'use strict';
  
@@ -16,16 +16,20 @@
 -);
 +/**
 + * rn-xtool P2: this copy runs from rn-xtool's install, so the app's @expo/config-plugins is
-+ * resolved from the app root rn-xtool passes in RN_XTOOL_PROJECT_ROOT, never from here.
++ * resolved through the app's expo (where the installed copy runs from), found from the app root
++ * rn-xtool passes in RN_XTOOL_PROJECT_ROOT, never from here.
 + */
 +function appPackages() {
-+  const appRoot = process.env.RN_XTOOL_PROJECT_ROOT;
-+  if (!appRoot) {
++  if (!process.env.RN_XTOOL_PROJECT_ROOT) {
 +    throw new Error(
 +      "RN_XTOOL_PROJECT_ROOT is not set: rn-xtool's vendored Expo SwiftPM plugin resolves the app's packages from it"
 +    );
 +  }
-+  const configPlugins = createRequire(path.join(appRoot, 'package.json')).resolve(
++  const appRoot = path.resolve(process.env.RN_XTOOL_PROJECT_ROOT);
++  const expoDir = path.dirname(
++    createRequire(path.join(appRoot, 'package.json')).resolve('expo/package.json')
++  );
++  const configPlugins = createRequire(path.join(expoDir, 'package.json')).resolve(
 +    '@expo/config-plugins'
 +  );
 +  const { IOSConfig } = require(configPlugins);
@@ -37,7 +41,7 @@
  
  const { spmUpdateCommand } = require('./commands');
  const { pluginError } = require('./diagnostics');
-@@ -96,6 +111,7 @@
+@@ -96,6 +115,7 @@
  
  /** The native target the registry is generated for, with its project, or null. */
  function findTarget(appRoot, projectPath, targetName) {
@@ -45,7 +49,7 @@
    let project;
    try {
      if (projectPath == null) throw new Error('no .xcodeproj with a project.pbxproj was found');
-@@ -139,6 +155,7 @@
+@@ -139,6 +159,7 @@
    const found = findTarget(appRoot, projectPath, targetName);
    if (found == null) return null;
    const { project, target } = found;
@@ -53,7 +57,7 @@
    const name = IOSConfig.XcodeUtils.unquote(String(target.name));
  
    let configurations;
-@@ -249,4 +266,4 @@
+@@ -249,4 +270,4 @@
    );
  }
  
@@ -61,13 +65,15 @@
 +module.exports = { appPackages, readPodfileProperties, resolveAppTarget };
 --- a/spm/flavored-frameworks.js
 +++ b/spm/flavored-frameworks.js
-@@ -62,9 +62,14 @@
+@@ -62,9 +62,16 @@
  
  function precompiledBases(buildPath, moduleRoot, bundledPath) {
    const envPath = process.env.EXPO_PRECOMPILED_MODULES_PATH;
 +  // rn-xtool P2: where the installed copy's `__dirname/../../..` lands (the app's node_modules),
 +  // never relative to this vendored copy.
-+  const appRoot = process.env.RN_XTOOL_PROJECT_ROOT;
++  const appRoot = process.env.RN_XTOOL_PROJECT_ROOT
++    ? path.resolve(process.env.RN_XTOOL_PROJECT_ROOT)
++    : null;
    const dirs = {
      env: envPath ? path.resolve(envPath, ...buildPath) : null,
 -    monorepo: path.resolve(__dirname, '..', '..', '..', 'precompile', '.build', ...buildPath),
@@ -77,7 +83,7 @@
      bundled: moduleRoot != null ? path.join(moduleRoot, 'prebuilds', ...bundledPath) : null,
    };
    const bases = PRECOMPILED_SOURCE_KINDS.filter((kind) => dirs[kind] != null).map((kind) => ({
-@@ -94,10 +99,12 @@
+@@ -94,10 +101,12 @@
      encoding: 'utf8',
      maxBuffer: 64 * 1024 * 1024,
    });
@@ -91,7 +97,7 @@
    if (entries.length === 0) {
      throw pluginError({ what: `${tarballPath} is empty` });
    }
-@@ -159,7 +166,21 @@
+@@ -159,7 +168,21 @@
  
    validateTarEntries(sourcePath, frameworkName);
    replaceDirectory(destination, (temp) => {
@@ -114,7 +120,7 @@
      const extracted = path.join(temp, `${frameworkName}.xcframework`);
      if (!fs.existsSync(path.join(extracted, 'Info.plist'))) {
        throw incompleteXCFrameworkError(
-@@ -629,6 +650,7 @@
+@@ -629,6 +652,7 @@
    assertDistinctFlavoredFrameworks,
    assertHeadersMatchSources,
    byteOrder,

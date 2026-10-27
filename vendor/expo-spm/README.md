@@ -12,15 +12,17 @@ of its own. SDK 58 and newer keep using the plugin installed in the app.
      directory). SDK 58 never runs them:
      - P1 (`plugin.js`): `expo-modules-macros` is resolved from expo-modules-core, then from this
        copy, so rn-xtool's `expo-modules-macros` 0.22.0 is used when core lacks it (SDK 57).
-     - P2 (`app-target.js`, `flavored-frameworks.js`): the app's `@expo/config-plugins` (and the
-       `xcode` next to it) and the monorepo precompiled base are resolved from
-       `RN_XTOOL_PROJECT_ROOT`, never from this copy's location.
+     - P2 (`app-target.js`, `flavored-frameworks.js`): the app's `@expo/config-plugins` (through
+       the app's `expo`, as the installed copy finds it, and the `xcode` next to it) and the
+       monorepo precompiled base are resolved from `RN_XTOOL_PROJECT_ROOT`, never from this copy's
+       location.
      - P3 (`manifests.js`): generated mixed and Objective-C packages default their header dir to
        the pod name, as CocoaPods does.
      - P4 (`manifests.js`): generated mixed and Objective-C packages get a CocoaPods-style
        `prefix.pch` that imports UIKit, passed with `-include` to C and C++.
      - P5 (`flavored-frameworks.js`): precompiled tarballs are extracted without macOS AppleDouble
-       (`._*`) entries and pax xattrs.
+       (`._*`) entries and pax xattrs. Its tar flags assume GNU tar: rn-xtool targets Linux, and
+       busybox tar and bsdtar are not supported (accepted limitation).
 - Environment: `RN_XTOOL_PROJECT_ROOT` (the app root, required; the plugin throws without it) and
   `EXPO_PRECOMPILED_MODULES_PATH` (optional, as upstream).
 - `expo-modules-autolinking` 58.0.15 and `expo-modules-macros` 0.22.0 (with the host's

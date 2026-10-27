@@ -88,7 +88,9 @@ const LISTED_TEMPLATES = ["@expo/modules-macros-${process.platform}-${process.ar
 const APP_PACKAGES = ["@expo/config-plugins", "xcode", "expo", "expo-modules-core", "expo-modules-jsi", "react-native", "expo-constants"];
 /**
  * What an app package may be resolved from (the `paths` entry or the `createRequire` argument):
- * - `path.join(appRoot, 'package.json')`: appPackages() (app-target.js), from RN_XTOOL_PROJECT_ROOT;
+ * - `path.join(appRoot, 'package.json')`: appPackages() (app-target.js) finding the app's expo, from
+ *   RN_XTOOL_PROJECT_ROOT;
+ * - `path.join(expoDir, 'package.json')`: appPackages() finding @expo/config-plugins through that expo;
  * - `path.dirname(configPlugins)`: `xcode` next to the app's @expo/config-plugins, as upstream does;
  * - `appRoot`: the plugin context's projectRoot (plugin.js);
  * - `from` / `path.join(from, 'package.json')`: a `dir(name, from)` helper walking app → expo → core;
@@ -96,6 +98,7 @@ const APP_PACKAGES = ["@expo/config-plugins", "xcode", "expo", "expo-modules-cor
  */
 const APP_BASES = [
   "path.join(appRoot, 'package.json')",
+  "path.join(expoDir, 'package.json')",
   "path.dirname(configPlugins)",
   "appRoot",
   "from",
@@ -285,17 +288,23 @@ describe("vendor/expo-spm edits", () => {
     expect(flags[3]!.endsWith("#ExpoModulesMacros")).toBe(true);
   });
 
-  it("P2 resolves app packages from RN_XTOOL_PROJECT_ROOT, never from vendor/", () => {
+  /** A temp app; `pkgs` maps a path under node_modules to the marker its index.js exports. */
+  function p2App(pkgs: Record<string, string>): string {
     const app = mkTmp("vendor-p2-app-");
     writeFileSync(path.join(app, "package.json"), JSON.stringify({ name: "app" }));
-    const pkg = (name: string, body: string) => {
-      const dir = path.join(app, "node_modules", name);
+    for (const [rel, marker] of Object.entries(pkgs)) {
+      const dir = path.join(app, "node_modules", rel);
       mkdirSync(dir, { recursive: true });
+      const name = rel.split("/node_modules/").pop()!;
       writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name, main: "index.js" }));
-      writeFileSync(path.join(dir, "index.js"), body);
-    };
-    pkg("@expo/config-plugins", 'module.exports = { IOSConfig: { marker: "app" } };\n');
-    pkg("xcode", 'module.exports = { marker: "app-xcode" };\n');
+      const body = name === "@expo/config-plugins" ? `{ IOSConfig: { marker: "${marker}" } }` : `{ marker: "${marker}" }`;
+      writeFileSync(path.join(dir, "index.js"), `module.exports = ${body};\n`);
+    }
+    return app;
+  }
+
+  it("P2 resolves app packages from RN_XTOOL_PROJECT_ROOT, never from vendor/", () => {
+    const app = p2App({ expo: "expo", "@expo/config-plugins": "app", xcode: "app-xcode" });
     const appTarget = loadSpm<AppTarget>(vendoredSpm(), "app-target.js");
     const flavored = loadSpm<Flavored>(vendoredSpm(), "flavored-frameworks.js");
 
@@ -309,6 +318,32 @@ describe("vendor/expo-spm edits", () => {
     });
     withEnv({ RN_XTOOL_PROJECT_ROOT: undefined }, () => {
       expect(() => appTarget.appPackages()).toThrow(/RN_XTOOL_PROJECT_ROOT is not set/);
+    });
+  });
+
+  it("P2 loads the @expo/config-plugins of the app's expo, as the installed copy does", () => {
+    const app = p2App({
+      expo: "expo",
+      "@expo/config-plugins": "top",
+      xcode: "top-xcode",
+      "expo/node_modules/@expo/config-plugins": "expo",
+      "expo/node_modules/xcode": "expo-xcode",
+    });
+    withEnv({ RN_XTOOL_PROJECT_ROOT: app }, () => {
+      const { IOSConfig, xcode } = loadSpm<AppTarget>(vendoredSpm(), "app-target.js").appPackages();
+      expect(IOSConfig.marker).toBe("expo");
+      expect(xcode.marker).toBe("expo-xcode");
+    });
+  });
+
+  it("P2 takes a relative RN_XTOOL_PROJECT_ROOT against the working directory", () => {
+    const app = p2App({ expo: "expo", "@expo/config-plugins": "app", xcode: "app-xcode" });
+    const rel = path.relative(process.cwd(), app);
+    expect(path.isAbsolute(rel)).toBe(false);
+    withEnv({ RN_XTOOL_PROJECT_ROOT: rel, EXPO_PRECOMPILED_MODULES_PATH: undefined }, () => {
+      expect(loadSpm<AppTarget>(vendoredSpm(), "app-target.js").appPackages().IOSConfig.marker).toBe("app");
+      const dirs = loadSpm<Flavored>(vendoredSpm(), "flavored-frameworks.js").artifactBaseDirs("expo-modules-core", null);
+      expect(dirs).toEqual([path.join(app, "node_modules", "precompile", ".build", "expo-modules-core", "output")]);
     });
   });
 

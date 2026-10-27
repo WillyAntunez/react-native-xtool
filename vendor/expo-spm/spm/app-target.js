@@ -14,16 +14,20 @@ const path = require('path');
 
 /**
  * rn-xtool P2: this copy runs from rn-xtool's install, so the app's @expo/config-plugins is
- * resolved from the app root rn-xtool passes in RN_XTOOL_PROJECT_ROOT, never from here.
+ * resolved through the app's expo (where the installed copy runs from), found from the app root
+ * rn-xtool passes in RN_XTOOL_PROJECT_ROOT, never from here.
  */
 function appPackages() {
-  const appRoot = process.env.RN_XTOOL_PROJECT_ROOT;
-  if (!appRoot) {
+  if (!process.env.RN_XTOOL_PROJECT_ROOT) {
     throw new Error(
       "RN_XTOOL_PROJECT_ROOT is not set: rn-xtool's vendored Expo SwiftPM plugin resolves the app's packages from it"
     );
   }
-  const configPlugins = createRequire(path.join(appRoot, 'package.json')).resolve(
+  const appRoot = path.resolve(process.env.RN_XTOOL_PROJECT_ROOT);
+  const expoDir = path.dirname(
+    createRequire(path.join(appRoot, 'package.json')).resolve('expo/package.json')
+  );
+  const configPlugins = createRequire(path.join(expoDir, 'package.json')).resolve(
     '@expo/config-plugins'
   );
   const { IOSConfig } = require(configPlugins);
