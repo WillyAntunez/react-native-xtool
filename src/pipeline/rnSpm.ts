@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { swiftHeadersEnv, type ProjectPaths } from "../paths.js";
 import type { ProjectKind } from "../project/index.js";
-import type { RnScripts } from "../versions.js";
+import type { ExpoPlugin, RnScripts } from "../versions.js";
 import { packageRoot, runArgv, toolEnv } from "../tools/exec.js";
 
 export const AUTOLINKING_CONFIG_COMMAND = [
@@ -42,6 +42,11 @@ export function vendoredScriptsRoot(): string {
   return path.join(packageRoot(), "vendor", "rn-spm");
 }
 
+/** Expo 58's SwiftPM plugin, vendored for SDK 57 (whose `expo` ships none); E5 loads it as `expo`'s. */
+export function vendoredExpoPlugin(): string {
+  return path.join(packageRoot(), "vendor", "expo-spm", "spm", "plugin.js");
+}
+
 export function rnSpmArgs(
   paths: ProjectPaths,
   opts: { rnArtifactsDir?: string },
@@ -65,10 +70,11 @@ export function rnSpmArgs(
  * Bare apps run RN's SwiftPM steps through our driver instead of `setup-apple-spm.js add|update`:
  * same codegen, autolinking and artifact steps, minus the injection into the user's xcodeproj
  * (which `add` refuses anyway on a CocoaPods-integrated pbxproj). Only `ios/build/` is written.
+ * Expo SDK 57 (the vendored Expo plugin) runs the driver too, with Expo's autolinking config command.
  */
 export function rnSpmGenerateArgs(
   paths: ProjectPaths,
-  opts: { rnArtifactsDir?: string; rnScripts: RnScripts },
+  opts: { rnArtifactsDir?: string; rnScripts: RnScripts; expoPlugin?: ExpoPlugin },
   rnDir: string = resolveRnDir(paths),
 ): string[] {
   return [
@@ -79,6 +85,14 @@ export function rnSpmGenerateArgs(
     paths.root,
     "--scripts-root",
     opts.rnScripts === "vendored" ? vendoredScriptsRoot() : path.join(rnDir, "scripts"),
+    ...(opts.expoPlugin === "vendored"
+      ? [
+          "--config-command",
+          JSON.stringify(AUTOLINKING_CONFIG_COMMAND),
+          "--expo-plugin",
+          vendoredExpoPlugin(),
+        ]
+      : []),
     ...(opts.rnArtifactsDir ? ["--artifacts", opts.rnArtifactsDir] : []),
   ];
 }
@@ -86,10 +100,22 @@ export function rnSpmGenerateArgs(
 /** The driver's `scaffold` step alone: RN's `setup-apple-spm.js scaffold` would go on to inject into the xcodeproj. */
 export function rnSpmScaffoldArgs(
   paths: ProjectPaths,
-  opts: { rnArtifactsDir?: string; rnScripts: RnScripts },
+  opts: { rnArtifactsDir?: string; rnScripts: RnScripts; expoPlugin?: ExpoPlugin },
   rnDir: string = resolveRnDir(paths),
 ): string[] {
   return [...rnSpmGenerateArgs(paths, opts, rnDir), "--scaffold"];
+}
+
+/**
+ * Env of every React Native run. RN's scaffolder warns about mixed-language libraries when the
+ * Swift headers dir is unset, and any manifest it evaluates must see the same value the xtool build
+ * uses. The vendored Expo plugin takes its precompiled modules from `ios/build/expo-precompiled`.
+ */
+export function rnSpmEnv(paths: ProjectPaths, expoPlugin: ExpoPlugin): Record<string, string> {
+  return {
+    ...swiftHeadersEnv(paths.iosXtool),
+    ...(expoPlugin === "vendored" ? { EXPO_PRECOMPILED_MODULES_PATH: paths.expoPrecompiled } : {}),
+  };
 }
 
 export interface RnRunResult {
@@ -202,26 +228,25 @@ function tail(output: string): string {
 
 export async function runRnSpm(
   paths: ProjectPaths,
-  opts: { rnArtifactsDir?: string; kind: ProjectKind; rnScripts: RnScripts },
+  opts: { rnArtifactsDir?: string; kind: ProjectKind; rnScripts: RnScripts; expoPlugin: ExpoPlugin },
   deps: Partial<RnSpmDeps> = {},
 ): Promise<void> {
-  // Expo runs `setup-apple-spm.js add --yes`, which may edit the xcodeproj: never pick it by default.
+  // Expo 58 runs `setup-apple-spm.js add --yes`, which may edit the xcodeproj: never pick it by default.
   if (opts.kind !== "bare" && opts.kind !== "expo") {
     throw new Error(`runRnSpm needs the project kind ("expo" or "bare"), got ${String(opts.kind)}`);
   }
-  if (opts.kind === "expo" && opts.rnScripts !== "installed") {
+  if (opts.kind === "expo" && opts.rnScripts === "vendored" && opts.expoPlugin !== "vendored") {
     throw new Error(
-      `runRnSpm: Expo projects use React Native's installed SwiftPM scripts, got rnScripts "${opts.rnScripts}"`,
+      `runRnSpm: Expo projects on vendored SwiftPM scripts need the vendored Expo plugin, got expoPlugin "${opts.expoPlugin}"`,
     );
   }
   const runner = deps.runner ?? streamingRunner;
   const log = deps.log ?? ((s: string) => console.log(s));
   const rnDir = deps.rnDir ?? resolveRnDir(paths);
-  const bare = opts.kind === "bare";
-  const rnArgs = bare ? rnSpmGenerateArgs(paths, opts, rnDir) : rnSpmArgs(paths, opts, rnDir);
-  // RN's scaffolder warns about mixed-language libraries when this is unset, and any manifest
-  // it evaluates must see the same value the xtool build uses.
-  const env = swiftHeadersEnv(paths.iosXtool);
+  // Bare apps and Expo SDK 57 never run `setup-apple-spm.js add|update`: only the driver.
+  const driver = opts.kind === "bare" || opts.expoPlugin === "vendored";
+  const rnArgs = driver ? rnSpmGenerateArgs(paths, opts, rnDir) : rnSpmArgs(paths, opts, rnDir);
+  const env = rnSpmEnv(paths, opts.expoPlugin);
 
   const first = await runner("node", rnArgs, { cwd: paths.ios, env });
   if (first.exitCode === 0) return;
@@ -233,7 +258,7 @@ export async function runRnSpm(
     );
 
   log(`▸ scaffold — generating Package.swift for: ${names.join(", ")}`);
-  const scArgs = bare ? rnSpmScaffoldArgs(paths, opts, rnDir) : scaffoldArgv(paths, opts, rnDir);
+  const scArgs = driver ? rnSpmScaffoldArgs(paths, opts, rnDir) : scaffoldArgv(paths, opts, rnDir);
   const sc = await runner("node", scArgs, {
     cwd: paths.ios,
     env,

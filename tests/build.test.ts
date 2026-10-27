@@ -178,7 +178,7 @@ describe("build", () => {
     });
     await build(t.root, {}, { ...t.deps, runRnSpm });
     expect(t.calls).toEqual(buildSteps({ ...bareFlags, hasIos: false, clean: false }));
-    expect(runRnSpm).toHaveBeenCalledWith(expect.objectContaining({ root: t.root }), { rnArtifactsDir: undefined, kind: "bare", rnScripts: "installed" });
+    expect(runRnSpm).toHaveBeenCalledWith(expect.objectContaining({ root: t.root }), { rnArtifactsDir: undefined, kind: "bare", rnScripts: "installed", expoPlugin: "installed" });
     const ctx = (t.writeIosXtool.mock.calls[0] as unknown[])[0] as { frameworks: { name: string }[] };
     expect(ctx.frameworks.map((f) => f.name)).toEqual(["A"]);
   });
@@ -201,7 +201,7 @@ describe("build", () => {
     const runRnSpm = vi.fn(async () => {});
     await build(t.root, {}, { ...t.deps, prepareRnArtifacts, runRnSpm });
     expect(prepareRnArtifacts).toHaveBeenCalledWith(expect.objectContaining({ root: t.root }), "0.86.3");
-    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: "/adapted/0.86.3", kind: "bare", rnScripts: "vendored" });
+    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: "/adapted/0.86.3", kind: "bare", rnScripts: "vendored", expoPlugin: "installed" });
   });
   it("rnArtifactsDir bypasses rn-artifacts", async () => {
     const t = setup({ cfg: { rnArtifactsDir: "/mine" }, project: { kind: "bare", rnScripts: "vendored", rnVersion: "0.86.3" } });
@@ -209,7 +209,7 @@ describe("build", () => {
     const runRnSpm = vi.fn(async () => {});
     await build(t.root, {}, { ...t.deps, prepareRnArtifacts, runRnSpm });
     expect(prepareRnArtifacts).not.toHaveBeenCalled();
-    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: "/mine", kind: "bare", rnScripts: "vendored" });
+    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: "/mine", kind: "bare", rnScripts: "vendored", expoPlugin: "installed" });
     expect(t.logs).not.toContain("▸ rn-artifacts");
   });
   it("never runs rn-artifacts for installed scripts", async () => {
@@ -230,7 +230,7 @@ describe("build", () => {
     const t = setup({ hasIos: true });
     const runRnSpm = vi.fn(async () => {});
     await build(t.root, {}, { ...t.deps, runRnSpm });
-    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: undefined, kind: "expo", rnScripts: "installed" });
+    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: undefined, kind: "expo", rnScripts: "installed", expoPlugin: "installed" });
   });
   it("builds the JSI framework for a bare project with expo modules, app-config only with expo-constants", async () => {
     const t = setup({ project: { kind: "bare", hasExpoModules: true, hasExpoConstants: false } });

@@ -1,3 +1,22 @@
+--- a/spm/autolinking-plugins.js
++++ b/spm/autolinking-plugins.js
+@@ -116,10 +116,15 @@
+       continue;
+     }
+     // $FlowFixMe[incompatible-use] config has a dynamic shape
+-    const rel = readSwiftpmConfig(
++    let rel = readSwiftpmConfig(
+       dep.root,
+       readConfig(dep.root),
+     )?.autolinkingPlugin;
++    // rn-xtool E5: Expo SDK 57 ships no SwiftPM plugin; the driver passes a
++    // vendored SDK 58 copy (absolute, so path.resolve keeps it).
++    if (rel == null && dep.name === 'expo' && process.env.RN_SPM_EXPO_PLUGIN) {
++      rel = process.env.RN_SPM_EXPO_PLUGIN;
++    }
+     if (rel == null) {
+       continue;
+     }
 --- a/spm/download-spm-artifacts.js
 +++ b/spm/download-spm-artifacts.js
 @@ -78,6 +78,12 @@

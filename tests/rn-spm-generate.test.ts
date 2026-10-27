@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { execa } from "execa";
@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 const DRIVER = path.resolve(import.meta.dirname, "../scripts/rn-spm-generate.js");
 const USAGE =
-  "Usage: node scripts/rn-spm-generate.js --rn-dir <abs> --app-root <abs> --scripts-root <abs> [--artifacts <root>] [--config-command <json>] [--scaffold]";
+  "Usage: node scripts/rn-spm-generate.js --rn-dir <abs> --app-root <abs> --scripts-root <abs> [--artifacts <root>] [--config-command <json>] [--expo-plugin <abs>] [--scaffold]";
 
 const tmp: string[] = [];
 afterAll(() => {
@@ -44,6 +44,10 @@ function record(...entry) {
 `;
   const stubs: Record<string, string> = {
     "setup-apple-spm.js": `
+fs.writeFileSync(${JSON.stringify(log)} + '.expo-env', JSON.stringify({
+  RN_SPM_EXPO_PLUGIN: process.env.RN_SPM_EXPO_PLUGIN,
+  RN_XTOOL_PROJECT_ROOT: process.env.RN_XTOOL_PROJECT_ROOT,
+}));
 module.exports = {
   resolveAppIosDeploymentTarget(args, appRoot) { record('deploymentTarget', args.xcodeprojPath, args.productName, appRoot); return '15.1'; },
   determineVersion(args, rnRoot, appRoot) { fs.writeFileSync(${JSON.stringify(log)} + '.env', String(process.env.RN_SPM_RN_ROOT)); record('determineVersion', args.version, rnRoot, appRoot); return '0.88.0'; },
@@ -180,6 +184,67 @@ describe("rn-spm-generate.js", () => {
     const r = await driver(["--rn-dir", rn.rnDir, "--app-root", rn.appRoot, "--scripts-root", rn.scriptsRoot]);
     expect(r.exitCode, r.all).toBe(0);
     expect(readFileSync(path.join(rn.appRoot, "..", "calls.json.env"), "utf8")).toBe(rn.rnDir);
+  });
+
+  it("--expo-plugin must be absolute", async () => {
+    const rn = fakeRn(true);
+    const r = await driver([
+      "--rn-dir",
+      rn.rnDir,
+      "--app-root",
+      rn.appRoot,
+      "--scripts-root",
+      rn.scriptsRoot,
+      "--expo-plugin",
+      "vendor/expo-spm/spm/plugin.js",
+    ]);
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr.trim()).toBe(USAGE);
+    expect(existsSync(path.join(rn.appRoot, "..", "calls.json"))).toBe(false);
+  });
+
+  it("exports the Expo plugin and project root to the scripts", async () => {
+    const rn = fakeRn(true);
+    const expoEnv = () =>
+      JSON.parse(readFileSync(path.join(rn.appRoot, "..", "calls.json.expo-env"), "utf8")) as Record<string, unknown>;
+    const base = ["--rn-dir", rn.rnDir, "--app-root", rn.appRoot, "--scripts-root", rn.scriptsRoot];
+    const plain = await driver(base);
+    expect(plain.exitCode, plain.all).toBe(0);
+    expect(expoEnv()).toEqual({});
+    const withPlugin = await driver([...base, "--expo-plugin", "/vendor/expo-spm/spm/plugin.js"]);
+    expect(withPlugin.exitCode, withPlugin.all).toBe(0);
+    expect(expoEnv()).toEqual({
+      RN_SPM_EXPO_PLUGIN: "/vendor/expo-spm/spm/plugin.js",
+      RN_XTOOL_PROJECT_ROOT: rn.appRoot,
+    });
+  });
+
+  it("clears inherited Expo plugin variables when --expo-plugin is absent", async () => {
+    const rn = fakeRn(true);
+    const r = await execa(
+      process.execPath,
+      [DRIVER, "--rn-dir", rn.rnDir, "--app-root", rn.appRoot, "--scripts-root", rn.scriptsRoot],
+      {
+        reject: false,
+        all: true,
+        env: { RN_SPM_EXPO_PLUGIN: "/stale/plugin.js", RN_XTOOL_PROJECT_ROOT: "/stale/app" },
+      },
+    );
+    expect(r.exitCode, r.all).toBe(0);
+    expect(JSON.parse(readFileSync(path.join(rn.appRoot, "..", "calls.json.expo-env"), "utf8"))).toEqual({});
+  });
+
+  it("--scaffold skips expo when the Expo plugin is given", async () => {
+    const rn = fakeRn(true);
+    const base = ["--rn-dir", rn.rnDir, "--app-root", rn.appRoot, "--scripts-root", rn.scriptsRoot, "--scaffold"];
+    const scaffoldOpts = () => rn.calls().filter((c) => c[0] === "scaffoldAll").map((c) => c[1] as Record<string, unknown>);
+    const plain = await driver(base);
+    expect(plain.exitCode, plain.all).toBe(0);
+    expect(scaffoldOpts()[0]!.skipDeps).toBeUndefined();
+    expect(Object.keys(scaffoldOpts()[0]!)).not.toContain("skipDeps");
+    const withPlugin = await driver([...base, "--expo-plugin", "/vendor/expo-spm/spm/plugin.js"]);
+    expect(withPlugin.exitCode, withPlugin.all).toBe(0);
+    expect(scaffoldOpts()[1]!.skipDeps).toEqual(["expo"]);
   });
 
   it("uses an offline artifact root without downloading, and forwards the config command", async () => {

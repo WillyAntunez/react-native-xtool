@@ -46,6 +46,7 @@ const req = createRequire(path.join(VENDOR, "spm", "download-spm-artifacts.js"))
 const spmUtils = () => req("./spm-utils.js");
 const downloader = () => req("./download-spm-artifacts.js");
 const podspec = () => req("./read-podspec.js");
+const plugins = () => req("./autolinking-plugins.js");
 
 describe("vendor/rn-spm provenance", () => {
   provenance("the cached tarball is react-native 0.88.0", () => {
@@ -132,6 +133,41 @@ describe("vendor/rn-spm dependencies and edits", () => {
     } finally {
       if (saved !== undefined) process.env.RN_SPM_RN_ROOT = saved;
       process.exitCode = savedExit;
+    }
+  });
+
+  it("E5 takes expo's plugin from RN_SPM_EXPO_PLUGIN only when expo declares none", () => {
+    const pluginFile = (dir: string) => {
+      const f = path.join(dir, "plugin.js");
+      writeFileSync(f, "module.exports = function plugin() { return {}; };\n");
+      return f;
+    };
+    const vendored = pluginFile(mkTmp("vendor-e5-plugin-"));
+    const bareExpo = mkTmp("vendor-e5-expo-");
+    writeFileSync(path.join(bareExpo, "package.json"), JSON.stringify({ name: "expo", version: "57.0.0" }));
+    const declaring = mkTmp("vendor-e5-expo58-");
+    const own = pluginFile(declaring);
+    writeFileSync(
+      path.join(declaring, "package.json"),
+      JSON.stringify({ name: "expo", version: "58.0.0", swiftpmConfig: { autolinkingPlugin: "./plugin.js" } }),
+    );
+    const discover = (root: string) =>
+      (plugins().discoverPlugins([{ name: "expo", root }], () => null) as { depName: string; pluginPath: string }[]).map(
+        ({ depName, pluginPath }) => ({ depName, pluginPath }),
+      );
+    const saved = process.env.RN_SPM_EXPO_PLUGIN;
+    try {
+      process.env.RN_SPM_EXPO_PLUGIN = vendored;
+      expect(discover(bareExpo)).toEqual([{ depName: "expo", pluginPath: vendored }]);
+      expect(discover(declaring)).toEqual([{ depName: "expo", pluginPath: own }]);
+      expect(
+        plugins().discoverPlugins([{ name: "not-expo", root: bareExpo }], () => null),
+      ).toEqual([]);
+      delete process.env.RN_SPM_EXPO_PLUGIN;
+      expect(discover(bareExpo)).toEqual([]);
+    } finally {
+      if (saved === undefined) delete process.env.RN_SPM_EXPO_PLUGIN;
+      else process.env.RN_SPM_EXPO_PLUGIN = saved;
     }
   });
 

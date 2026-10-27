@@ -91,7 +91,10 @@ export interface BuildDeps {
   applyPatches: (root: string, sources: { rnScripts: RnScripts; expoPlugin: ExpoPlugin }) => Promise<void>;
   /** Downloads (and adapts when needed) RN's prebuilt artifacts; returns the root for `rn-spm --artifacts`. */
   prepareRnArtifacts: (paths: ProjectPaths, rnVersion: string) => Promise<string>;
-  runRnSpm: (paths: ProjectPaths, opts: { rnArtifactsDir?: string; kind: ProjectKind; rnScripts: RnScripts }) => Promise<void>;
+  runRnSpm: (
+    paths: ProjectPaths,
+    opts: { rnArtifactsDir?: string; kind: ProjectKind; rnScripts: RnScripts; expoPlugin: ExpoPlugin },
+  ) => Promise<void>;
   buildJsi: (paths: ProjectPaths) => Promise<RuntimeFramework>;
   generateAppConfig: (paths: ProjectPaths) => Promise<void>;
   readFrameworks: (dir: string, flavor: "debug" | "release") => RuntimeFramework[];
@@ -196,6 +199,7 @@ export async function build(
       rnArtifactsDir: preparedArtifacts ?? config.rnArtifactsDir,
       kind: project.kind,
       rnScripts: project.rnScripts,
+      expoPlugin: project.expoPlugin,
     }),
   );
   const jsi = planned("jsi") ? await step("jsi", () => d.buildJsi(paths)) : undefined;

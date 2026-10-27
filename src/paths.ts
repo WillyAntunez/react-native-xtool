@@ -7,6 +7,8 @@ export interface ProjectPaths {
   iosBuild: string;
   /** Pre-headers-spec React Native artifact slots adapted for the vendored scripts: `<v>/<flavor>`. */
   rnArtifacts: string;
+  /** `EXPO_PRECOMPILED_MODULES_PATH` for the vendored Expo plugin (SDK 57): `<pkg>/output/<flavor>/xcframeworks`. */
+  expoPrecompiled: string;
   xcframeworks: string;
   autolinking: string;
   expoDir: string;
@@ -31,6 +33,7 @@ export function projectPaths(root: string): ProjectPaths {
     ios,
     iosBuild,
     rnArtifacts: join(iosBuild, "rn-artifacts"),
+    expoPrecompiled: join(iosBuild, "expo-precompiled"),
     xcframeworks: join(iosBuild, "xcframeworks"),
     autolinking,
     expoDir: join(autolinking, "expo"),
