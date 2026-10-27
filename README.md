@@ -4,7 +4,11 @@ Build, sign and install Expo and bare React Native iOS dev builds from Linux, wi
 Fast Refresh over Wi‑Fi. Built on [xtool](https://github.com/xtool-org/xtool) and the official React Native / Expo
 SwiftPM pipeline.
 
-**Status:** alpha, `0.1.0-alpha.1` on npm under the `alpha` tag. Verified end to end on a physical iPhone on 2026-10-26.
+[![npm](https://img.shields.io/npm/v/react-native-xtool/alpha?label=npm%20%40alpha)](https://www.npmjs.com/package/react-native-xtool)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
+**Status:** alpha, [`react-native-xtool@0.1.0-alpha.1` on npm](https://www.npmjs.com/package/react-native-xtool) under the
+`alpha` tag. Verified end to end on a physical iPhone on 2026-10-26.
 
 <!-- demo GIF: rn-xtool run → app opens on the iPhone → Fast Refresh -->
 Demo video coming soon.
