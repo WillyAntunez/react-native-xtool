@@ -35,7 +35,7 @@
 ### Task 1: Vendored RN 0.88.0 SwiftPM scripts with a provenance test
 
 **Files:**
-- Create: `vendor/rn-spm/{setup-apple-spm.js, spm/*.js, codegen/templates/Package.swift.spm-template}` (RN 0.88.0 `scripts/` files, same relative layout), `vendor/rn-spm/package.json` (`{ "type": "commonjs" }`: rn-xtool is `"type": "module"`, as `scripts/package.json` already does), `vendor/rn-spm/LICENSE` (the tarball's `package/LICENSE`), `vendor/rn-spm/README.md` (origin react-native 0.88.0, MIT, Meta Platforms; modifications: the 13 fixes of `docs/upstream/react-native-scaffolder.md` via `patches/react-native+0.88.0.patch`, then E1–E4 via `rn-xtool-edits.patch`), `vendor/rn-spm/rn-xtool-edits.patch`
+- Create: `vendor/rn-spm/{setup-apple-spm.js, spm/*.js, codegen/templates/Package.swift.spm-template}` (RN 0.88.0 `scripts/` files, same relative layout), `vendor/rn-spm/package.json` (`{ "type": "commonjs" }`: rn-xtool is `"type": "module"`, as `scripts/package.json` already does), `vendor/rn-spm/LICENSE` (the tarball's `package/LICENSE`), `vendor/rn-spm/README.md` (origin react-native 0.88.0, MIT, Meta Platforms; modifications: the 13 fixes of `docs/upstream/react-native-scaffolder.md` via `patches/react-native+0.88.0.patch`, then E1–E4 via `rn-xtool-edits.patch`; it also says that the `__dirname` candidates in `spm/spm-utils.js` and `setup-apple-spm.js` `resolveReactNativeRoot` are untouched and unreachable, since the driver always passes `--react-native-root`), `vendor/rn-spm/rn-xtool-edits.patch`
 - Modify: `package.json` (`"files"` adds `"vendor"`; dependencies `"yargs": "~17.7.2"`, `"micromatch": "~4.0.8"`), `.gitignore` (`tests/.cache/`)
 - Test: `tests/vendor-rn-spm.test.ts`
 
@@ -66,8 +66,8 @@
 ### Task 2: Supported versions, the gate, `rnScripts` and doctor
 
 **Files:**
-- Modify: `src/versions.ts`, `src/project/types.ts`, `src/project/bare.ts` (`checkRnVersion`, order of the expo-modules check), `src/project/expo.ts` (`rnScripts: "installed"`), `src/commands/doctor.ts` (`ProjectProbe`, `readProjectProbe`, `projectSummary`)
-- Create: `tests/fixtures/bare-086/` and `tests/fixtures/bare-087/` (`template/ios/**` + `template/package.json` of `npm pack @react-native-community/template@0.86.3` and `@0.87.2`, which pins react-native 0.87.1; `_xcode.env` and `Images.xcassets` included as shipped)
+- Modify: `src/versions.ts`, `src/project/types.ts`, `src/project/bare.ts` (`checkRnVersion`, order of the expo-modules check; delete `MIN_RN_MINOR` there and hardcode `react-native@0.88.0` in the "not installed" hint), `src/project/expo.ts` (`rnScripts: "installed"`), `src/commands/doctor.ts` (`ProjectProbe`, `readProjectProbe`, `projectSummary`)
+- Create: `tests/fixtures/bare-086/` and `tests/fixtures/bare-087/` (`ios/**` + `package.json` at the fixture root, no `template/` dir, like `tests/fixtures/bare`; `tempBare` in bare.test takes a fixture name; from the `template/` dir of `npm pack @react-native-community/template@0.86.3` and `@0.87.2`, which pins react-native 0.87.1; `_xcode.env` and `Images.xcassets` included as shipped)
 - Test: `tests/project/bare.test.ts`, `tests/project/expo.test.ts`, `tests/project/pbxproj.test.ts`, `tests/doctor.test.ts`
 
 **Interfaces:**
@@ -81,7 +81,7 @@
   // ProjectInfo (src/project/types.ts) gains: rnScripts: RnScripts   (expo: always "installed")
   // ProjectProbe (src/commands/doctor.ts) gains: rnScripts: RnScripts
   ```
-- Gate in `readBareProject` (expo-modules-core checked with `isInstalled` before the gate): version not in the list → `React Native ${v} is not supported; rn-xtool supports ${supportedRnList()} (bare). Pin react-native to one of them.`, plus ` Expo SDK 58 needs React Native 0.88.0.` when expo-modules-core is installed. A listed `vendored` version with expo-modules-core installed → `React Native ${v} with Expo modules is not supported. Expo SDK 58 needs React Native 0.88.0.` The "react-native is not installed" message keeps suggesting `react-native@0.88.0`.
+- Gate in `readBareProject` (expo-modules-core checked with `isInstalled` before the gate): version not in the list → `React Native ${v} is not supported; rn-xtool supports ${supportedRnList()} (bare). Pin react-native to one of them.`, plus ` Expo SDK 58 needs React Native 0.88.0.` when expo-modules-core is installed. A listed `vendored` version with expo-modules-core installed → `React Native ${v} with Expo modules is not supported. Expo SDK 58 needs React Native 0.88.0.` (also without `use_expo_modules!` in the Podfile, where 0.88.0 only warns; Task 9 documents it in `docs/bare-react-native.md`) The "react-native is not installed" message keeps suggesting `react-native@0.88.0`.
 - doctor `project` for vendored: `bare React Native 0.86.3 (vendored SwiftPM scripts), target HelloWorld (HelloWorld.xcodeproj)`; installed-scripts texts unchanged.
 
 - [ ] **Step 1: Write failing tests**:
@@ -113,20 +113,21 @@
   export function rnPatchMismatch(projectRoot: string, bundledDir: string): Omit<PatchFailureDetails, "output"> | undefined;
   export async function applyPatches(projectRoot: string, exec?: PatchExec, opts?: { rnScripts: RnScripts } /* default "installed" */): Promise<void>;
   //   rnScripts "installed" + rnPatchMismatch → throw patchFailureMessage({ ...m, output: `patch-package was not run: react-native ${installed} is installed and the bundled patch is for ${patched}.` }) before any exec
-  // BuildDeps.applyPatches: (root: string, rnScripts: RnScripts) => Promise<void>; build passes project.rnScripts
+  // BuildDeps.applyPatches: (root: string, rnScripts: RnScripts) => Promise<void>; build passes project.rnScripts;
+  //   realDeps wraps it: (root, rnScripts) => applyPatches(root, undefined, { rnScripts }) (the exported signature stays)
   ```
 
 - [ ] **Step 1: Write failing tests** in `tests/patches.test.ts` (existing tests that install react-native without a version now pass `"0.88.0"`):
   - `stages the react-native patch only for the version it was made for` → RN 0.86.3 → `[]`; RN 0.88.0 → `["react-native+0.88.0.patch"]`.
   - `keeps staging the expo patches whatever their installed version` → expo 58.0.20 → `["expo+58.0.19.patch"]`.
   - `stages exactly the four bundled patches for Expo 58 on React Native 0.88.0` → expo 58.0.19, expo-modules-autolinking 58.0.15, expo-modules-jsi 58.0.19, react-native 0.88.0 → all four names, sorted.
-  - `runs no bundled patch for a vendored project` → RN 0.86.3, `applyPatches(root, exec, { rnScripts: "vendored" })` resolves, exec never called.
+  - `runs no bundled patch for a vendored project` → RN 0.86.3 with the bundled patch dir: `applyPatches(root, exec, { rnScripts: "installed" })` rejects `/pin "react-native" to 0\.88\.0/`, while `{ rnScripts: "vendored" }` resolves and exec is never called.
   - `stops an installed-scripts project whose react-native differs from the patch` (Review Focus 1) → RN 0.88.1, `rnScripts "installed"` → rejects `/pin "react-native" to 0\.88\.0/`, exec never called.
   - build.test `passes the scripts source to the patches step` → `applyPatches` mock receives `(root, "vendored")` for a vendored project.
 - [ ] **Step 2: Run** `npx vitest run tests/patches.test.ts tests/build.test.ts` → FAIL.
 - [ ] **Step 3: Implement** the exact rule for `react-native`, `rnPatchMismatch`, the `applyPatches` option and the build wiring.
 - [ ] **Step 4: Run** the same tests, `npm test && npm run lint` → PASS.
-- [ ] **Step 5: Commit** `git commit -am "feat: stage the react-native patch for its version only"`
+- [ ] **Step 5: Commit** `git commit -am "feat: stage the react-native patch for its version only"`; PR note: an Expo project on React Native ≠ 0.88.0 stops with the pin message produced by `rnPatchMismatch`, not by patch-package output.
 
 ### Task 4: Driver `--scripts-root` and `RN_SPM_RN_ROOT`
 
@@ -151,6 +152,7 @@
 
 - [ ] **Step 1: Write failing tests**:
   - rn-spm-generate.test: extend the usage test with `["--rn-dir","/rn","--app-root","/app"]` (no `--scripts-root`) and a relative `--scripts-root` → exit 1 with the new `USAGE`; existing calls pass `--scripts-root <rnDir>/scripts`.
+  - rnSpm.test: update the existing expectations: calls pass `rnScripts: "installed"` and the `rnSpmGenerateArgs` expectation gains `--scripts-root <rnDir>/scripts` after `--app-root`.
   - rn-spm-generate.test `loads RN's modules from --scripts-root` → the fake modules live in `<tmp>/vendored/` and `<rnDir>` has no `scripts/`; the recorded calls are the same sequence as the installed case and `determineVersion` receives `rnRoot === rnDir`.
   - rn-spm-generate.test `exports RN_SPM_RN_ROOT to the scripts` → the fake `determineVersion` records `process.env.RN_SPM_RN_ROOT`, equal to `rnDir`.
   - rnSpm.test `rnSpmGenerateArgs points at the installed scripts for 0.88.0 and the vendored copy otherwise` → `--scripts-root` values `path.join(rnDir, "scripts")` and `path.join(packageRoot(), "vendor", "rn-spm")`.
@@ -178,7 +180,7 @@
   export interface VfsEntry { virtual: string /* "React/RCTBridge.h" */; external: string /* "${ROOT_PATH}/Headers/React_Core/React/RCTBridge.h" */ }
   export function parseVfsTemplate(text: string): VfsEntry[];
   export type LinkFn = (from: string, to: string) => Promise<void>;
-  export async function materialiseVirtualTree(frameworkDir: string, entries: VfsEntry[], outDir: string, link: LinkFn): Promise<{ missing: string[] }>;
+  export async function materialiseVirtualTree(frameworkDir: string /* the React.xcframework directory: ${ROOT_PATH} of the template */, entries: VfsEntry[], outDir: string, link: LinkFn): Promise<{ missing: string[] }>;
   //   each entry: external (${ROOT_PATH} = frameworkDir) linked at outDir/virtual; then VFS fallthrough as in the spike:
   //   files under a physical top-level Headers/<dir> whose name (exact case) is also a virtual top-level name, not yet present, linked at outDir/<dir>/…
   export function renderHeadersModuleMap(headersDir: string): string;
@@ -195,7 +197,7 @@
   export function makeFakeSlot088(dir: string): void;   // headers-spec: the 5 xcframeworks, hermes-headers/hermes, complete artifacts.json
   ```
 
-- [ ] **Step 1: Write `tests/support/fakeSlots.ts`**: `makeFakeSlot086` writes `React.xcframework/Info.plist` (slices `ios-arm64` platform ios arm64; `ios-arm64_x86_64-simulator` variant simulator), `React.xcframework/React-VFS-template.yaml` in RN's format with four mappings (`React/RCTBridge.h` ← `Headers/React_Core/React/RCTBridge.h`; `React_RCTAppDelegate/RCTReactNativeFactory.h` ← `Headers/React_RCTAppDelegate/React_RCTAppDelegate/RCTReactNativeFactory.h`; `yoga/Yoga.h` ← `Headers/Yoga/yoga/Yoga.h`; `ReactCommon/RCTPerformanceLoggerUtils.h` ← `Headers/React_NativeModulesApple/ReactCommon/RCTPerformanceLoggerUtils.h`), per slice `React.framework/{React ("bin-<slice>"), Info.plist, Headers/<those physical files>, Headers/React_Core/React_Core-umbrella.h ("#import \"RCTBridge.h\"\n"), Headers/ReactCommon/RCTTurboModuleWithJSIBindings.h}`, `ReactNativeDependencies.xcframework/{Info.plist (same two slices), Headers/folly/dynamic.h, <slice>/ReactNativeDependencies.framework/ReactNativeDependencies}`, `hermes-engine.xcframework/Info.plist`, `hermes-headers/hermes/hermes.h`, `artifacts.json` with `React`, `ReactNativeDependencies`, `hermes-engine` (absolute paths, fake urls).
+- [ ] **Step 1: Write `tests/support/fakeSlots.ts`**: `makeFakeSlot086` mirrors the real layout (the physical headers and the umbrella also sit in a top-level `React.xcframework/Headers/`, which is what `${ROOT_PATH}/Headers` resolves to) and writes `React.xcframework/Info.plist` (slices `ios-arm64` platform ios arm64; `ios-arm64_x86_64-simulator` variant simulator), `React.xcframework/React-VFS-template.yaml` in RN's format with four mappings (`React/RCTBridge.h` ← `Headers/React_Core/React/RCTBridge.h`; `React_RCTAppDelegate/RCTReactNativeFactory.h` ← `Headers/React_RCTAppDelegate/React_RCTAppDelegate/RCTReactNativeFactory.h`; `yoga/Yoga.h` ← `Headers/Yoga/yoga/Yoga.h`; `ReactCommon/RCTPerformanceLoggerUtils.h` ← `Headers/React_NativeModulesApple/ReactCommon/RCTPerformanceLoggerUtils.h`), per slice `React.framework/{React ("bin-<slice>"), Info.plist, Headers/<those physical files>, Headers/React_Core/React_Core-umbrella.h ("#import \"RCTBridge.h\"\n"), Headers/ReactCommon/RCTTurboModuleWithJSIBindings.h}`, `ReactNativeDependencies.xcframework/{Info.plist (same two slices), Headers/folly/dynamic.h, <slice>/ReactNativeDependencies.framework/ReactNativeDependencies}`, `hermes-engine.xcframework/Info.plist`, `hermes-headers/hermes/hermes.h`, `artifacts.json` with `React`, `ReactNativeDependencies`, `hermes-engine` (absolute paths, fake urls).
 - [ ] **Step 2: Write failing tests** in `tests/rnArtifacts.test.ts`:
   - `parses the VFS template into virtual and external paths` → the four pairs, in file order.
   - `materialises the virtual tree with VFS fallthrough` → `outDir` holds the four virtual files plus `ReactCommon/RCTTurboModuleWithJSIBindings.h`; nothing under `React_Core/`; `missing` is `[]`; an entry pointing at a deleted file is reported in `missing`.
@@ -205,7 +207,7 @@
   - `the module table renders 0.88.0's own map` → `describe.skipIf` the 0.88.0 slot is absent (`RN_XTOOL_RN088_SLOT`, default `~/Library/Caches/ReactNative/spm-artifacts/0.88.0/debug`): `renderHeadersModuleMap(<slot>/ReactNativeHeaders.xcframework/ios-arm64/Headers)` equals that directory's `module.modulemap` byte for byte.
 - [ ] **Step 3: Run** `npx vitest run tests/rnArtifacts.test.ts` → FAIL (module not found).
 - [ ] **Step 4: Implement** `rnHeadersModules.ts` (transcribe the 0.88.0 map from the slot on this machine) and the pure functions.
-- [ ] **Step 5: Run** the test file (the gated test must run, not skip, here) → PASS; `npm run lint`.
+- [ ] **Step 5: Run** the test file (the gated test must run, not skip, here) → PASS; `npm test && npm run lint`.
 - [ ] **Step 6: Commit** `git add src/pipeline/rnHeadersModules.ts src/pipeline/rnArtifacts.ts tests/support tests/rnArtifacts.test.ts && git commit -m "feat: render headers-spec pieces for older RN artifacts"`
 
 ### Task 6: `adaptSlot` — assembling, stamping and guarding the adapted slot
@@ -226,7 +228,7 @@
   export async function adaptedSlotIsCurrent(src: string, dest: string): Promise<boolean>;
   export async function adaptSlot(src: string, dest: string, version: string, opts?: { hardLink?: LinkFn /* default fs.link */ }): Promise<void>;
   ```
-- `adaptSlot`, in a sibling temp dir `${dest}.tmp-${process.pid}` renamed over `dest` at the end (removed on any error): checks `React.xcframework/{Info.plist,React-VFS-template.yaml}`, per slice `React.framework/Headers/React_Core/React_Core-umbrella.h`, `ReactNativeDependencies.xcframework/{Info.plist,Headers}`, `hermes-engine.xcframework`, `hermes-headers/hermes`, `artifacts.json`, and every VFS external → first absent one (path relative to `src`) throws `ArtifactLayoutError`. Then, per the spec: `React.xcframework` (per slice: everything of `React.framework` but `Headers/`, `Modules/`, `_CodeSignature/` linked; `Headers/` = virtual `React/`; `Headers/React-umbrella.h` = the 0.86 `React_Core-umbrella.h`; `Modules/module.modulemap` = `framework module React {\n  umbrella header "React-umbrella.h"\n  export *\n  module * { export * }\n}\n`; xcframework `Info.plist` linked); `ReactNativeHeaders.xcframework` (per React slice: virtual tree minus `React/` plus `hermes/` from `hermes-headers/hermes`, `module.modulemap` from `renderHeadersModuleMap`, `EMPTY_AR_ARCHIVE` as `libReactNativeHeaders-<id>.a`; `Info.plist` from `headersXcframeworkInfoPlist`); `ReactNativeDependenciesHeaders.xcframework` (per deps slice: `ReactNativeDependencies.xcframework/Headers` linked, empty archive, Info.plist; no module map); `ReactNativeDependencies.xcframework` and `hermes-engine.xcframework` as symlinks to the source; `hermes-headers/` linked; `artifacts.json` with the five `REQUIRED_ARTIFACTS` names, `xcframeworkPath` in `dest`, `url` from the source entry of the parent (React → ReactNativeHeaders, ReactNativeDependencies → its headers); the stamp written last.
+- `adaptSlot`, in a sibling temp dir `${dest}.tmp-${process.pid}` renamed over `dest` at the end (an existing `dest` is first renamed to `${dest}.old-${process.pid}` and removed after the rename; the sibling dir is removed on any error): checks `React.xcframework/{Info.plist,React-VFS-template.yaml}`, per slice `React.framework/Headers/React_Core/React_Core-umbrella.h`, `ReactNativeDependencies.xcframework/{Info.plist,Headers}`, `hermes-engine.xcframework`, `hermes-headers/hermes`, `artifacts.json`, and every VFS external → first absent one (path relative to `src`) throws `ArtifactLayoutError`. Then, per the spec: `React.xcframework` (per slice: everything of `React.framework` but `Headers/`, `Modules/`, `_CodeSignature/` linked; `Headers/` = virtual `React/`; `Headers/React-umbrella.h` = the 0.86 `React_Core-umbrella.h`; `Modules/module.modulemap` = `framework module React {\n  umbrella header "React-umbrella.h"\n  export *\n  module * { export * }\n}\n`; xcframework `Info.plist` linked); `ReactNativeHeaders.xcframework` (per React slice: virtual tree minus `React/` plus `hermes/` from `hermes-headers/hermes`, `module.modulemap` from `renderHeadersModuleMap`, `EMPTY_AR_ARCHIVE` as `libReactNativeHeaders-<id>.a`; `Info.plist` from `headersXcframeworkInfoPlist`); `ReactNativeDependenciesHeaders.xcframework` (per deps slice: `ReactNativeDependencies.xcframework/Headers` linked, empty archive, Info.plist; no module map); `ReactNativeDependencies.xcframework` and `hermes-engine.xcframework` as symlinks to the source; `hermes-headers/` linked; `artifacts.json` with the five `REQUIRED_ARTIFACTS` names, `xcframeworkPath` in `dest`, `url` from the source entry of the parent (React → ReactNativeHeaders, ReactNativeDependencies → its headers); the stamp written last.
 - Linking: `hardLink`, and on `EXDEV`, `EPERM` or `EMLINK` a `copyFile`; any other error propagates.
 
 - [ ] **Step 1: Write failing tests** on `makeFakeSlot086` copies:
@@ -235,10 +237,12 @@
   - `wraps the dependency headers` → `ReactNativeDependenciesHeaders.xcframework/ios-arm64/Headers/folly/dynamic.h` exists, no `module.modulemap`.
   - `RN's validateArtifactsCache accepts the adapted slot` → returns `null`; the dependencies and hermes xcframeworks are symlinks to the source.
   - `stops on an unknown layout naming the file and the version` → without `React-VFS-template.yaml`: rejects `ArtifactLayoutError` with `/0\.86\.3.*React\.xcframework\/React-VFS-template\.yaml is missing/`; same for the umbrella and for a VFS external deleted; `dest` absent afterwards.
+  - `detects headers-spec slots` → `isHeadersSpecSlot` is false for `makeFakeSlot086` and true for `makeFakeSlot088`.
   - `stamps the adapted slot and reuses it until artifacts.json changes` → `adaptedSlotIsCurrent` false before, true after; false after editing the source `artifacts.json`; false with a stamp whose `adapterVersion` is 0.
   - `a failed adaptation leaves no stamped tree` (Review Focus 3) → `hardLink` throwing `ENOSPC` on its 3rd call: rejects; neither `dest` nor any `${dest}.tmp-*` exists; a later successful run makes `adaptedSlotIsCurrent` true.
+  - `re-adapts over a stale adapted tree` → adapt, change the source `artifacts.json`, adapt again: resolves, `adaptedSlotIsCurrent` true, no `${dest}.old-*` left.
   - `falls back to copying when hard links fail` (Review Focus 4) → `hardLink` always throwing `EXDEV`: resolves; the `React` binary has the source's bytes and a different inode.
-  - `adapts the real 0.86.3 slot to 0.88's module set` → `describe.skipIf` unless the 0.86.3 slot (`RN_XTOOL_RN086_SLOT`, default `~/Library/Caches/ReactNative/spm-artifacts/0.86.3/debug`) has `artifacts.json` and the 0.88.0 slot exists: adapted into a temp dir; module names of the generated `ios-arm64` map equal 0.88.0's 14; 0.88.0's header lines minus the generated ones are exactly the lines whose file is absent from the adapted tree, and there are 4 of them; the deps headers have the same file list and bytes as 0.88.0's `ReactNativeDependenciesHeaders.xcframework/ios-arm64/Headers`.
+  - `adapts the real 0.86.3 slot to 0.88's module set` → `describe.skipIf` unless the 0.86.3 slot (`RN_XTOOL_RN086_SLOT`, default `~/Library/Caches/ReactNative/spm-artifacts/0.86.3/debug`) has `artifacts.json` and the 0.88.0 slot exists: adapted into a temp dir; module names of the generated `ios-arm64` map equal 0.88.0's 14; the generated map's text equals 0.88.0's `module.modulemap` with exactly four header lines removed, the four named in the test (taken from the spike's proven map); the deps headers have the same file list and bytes as 0.88.0's `ReactNativeDependenciesHeaders.xcframework/ios-arm64/Headers`.
 - [ ] **Step 2: Run** `npx vitest run tests/rnArtifacts.test.ts` → FAIL.
 - [ ] **Step 3: Implement** `adaptSlot`, `adaptedSlotIsCurrent`, `isHeadersSpecSlot`, `ArtifactLayoutError`.
 - [ ] **Step 4: Run** the test file → PASS (the real-slot test may skip until Task 7 step 5); `npm test && npm run lint`.
@@ -258,7 +262,7 @@
   export type Flavor = "debug" | "release";
   export function rnArtifactsCacheRoot(): string;   // join(homedir(), "Library", "Caches", "ReactNative", "spm-artifacts")
   export function rawSlotComplete(slot: string): boolean;
-  //   artifacts.json parses; React, ReactNativeDependencies, hermes-engine entries whose xcframeworkPath exists; hermes-headers/hermes exists
+  //   artifacts.json parses; React, ReactNativeDependencies, hermes-engine entries (plus ReactNativeHeaders and ReactNativeDependenciesHeaders when ReactNativeHeaders.xcframework exists: RN's five REQUIRED_ARTIFACTS) whose xcframeworkPath exists; hermes-headers/hermes exists
   export function downloadArtifactsArgv(version: string, flavor: Flavor, slot: string): string[];
   //   [<vendored>/spm/download-spm-artifacts.js, "--version", v, "--flavor", f, "--output", slot, "--allow-pre-headers-spec"]
   export interface RnArtifactsDeps { runner: RnRunner; log: (s: string) => void; cacheRoot: string; rnDir: string; adapt: typeof adaptSlot }
@@ -276,6 +280,7 @@
   - `passes headers-spec slots through` → 088 slots for `0.87.1`: returns `join(cacheRoot, "0.87.1")`, `adapt` never called.
   - `skips the download when the raw slot is complete` → no runner call.
   - `re-runs the downloader when the raw slot is incomplete` (Review Focus 2) → slot with `React.xcframework` but no `artifacts.json`, and one whose `artifacts.json` names a deleted `hermes-engine.xcframework`: runner called for that flavor.
+  - `re-runs the downloader when a headers-spec slot lacks companion entries` → fake 088 slot whose `artifacts.json` drops `ReactNativeHeaders`: runner called for that flavor.
   - `reuses a current adapted slot` → second call: `adapt` not called.
   - `fails with the downloader's output` → runner exit 1 with output `boom` → rejects `/Downloading React Native 0\.86\.3 debug artifacts failed \(exit 1\):\nboom/`.
   - `stops when the flavors disagree on the layout` → debug 086, release 088 → `ArtifactLayoutError`.
@@ -305,7 +310,7 @@
   - `project --rn without --bare is refused` and `--rn needs a version` → exit 1 with the messages above, no docker call.
 - [ ] **Step 2: Run** `npx vitest run tests/e2e-harness.test.ts` → FAIL.
 - [ ] **Step 3: Implement** the flag parsing.
-- [ ] **Step 4: Run** the test, `bash -n e2e/clean-machine/e2e.sh`, `npm run scan:private` → PASS.
+- [ ] **Step 4: Run** the test, `bash -n e2e/clean-machine/e2e.sh`, `npm test`, `npm run scan:private` → PASS.
 - [ ] **Step 5: Commit** `git add e2e tests/e2e-harness.test.ts && git commit -m "chore: pick the React Native version in the e2e harness"`
 
 ### Task 9: Docs and changelog
@@ -315,7 +320,7 @@
 - Test: `npm run lint`, `npm run scan:private`.
 
 - [ ] **Step 1: Write** the docs (statements about device results only once Tasks 10–12 confirm them; until then the README note says which checks are pending).
-- [ ] **Step 2: Run** `npm run lint && npm run scan:private` → clean.
+- [ ] **Step 2: Run** `npm test && npm run lint && npm run scan:private` → clean.
 - [ ] **Step 3: Commit** `git add README.md CHANGELOG.md docs && git commit -m "docs: document React Native 0.86 and 0.87 support"`
 
 ### Task 10: `app-bare-086` reference app on the iPhone (controller with Willy)
