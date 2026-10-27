@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { copyFile } from "node:fs/promises";
-import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
@@ -331,6 +331,21 @@ describe("adaptSlot", () => {
 
     writeFileSync(path.join(dest, ADAPTED_STAMP), JSON.stringify({ ...stamp, adapterVersion: 0 }));
     expect(await adaptedSlotIsCurrent(src, dest)).toBe(false);
+  });
+
+  it("a moved project re-adapts", async () => {
+    const { src, dest } = adaptCase();
+    await adaptSlot(src, dest, "0.86.3");
+    const project = path.dirname(dest);
+    const moved = `${project}-moved`;
+    renameSync(project, moved);
+    tmp.push(moved);
+    const newDest = path.join(moved, path.basename(dest));
+    expect(await adaptedSlotIsCurrent(src, newDest)).toBe(false);
+
+    await adaptSlot(src, newDest, "0.86.3");
+    expect(await adaptedSlotIsCurrent(src, newDest)).toBe(true);
+    expect(downloader().validateArtifactsCache(newDest)).toBeNull();
   });
 
   it("a failed adaptation leaves no stamped tree", async () => {

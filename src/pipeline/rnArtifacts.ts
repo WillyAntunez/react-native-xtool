@@ -196,7 +196,7 @@ export function headersXcframeworkInfoPlist(name: string, libs: XcframeworkLibra
 
 /** Bumped whenever the adapted layout changes, so older adapted slots are rebuilt. */
 export const ADAPTER_VERSION = 1;
-/** Written last into an adapted slot: `{ adapterVersion, source, artifactsJsonSha256 }`. */
+/** Written last into an adapted slot: `{ adapterVersion, source, dest, artifactsJsonSha256 }`. */
 export const ADAPTED_STAMP = ".rn-xtool-adapted.json";
 
 /** A React Native artifact slot whose layout the adapter does not know; never worked around. */
@@ -218,12 +218,14 @@ export function isHeadersSpecSlot(slot: string): boolean {
 interface AdaptedStamp {
   adapterVersion: number;
   source: string;
+  /** Where the slot was adapted to: its `artifacts.json` holds absolute paths under it, so a moved slot is stale. */
+  dest: string;
   artifactsJsonSha256: string;
 }
 
 const sha256 = (data: Buffer) => createHash("sha256").update(data).digest("hex");
 
-/** True when `dest` holds a complete adaptation of `src` by this adapter version and src's `artifacts.json`. */
+/** True when `dest` holds a complete adaptation of `src`, made at `dest` by this adapter version and src's `artifacts.json`. */
 export async function adaptedSlotIsCurrent(src: string, dest: string): Promise<boolean> {
   try {
     const stamp = JSON.parse(await readFile(path.join(dest, ADAPTED_STAMP), "utf8")) as Partial<AdaptedStamp>;
@@ -231,6 +233,7 @@ export async function adaptedSlotIsCurrent(src: string, dest: string): Promise<b
     return (
       stamp.adapterVersion === ADAPTER_VERSION &&
       stamp.source === path.resolve(src) &&
+      stamp.dest === path.resolve(dest) &&
       stamp.artifactsJsonSha256 === sha256(artifactsJson)
     );
   } catch {
@@ -434,7 +437,12 @@ async function assemble(
   ]);
   await writeNew(path.join(out, "artifacts.json"), JSON.stringify(artifactsJson, null, 2) + "\n");
 
-  const stamp: AdaptedStamp = { adapterVersion: ADAPTER_VERSION, source: src, artifactsJsonSha256: layout.artifactsJsonSha256 };
+  const stamp: AdaptedStamp = {
+    adapterVersion: ADAPTER_VERSION,
+    source: src,
+    dest: finalDest,
+    artifactsJsonSha256: layout.artifactsJsonSha256,
+  };
   await writeNew(path.join(out, ADAPTED_STAMP), JSON.stringify(stamp, null, 2) + "\n");
 }
 
