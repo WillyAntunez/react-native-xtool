@@ -82,7 +82,7 @@ export interface BuildDeps {
   remove: (path: string) => Promise<void>;
   prebuild: (root: string, clean: boolean) => Promise<void>;
   applyPatches: (root: string, rnScripts: RnScripts) => Promise<void>;
-  runRnSpm: (paths: ProjectPaths, opts: { rnArtifactsDir?: string; kind: ProjectKind }) => Promise<void>;
+  runRnSpm: (paths: ProjectPaths, opts: { rnArtifactsDir?: string; kind: ProjectKind; rnScripts: RnScripts }) => Promise<void>;
   buildJsi: (paths: ProjectPaths) => Promise<RuntimeFramework>;
   generateAppConfig: (paths: ProjectPaths) => Promise<void>;
   readFrameworks: (dir: string, flavor: "debug" | "release") => RuntimeFramework[];
@@ -175,7 +175,7 @@ export async function build(
     });
   }
   await step("patches", () => d.applyPatches(paths.root, project.rnScripts));
-  await step("rn-spm", () => d.runRnSpm(paths, { rnArtifactsDir: config.rnArtifactsDir, kind: project.kind }));
+  await step("rn-spm", () => d.runRnSpm(paths, { rnArtifactsDir: config.rnArtifactsDir, kind: project.kind, rnScripts: project.rnScripts }));
   const jsi = planned("jsi") ? await step("jsi", () => d.buildJsi(paths)) : undefined;
   if (planned("app-config")) await step("app-config", () => d.generateAppConfig(paths));
   const frameworks = await step("frameworks", async () => {

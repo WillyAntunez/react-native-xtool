@@ -66,6 +66,7 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
         hasExpoModules: true,
         hasExpoConstants: true,
         hasDevClient: false,
+        rnScripts: "installed",
         ...over.project,
       }) as never,
     exists: () => over.hasIos ?? false,
@@ -155,15 +156,22 @@ describe("build", () => {
     });
     await build(t.root, {}, { ...t.deps, runRnSpm });
     expect(t.calls).toEqual(buildSteps({ ...bareFlags, hasIos: false, clean: false }));
-    expect(runRnSpm).toHaveBeenCalledWith(expect.objectContaining({ root: t.root }), { rnArtifactsDir: undefined, kind: "bare" });
+    expect(runRnSpm).toHaveBeenCalledWith(expect.objectContaining({ root: t.root }), { rnArtifactsDir: undefined, kind: "bare", rnScripts: "installed" });
     const ctx = (t.writeIosXtool.mock.calls[0] as unknown[])[0] as { frameworks: { name: string }[] };
     expect(ctx.frameworks.map((f) => f.name)).toEqual(["A"]);
   });
+  it("passes the scripts source to runRnSpm", async () => {
+    const t = setup({ project: { kind: "bare", rnScripts: "vendored" } });
+    const runRnSpm = vi.fn(async () => {});
+    await build(t.root, {}, { ...t.deps, runRnSpm });
+    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ rnScripts: "vendored" }));
+  });
+
   it("passes the expo kind to runRnSpm", async () => {
     const t = setup({ hasIos: true });
     const runRnSpm = vi.fn(async () => {});
     await build(t.root, {}, { ...t.deps, runRnSpm });
-    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: undefined, kind: "expo" });
+    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: undefined, kind: "expo", rnScripts: "installed" });
   });
   it("builds the JSI framework for a bare project with expo modules, app-config only with expo-constants", async () => {
     const t = setup({ project: { kind: "bare", hasExpoModules: true, hasExpoConstants: false } });

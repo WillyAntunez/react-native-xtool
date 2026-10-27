@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { swiftHeadersEnv, type ProjectPaths } from "../paths.js";
 import type { ProjectKind } from "../project/index.js";
+import type { RnScripts } from "../versions.js";
 import { packageRoot, runArgv, toolEnv } from "../tools/exec.js";
 
 export const AUTOLINKING_CONFIG_COMMAND = [
@@ -16,7 +17,7 @@ export const AUTOLINKING_CONFIG_COMMAND = [
   "ios",
 ];
 
-function resolveRnDir(paths: ProjectPaths): string {
+export function resolveRnDir(paths: ProjectPaths): string {
   const require = createRequire(import.meta.url);
   return path.dirname(
     require.resolve("react-native/package.json", { paths: [paths.root] }),
@@ -35,6 +36,10 @@ function hasSpmMarker(iosDir: string): boolean {
   } catch {
     return false;
   }
+}
+
+export function vendoredScriptsRoot(): string {
+  return path.join(packageRoot(), "vendor", "rn-spm");
 }
 
 export function rnSpmArgs(
@@ -63,7 +68,7 @@ export function rnSpmArgs(
  */
 export function rnSpmGenerateArgs(
   paths: ProjectPaths,
-  opts: { rnArtifactsDir?: string },
+  opts: { rnArtifactsDir?: string; rnScripts: RnScripts },
   rnDir: string = resolveRnDir(paths),
 ): string[] {
   return [
@@ -72,6 +77,8 @@ export function rnSpmGenerateArgs(
     rnDir,
     "--app-root",
     paths.root,
+    "--scripts-root",
+    opts.rnScripts === "vendored" ? vendoredScriptsRoot() : path.join(rnDir, "scripts"),
     ...(opts.rnArtifactsDir ? ["--artifacts", opts.rnArtifactsDir] : []),
   ];
 }
@@ -79,7 +86,7 @@ export function rnSpmGenerateArgs(
 /** The driver's `scaffold` step alone: RN's `setup-apple-spm.js scaffold` would go on to inject into the xcodeproj. */
 export function rnSpmScaffoldArgs(
   paths: ProjectPaths,
-  opts: { rnArtifactsDir?: string },
+  opts: { rnArtifactsDir?: string; rnScripts: RnScripts },
   rnDir: string = resolveRnDir(paths),
 ): string[] {
   return [...rnSpmGenerateArgs(paths, opts, rnDir), "--scaffold"];
@@ -195,12 +202,17 @@ function tail(output: string): string {
 
 export async function runRnSpm(
   paths: ProjectPaths,
-  opts: { rnArtifactsDir?: string; kind: ProjectKind },
+  opts: { rnArtifactsDir?: string; kind: ProjectKind; rnScripts: RnScripts },
   deps: Partial<RnSpmDeps> = {},
 ): Promise<void> {
   // Expo runs `setup-apple-spm.js add --yes`, which may edit the xcodeproj: never pick it by default.
   if (opts.kind !== "bare" && opts.kind !== "expo") {
     throw new Error(`runRnSpm needs the project kind ("expo" or "bare"), got ${String(opts.kind)}`);
+  }
+  if (opts.kind === "expo" && opts.rnScripts !== "installed") {
+    throw new Error(
+      `runRnSpm: Expo projects use React Native's installed SwiftPM scripts, got rnScripts "${opts.rnScripts}"`,
+    );
   }
   const runner = deps.runner ?? streamingRunner;
   const log = deps.log ?? ((s: string) => console.log(s));

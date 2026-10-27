@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 const DRIVER = path.resolve(import.meta.dirname, "../scripts/rn-spm-generate.js");
 const USAGE =
-  "Usage: node scripts/rn-spm-generate.js --rn-dir <abs> --app-root <abs> [--artifacts <root>] [--config-command <json>] [--scaffold]";
+  "Usage: node scripts/rn-spm-generate.js --rn-dir <abs> --app-root <abs> --scripts-root <abs> [--artifacts <root>] [--config-command <json>] [--scaffold]";
 
 const tmp: string[] = [];
 afterAll(() => {
@@ -22,12 +22,14 @@ function driver(args: string[], cwd = process.cwd()) {
  * so the test sees which RN functions the driver calls, in what order, with what arguments.
  * `FAIL_AT` makes one of them throw (`sync-missing` throws RN's MissingManifestError).
  */
-function fakeRn(): { rnDir: string; appRoot: string; calls: () => unknown[][] } {
+function fakeRn(vendored = false): { rnDir: string; appRoot: string; scriptsRoot: string; calls: () => unknown[][] } {
   const root = mkdtempSync(path.join(tmpdir(), "rn-spm-generate-"));
   tmp.push(root);
   const rnDir = path.join(root, "node_modules", "react-native");
   const appRoot = path.join(root, "app");
-  mkdirSync(path.join(rnDir, "scripts", "spm"), { recursive: true });
+  const scriptsRoot = vendored ? path.join(root, "vendored") : path.join(rnDir, "scripts");
+  mkdirSync(path.join(scriptsRoot, "spm"), { recursive: true });
+  mkdirSync(rnDir, { recursive: true });
   mkdirSync(path.join(appRoot, "ios"), { recursive: true });
   const log = path.join(root, "calls.json");
   const record = `
@@ -44,7 +46,7 @@ function record(...entry) {
     "setup-apple-spm.js": `
 module.exports = {
   resolveAppIosDeploymentTarget(args, appRoot) { record('deploymentTarget', args.xcodeprojPath, args.productName, appRoot); return '15.1'; },
-  determineVersion(args, rnRoot, appRoot) { record('determineVersion', args.version, rnRoot, appRoot); return '0.88.0'; },
+  determineVersion(args, rnRoot, appRoot) { fs.writeFileSync(${JSON.stringify(log)} + '.env', String(process.env.RN_SPM_RN_ROOT)); record('determineVersion', args.version, rnRoot, appRoot); return '0.88.0'; },
   async ensureBothArtifactFlavors(args, version) {
     record('ensureBothArtifactFlavors', args.version, args.artifacts, args.downloadPolicy, version);
     return args.artifacts ? {debug: args.artifacts + '/debug', release: args.artifacts + '/release'} : {debug: '/cache/debug', release: '/cache/release'};
@@ -97,10 +99,11 @@ module.exports = { main(argv) { record('generatePackage', ...argv); } };`,
 module.exports = { finalizeArtifactPublication(appRoot) { record('finalizeArtifactPublication', appRoot); return true; } };`,
   };
   for (const [rel, body] of Object.entries(stubs))
-    writeFileSync(path.join(rnDir, "scripts", rel), `'use strict';\n${record}\n${body}\n`);
+    writeFileSync(path.join(scriptsRoot, rel), `'use strict';\n${record}\n${body}\n`);
   return {
     rnDir,
     appRoot,
+    scriptsRoot,
     calls: () => JSON.parse(readFileSync(log, "utf8")) as unknown[][],
   };
 }
@@ -112,9 +115,11 @@ describe("rn-spm-generate.js", () => {
       [],
       ["--rn-dir", "/rn"],
       ["--rn-dir", "relative/rn", "--app-root", "/app"],
-      ["--rn-dir", "/rn", "--app-root", "/app", "--bogus"],
-      ["--rn-dir", "/rn", "--app-root", "/app", "extra"],
-      ["--rn-dir", "/rn", "--app-root", "/app", "--scaffold=yes"],
+      ["--rn-dir", "/rn", "--app-root", "/app"],
+      ["--rn-dir", "/rn", "--app-root", "/app", "--scripts-root", "scripts"],
+      ["--rn-dir", "/rn", "--app-root", "/app", "--scripts-root", "/s", "--bogus"],
+      ["--rn-dir", "/rn", "--app-root", "/app", "--scripts-root", "/s", "extra"],
+      ["--rn-dir", "/rn", "--app-root", "/app", "--scripts-root", "/s", "--scaffold=yes"],
     ]) {
       const r = await driver(args);
       expect(r.exitCode, args.join(" ")).toBe(1);
@@ -125,7 +130,7 @@ describe("rn-spm-generate.js", () => {
   it("runs RN's steps 1-5 against <app-root>/ios and never the xcodeproj injection", async () => {
     const rn = fakeRn();
     const ios = path.join(rn.appRoot, "ios");
-    const r = await driver(["--rn-dir", rn.rnDir, "--app-root", rn.appRoot], ios);
+    const r = await driver(["--rn-dir", rn.rnDir, "--scripts-root", rn.scriptsRoot, "--app-root", rn.appRoot], ios);
     expect(r.exitCode, r.all).toBe(0);
     const json = path.join(ios, "build/generated/autolinking/autolinking.json");
     expect(rn.calls()).toEqual([
@@ -152,12 +157,39 @@ describe("rn-spm-generate.js", () => {
     ]);
   });
 
+  it("loads RN's modules from --scripts-root", async () => {
+    const rn = fakeRn(true);
+    const ios = path.join(rn.appRoot, "ios");
+    const r = await driver(["--rn-dir", rn.rnDir, "--app-root", rn.appRoot, "--scripts-root", rn.scriptsRoot], ios);
+    expect(r.exitCode, r.all).toBe(0);
+    expect(rn.calls().map((c) => c[0])).toEqual([
+      "generateAutolinkingConfig",
+      "deploymentTarget",
+      "determineVersion",
+      "refreshScaffoldedPlatformFloors",
+      "sync",
+      "ensureBothArtifactFlavors",
+      "generatePackage",
+      "finalizeArtifactPublication",
+    ]);
+    expect(rn.calls()[2]).toEqual(["determineVersion", null, rn.rnDir, ios]);
+  });
+
+  it("exports RN_SPM_RN_ROOT to the scripts", async () => {
+    const rn = fakeRn(true);
+    const r = await driver(["--rn-dir", rn.rnDir, "--app-root", rn.appRoot, "--scripts-root", rn.scriptsRoot]);
+    expect(r.exitCode, r.all).toBe(0);
+    expect(readFileSync(path.join(rn.appRoot, "..", "calls.json.env"), "utf8")).toBe(rn.rnDir);
+  });
+
   it("uses an offline artifact root without downloading, and forwards the config command", async () => {
     const rn = fakeRn();
     const cmd = ["npx", "react-native", "config"];
     const r = await driver([
       "--rn-dir",
       rn.rnDir,
+      "--scripts-root",
+      rn.scriptsRoot,
       "--app-root",
       rn.appRoot,
       "--artifacts",
@@ -187,7 +219,7 @@ describe("rn-spm-generate.js", () => {
     const rn = fakeRn();
     const r = await execa(
       process.execPath,
-      [DRIVER, "--rn-dir", rn.rnDir, "--app-root", rn.appRoot],
+      [DRIVER, "--rn-dir", rn.rnDir, "--scripts-root", rn.scriptsRoot, "--app-root", rn.appRoot],
       { reject: false, all: true, env: { FAIL_AT: "sync-missing" } },
     );
     expect(r.exitCode).toBe(2);
@@ -198,7 +230,7 @@ describe("rn-spm-generate.js", () => {
   it("--scaffold writes RN's scaffolded manifests and runs no other pipeline step", async () => {
     const rn = fakeRn();
     const ios = path.join(rn.appRoot, "ios");
-    const r = await driver(["--rn-dir", rn.rnDir, "--app-root", rn.appRoot, "--scaffold"]);
+    const r = await driver(["--rn-dir", rn.rnDir, "--scripts-root", rn.scriptsRoot, "--app-root", rn.appRoot, "--scaffold"]);
     expect(r.exitCode, r.all).toBe(0);
     expect(rn.calls()).toEqual([
       ["generateAutolinkingConfig", rn.appRoot, null],
@@ -228,7 +260,7 @@ describe("rn-spm-generate.js", () => {
   it("--scaffold still scaffolds without a cache slot label, and exits 1 when scaffolding throws", async () => {
     const rn = fakeRn();
     const run = (FAIL_AT: string) =>
-      execa(process.execPath, [DRIVER, "--rn-dir", rn.rnDir, "--app-root", rn.appRoot, "--scaffold"], {
+      execa(process.execPath, [DRIVER, "--rn-dir", rn.rnDir, "--scripts-root", rn.scriptsRoot, "--app-root", rn.appRoot, "--scaffold"], {
         reject: false,
         all: true,
         env: { FAIL_AT },
@@ -248,7 +280,7 @@ describe("rn-spm-generate.js", () => {
       const rn = fakeRn();
       const r = await execa(
         process.execPath,
-        [DRIVER, "--rn-dir", rn.rnDir, "--app-root", rn.appRoot],
+        [DRIVER, "--rn-dir", rn.rnDir, "--scripts-root", rn.scriptsRoot, "--app-root", rn.appRoot],
         { reject: false, all: true, env: { FAIL_AT: step } },
       );
       expect(r.exitCode).toBe(1);
