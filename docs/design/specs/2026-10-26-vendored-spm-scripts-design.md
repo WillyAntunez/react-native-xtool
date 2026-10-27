@@ -100,11 +100,13 @@ Willy chose B after the spike (and 0.86.3 as the target over 0.87).
   `rn-xtool-scaffold-revision` marker, `RN_SPM_SWIFT_HEADERS_DIR`) plus the three root edits found by the spike:
   codegen template taken from the vendored copy (`spm-utils.js installSpmCodegenTemplate`), RN version macros read from
   the installed RN (`read-podspec.js readRnVersionMacros`), downloader RN root from the installed RN
-  (`download-spm-artifacts.js main`). The RN root comes from one explicit parameter/env (`RN_SPM_RN_ROOT`), never from
-  `__dirname`.
-- A test (`tests/vendor-rn-spm.test.ts`) proves provenance: extracting `react-native@0.88.0`'s scripts from the
-  reference app's node_modules (skipped when absent) and applying our patch + the three edits yields byte-identical
-  files. This is how future script refreshes are checked.
+  (`download-spm-artifacts.js main`). The RN root comes from one explicit env (`RN_SPM_RN_ROOT`) at the E2/E3 sites, never from
+  `__dirname`; E1 resolves the template relative to the vendored copy. Our edits (E1–E4) are kept as one stored diff,
+  `vendor/rn-spm/rn-xtool-edits.patch`, applied after the 0.88 patch.
+- A test (`tests/vendor-rn-spm.test.ts`) proves provenance: taking the pristine `react-native@0.88.0` scripts (from the
+  npm tarball cached for tests, or the reference app's pristine copy; skipped when neither is available) and applying
+  `patches/react-native+0.88.0.patch` then `vendor/rn-spm/rn-xtool-edits.patch` yields files byte-identical to
+  `vendor/rn-spm/`. This is how future script refreshes are checked.
 - `yargs` and `micromatch` become rn-xtool dependencies at the versions RN 0.88.0 uses (17.7.x, 4.0.x).
 - `package.json` `files` adds `vendor/`.
 
@@ -113,23 +115,35 @@ Willy chose B after the spike (and 0.86.3 as the target over 0.87).
 - `scripts/rn-spm-generate.js` takes `--scripts-root <dir>`: the installed RN's `scripts/` for `installed`, the
   vendored dir for `vendored`. `--rn-dir` stays the installed RN (codegen, versions, hermes). Everything else unchanged.
 - `src/pipeline/rnSpm.ts` passes the root according to `project.rnScripts`, and for vendored projects skips the
-  bundled RN patch: `selectBundledPatches` selects by **exact installed version** (filename version equals installed),
-  so `react-native+0.88.0.patch` is staged only on 0.88.0. Golden expectation: an Expo 58 / RN 0.88.0 project stages
-  exactly the four patches it stages today.
+  bundled RN patch: `selectBundledPatches` applies an **exact-version rule to `react-native` only** (its patch is staged
+  only when the installed version equals the filename's), so `react-native+0.88.0.patch` is never staged on 0.86/0.87.
+  The Expo packages keep today's rule (staged whenever installed; a version mismatch still surfaces as the existing
+  "could not patch … pin" error, which is better than silently building unpatched). Golden expectation: an Expo 58 /
+  RN 0.88.0 project stages exactly the four patches it stages today.
 
 ### Artifact adapter for pre-headers-spec slots (`src/pipeline/rnArtifacts.ts`)
 
-- Runs for versions whose slot lacks `ReactNativeHeaders.xcframework` (detected, not hard-coded by version). Input: the
-  downloaded slot for one flavor (`~/Library/Caches/ReactNative/spm-artifacts/<v>/<flavor>`, where RN's downloader puts
-  it on Linux too). Output: `ios/build/rn-artifacts/<v>/<flavor>/` in the headers-spec layout, mostly hard links:
+- **Download.** The `rn-artifacts` step calls the vendored `download-spm-artifacts.js` once per flavor with a new
+  option `--allow-pre-headers-spec` (vendored edit E4): the downloader fetches and extracts core, dependencies and Hermes
+  as today, and skips only its final "ReactNativeHeaders.xcframework is missing" validation, returning the slot path.
+  Extraction errors (truncated tarball, checksum) still fail as before; rn-xtool never parses the downloader's output to
+  tell the two apart. The slot is `~/Library/Caches/ReactNative/spm-artifacts/<v>/<flavor>` (RN's own location, also on
+  Linux); the Hermes tarball lands inside that slot, so the adapter reads everything from one directory.
+- **Adapt.** Runs for slots that lack `ReactNativeHeaders.xcframework` (detected, not hard-coded by version). Output:
+  `ios/build/rn-artifacts/<v>/<flavor>/` in the headers-spec layout, mostly hard links:
   1. Materialise the VFS overlay (`React-VFS-template.yaml`) into the flat virtual header tree.
   2. `React.xcframework`: per slice, the 0.86 binary and Info.plist; `Headers/` = the virtual `React/` dir;
      `React-umbrella.h` = 0.86's `React_Core-umbrella.h`; `Modules/module.modulemap` = `framework module React { umbrella
      header "React-umbrella.h" export * module * { export * } }`.
-  3. `ReactNativeHeaders.xcframework`: the virtual tree minus `React/` plus `hermes/` from the Hermes tarball; module map
-     generated from the namespaces present (one `module <ns>` per top-level dir with headers), not copied from 0.88;
-     empty `libReactNativeHeaders-<slice>.a` written as a valid empty `ar` archive; `Info.plist` generated from the
-     slices.
+  3. `ReactNativeHeaders.xcframework`: the virtual tree minus `React/` plus `hermes/` from the Hermes tarball. Module
+     map generated, not copied: one entry per top-level directory of the virtual tree (plus `hermes`), named after the
+     directory, in the exact form 0.88's map uses for each of its modules (umbrella directory, `export *`, submodules),
+     which the implementer reads from the 0.88 map in the reference app and reproduces as a template. The module names
+     are the pod `header_dir`s that libraries `@import` (`React_RCTAppDelegate`, `ReactCommon`, `jsi`, …): the 0.86
+     AppDelegate's `import React_RCTAppDelegate` resolves through this. Acceptance: on the real 0.86.3 slot, the
+     generated map's module set equals 0.88.0's minus `RCTAnimatedModuleProvider` (the only 0.88-only namespace, per the
+     spike). Empty `libReactNativeHeaders-<slice>.a` written as a valid empty `ar` archive; `Info.plist` generated from
+     the slices.
   4. `ReactNativeDependenciesHeaders.xcframework`: `ReactNativeDependencies.xcframework/Headers` wrapped the same way.
   5. `ReactNativeDependencies.xcframework` and the Hermes framework linked unchanged; `artifacts.json` written so RN's
      `validateArtifactsCache` and `flavored-frameworks.js` accept the slot.
@@ -197,7 +211,9 @@ will build on, and the route for 0.81 (SDK 54) if its artifacts allow.
 - Supported list is exact versions, device-verified or build-verified, not ranges: `0.86.2`, `0.86.3`, `0.87.1`,
   `0.88.0`. 0.86.0 (0.5 M downloads/week) is excluded until someone verifies it; one list entry to add.
 - 0.87.1 goes through the vendored scripts too (no second patch file), since the vendored copy already carries the fixes
-  and 0.87.1's artifacts are headers-spec. The parked 0.87 design is superseded.
+  and 0.87.1's artifacts are headers-spec. The parked 0.87 design is superseded. The 0.87.1 task is a verification
+  task: if it needs more vendored edits of the E1–E4 kind (explicit roots, missing template), they are added; if it
+  would need 0.87-specific logic branches, it goes back to Willy as a decision.
 - The adapter generates module maps, `Info.plist` and placeholder archives itself: no dependency on a 0.88 slot.
 - The adapted slot lives under `ios/build/rn-artifacts/` (per project, removed by `--clean`), not in the global cache.
 - Device verification is the controller's with Willy; implementers never need the iPhone; device-gated tasks come
