@@ -1,0 +1,174 @@
+--- a/spm/download-spm-artifacts.js
++++ b/spm/download-spm-artifacts.js
+@@ -78,6 +78,12 @@
+ function parseArgs(argv /*: Array<string> */) /*: DownloadArgs */ {
+   const parsed = yargs(argv)
+     .version(false)
++    .option('allow-pre-headers-spec', {
++      type: 'boolean',
++      default: false,
++      describe:
++        'Skip a missing ReactNativeHeaders / ReactNativeDependenciesHeaders companion instead of failing (react-native versions that predate the headers-spec layout).',
++    })
+     .option('version', {
+       alias: 'v',
+       type: 'string',
+@@ -123,6 +129,7 @@
+ 
+   return {
+     version: parsed.version ?? null,
++    allowPreHeadersSpec: parsed['allow-pre-headers-spec'] === true,
+     flavor: parsed.flavor.toLowerCase(),
+     output: parsed.output ?? null,
+     coreTarball:
+@@ -1140,9 +1147,65 @@
+   return {label, version, xcframeworkPath: destXcfwPath, url};
+ }
+ 
++/**
++ * Adds the headers-only companions (ReactNativeHeaders, the
++ * ReactNativeDependenciesHeaders sidecar) to the artifact index when they sit
++ * in the slot. A missing companion dies, unless allowPreHeadersSpec: then it
++ * is skipped, for react-native versions that predate the headers-spec layout.
++ */
++function addHeadersCompanions(
++  artifactsJson /*: {[string]: {xcframeworkPath: string, url: string}} */,
++  outputDir /*: string */,
++  allowPreHeadersSpec /*: boolean */,
++) /*: void */ {
++  const companions = [
++    {
++      name: 'ReactNativeHeaders',
++      parent: 'React',
++      advice:
++        'The React core tarball predates the headers-spec layout — use a ' +
++        'matching react-native version, or pass --headers-tarball / ' +
++        'RN_HEADERS_TARBALL_PATH.',
++    },
++    {
++      name: DEPS_HEADERS_NAME,
++      parent: 'ReactNativeDependencies',
++      advice:
++        'The ReactNativeDependencies tarball predates the headers sidecar — ' +
++        'use a matching react-native version, or pass ' +
++        '--deps-headers-tarball / RN_DEPS_HEADERS_TARBALL_PATH.',
++    },
++  ];
++  for (const {name, parent, advice} of companions) {
++    if (artifactsJson[name] != null) {
++      continue;
++    }
++    const companionPath = path.join(outputDir, `${name}.xcframework`);
++    if (!fs.existsSync(companionPath)) {
++      if (allowPreHeadersSpec) {
++        log(
++          `${name}.xcframework is missing from the artifact slot; skipping it (--allow-pre-headers-spec)`,
++        );
++        continue;
++      }
++      die(`${name}.xcframework is missing from the artifact slot. ${advice}`);
++    }
++    const parentEntry = artifactsJson[parent];
++    artifactsJson[name] = {
++      xcframeworkPath: companionPath,
++      url: parentEntry != null ? parentEntry.url : '',
++    };
++  }
++}
++
+ async function main(argv /*:: ?: Array<string> */) /*: Promise<void> */ {
+   const args = parseArgs(argv ?? process.argv.slice(2));
+-  const rnRoot = path.resolve(__dirname, '../..');
++  const rnRoot = process.env.RN_SPM_RN_ROOT;
++  if (rnRoot == null || rnRoot === '') {
++    throw new Error(
++      "RN_SPM_RN_ROOT is not set: rn-xtool's vendored SwiftPM scripts need the installed react-native directory",
++    );
++  }
+   const flavor = args.flavor;
+ 
+   // Resolve base RN version
+@@ -1394,38 +1457,11 @@
+   // includes (the sidecar; ReactNativeHeaders is pure-RN) — fail closed
+   // rather than hand Xcode a package graph that breaks with header-not-found
+   // errors much later.
+-  const companions = [
+-    {
+-      name: 'ReactNativeHeaders',
+-      parent: 'React',
+-      advice:
+-        'The React core tarball predates the headers-spec layout — use a ' +
+-        'matching react-native version, or pass --headers-tarball / ' +
+-        'RN_HEADERS_TARBALL_PATH.',
+-    },
+-    {
+-      name: DEPS_HEADERS_NAME,
+-      parent: 'ReactNativeDependencies',
+-      advice:
+-        'The ReactNativeDependencies tarball predates the headers sidecar — ' +
+-        'use a matching react-native version, or pass ' +
+-        '--deps-headers-tarball / RN_DEPS_HEADERS_TARBALL_PATH.',
+-    },
+-  ];
+-  for (const {name, parent, advice} of companions) {
+-    if (artifactsJson[name] != null) {
+-      continue;
+-    }
+-    const companionPath = path.join(outputDir, `${name}.xcframework`);
+-    if (!fs.existsSync(companionPath)) {
+-      die(`${name}.xcframework is missing from the artifact slot. ${advice}`);
+-    }
+-    const parentEntry = artifactsJson[parent];
+-    artifactsJson[name] = {
+-      xcframeworkPath: companionPath,
+-      url: parentEntry != null ? parentEntry.url : '',
+-    };
+-  }
++  addHeadersCompanions(
++    artifactsJson,
++    outputDir,
++    args.allowPreHeadersSpec,
++  );
+   const artifactsJsonPath = path.join(outputDir, 'artifacts.json');
+   fs.writeFileSync(
+     artifactsJsonPath,
+@@ -1503,6 +1539,7 @@
+ 
+ module.exports = {
+   main,
++  addHeadersCompanions,
+   resolveCacheSlotVersion,
+   resolveHermesArtifact,
+   resolveLocalHermesCompilerVersion,
+--- a/spm/read-podspec.js
++++ b/spm/read-podspec.js
+@@ -1200,9 +1200,15 @@
+ 
+ // The installed React Native's version as the macros libraries derive from it.
+ function readRnVersionMacros() /*: {[string]: number} */ {
++  const rnRoot = process.env.RN_SPM_RN_ROOT;
++  if (rnRoot == null || rnRoot === '') {
++    throw new Error(
++      "RN_SPM_RN_ROOT is not set: rn-xtool's vendored SwiftPM scripts need the installed react-native directory",
++    );
++  }
+   try {
+     const pkg = JSON.parse(
+-      fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8'),
++      fs.readFileSync(path.join(rnRoot, 'package.json'), 'utf8'),
+     );
+     const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(pkg.version));
+     if (m != null) {
+--- a/spm/spm-utils.js
++++ b/spm/spm-utils.js
+@@ -641,8 +641,8 @@
+   logger /*: {log: (msg: string) => void} */ = {log() {}},
+ ) /*: void */ {
+   const spmTemplate = path.join(
+-    reactNativeRoot,
+-    'scripts',
++    __dirname,
++    '..',
+     'codegen',
+     'templates',
+     'Package.swift.spm-template',
