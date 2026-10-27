@@ -58,6 +58,7 @@ The heartbeat requirement is written up for upstream in
 
 ## WSL2
 
+Not tested yet: this section is reasoned from how WSL2 works, not from a run. Please report what you find.
 WSL2 has no USB by default, and the phone is reached through Windows' network. Ways to get a pair record:
 
 - Attach the iPhone to WSL once with [usbipd-win](https://github.com/dorssel/usbipd-win) (`usbipd bind` /
