@@ -3,10 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { build, buildSteps, chooseMetroPort, type BuildDeps } from "../src/commands/build.js";
+import { jsiRnHeaderDirs } from "../src/pipeline/jsi.js";
 import { readState, writeState } from "../src/state.js";
 
-const expoFlags = { kind: "expo" as const, hasExpoModules: true, hasExpoConstants: true, rnArtifacts: false };
-const bareFlags = { kind: "bare" as const, hasExpoModules: false, hasExpoConstants: false, rnArtifacts: false };
+const expoFlags = { kind: "expo" as const, hasExpoModules: true, hasExpoConstants: true, rnArtifacts: false, expoPlugin: "installed" as const };
+const bareFlags = { kind: "bare" as const, hasExpoModules: false, hasExpoConstants: false, rnArtifacts: false, expoPlugin: "installed" as const };
 
 describe("buildSteps", () => {
   it("starts with prebuild when ios/ is missing", () => {
@@ -48,8 +49,22 @@ describe("buildSteps", () => {
       "patches", "rn-artifacts", "rn-spm", "frameworks", "generate", "xtool-build",
     ]);
   });
-  it("expo never gets rn-artifacts", () => {
+  it("expo 58 (installed plugin) never gets rn-artifacts", () => {
     expect(buildSteps({ ...expoFlags, rnArtifacts: true, hasIos: true, clean: false })).not.toContain("rn-artifacts");
+  });
+  it("expo 57: jsi before rn-spm, with rn-artifacts", () => {
+    const sdk57 = { ...expoFlags, expoPlugin: "vendored" as const, rnArtifacts: true, hasIos: true, clean: false };
+    expect(buildSteps(sdk57)).toEqual([
+      "patches", "rn-artifacts", "jsi", "rn-spm", "app-config", "frameworks", "generate", "xtool-build",
+    ]);
+    expect(buildSteps({ ...sdk57, rnArtifacts: false })).toEqual([
+      "patches", "jsi", "rn-spm", "app-config", "frameworks", "generate", "xtool-build",
+    ]);
+  });
+  it("expo 57 --clean re-creates artifacts and JSI headers before rn-spm", () => {
+    expect(buildSteps({ ...expoFlags, expoPlugin: "vendored", rnArtifacts: true, hasIos: true, clean: true })).toEqual([
+      "prebuild --clean", "patches", "rn-artifacts", "jsi", "rn-spm", "app-config", "frameworks", "generate", "xtool-build",
+    ]);
   });
 });
 
@@ -219,6 +234,49 @@ describe("build", () => {
     const expo = setup();
     await build(expo.root, {}, { ...expo.deps, prepareRnArtifacts });
     expect(prepareRnArtifacts).not.toHaveBeenCalled();
+  });
+  const sdk57 = { kind: "expo" as const, rnScripts: "vendored" as const, expoPlugin: "vendored" as const, rnVersion: "0.86.3" };
+  it("expo 57 --clean re-creates artifacts and JSI headers before rn-spm", async () => {
+    const t = setup({ hasIos: true, project: sdk57 });
+    await build(t.root, { clean: true }, t.deps);
+    const order = buildSteps({ ...expoFlags, expoPlugin: "vendored", rnArtifacts: true, hasIos: true, clean: true });
+    expect(t.calls).toEqual(order);
+    expect(t.logs.filter((l) => l.startsWith("▸ "))).toEqual(order.map((s) => `▸ ${s}`));
+  });
+  it("expo 57 builds JSI from the prepared artifacts", async () => {
+    const t = setup({ hasIos: true, project: sdk57 });
+    const prepareRnArtifacts = vi.fn(async () => "/adapted/0.86.3");
+    const buildJsi = vi.fn(async () => ({ name: "ExpoModulesJSI" }) as never);
+    const runRnSpm = vi.fn(async () => {});
+    await build(t.root, {}, { ...t.deps, prepareRnArtifacts, buildJsi, runRnSpm });
+    expect(buildJsi).toHaveBeenCalledWith(expect.objectContaining({ root: t.root }), {
+      rnHeaders: jsiRnHeaderDirs("/adapted/0.86.3"),
+      headersXcframework: true,
+    });
+    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: "/adapted/0.86.3", kind: "expo", rnScripts: "vendored", expoPlugin: "vendored" });
+    const ctx = (t.writeIosXtool.mock.calls[0] as unknown[])[0] as { frameworks: { name: string }[] };
+    expect(ctx.frameworks.map((f) => f.name)).toEqual(["A", "ExpoModulesJSI"]);
+
+    const u = setup({ hasIos: true, cfg: { rnArtifactsDir: "/mine" }, project: sdk57 });
+    const prepare = vi.fn(async () => "/adapted/0.86.3");
+    const jsi = vi.fn(async () => ({ name: "ExpoModulesJSI" }) as never);
+    const spm = vi.fn(async () => {});
+    await build(u.root, {}, { ...u.deps, prepareRnArtifacts: prepare, buildJsi: jsi, runRnSpm: spm });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(jsi).toHaveBeenCalledWith(expect.anything(), { rnHeaders: jsiRnHeaderDirs("/mine"), headersXcframework: true });
+    expect(spm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: "/mine", kind: "expo", rnScripts: "vendored", expoPlugin: "vendored" });
+  });
+  it("expo 58 and bare plans are unchanged", async () => {
+    const t = setup({ hasIos: true });
+    const buildJsi = vi.fn(async () => ({ name: "ExpoModulesJSI" }) as never);
+    const runRnSpm = vi.fn(async () => {});
+    await build(t.root, {}, { ...t.deps, buildJsi, runRnSpm });
+    expect(buildJsi.mock.calls).toEqual([[expect.objectContaining({ root: t.root })]]);
+    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: undefined, kind: "expo", rnScripts: "installed", expoPlugin: "installed" });
+    const b = setup({ project: { kind: "bare", hasExpoModules: true, hasExpoConstants: false } });
+    const bareJsi = vi.fn(async () => ({ name: "ExpoModulesJSI" }) as never);
+    await build(b.root, {}, { ...b.deps, buildJsi: bareJsi });
+    expect(bareJsi.mock.calls).toEqual([[expect.objectContaining({ root: b.root })]]);
   });
   it("records the React Native version in the state", async () => {
     const t = setup({ project: { kind: "bare", rnScripts: "vendored", rnVersion: "0.86.3" } });
