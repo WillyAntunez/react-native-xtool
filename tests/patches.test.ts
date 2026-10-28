@@ -190,7 +190,11 @@ describe("react-native patch scope", () => {
     });
     const calls: string[][] = [];
     const exec = async (_c: string, args: string[]) => (calls.push(args), { exitCode: 0 });
-    await expect(applyPatches(root, exec, { rnScripts: "installed" })).rejects.toThrow(/pin "react-native" to 0\.88\.1/);
+    const err = (await applyPatches(root, exec, { rnScripts: "installed" }).catch((e: unknown) => e)) as Error;
+    expect(err.message).toMatch(/pin "react-native" to 0\.88\.1/);
+    expect(err.message).toContain(
+      "patch-package was not run: react-native 0.88.2 is installed and the bundled react-native patches are for 0.88.0 and 0.88.1.",
+    );
     expect(calls).toHaveLength(0);
   });
 

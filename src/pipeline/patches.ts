@@ -130,6 +130,16 @@ export function rnPatchMismatch(
   return highest && { pkg: "react-native", installed, patchFile: highest.patchFile, patched: highest.version };
 }
 
+/** "0.88.0 and 0.88.1": the versions `pkg` has a bundled patch for, ascending. */
+function bundledVersionList(bundledDir: string, pkg: string): string {
+  const versions = readdirSync(bundledDir)
+    .map(parsePatchFileName)
+    .filter((info) => info?.pkg === pkg)
+    .map((info) => info!.version)
+    .sort(compareVersions);
+  return versions.length < 2 ? versions.join("") : `${versions.slice(0, -1).join(", ")} and ${versions[versions.length - 1]}`;
+}
+
 /** Finds a bundled patch whose package is installed at a different version. */
 export function findPatchMismatch(
   projectRoot: string,
@@ -270,9 +280,12 @@ export async function applyPatches(
   opts: { rnScripts: RnScripts; expoPlugin?: ExpoPlugin; log?: (line: string) => void } = { rnScripts: "installed" },
 ): Promise<void> {
   if (opts.rnScripts === "installed") {
-    const m = rnPatchMismatch(projectRoot, path.join(packageRoot(), "patches"));
+    const bundledDir = path.join(packageRoot(), "patches");
+    const m = rnPatchMismatch(projectRoot, bundledDir);
     if (m) {
-      const output = `patch-package was not run: react-native ${m.installed} is installed and the bundled patch is for ${m.patched}.`;
+      const output =
+        `patch-package was not run: react-native ${m.installed} is installed and the bundled react-native patches are ` +
+        `for ${bundledVersionList(bundledDir, "react-native")}.`;
       throw new Error(patchFailureMessage({ ...m, output }));
     }
   }
