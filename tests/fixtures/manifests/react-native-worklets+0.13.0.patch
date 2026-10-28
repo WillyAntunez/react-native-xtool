@@ -1,0 +1,25 @@
+diff --git a/node_modules/react-native-worklets/Package.swift b/node_modules/react-native-worklets/Package.swift
+index e8746c4..9f326eb 100644
+--- a/node_modules/react-native-worklets/Package.swift
++++ b/node_modules/react-native-worklets/Package.swift
+@@ -20,10 +20,18 @@ func readJSONObject(at url: URL) -> [String: Any]? {
+     return object as? [String: Any]
+ }
+ 
+-// NSNumber needs the CFBoolean check to tell booleans apart from integers.
++// NSNumber needs a boolean check to tell booleans apart from integers.
++// CFGetTypeID/CFBooleanGetTypeID only exist on Darwin; this manifest is also
++// evaluated on Linux hosts (swift-corelibs-foundation), where JSON booleans
++// are NSNumbers with objCType "c".
+ func stringifyFlagValue(_ value: Any) -> String? {
+     if let number = value as? NSNumber {
+-        if CFGetTypeID(number) == CFBooleanGetTypeID() {
++#if canImport(Darwin)
++        let isBoolean = CFGetTypeID(number) == CFBooleanGetTypeID()
++#else
++        let isBoolean = String(cString: number.objCType) == "c"
++#endif
++        if isBoolean {
+             return number.boolValue ? "true" : "false"
+         }
+         return number.stringValue

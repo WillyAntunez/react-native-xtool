@@ -8,6 +8,7 @@ import { detectLanIp, detectLanRoute, findFreePort, isMetroRunning, isPortFree, 
 import { projectPaths, type ProjectPaths } from "../paths.js";
 import { generateAppConfig } from "../pipeline/appConfig.js";
 import { buildExpoModulesJsi, jsiRnHeaderDirs, type JsiRnHeaders } from "../pipeline/jsi.js";
+import { fixLibraryManifests } from "../pipeline/manifests.js";
 import { applyPatches } from "../pipeline/patches.js";
 import { prepareRnArtifacts } from "../pipeline/rnArtifactsStep.js";
 import type { ExpoPlugin, RnScripts } from "../versions.js";
@@ -99,6 +100,8 @@ export interface BuildDeps {
   remove: (path: string) => Promise<void>;
   prebuild: (root: string, clean: boolean) => Promise<void>;
   applyPatches: (root: string, sources: { rnScripts: RnScripts; expoPlugin: ExpoPlugin }) => Promise<void>;
+  /** After patch-package, before rn-spm: rewrites known non-portable snippets in the libraries' own manifests. */
+  fixLibraryManifests: (root: string, log: (s: string) => void) => Promise<void>;
   /** Downloads (and adapts when needed) RN's prebuilt artifacts; returns the root for `rn-spm --artifacts`. */
   prepareRnArtifacts: (paths: ProjectPaths, rnVersion: string) => Promise<string>;
   runRnSpm: (
@@ -134,6 +137,7 @@ const realDeps: BuildDeps = {
       cwd: root,
     }),
   applyPatches: (root, sources) => applyPatches(root, undefined, sources),
+  fixLibraryManifests,
   prepareRnArtifacts: (paths, rnVersion) => prepareRnArtifacts(paths, rnVersion),
   runRnSpm,
   buildJsi: buildExpoModulesJsi,
@@ -204,9 +208,11 @@ export async function build(
       await d.remove(paths.iosXtool);
     });
   }
-  await step("patches", () =>
-    d.applyPatches(paths.root, { rnScripts: project.rnScripts, expoPlugin: project.expoPlugin }),
-  );
+  // Library manifests last: idempotent, so a project's persisted patch-package fix of the same snippet applies first.
+  await step("patches", async () => {
+    await d.applyPatches(paths.root, { rnScripts: project.rnScripts, expoPlugin: project.expoPlugin });
+    await d.fixLibraryManifests(paths.root, d.log);
+  });
   const preparedArtifacts = planned("rn-artifacts")
     ? await step("rn-artifacts", () => d.prepareRnArtifacts(paths, project.rnVersion))
     : undefined;

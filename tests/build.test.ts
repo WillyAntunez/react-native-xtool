@@ -1,9 +1,11 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { build, buildSteps, chooseMetroPort, type BuildDeps } from "../src/commands/build.js";
 import { jsiRnHeaderDirs } from "../src/pipeline/jsi.js";
+import { fixLibraryManifests } from "../src/pipeline/manifests.js";
 import { readState, writeState } from "../src/state.js";
 
 const expoFlags = { kind: "expo" as const, hasExpoModules: true, hasExpoConstants: true, rnArtifacts: false, expoPlugin: "installed" as const };
@@ -102,6 +104,7 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
       calls.push(clean ? "prebuild --clean" : "prebuild");
     },
     applyPatches: over.applyPatches ?? rec("patches"),
+    fixLibraryManifests: async () => {},
     prepareRnArtifacts: async (_paths, version) => {
       calls.push("rn-artifacts");
       return `/adapted/${version}`;
@@ -279,6 +282,39 @@ describe("build", () => {
     await build(b.root, {}, { ...b.deps, buildJsi: bareJsi });
     expect(bareJsi.mock.calls).toEqual([[expect.objectContaining({ root: b.root })]]);
   });
+  it("makes library manifests portable in the patches step, after patch-package and before rn-spm", async () => {
+    const manifests = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "manifests");
+    const t = setup({ hasIos: true });
+    const lib = join(t.root, "node_modules", "react-native-worklets");
+    mkdirSync(lib, { recursive: true });
+    writeFileSync(join(lib, "Package.swift"), readFileSync(join(manifests, "react-native-worklets.Package.swift")));
+    const order: string[] = [];
+    let seenByRnSpm = "";
+    await build(t.root, {}, {
+      ...t.deps,
+      applyPatches: async () => {
+        order.push("patch-package");
+      },
+      fixLibraryManifests: async (root, log) => {
+        order.push("manifests");
+        await fixLibraryManifests(root, log);
+      },
+      runRnSpm: async () => {
+        order.push("rn-spm");
+        seenByRnSpm = readFileSync(join(lib, "Package.swift"), "utf8");
+      },
+    });
+    expect(order).toEqual(["patch-package", "manifests", "rn-spm"]);
+    expect(seenByRnSpm).toBe(readFileSync(join(manifests, "react-native-worklets.portable.Package.swift"), "utf8"));
+    const line = "manifest — made react-native-worklets's Package.swift portable to Linux (CFGetTypeID)";
+    const at = (l: string) => t.logs.findIndex((x) => x === l || x.startsWith(`${l} (`));
+    expect(at("▸ patches")).toBeLessThan(at(line));
+    expect(at(line)).toBeLessThan(at("✔ patches"));
+    expect(t.logs.filter((l) => l.startsWith("▸ "))).toEqual(
+      buildSteps({ ...expoFlags, hasIos: true, clean: false }).map((s) => `▸ ${s}`),
+    );
+  });
+
   it("checks symbols before staging", async () => {
     const jsi = { name: "ExpoModulesJSI" } as never;
     const frameworks = [{ name: "A" }, { name: "B" }] as never[];
