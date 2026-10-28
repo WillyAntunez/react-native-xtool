@@ -122,11 +122,16 @@ function xcconfigLinkerFlags(text) {
   return null;
 }
 
-/** Pod names a podspec depends on, ignoring `test_spec` blocks. Text-only. */
+/**
+ * Pod names a podspec depends on, ignoring `test_spec` blocks. Text-only. rn-xtool: React
+ * Native's `add_dependency(s, "<Pod>", …)` helper declares one too (expo-router → RNScreens).
+ */
 function podspecDependencies(text) {
   const deps = [];
   for (const { text: line } of podspecBodyLines(text)) {
-    const match = line.match(/\.dependency\s+['"]([^'"]+)['"]/);
+    const match =
+      line.match(/\.dependency\s+['"]([^'"]+)['"]/) ??
+      line.match(/\badd_dependency\s*\(\s*\w+\s*,\s*['"]([^'"]+)['"]/);
     if (match) deps.push(match[1]);
   }
   return deps;

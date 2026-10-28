@@ -201,7 +201,7 @@ index 2554a75..502a66c 100644
    renderPartlyProvidedPackageWarning,
    renderExtraPodsWarning,
 diff --git a/node_modules/expo/scripts/spm/manifests.js b/node_modules/expo/scripts/spm/manifests.js
-index c42928b..5bc429d 100644
+index c42928b..6ce398a 100644
 --- a/node_modules/expo/scripts/spm/manifests.js
 +++ b/node_modules/expo/scripts/spm/manifests.js
 @@ -9,7 +9,7 @@
@@ -256,15 +256,17 @@ index c42928b..5bc429d 100644
  let package = Package(
      name: "${manifest.name}",
      platforms: ${renderPlatforms(manifest.iosDeploymentTarget)},
-@@ -644,6 +660,7 @@ function pureSwiftManifest({
+@@ -644,7 +660,9 @@ function pureSwiftManifest({
    iosDeploymentTarget = null,
    hasPrivacyManifest = false,
    packages = [],
 +  localDeps = [],
  }) {
++  const importerFlags = swiftImporterFlags(localDeps);
    const target = {
      name: product,
-@@ -656,11 +673,15 @@ function pureSwiftManifest({
+     path: srcRel,
+@@ -656,11 +674,16 @@ function pureSwiftManifest({
      // .process may rename or transform what it puts in the bundle.
      resources: hasPrivacyManifest ? [{ path: PRIVACY_MANIFEST, rule: { copy: {} } }] : [],
      settings: [],
@@ -279,13 +281,14 @@ index c42928b..5bc429d 100644
 +        package: pkg.identity,
 +        platforms: [],
 +      })),
-+      // rn-xtool: sibling generated packages the podspec depends on.
++      // rn-xtool: sibling generated packages and React Native libraries the podspec depends on.
 +      ...localDeps.map((dep) => ({ product: dep.name, package: dep.name, platforms: [] })),
 +    ],
++    ...(importerFlags.length > 0 ? { rawSettings: { swift: importerFlags } } : {}),
    };
    return {
      name: product,
-@@ -669,7 +690,11 @@ function pureSwiftManifest({
+@@ -669,10 +692,28 @@ function pureSwiftManifest({
      products: [{ name: product, targets: [product] }],
      targets: [target],
      packageDeps: packages,
@@ -298,7 +301,24 @@ index c42928b..5bc429d 100644
    };
  }
  
-@@ -681,7 +706,13 @@ function escapeSwiftString(value) {
++/**
++ * rn-xtool: Swift reads a scaffolded mixed library's Clang module through its umbrella, whose
++ * headers include others by the library's own header search paths; its manifest records them
++ * (`importerPaths`, see plugin.js#libraryPackageIndex), and an importer passes them to Clang.
++ */
++function swiftImporterFlags(localDeps) {
++  return localDeps
++    .filter((dep) => dep.library && dep.importerPaths?.length > 0)
++    .map(
++      (dep) =>
++        `.unsafeFlags([${dep.importerPaths.map((p) => `"-Xcc", "-I${escapeSwiftString(p)}"`).join(', ')}])`
++    );
++}
++
+ function escapeSwiftString(value) {
+   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+ }
+@@ -681,7 +722,13 @@ function escapeSwiftString(value) {
   * A target's `*Settings:` arguments: Expo's binary-free interface tree first, then
   * whatever the module itself declared, in its own order.
   */
@@ -313,7 +333,7 @@ index c42928b..5bc429d 100644
    const unsafeFlags = (flags) =>
      `.unsafeFlags([${flags.map((f) => `"${escapeSwiftString(f)}"`).join(', ')}])`;
    const interfaceFlags = unsafeFlags(['-F', frameworkSearchPath]);
-@@ -700,7 +731,9 @@ function renderTargetSettings(frameworkSearchPath, settings, targetName, extraSw
+@@ -700,7 +747,9 @@ function renderTargetSettings(frameworkSearchPath, settings, targetName, extraSw
        .filter((s) => s.tool === tool)
        .map((s) => renderSetting(s, targetName));
      const injected = tool === 'swift' ? swiftInterfaceFlags : interfaceFlags;
@@ -324,7 +344,7 @@ index c42928b..5bc429d 100644
      return values.length ? `\n            ${label}: [${values.join(', ')}],` : '';
    }).join('');
  }
-@@ -847,6 +880,70 @@ function withoutSatisfiedProducts(manifest, satisfiedDependencies) {
+@@ -847,6 +896,70 @@ function withoutSatisfiedProducts(manifest, satisfiedDependencies) {
    return { manifest: { ...manifest, targets, packageDeps }, partlyProvidedPackages };
  }
  
@@ -395,7 +415,7 @@ index c42928b..5bc429d 100644
  /**
   * Render `manifest` against Expo's binary-free framework interface tree, with RN's
   * invariant React products injected and its floor raised to the minimum, and write it
-@@ -872,24 +969,63 @@ function emitPackage(
+@@ -872,24 +985,63 @@ function emitPackage(
      manifest,
      satisfiedDependencies
    );
@@ -463,7 +483,7 @@ index c42928b..5bc429d 100644
    return {
      ok: {
        packageDep: { name: manifest.name, path: pkgDir },
-@@ -1012,14 +1148,159 @@ function emitPureSwiftSourcePackage(
+@@ -1012,14 +1164,169 @@ function emitPureSwiftSourcePackage(
      iosDeploymentTarget = null,
      spmPackages = [],
      sources = scanAppleSources(moduleRoot),
@@ -537,7 +557,8 @@ index c42928b..5bc429d 100644
 +  ...options
 +}) {
 +  const base = pureSwiftManifest(options);
-+  const localDeps = options.localDeps ?? [];
++  // rn-xtool: React Native libraries have no `pod-headers` or Swift Build module map of ours.
++  const localDeps = (options.localDeps ?? []).filter((dep) => !dep.library);
 +  // Directories CocoaPods would put on the header search path: this pod's own `pod-headers`
 +  // (Swift header, umbrella, header_dir) and each dependency's, and the flat `-Swift.h` directory.
 +  const usesSwiftHeadersDir = language === 'mixed' || localDeps.length > 0;
@@ -566,6 +587,7 @@ index c42928b..5bc429d 100644
 +          '.unsafeFlags(["-Xcc", "-I" + rnSpmSwiftHeadersDir])',
 +          ...includeDirs.map((dir) => `.unsafeFlags(["-Xcc", "-I${escapeSwiftString(dir)}"])`),
 +          ...swiftDepModuleMaps.map((flag) => `.unsafeFlags(["-Xcc", ${flag}])`),
++          ...swiftImporterFlags(options.localDeps ?? []),
 +        ]
 +      : [];
 +  return {
@@ -608,7 +630,15 @@ index c42928b..5bc429d 100644
 +  const headers = walkSourceTree(srcDir)
 +    .files.filter((file) => file.endsWith('.h'))
 +    .sort();
-+  const umbrellaHeaders = headers.filter((file) => !isCxxHeader(fs.readFileSync(file, 'utf8')));
++  // rn-xtool: the umbrella leaves out the headers Swift cannot import: C++ ones, and ones that
++  // import the module's own `<Product>-Swift.h` (SDK 57's expo/ios/Swift.h), which Swift writes
++  // only after it has read the umbrella.
++  const escapedProduct = product.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
++  const ownSwiftHeader = new RegExp(`#\\s*import\\s*[<"](?:[^>"]*/)?${escapedProduct}-Swift\\.h[>"]`);
++  const umbrellaHeaders = headers.filter((file) => {
++    const text = fs.readFileSync(file, 'utf8');
++    return !isCxxHeader(text) && !ownSwiftHeader.test(text);
++  });
 +  const manifest = generatedSourceManifest({
 +    language,
 +    hasCxx: sources.hasCxx,
@@ -624,7 +654,7 @@ index c42928b..5bc429d 100644
      iosDeploymentTarget,
      hasPrivacyManifest: fs.existsSync(path.join(srcDir, PRIVACY_MANIFEST)),
      packages: spmPackages.map(documentedPackage),
-@@ -1038,5 +1319,8 @@ module.exports = {
+@@ -1038,5 +1345,8 @@ module.exports = {
    raiseFloor,
    emitSourceManifestPackage,
    emitPureSwiftSourcePackage,
@@ -634,7 +664,7 @@ index c42928b..5bc429d 100644
    emitExpoModulesJSIHeadersPackage,
  };
 diff --git a/node_modules/expo/scripts/spm/plugin.js b/node_modules/expo/scripts/spm/plugin.js
-index 00a7c98..f08bbb0 100644
+index 00a7c98..3d261b1 100644
 --- a/node_modules/expo/scripts/spm/plugin.js
 +++ b/node_modules/expo/scripts/spm/plugin.js
 @@ -69,6 +69,7 @@ const {
@@ -666,7 +696,7 @@ index 00a7c98..f08bbb0 100644
   */
  function podRecords(identities) {
    const records = new Map();
-@@ -553,17 +555,84 @@ function resolveCoreHeaders(core, coreSource, cacheDir) {
+@@ -553,17 +555,176 @@ function resolveCoreHeaders(core, coreSource, cacheDir) {
    return headers.xcframework;
  }
  
@@ -729,6 +759,98 @@ index 00a7c98..f08bbb0 100644
 +  return index;
 +}
 +
++/** rn-xtool: the line a scaffolded mixed manifest records its Swift importer paths on. */
++const IMPORTER_MARKER_RX = /^\/\/ rn-xtool-swift-importer-paths: (.*)$/m;
++
++/**
++ * rn-xtool: the Swift importer paths the manifest in `pkgDir` records, resolved against it ([]
++ * without the marker). Throws on a marker that is not a JSON array of package-relative paths.
++ */
++function readImporterPaths(pkgDir) {
++  const manifestPath = path.join(pkgDir, 'Package.swift');
++  const marker = IMPORTER_MARKER_RX.exec(fs.readFileSync(manifestPath, 'utf8'))?.[1];
++  if (marker == null) return [];
++  let paths = null;
++  try {
++    paths = JSON.parse(marker);
++  } catch {}
++  const relative = (p) =>
++    typeof p === 'string' && !path.isAbsolute(p) && !p.split(/[\\/]/).includes('..');
++  if (!Array.isArray(paths) || !paths.every(relative)) {
++    throw pluginError({
++      what: `${manifestPath} records its Swift importer paths as ${marker.trim()}, which is not a JSON array of paths inside the package.`,
++      how: "rn-xtool's scaffolder writes that line: remove the library's scaffolded patch if the app has one, reinstall the library and build again so it is scaffolded again, or report it to rn-xtool.",
++    });
++  }
++  return paths.map((p) => `${pkgDir}/${p}`);
++}
++
++/**
++ * rn-xtool: React Native's autolinked libraries with their own Package.swift, by pod name, as a
++ * generated package depends on them (expo-router → RNScreens). Each is declared at the
++ * `<outputDir>/libs/<name>` alias React Native declares it at, so SwiftPM sees one package.
++ * `importerPaths` are the header search paths a scaffolded mixed manifest records for Swift
++ * importers of its umbrella, resolved against the real package directory; they are read on
++ * first use, so only a library some package depends on is read.
++ */
++function libraryPackageIndex(autolinking, outputDir) {
++  const index = new Map();
++  const libsDir = path.join(outputDir, 'libs');
++  const realpath = (p) => {
++    try {
++      return fs.realpathSync(p);
++    } catch {
++      return null;
++    }
++  };
++  let aliases;
++  try {
++    aliases = fs.readdirSync(libsDir).map((name) => ({ name, real: realpath(path.join(libsDir, name)) }));
++  } catch {
++    return index;
++  }
++  for (const dependency of Object.values(autolinking?.dependencies ?? {})) {
++    const podspecPath = dependency?.platforms?.ios?.podspecPath;
++    const root = dependency?.root != null ? realpath(dependency.root) : null;
++    if (typeof podspecPath !== 'string' || root == null) continue;
++    // The alias points at the root, or at its `ios/` when the manifest is kept there.
++    const alias = aliases.find(({ real }) => real === root || real === path.join(root, 'ios'));
++    if (alias == null || !fs.existsSync(path.join(alias.real, 'Package.swift'))) continue;
++    const podName = path.basename(podspecPath, '.podspec');
++    let importerPaths = null;
++    index.set(podName, {
++      podName,
++      name: alias.name,
++      pkgDir: path.join(libsDir, alias.name),
++      hasSwift: false,
++      library: true,
++      get importerPaths() {
++        return (importerPaths ??= readImporterPaths(alias.real));
++      },
++    });
++  }
++  return index;
++}
++
++/**
++ * rn-xtool: what a pod dependency names, by pod name: the generated packages, and React Native's
++ * libraries with a Package.swift. A generated package wins over a library of the same pod name.
++ */
++function dependencyPackageIndex(generatedPackages, libraryPackages = new Map()) {
++  return new Map([...libraryPackages, ...generatedPackages]);
++}
++
++/**
++ * rn-xtool: the packages a generated package depends on: the generated ones and React Native
++ * libraries (`packages`) its podspec's dependencies name, subspecs by their pod.
++ */
++function localDependencies({ podName, podspec }, packages) {
++  return [...new Set(podspec.dependencies.map((dep) => dep.split('/')[0]))]
++    .filter((dep) => dep !== podName)
++    .map((dep) => packages.get(dep))
++    .filter((dep) => dep != null);
++}
++
  /**
   * Emits the source package of the module whose first pod is `identity`: its checked-in
   * manifest as it stands when that depends on ExpoModulesCoreHeaders (`direct` is then
@@ -756,7 +878,7 @@ index 00a7c98..f08bbb0 100644
    const { moduleRoot, packageName, podName, iosDeploymentTarget, spmPackages, sources, podspec } =
      identity;
    if (hasManifest) {
-@@ -585,9 +654,33 @@ function emitSourceModule(identity, hasManifest, emitContext, dumpManifest) {
+@@ -585,9 +746,30 @@ function emitSourceModule(identity, hasManifest, emitContext, dumpManifest) {
    if (podspec.linkage != null) {
      return { refusal: { reason: 'needs-manifest-for-linkage', ...podspec.linkage } };
    }
@@ -769,10 +891,7 @@ index 00a7c98..f08bbb0 100644
 +    return { refusal: { reason: 'vendored-sources', vendorSources: sources.vendorSources } };
 +  }
 +  const product = generatedModuleName(identity);
-+  const localDeps = [...new Set(podspec.dependencies.map((dep) => dep.split('/')[0]))]
-+    .filter((dep) => dep !== podName)
-+    .map((dep) => generatedPackages.get(dep))
-+    .filter((dep) => dep != null);
++  const localDeps = localDependencies(identity, generatedPackages);
 +  if (layout === 'pure-swift') {
 +    return emitPureSwiftSourcePackage(
 +      { moduleRoot, product, iosDeploymentTarget, spmPackages, sources, localDeps },
@@ -793,12 +912,15 @@ index 00a7c98..f08bbb0 100644
      emitContext
    );
  }
-@@ -614,16 +707,20 @@ function linkSourceModules(modules, identities, records, emitContext, dumpManife
+@@ -614,16 +796,23 @@ function linkSourceModules(modules, identities, records, emitContext, dumpManife
      refusals.set(root, (refusals.get(root) ?? new Map()).set(reason, refusalFor));
    const linkedAs = (identity) => records.get(identity.podName).linkedAs;
    const manifestProductsByRoot = new Map();
 +  // rn-xtool: emission order does not matter; every generated package's directory is known.
-+  const generatedPackages = generatedPackageIndex(modules, identities, records, emitContext.outDir);
++  const generatedPackages = dependencyPackageIndex(
++    generatedPackageIndex(modules, identities, records, emitContext.outDir),
++    emitContext.libraryPackages
++  );
    for (const mod of modules) {
      const pods = (mod.pods ?? []).map((pod) => identities.get(pod));
      if (!pods.length || pods.every(linkedAs)) continue;
@@ -816,7 +938,7 @@ index 00a7c98..f08bbb0 100644
        // Both source branches build the whole module, so emitting it would link
        // the precompiled pods a second time, from source.
        const siblings = {
-@@ -649,16 +746,26 @@ function linkSourceModules(modules, identities, records, emitContext, dumpManife
+@@ -649,16 +838,26 @@ function linkSourceModules(modules, identities, records, emitContext, dumpManife
        if (covered.some(linkedAs)) continue;
        // A module with no sources at all scans as pure Swift too, so it reaches
        // emitSourceModule for the podspec linkage check that outranks it.
@@ -846,7 +968,51 @@ index 00a7c98..f08bbb0 100644
        emitted.push({ identity: first, linkedAs: kind, direct, emission: ok });
        if (!hasManifest) {
          Object.assign(records.get(first.podName), { identity: first, linkedAs: kind });
-@@ -851,7 +958,9 @@ function summarizeRecords(
+@@ -700,7 +899,7 @@ function manifestDumper() {
+  * Both passes, over fresh pod records, with the pods in `fallbackPods` linked precompiled
+  * though a buildFromSource pattern matches them.
+  *
+- * @param sourceContext `{ react, outDir, codegenPkgPath, jsiHeadersPkgPath }`: what every
++ * @param sourceContext `{ react, outDir, codegenPkgPath, jsiHeadersPkgPath, libraryPackages }`: what every
+  *   emitted package is generated against, besides what pass 1 decides.
+  */
+ function linkPasses(
+@@ -838,6 +1037,28 @@ function gateProducts(emitted, autolinkConditions, autolinkGate) {
+  *
+  * @param satisfiedDependencies the SwiftPM packages already declared as frameworks.
+  */
++/**
++ * What the resolved dependencies already carry is not uncovered, their subspecs included.
++ * rn-xtool: nor is a React Native library with a Package.swift (`libraryPackages`): the app links
++ * it, whether a record is generated or precompiled (expo-router's `add_dependency(s, "RNScreens")`).
++ */
++function unmappedDependencies(records, satisfiedDependencies, libraryPackages = new Map()) {
++  return records
++    .map((record) => ({
++      packageName: record.identity.packageName,
++      podName: record.identity.podName,
++      pods: unmappedPodDependencies(
++        record.identity.podspec.dependencies,
++        new Set([
++          ...satisfiedDependencies,
++          ...libraryPackages.keys(),
++          ...(record.emission?.spmProductNames ?? []),
++        ])
++      ),
++    }))
++    .filter((entry) => entry.pods.length > 0);
++}
++
+ function summarizeRecords(
+   records,
+   {
+@@ -846,12 +1067,15 @@ function summarizeRecords(
+     refusals,
+     react,
+     satisfiedDependencies,
++    libraryPackages = new Map(),
+     autolinkConditions,
+     gatedCompanions,
      autolinkGate,
    }
  ) {
@@ -857,7 +1023,31 @@ index 00a7c98..f08bbb0 100644
    const refusalsFor = (identity) =>
      [...(refusals.get(identity.moduleRoot)?.values() ?? [])].map((refusalFor) =>
        refusalFor(identity)
-@@ -917,10 +1026,23 @@ function summarizeRecords(
+@@ -864,18 +1088,11 @@ function summarizeRecords(
+       precompiledIncomplete: buildFromSource?.precompiledIncomplete,
+     }));
+ 
+-  // What the resolved dependencies already carry is not uncovered, their subspecs
+-  // included.
+-  const unmappedDeps = [...precompiled, ...emitted]
+-    .map((record) => ({
+-      packageName: record.identity.packageName,
+-      podName: record.identity.podName,
+-      pods: unmappedPodDependencies(
+-        record.identity.podspec.dependencies,
+-        new Set([...satisfiedDependencies, ...(record.emission?.spmProductNames ?? [])])
+-      ),
+-    }))
+-    .filter((entry) => entry.pods.length > 0);
++  const unmappedDeps = unmappedDependencies(
++    [...precompiled, ...emitted],
++    satisfiedDependencies,
++    libraryPackages
++  );
+   const unchecked = uncheckedAutolinkConditions([...precompiled, ...pureSwift], {
+     gatedCompanions,
+     manifestRoots: new Set(
+@@ -917,10 +1134,23 @@ function summarizeRecords(
        emission.partlyProvidedPackages.map((pkg) => ({ packageName, moduleRoot, ...pkg }))
      ),
      xcconfigLinkage,
@@ -882,7 +1072,7 @@ index 00a7c98..f08bbb0 100644
      reactWiredPods: podNames(reactWired),
    };
  }
-@@ -971,7 +1093,11 @@ function macroPluginTool(coreModuleRoot) {
+@@ -971,7 +1201,11 @@ function macroPluginTool(coreModuleRoot) {
        { cause: error }
      );
    }
@@ -895,7 +1085,32 @@ index 00a7c98..f08bbb0 100644
    if (!fs.existsSync(tool)) {
      throw pluginError(
        macroPluginFault(`The Expo Swift macro plugin is missing its executable at ${tool}.`, 'it')
-@@ -1123,6 +1249,9 @@ module.exports = function expoSpmPlugin(context) {
+@@ -1044,13 +1278,15 @@ module.exports = function expoSpmPlugin(context) {
+     : null;
+ 
+   const jsiHeadersPkgPath = linkExpoModulesJSI(identities, outDir, artifactCacheDir, appRoot);
++  // rn-xtool: React Native's libraries a generated package may depend on.
++  const libraryPackages = libraryPackageIndex(autolinking, outputDir);
+   const passOptions = {
+     modules,
+     identities,
+     cacheDir: artifactCacheDir,
+     matchBuildFromSource,
+     dumpManifest: manifestDumper(),
+-    sourceContext: { react, outDir, codegenPkgPath, jsiHeadersPkgPath },
++    sourceContext: { react, outDir, codegenPkgPath, jsiHeadersPkgPath, libraryPackages },
+   };
+   // A pod a buildFromSource pattern matches is linked precompiled when no source route takes
+   // it, as ExpoModulesCore never is. Linking one changes what pass 2 decides — a sibling pod's
+@@ -1112,6 +1348,7 @@ module.exports = function expoSpmPlugin(context) {
+     ...sourceModules,
+     react,
+     satisfiedDependencies,
++    libraryPackages,
+     autolinkConditions,
+     gatedCompanions: indexGatedCompanions(metadata, records),
+     autolinkGate,
+@@ -1123,6 +1360,9 @@ module.exports = function expoSpmPlugin(context) {
    logListed('source via checked-in manifest', summary.manifestPackages);
    logListed('source via direct checked-in manifest', summary.directPackages);
    logListed('source pure-Swift', summary.pureSwiftPods);
@@ -905,7 +1120,7 @@ index 00a7c98..f08bbb0 100644
    logListed('React wired into', summary.reactWiredPods);
    logListed('gated off', summary.gatedOffProducts);
    logListed(
-@@ -1148,6 +1277,9 @@ module.exports = function expoSpmPlugin(context) {
+@@ -1148,6 +1388,9 @@ module.exports = function expoSpmPlugin(context) {
    if (summary.xcconfigLinkage.length > 0) {
      console.warn(renderXcconfigLinkerWarning(summary.xcconfigLinkage));
    }
@@ -915,17 +1130,38 @@ index 00a7c98..f08bbb0 100644
    if (summary.leftOutCompanions.length > 0) {
      console.warn(renderLeftOutCompanionWarning(summary.leftOutCompanions));
    }
-@@ -1245,3 +1377,5 @@ module.exports = function expoSpmPlugin(context) {
+@@ -1245,3 +1488,9 @@ module.exports = function expoSpmPlugin(context) {
  module.exports.macroPluginFlags = macroPluginFlags;
  module.exports.resolvePodIdentities = resolvePodIdentities;
  module.exports.uncoveredPod = uncoveredPod;
 +module.exports.sourceLayout = sourceLayout;
 +module.exports.generatedPackageIndex = generatedPackageIndex;
++module.exports.libraryPackageIndex = libraryPackageIndex;
++module.exports.dependencyPackageIndex = dependencyPackageIndex;
++module.exports.unmappedDependencies = unmappedDependencies;
++module.exports.localDependencies = localDependencies;
 diff --git a/node_modules/expo/scripts/spm/podspec.js b/node_modules/expo/scripts/spm/podspec.js
-index 44117ae..cfa56fd 100644
+index 44117ae..d69091e 100644
 --- a/node_modules/expo/scripts/spm/podspec.js
 +++ b/node_modules/expo/scripts/spm/podspec.js
-@@ -132,6 +132,44 @@ function podspecDependencies(text) {
+@@ -122,16 +122,59 @@ function xcconfigLinkerFlags(text) {
+   return null;
+ }
+ 
+-/** Pod names a podspec depends on, ignoring `test_spec` blocks. Text-only. */
++/**
++ * Pod names a podspec depends on, ignoring `test_spec` blocks. Text-only. rn-xtool: React
++ * Native's `add_dependency(s, "<Pod>", …)` helper declares one too (expo-router → RNScreens).
++ */
+ function podspecDependencies(text) {
+   const deps = [];
+   for (const { text: line } of podspecBodyLines(text)) {
+-    const match = line.match(/\.dependency\s+['"]([^'"]+)['"]/);
++    const match =
++      line.match(/\.dependency\s+['"]([^'"]+)['"]/) ??
++      line.match(/\badd_dependency\s*\(\s*\w+\s*,\s*['"]([^'"]+)['"]/);
+     if (match) deps.push(match[1]);
+   }
    return deps;
  }
  
@@ -970,7 +1206,7 @@ index 44117ae..cfa56fd 100644
  // ---------------------------------------------------------------------------
  // I/O
  // ---------------------------------------------------------------------------
-@@ -216,7 +254,22 @@ function readPodspecFacts({ podName, podspecDir, moduleRoot }) {
+@@ -216,7 +259,22 @@ function readPodspecFacts({ podName, podspecDir, moduleRoot }) {
    const dependencies = new Set(
      podspecsIn(podspecDir).flatMap((file) => podspecDependencies(readText(file) ?? ''))
    );
@@ -994,7 +1230,7 @@ index 44117ae..cfa56fd 100644
  }
  
  module.exports = {
-@@ -226,4 +279,6 @@ module.exports = {
+@@ -226,4 +284,6 @@ module.exports = {
    xcconfigLinkerFlags,
    readPodspecs,
    readPodspecFacts,

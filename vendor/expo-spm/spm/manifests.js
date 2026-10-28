@@ -662,6 +662,7 @@ function pureSwiftManifest({
   packages = [],
   localDeps = [],
 }) {
+  const importerFlags = swiftImporterFlags(localDeps);
   const target = {
     name: product,
     path: srcRel,
@@ -679,9 +680,10 @@ function pureSwiftManifest({
         package: pkg.identity,
         platforms: [],
       })),
-      // rn-xtool: sibling generated packages the podspec depends on.
+      // rn-xtool: sibling generated packages and React Native libraries the podspec depends on.
       ...localDeps.map((dep) => ({ product: dep.name, package: dep.name, platforms: [] })),
     ],
+    ...(importerFlags.length > 0 ? { rawSettings: { swift: importerFlags } } : {}),
   };
   return {
     name: product,
@@ -696,6 +698,20 @@ function pureSwiftManifest({
       ...localDeps.map((dep) => dep.podName ?? dep.name),
     ],
   };
+}
+
+/**
+ * rn-xtool: Swift reads a scaffolded mixed library's Clang module through its umbrella, whose
+ * headers include others by the library's own header search paths; its manifest records them
+ * (`importerPaths`, see plugin.js#libraryPackageIndex), and an importer passes them to Clang.
+ */
+function swiftImporterFlags(localDeps) {
+  return localDeps
+    .filter((dep) => dep.library && dep.importerPaths?.length > 0)
+    .map(
+      (dep) =>
+        `.unsafeFlags([${dep.importerPaths.map((p) => `"-Xcc", "-I${escapeSwiftString(p)}"`).join(', ')}])`
+    );
 }
 
 function escapeSwiftString(value) {
@@ -1218,7 +1234,8 @@ function generatedSourceManifest({
   ...options
 }) {
   const base = pureSwiftManifest(options);
-  const localDeps = options.localDeps ?? [];
+  // rn-xtool: React Native libraries have no `pod-headers` or Swift Build module map of ours.
+  const localDeps = (options.localDeps ?? []).filter((dep) => !dep.library);
   // Directories CocoaPods would put on the header search path: this pod's own `pod-headers`
   // (Swift header, umbrella, header_dir) and each dependency's, and the flat `-Swift.h` directory.
   const usesSwiftHeadersDir = language === 'mixed' || localDeps.length > 0;
@@ -1253,6 +1270,7 @@ function generatedSourceManifest({
           '.unsafeFlags(["-Xcc", "-I" + rnSpmSwiftHeadersDir])',
           ...includeDirs.map((dir) => `.unsafeFlags(["-Xcc", "-I${escapeSwiftString(dir)}"])`),
           ...swiftDepModuleMaps.map((flag) => `.unsafeFlags(["-Xcc", ${flag}])`),
+          ...swiftImporterFlags(options.localDeps ?? []),
         ]
       : [];
   return {
@@ -1295,7 +1313,15 @@ function emitGeneratedSourcePackage(
   const headers = walkSourceTree(srcDir)
     .files.filter((file) => file.endsWith('.h'))
     .sort();
-  const umbrellaHeaders = headers.filter((file) => !isCxxHeader(fs.readFileSync(file, 'utf8')));
+  // rn-xtool: the umbrella leaves out the headers Swift cannot import: C++ ones, and ones that
+  // import the module's own `<Product>-Swift.h` (SDK 57's expo/ios/Swift.h), which Swift writes
+  // only after it has read the umbrella.
+  const escapedProduct = product.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const ownSwiftHeader = new RegExp(`#\\s*import\\s*[<"](?:[^>"]*/)?${escapedProduct}-Swift\\.h[>"]`);
+  const umbrellaHeaders = headers.filter((file) => {
+    const text = fs.readFileSync(file, 'utf8');
+    return !isCxxHeader(text) && !ownSwiftHeader.test(text);
+  });
   const manifest = generatedSourceManifest({
     language,
     hasCxx: sources.hasCxx,

@@ -41,7 +41,7 @@ export type Plugin = {
   macroPluginFlags(coreModuleRoot: string): string[];
 };
 export type EmitContext = { frameworkSearchPath: string; outDir: string; macroFlags: string[] };
-export type LocalDep = { podName: string; name: string; pkgDir: string; hasSwift: boolean };
+export type LocalDep = { podName: string; name: string; pkgDir: string; hasSwift: boolean; library?: boolean };
 export type Emit = (
   o: {
     moduleRoot: string;
@@ -161,4 +161,81 @@ export function emit(
   const dir = fn({ moduleRoot: root, product: pod, language, sources, ...extra }, ctx).ok.packageDep.path;
   const read = (f: string) => readFileSync(path.join(dir, f), "utf8");
   return { dir, read, manifest: read("Package.swift") };
+}
+
+// --- Expo 58's golden: what the shared plugin emits for the expo-application and dev-client fixtures ---
+
+/** expo-application's shape: mixed Swift + Objective-C, with C++ and a guarded header. */
+export const MIXMOD_FILES: Record<string, string> = {
+  "ios/MixModule.swift": "import Foundation\nlet x = MXProfile.self\n",
+  "ios/MixMod/MXProfile.h": "#import <Foundation/Foundation.h>\n@interface MXProfile : NSObject\n@end\n",
+  "ios/MixMod/MXProfile.m": '#import "MXProfile.h"\n#import <MixMod/MixMod-Swift.h>\n@implementation MXProfile\n@end\n',
+  "ios/MixMod/Cxx.h": "#pragma once\n#include <string>\nnamespace mx { int f(); }\n",
+  "ios/MixMod/Cxx.mm": '#import "Cxx.h"\nint mx::f() { return 1; }\n',
+  "ios/MixMod/Guarded.h":
+    "#import <Foundation/Foundation.h>\n#ifdef __cplusplus\nnamespace g {}\n#endif\n@interface MXGuarded : NSObject\n@end\n",
+  "ios/Tests/MixTests.swift": "",
+};
+
+/** expo-dev-launcher's shape: mixed, with a nested header that imports a sibling module. */
+export const LAUNCHER_FILES: Record<string, string> = {
+  "ios/Launcher.swift": "",
+  "ios/EXDevLauncherController.h": "#import <Foundation/Foundation.h>\n",
+  "ios/EXDevLauncherController.m": "#import <EXDevLauncher/EXDevLauncherController.h>\n",
+  "ios/Manifest/EXDevLauncherManifestParser.h": "@import EXManifests;\n",
+};
+
+/** The dev-client chain's sibling generated packages. */
+export const DEV_CLIENT_DEPS: LocalDep[] = [
+  { podName: "EXManifests", name: "EXManifests", pkgDir: "/out/expo-source/EXManifests", hasSwift: true },
+  { podName: "EXJSONUtils", name: "EXJSONUtils", pkgDir: "/out/expo-source/EXJSONUtils", hasSwift: false },
+];
+
+/** Where the golden of `expo58GoldenEmissions` lives. */
+export const EXPO58_GOLDEN = path.join(ROOT, "tests", "fixtures", "expo58-golden");
+
+/**
+ * The `Package.swift` and `umbrella.h` the given copy emits for the expo-application and dev-client
+ * fixtures, by `<case>/<file>`, with the module root and package dir as `<moduleRoot>` and `<pkgDir>`.
+ */
+export function expo58GoldenEmissions(spm: string): Record<string, string> {
+  const classify = loadSpm<Classify>(spm, "classify.js");
+  const cases: { name: string; pod: string; files: Record<string, string>; podspec?: string; language: string; extra?: { headerDir?: string; localDeps?: LocalDep[] } }[] = [
+    { name: "expo-application", pod: "MixMod", files: MIXMOD_FILES, language: "mixed" },
+    {
+      name: "expo-dev-launcher",
+      pod: "EXDevLauncher",
+      files: LAUNCHER_FILES,
+      language: "mixed",
+      extra: { headerDir: "EXDevLauncher", localDeps: DEV_CLIENT_DEPS },
+    },
+    {
+      name: "expo-updates-interface",
+      pod: "EXUpdatesInterface",
+      files: { "ios/A.swift": "" },
+      language: "pure-swift",
+      extra: { localDeps: [DEV_CLIENT_DEPS[0]!] },
+    },
+    {
+      name: "expo-json-utils",
+      pod: "EXJSONUtils",
+      files: {
+        "ios/EXJSONUtils/NSDictionary+EXJSONUtils.h": "#import <Foundation/Foundation.h>\n",
+        "ios/EXJSONUtils/NSDictionary+EXJSONUtils.m": "#import <EXJSONUtils/NSDictionary+EXJSONUtils.h>\n",
+        "ios/Tests/dummy.swift": "",
+      },
+      language: "clang",
+    },
+  ];
+  const out: Record<string, string> = {};
+  for (const c of cases) {
+    const root = moduleFixture(c.pod, c.files);
+    const { dir } = emit(spm, c.pod, root, c.language, classify.scanAppleSources(root), c.extra);
+    for (const file of ["Package.swift", "umbrella.h"]) {
+      const full = path.join(dir, file);
+      if (!existsSync(full)) continue;
+      out[`${c.name}/${file}`] = readFileSync(full, "utf8").replaceAll(dir, "<pkgDir>").replaceAll(root, "<moduleRoot>");
+    }
+  }
+  return out;
 }

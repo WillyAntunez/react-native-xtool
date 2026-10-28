@@ -614,6 +614,98 @@ function generatedPackageIndex(modules, identities, records, outDir) {
   return index;
 }
 
+/** rn-xtool: the line a scaffolded mixed manifest records its Swift importer paths on. */
+const IMPORTER_MARKER_RX = /^\/\/ rn-xtool-swift-importer-paths: (.*)$/m;
+
+/**
+ * rn-xtool: the Swift importer paths the manifest in `pkgDir` records, resolved against it ([]
+ * without the marker). Throws on a marker that is not a JSON array of package-relative paths.
+ */
+function readImporterPaths(pkgDir) {
+  const manifestPath = path.join(pkgDir, 'Package.swift');
+  const marker = IMPORTER_MARKER_RX.exec(fs.readFileSync(manifestPath, 'utf8'))?.[1];
+  if (marker == null) return [];
+  let paths = null;
+  try {
+    paths = JSON.parse(marker);
+  } catch {}
+  const relative = (p) =>
+    typeof p === 'string' && !path.isAbsolute(p) && !p.split(/[\\/]/).includes('..');
+  if (!Array.isArray(paths) || !paths.every(relative)) {
+    throw pluginError({
+      what: `${manifestPath} records its Swift importer paths as ${marker.trim()}, which is not a JSON array of paths inside the package.`,
+      how: "rn-xtool's scaffolder writes that line: remove the library's scaffolded patch if the app has one, reinstall the library and build again so it is scaffolded again, or report it to rn-xtool.",
+    });
+  }
+  return paths.map((p) => `${pkgDir}/${p}`);
+}
+
+/**
+ * rn-xtool: React Native's autolinked libraries with their own Package.swift, by pod name, as a
+ * generated package depends on them (expo-router → RNScreens). Each is declared at the
+ * `<outputDir>/libs/<name>` alias React Native declares it at, so SwiftPM sees one package.
+ * `importerPaths` are the header search paths a scaffolded mixed manifest records for Swift
+ * importers of its umbrella, resolved against the real package directory; they are read on
+ * first use, so only a library some package depends on is read.
+ */
+function libraryPackageIndex(autolinking, outputDir) {
+  const index = new Map();
+  const libsDir = path.join(outputDir, 'libs');
+  const realpath = (p) => {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return null;
+    }
+  };
+  let aliases;
+  try {
+    aliases = fs.readdirSync(libsDir).map((name) => ({ name, real: realpath(path.join(libsDir, name)) }));
+  } catch {
+    return index;
+  }
+  for (const dependency of Object.values(autolinking?.dependencies ?? {})) {
+    const podspecPath = dependency?.platforms?.ios?.podspecPath;
+    const root = dependency?.root != null ? realpath(dependency.root) : null;
+    if (typeof podspecPath !== 'string' || root == null) continue;
+    // The alias points at the root, or at its `ios/` when the manifest is kept there.
+    const alias = aliases.find(({ real }) => real === root || real === path.join(root, 'ios'));
+    if (alias == null || !fs.existsSync(path.join(alias.real, 'Package.swift'))) continue;
+    const podName = path.basename(podspecPath, '.podspec');
+    let importerPaths = null;
+    index.set(podName, {
+      podName,
+      name: alias.name,
+      pkgDir: path.join(libsDir, alias.name),
+      hasSwift: false,
+      library: true,
+      get importerPaths() {
+        return (importerPaths ??= readImporterPaths(alias.real));
+      },
+    });
+  }
+  return index;
+}
+
+/**
+ * rn-xtool: what a pod dependency names, by pod name: the generated packages, and React Native's
+ * libraries with a Package.swift. A generated package wins over a library of the same pod name.
+ */
+function dependencyPackageIndex(generatedPackages, libraryPackages = new Map()) {
+  return new Map([...libraryPackages, ...generatedPackages]);
+}
+
+/**
+ * rn-xtool: the packages a generated package depends on: the generated ones and React Native
+ * libraries (`packages`) its podspec's dependencies name, subspecs by their pod.
+ */
+function localDependencies({ podName, podspec }, packages) {
+  return [...new Set(podspec.dependencies.map((dep) => dep.split('/')[0]))]
+    .filter((dep) => dep !== podName)
+    .map((dep) => packages.get(dep))
+    .filter((dep) => dep != null);
+}
+
 /**
  * Emits the source package of the module whose first pod is `identity`: its checked-in
  * manifest as it stands when that depends on ExpoModulesCoreHeaders (`direct` is then
@@ -660,10 +752,7 @@ function emitSourceModule(
     return { refusal: { reason: 'vendored-sources', vendorSources: sources.vendorSources } };
   }
   const product = generatedModuleName(identity);
-  const localDeps = [...new Set(podspec.dependencies.map((dep) => dep.split('/')[0]))]
-    .filter((dep) => dep !== podName)
-    .map((dep) => generatedPackages.get(dep))
-    .filter((dep) => dep != null);
+  const localDeps = localDependencies(identity, generatedPackages);
   if (layout === 'pure-swift') {
     return emitPureSwiftSourcePackage(
       { moduleRoot, product, iosDeploymentTarget, spmPackages, sources, localDeps },
@@ -708,7 +797,10 @@ function linkSourceModules(modules, identities, records, emitContext, dumpManife
   const linkedAs = (identity) => records.get(identity.podName).linkedAs;
   const manifestProductsByRoot = new Map();
   // rn-xtool: emission order does not matter; every generated package's directory is known.
-  const generatedPackages = generatedPackageIndex(modules, identities, records, emitContext.outDir);
+  const generatedPackages = dependencyPackageIndex(
+    generatedPackageIndex(modules, identities, records, emitContext.outDir),
+    emitContext.libraryPackages
+  );
   for (const mod of modules) {
     const pods = (mod.pods ?? []).map((pod) => identities.get(pod));
     if (!pods.length || pods.every(linkedAs)) continue;
@@ -807,7 +899,7 @@ function manifestDumper() {
  * Both passes, over fresh pod records, with the pods in `fallbackPods` linked precompiled
  * though a buildFromSource pattern matches them.
  *
- * @param sourceContext `{ react, outDir, codegenPkgPath, jsiHeadersPkgPath }`: what every
+ * @param sourceContext `{ react, outDir, codegenPkgPath, jsiHeadersPkgPath, libraryPackages }`: what every
  *   emitted package is generated against, besides what pass 1 decides.
  */
 function linkPasses(
@@ -945,6 +1037,28 @@ function gateProducts(emitted, autolinkConditions, autolinkGate) {
  *
  * @param satisfiedDependencies the SwiftPM packages already declared as frameworks.
  */
+/**
+ * What the resolved dependencies already carry is not uncovered, their subspecs included.
+ * rn-xtool: nor is a React Native library with a Package.swift (`libraryPackages`): the app links
+ * it, whether a record is generated or precompiled (expo-router's `add_dependency(s, "RNScreens")`).
+ */
+function unmappedDependencies(records, satisfiedDependencies, libraryPackages = new Map()) {
+  return records
+    .map((record) => ({
+      packageName: record.identity.packageName,
+      podName: record.identity.podName,
+      pods: unmappedPodDependencies(
+        record.identity.podspec.dependencies,
+        new Set([
+          ...satisfiedDependencies,
+          ...libraryPackages.keys(),
+          ...(record.emission?.spmProductNames ?? []),
+        ])
+      ),
+    }))
+    .filter((entry) => entry.pods.length > 0);
+}
+
 function summarizeRecords(
   records,
   {
@@ -953,6 +1067,7 @@ function summarizeRecords(
     refusals,
     react,
     satisfiedDependencies,
+    libraryPackages = new Map(),
     autolinkConditions,
     gatedCompanions,
     autolinkGate,
@@ -973,18 +1088,11 @@ function summarizeRecords(
       precompiledIncomplete: buildFromSource?.precompiledIncomplete,
     }));
 
-  // What the resolved dependencies already carry is not uncovered, their subspecs
-  // included.
-  const unmappedDeps = [...precompiled, ...emitted]
-    .map((record) => ({
-      packageName: record.identity.packageName,
-      podName: record.identity.podName,
-      pods: unmappedPodDependencies(
-        record.identity.podspec.dependencies,
-        new Set([...satisfiedDependencies, ...(record.emission?.spmProductNames ?? [])])
-      ),
-    }))
-    .filter((entry) => entry.pods.length > 0);
+  const unmappedDeps = unmappedDependencies(
+    [...precompiled, ...emitted],
+    satisfiedDependencies,
+    libraryPackages
+  );
   const unchecked = uncheckedAutolinkConditions([...precompiled, ...pureSwift], {
     gatedCompanions,
     manifestRoots: new Set(
@@ -1172,13 +1280,15 @@ module.exports = function expoSpmPlugin(context) {
     : null;
 
   const jsiHeadersPkgPath = linkExpoModulesJSI(identities, outDir, artifactCacheDir, appRoot);
+  // rn-xtool: React Native's libraries a generated package may depend on.
+  const libraryPackages = libraryPackageIndex(autolinking, outputDir);
   const passOptions = {
     modules,
     identities,
     cacheDir: artifactCacheDir,
     matchBuildFromSource,
     dumpManifest: manifestDumper(),
-    sourceContext: { react, outDir, codegenPkgPath, jsiHeadersPkgPath },
+    sourceContext: { react, outDir, codegenPkgPath, jsiHeadersPkgPath, libraryPackages },
   };
   // A pod a buildFromSource pattern matches is linked precompiled when no source route takes
   // it, as ExpoModulesCore never is. Linking one changes what pass 2 decides — a sibling pod's
@@ -1240,6 +1350,7 @@ module.exports = function expoSpmPlugin(context) {
     ...sourceModules,
     react,
     satisfiedDependencies,
+    libraryPackages,
     autolinkConditions,
     gatedCompanions: indexGatedCompanions(metadata, records),
     autolinkGate,
@@ -1381,3 +1492,7 @@ module.exports.resolvePodIdentities = resolvePodIdentities;
 module.exports.uncoveredPod = uncoveredPod;
 module.exports.sourceLayout = sourceLayout;
 module.exports.generatedPackageIndex = generatedPackageIndex;
+module.exports.libraryPackageIndex = libraryPackageIndex;
+module.exports.dependencyPackageIndex = dependencyPackageIndex;
+module.exports.unmappedDependencies = unmappedDependencies;
+module.exports.localDependencies = localDependencies;

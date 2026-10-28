@@ -151,11 +151,46 @@ Outside the plugin, two more pieces were needed (both in rn-xtool's `patches/` o
   debug-only modules under `#if EXPO_CONFIGURATION_DEBUG`, which CocoaPods defines for the app; rn-xtool's
   app target now defines `EXPO_CONFIGURATION_DEBUG` / `EXPO_CONFIGURATION_RELEASE` per configuration.
 
+## SDK 57 spike: own Swift header, React Native library dependencies (expo-router)
+
+Found while building Expo SDK 57 (`docs/research/expo-57-vendored-plugin-spike.md`); each fix is generic and
+leaves Expo 58's generated packages for the modules above byte-identical (`tests/fixtures/expo58-golden/`).
+
+9. **X3: own `-Swift.h` importers stay out of the umbrella** (`manifests.js#emitGeneratedSourcePackage`). A
+   header that imports the module's own Swift header (`#import <Expo/Expo-Swift.h>` or `"Expo-Swift.h"`, matched
+   by `#\s*import\s*[<"](?:[^>"]*/)?<Product>-Swift\.h[>"]`) is left out of `umbrella.h`. Swift reads the umbrella
+   before it writes that header, so SDK 57's `expo/ios/Swift.h` failed with `'Expo-Swift.h' file not found`.
+   Objective-C still imports the header as before.
+10. **X6b: `add_dependency(s, "<Pod>")`** (`podspec.js#podspecDependencies`). React Native's Ruby helper
+    (`react_native_pods.rb`), which Expo's podspecs also use (expo-router: `add_dependency(s, "RNScreens")`), is
+    read as a pod dependency like `s.dependency` (any receiver, either quote). The plugin also indexes React
+    Native's autolinked libraries that have a Package.swift (`plugin.js#libraryPackageIndex`: pod name from
+    the autolinking `podspecPath`, package at the `<outputDir>/libs/<name>` alias React Native declares it at,
+    so SwiftPM sees one package). A generated package now depends on such a library when its podspec names
+    it: `.package(name: "RNScreens", path: "<outputDir>/libs/RNScreens")` + `.product(...)`. Before,
+    `import RNScreens` in ExpoRouter had no declared dependency. A generated package of the same pod name wins.
+11. **X6c: the importer paths of a scaffolded mixed library** (`manifests.js#swiftImporterFlags`). Swift reads a
+    scaffolded mixed library's Clang module through its umbrella, whose headers include others by the
+    library's own header search paths (`RNSFullWindowOverlay.h` → `RNSReactBaseView.h` in `ios/bridging`).
+    rn-xtool's scaffolder records them in the manifest as
+    `// rn-xtool-swift-importer-paths: <JSON array of package-relative paths>`. A generated package
+    (pure Swift or mixed) that depends on that library adds
+    `.unsafeFlags(["-Xcc", "-I<lib dir>/<p>", …])` to its `swiftSettings`, `<lib dir>` being the real
+    package directory. Without the marker nothing is added. The marker is read only for a library some
+    generated package depends on; one that is not a JSON array of package-relative paths (absolute or `..`
+    entries included) stops the update with an error naming the manifest. A precompiled module's dependency on
+    such a library is not reported as unmapped either: the app links the library. Upstream, React Native would carry these paths in
+    its own contract instead (the plugin context). The App target needs the same flags; that is
+    rn-xtool's side (X6d), not the plugin's.
+
 ## Verified
 
 - Unit tests (`tests/expo-plugin.test.ts`): fixtures for mixed (with ObjC++, a guarded header, a C++ header,
   `Tests/`), pure ObjC, a comment-only `.m` and a blank `.c`, a meta pod, a podspec that declares sources but
   ships none, and an expo-sqlite-shaped `vendor/`.
+  Fixes 9–11 on the 58 copy and the vendored one: an SDK 57 `expo/ios/Swift.h`-shaped header, an
+  expo-router-shaped podspec with `add_dependency(s, "RNScreens")` and a fake RNScreens with and without the
+  marker; the 58 golden for the expo-application and dev-client fixtures is unchanged.
 - Real build (Swift 6.4.1, swiftbuild, Darwin SDK on Linux): an Expo SDK 58 app with expo-notifications
   builds and links; expo-application is emitted as one mixed target, `_OBJC_CLASS_$_EXProvisioningProfile` and
   `ExpoApplication.ApplicationModule` are in the app binary.
@@ -200,11 +235,13 @@ Swift does not reference their own Objective-C, or keep refusing.
   named `<Package>_<Target>.bundle`, while pods look theirs up by the CocoaPods name (`EXDevLauncher.bundle`):
   supporting `resource_bundles` needs that name, not just the files.
 - **Pod dependencies on manifest packages** (e.g. a generated module depending on expo-constants) are not
-  wired; only generated-to-generated dependencies are.
+  wired; only dependencies on generated packages and on React Native libraries with a Package.swift are (fix 10).
 - **expo-sqlite** is refused (`vendored-sources`), not built: it needs a C target over
   `vendor/sqlite3/sqlite3.c` with the podspec's `-DSQLITE_*` cflags (and the same `-Xcc` flags for Swift), and
   the `vendor/sqlcipher` copy left out. Because it ships an `spm.config.json`, the report shows the
   higher-priority `prebuild-available` reason first.
+- **X3 is per header and text-only**: a header that imports one which imports `<Product>-Swift.h` stays in the
+  umbrella (the filter is not transitive), and a commented-out `#import <Product>-Swift.h` excludes its header too.
 - **Meta pod rule**: a podspec without `source_files` and no sources on disk. A podspec that builds its file
   list dynamically without a `*.source_files` line would be taken for one.
 - **Cross-module Swift headers** (expo-dev-launcher imports `EXUpdatesInterface-Swift.h` and
