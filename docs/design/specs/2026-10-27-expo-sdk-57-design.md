@@ -382,11 +382,11 @@ SDK).
 - Shared-patch changes re-patch the Expo reference app `../app` in place (reverse the old patch, apply the new; only `scripts/spm` changes). Accepted: the main checkout's reference-app guard tests fail until this branch merges.
 - gesture-handler 2.32.0's scaffolder gaps count toward the same reanimated/worklets checkpoint.
 - The P1–P5 unit tests live in `tests/vendor-expo-spm.test.ts`; shared fixture helpers move to `tests/support/expoSpm.ts`.
-- Failure mode added: nested expo-modules-jsi (the copy the build resolves from core is not the top-level `node_modules/expo-modules-jsi`, the only copy patch-package patches) — handle (gate error, Task 2): `expo-modules-jsi <installed> resolves from <relative path>, not from the project's top-level node_modules: rn-xtool patches and builds only the top-level copy. Pin expo-modules-jsi to 57.1.3 in package.json and reinstall (npm dedupe may also fix it).`
+- Failure mode added: nested expo-modules-jsi (the copy the build resolves from core is not the top-level `node_modules/expo-modules-jsi`, the only copy patch-package patches) — handle (gate error, Task 2): `expo-modules-jsi <installed> resolves from <relative path>, not from the project's top-level node_modules: rn-xtool patches and builds only the top-level copy. Pin expo-modules-jsi to 57.1.3 in package.json and reinstall; if the copy stays nested, run `npm update expo-modules-jsi` (npm dedupe may also fix it).`
 
 ## Amendment: SDK 58 version drift (2026-10-28)
 
-Evidence: `docs/research/expo-58-drift.md`. Plan: Tasks 18–22.
+Evidence: `docs/research/expo-58-drift.md`. Plan: Tasks 18–23.
 
 **Intent.** A fresh SDK 58 project resolves expo 58.0.21 and react-native 0.88.1, which alpha.2 refuses. `expo@58.0.19`
 alone no longer resolves a working set: it pulls core 58.0.28, which nests jsi 58.0.21. Holding core back builds an app
@@ -429,6 +429,12 @@ This amendment moves SDK 58 to the current set and adds a gate that turns that l
   - G4 runs on every build (SDK 57, SDK 58, bare, hybrid), before staging. It has no bypass flag, so a false positive is
     a release bug. A missing `llvm-nm` is an error that points to `rn-xtool setup`. Symbols are shown mangled.
   - SDK 59 and newer stay ungated (no table), with G4 as their only coherence check.
+- Willy, added 2026-10-28 (Task 23): **rn-xtool fixes library manifests that do not compile on Linux.** The default SDK
+  58 template's reanimated 4.7.1 and worklets 0.13.0 manifests call `CFGetTypeID`, so every new SDK 58 user hit it on
+  the first build; until now it was a manual project patch. The fix keys on content, not version: a table of known
+  non-portable snippets and their portable forms, applied in the `patches` step after patch-package. It is idempotent,
+  makes no partial edits, and its result is byte-identical to the documented patch, so project patches from the old
+  docs keep applying. Failure walk row 10.
 
 **Failure walk** (process hops from the research, §6):
 
@@ -443,3 +449,5 @@ This amendment moves SDK 58 to the current set and adds a gate that turns that l
 | 7 | Launch (dyld on the iPhone) | `Symbol not found`; C++ layout drift; by-name runtime lookups | user, by a crash with no rn-xtool text | **handle** the symbol class by G4; **accept** layout drift and by-name lookups (Willy), mitigated by the exact RN pin, written in the PR and troubleshooting; template and `../app` launches before release (Task 21, manual) |
 | 8 | G4 itself (`llvm-nm` on each framework) | `llvm-nm` missing; a false positive (re-exported symbols, an unusual install name) blocks a working app | user, by the G4 or llvm-nm text | **handle** a missing `llvm-nm` (named error + test); **handle** false positives by building every reference app kind with G4 on (Task 21); **accept** no bypass flag |
 | 9 | alpha.2 users on the 58.0.19 set upgrade rn-xtool | G1 refuses the old set | user, by the G1 text | **handle**: G1's remedy; CHANGELOG and README name the new set (Task 22) |
+| 10 | Library manifests (SwiftPM compiles each library's own `Package.swift` on the Linux host, in `rn-spm`) | The template's react-native-reanimated 4.7.1 and react-native-worklets 0.13.0 call `CFGetTypeID`, which Linux lacks; a variant of the snippet rn-xtool does not know; a project already carries the old docs' patch-package fix | user, by SwiftPM's `cannot find 'CFGetTypeID' in scope`; by a `manifest —` line when rn-xtool fixed it | **handle** (Willy, 2026-10-28): the `patches` step rewrites known snippets by content, not version, after patch-package, idempotent, with tests, persisted patches included (Task 23); **accept** an unknown variant: left untouched, SwiftPM's error stands, and the fix is one new table entry |
+| 10a | Library manifests, after review (Task 23 fix round 1) | A user's own reanimated/worklets patch made after an rn-xtool build carries the rewrite next to other hunks and fails on a machine rn-xtool already fixed; a package linked from outside the project (`npm link`, `file:`, workspaces) would be edited in its source; a read-only `node_modules`; the snippet more than once, in a comment, string or `#if`; CRLF files; a library hoisted to a monorepo root outside the project | user, by `Applying the project's patches/ failed`, a `manifest — skipped` line, a `Could not write …` error, or SwiftPM's CF error | **accept** the user-made patch case, with a troubleshooting entry (reinstall the package, recreate or drop the patch); **handle** links: skipped, never written, one log line; **handle** read-only: a named error with the file and the remedy; **handle** the repeated or guarded snippet: file left untouched, with tests; **handle** CRLF: rewritten with CRLF kept, mixed endings left untouched; **accept** the scan scope (the project's top-level and scoped packages), stated in the docs |

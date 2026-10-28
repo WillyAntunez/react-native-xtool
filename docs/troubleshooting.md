@@ -69,6 +69,20 @@ far with their fixes. Wi‑Fi install problems have their own list in [wifi-inst
 - **"rn-xtool could not patch <package>":** your project has a different version of an Expo package than the one this
   release of rn-xtool patches. The message names the versions: pin the package to the patched version, or report the
   new version in the issue tracker so the patch can be refreshed.
+- **A reanimated or worklets patch fails at `patches` with "Applying the project's patches/ failed":** rn-xtool rewrites
+  these libraries' `Package.swift` in `node_modules` so it compiles on Linux (`manifest — made … portable to Linux`).
+  A patch you made with `npx patch-package react-native-reanimated` (or `react-native-worklets`) after an rn-xtool
+  build includes that rewrite next to your own change. On a machine where rn-xtool already rewrote the file,
+  patch-package then can apply the patch neither forward nor backward. Reinstall the package, for example
+  `rm -rf node_modules/react-native-reanimated && npm install`, and build again. If the patch holds nothing but the
+  `Package.swift` fix, delete it instead: rn-xtool applies that fix itself.
+- **"manifest — skipped <package>: it is a link to <path>; apply the portable manifest in its source":** the package
+  is a symlink out of your project's `node_modules` (`npm link`, a `file:` dependency, a workspace), so rn-xtool does
+  not edit it. Make the change from
+  [upstream/reanimated-worklets-manifest.md](upstream/reanimated-worklets-manifest.md) in that source checkout.
+- **"Could not write node_modules/<package>/Package.swift (EACCES) to make it portable to Linux":** `node_modules` is
+  read-only, often after `sudo npm install`. Make it writable (reinstall without `sudo`), or apply the portable
+  manifest yourself.
 
 ## Expo SDK 57
 

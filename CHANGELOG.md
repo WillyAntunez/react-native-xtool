@@ -27,6 +27,12 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
     clang-only target's module without the headers its podspec leaves out (react-native-screens 4.30's `ios/gamma`).
   - The App target gets the Swift importer paths of every autolinked scaffolded library that records them.
 - The clean-machine harness takes `e2e.sh project --sdk <n>` (template `blank-typescript@sdk-<n>`).
+- The `patches` step makes the libraries' own `Package.swift` files portable to Linux, which fixes the default SDK 58
+  template's first build: react-native-reanimated 4.7.1 and react-native-worklets 0.13.0 use `CFGetTypeID`, which
+  Linux hosts lack. It keys on the snippet, not the version, logs one `manifest —` line per library, and leaves
+  existing project patches for the same fix working. It scans the project's top-level and scoped packages, never
+  edits a package linked from outside the project (it logs a `manifest — skipped` line instead), and stops with a named
+  error when `node_modules` is read-only.
 
 ### Changed
 - An Expo SDK older than 57 now gets `Expo SDK <n> is not supported; rn-xtool supports SDK 57 (expo 57.0.31) and SDK 58

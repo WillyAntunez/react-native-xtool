@@ -45,6 +45,13 @@ file locations.
      the `spm scaffold` podspec reader and `Package.swift` generator, including mixed Swift + Objective-C/C++ targets,
      known CocoaPods dependencies mapped to SwiftPM packages and the Swift importer paths of mixed targets, plus one to
      the per-app header farm ([upstream/react-native-scaffolder.md](upstream/react-native-scaffolder.md)).
+
+   Then, in the same step, rn-xtool makes the libraries' own `Package.swift` files portable to Linux, because SwiftPM
+   compiles them on the host. In each top-level and scoped package of the project's `node_modules`, it rewrites a known
+   Darwin-only snippet by content, not by library version, and prints one `manifest —` line per library it fixed.
+   Packages linked from outside the project are skipped, with a line saying so. Today the snippet is `CFGetTypeID`,
+   checked in react-native-reanimated 4.7.1 and react-native-worklets 0.13.0 and 0.13.1
+   ([upstream/reanimated-worklets-manifest.md](upstream/reanimated-worklets-manifest.md)).
 2. Bare projects on React Native 0.86 or 0.87, and Expo SDK 57 projects, first run the `rn-artifacts` step (downloads
    and, for 0.86, adapts the prebuilt artifacts, see [bare-react-native.md](bare-react-native.md#older-artifacts-086)).
    Then runs React Native 0.88's SwiftPM pipeline (the vendored copy for 0.86 and 0.87, see
