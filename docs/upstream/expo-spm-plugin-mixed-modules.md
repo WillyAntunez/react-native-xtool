@@ -182,6 +182,13 @@ leaves Expo 58's generated packages for the modules above byte-identical (`tests
     such a library is not reported as unmapped either: the app links the library. Upstream, React Native would carry these paths in
     its own contract instead (the plugin context). The App target needs the same flags; that is
     rn-xtool's side (X6d), not the plugin's.
+12. **Every `*Tests` folder is ignored** (`classify.js#IGNORED_DIR_RX`:
+    `/^([A-Za-z0-9]*Tests|Test|__tests__|node_modules|build|\.build)$/`, was `Tests?`). Podspecs exclude
+    `ios/*Tests/**/*` and build those folders only in `test_spec`s; the plugin never reads `exclude_files`, so
+    expo-dev-menu 57's `ios/UITests` (`import XCTest`) was compiled into `EXDevMenu`, and the app aborted at
+    launch with `Library not loaded: @rpath/libXCTestSwiftSupport.dylib`. Such folders are now in the target's
+    `exclude:` like `Tests` (also expo-modules-core 57's `ios/WorkletsTests`). The match is anchored and
+    case-sensitive: `Latest`, `Contests` or `TestsSupport` are still sources; `Foo_Tests` or `Foo-Tests` are too.
 
 ## Verified
 
@@ -190,7 +197,9 @@ leaves Expo 58's generated packages for the modules above byte-identical (`tests
   ships none, and an expo-sqlite-shaped `vendor/`.
   Fixes 9–11 on the 58 copy and the vendored one: an SDK 57 `expo/ios/Swift.h`-shaped header, an
   expo-router-shaped podspec with `add_dependency(s, "RNScreens")` and a fake RNScreens with and without the
-  marker; the 58 golden for the expo-application and dev-client fixtures is unchanged.
+  marker; the 58 golden for the expo-application and dev-client fixtures is unchanged. Fix 12: `UITests` and
+  `WorkletsTests` (holding a `.m` and a `.mm` that would make the module mixed) and a nested `SnapshotTests` are
+  excluded; `Latest`, `Contests`, `TestsSupport` and `UITest` are still compiled.
 - Real build (Swift 6.4.1, swiftbuild, Darwin SDK on Linux): an Expo SDK 58 app with expo-notifications
   builds and links; expo-application is emitted as one mixed target, `_OBJC_CLASS_$_EXProvisioningProfile` and
   `ExpoApplication.ApplicationModule` are in the app binary.

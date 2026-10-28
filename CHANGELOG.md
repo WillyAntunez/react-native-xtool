@@ -39,6 +39,11 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   the `patches` step warns about persisted scaffold patches written by revision 1 and says which file to delete.
   Generated manifests of SDK 58 and bare apps change only where one of the fixes above applies.
 
+### Fixed
+- Expo's plugin skips every `*Tests` folder of a module, as podspecs do (`ios/*Tests/**/*`), not only `Tests`: SDK 57's
+  expo-dev-menu compiled its `UITests` XCTest helpers into the app, which then closed at launch.
+- SDK 57's expo-dev-launcher `Unsafe` subspec now builds, with its own compiler flags (vendored edit P6).
+
 ## [0.1.0-alpha.2] - 2026-10-27
 
 ### Added

@@ -14,7 +14,9 @@ const path = require('path');
 const CORE_REACT_PRODUCTS = new Set(['ExpoModulesCore', 'ExpoModulesJSI', 'ExpoModulesWorklets']);
 
 // Directories classification never looks into: tests, vendored deps, build output.
-const IGNORED_DIR_RX = /^(Tests?|__tests__|node_modules|build|\.build)$/;
+// rn-xtool: any `*Tests` folder (UITests, WorkletsTests...), as podspecs exclude 'ios/*Tests/**/*'
+// and build them only in test_specs; compiled in, their XCTest imports abort the app at launch.
+const IGNORED_DIR_RX = /^([A-Za-z0-9]*Tests|Test|__tests__|node_modules|build|\.build)$/;
 
 // Where a module keeps its Apple sources, in the order they are looked for.
 const APPLE_SOURCE_DIRS = ['ios', 'apple'];

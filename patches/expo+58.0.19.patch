@@ -1,8 +1,19 @@
 diff --git a/node_modules/expo/scripts/spm/classify.js b/node_modules/expo/scripts/spm/classify.js
-index 8193364..f3d0f85 100644
+index 8193364..1640d35 100644
 --- a/node_modules/expo/scripts/spm/classify.js
 +++ b/node_modules/expo/scripts/spm/classify.js
-@@ -104,6 +104,65 @@ function walkSourceTree(dir) {
+@@ -14,7 +14,9 @@ const path = require('path');
+ const CORE_REACT_PRODUCTS = new Set(['ExpoModulesCore', 'ExpoModulesJSI', 'ExpoModulesWorklets']);
+ 
+ // Directories classification never looks into: tests, vendored deps, build output.
+-const IGNORED_DIR_RX = /^(Tests?|__tests__|node_modules|build|\.build)$/;
++// rn-xtool: any `*Tests` folder (UITests, WorkletsTests...), as podspecs exclude 'ios/*Tests/**/*'
++// and build them only in test_specs; compiled in, their XCTest imports abort the app at launch.
++const IGNORED_DIR_RX = /^([A-Za-z0-9]*Tests|Test|__tests__|node_modules|build|\.build)$/;
+ 
+ // Where a module keeps its Apple sources, in the order they are looked for.
+ const APPLE_SOURCE_DIRS = ['ios', 'apple'];
+@@ -104,6 +106,65 @@ function walkSourceTree(dir) {
  
  const REACT_SCANNED_RX = /\.(swift|m|mm|c|h|hpp|cpp|cc)$/;
  const NON_SWIFT_SOURCE_RX = /\.(m|mm|c|cpp|cc)$/;
@@ -68,7 +79,7 @@ index 8193364..f3d0f85 100644
  
  function fileImportsReact(file) {
    try {
-@@ -126,16 +185,40 @@ function scanAppleSources(moduleRoot) {
+@@ -126,16 +187,40 @@ function scanAppleSources(moduleRoot) {
    let pureSwift = true;
    let importsReact = false;
    let ignoredDirs = [];
@@ -111,7 +122,7 @@ index 8193364..f3d0f85 100644
  }
  
  /**
-@@ -159,4 +242,7 @@ module.exports = {
+@@ -159,4 +244,7 @@ module.exports = {
    findModuleRoot,
    moduleNeedsReact,
    scanAppleSources,

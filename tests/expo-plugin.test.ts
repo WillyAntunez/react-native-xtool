@@ -590,6 +590,41 @@ describe.skipIf(shared58 === undefined).each([
       { packageName: "expo-router", podName: "ExpoRouter", pods: ["RNScreens"] },
     ]);
   });
+
+  // expo-dev-menu 57 ships XCTest helpers in ios/UITests (its podspec excludes 'ios/*Tests/**/*');
+  // compiled into the app, they make it load libXCTestSwiftSupport.dylib, which aborts at launch.
+  it("skips every *Tests folder, as CocoaPods' ios/*Tests/**/* does", () => {
+    const tested = moduleFixture("EXDevMenu", {
+      "ios/DevMenu.swift": "",
+      "ios/UITests/DevMenuLooper.swift": "import XCTest\n",
+      "ios/UITests/MockedBridges.m": "int mocked(void) { return 1; }\n",
+      "ios/WorkletsTests/Worklets.mm": "int worklets() { return 1; }\n",
+      "ios/Views/SnapshotTests/Snapshot.swift": "import XCTest\n",
+      "ios/Tests/T.swift": "import XCTest\n",
+      "ios/Test/T.swift": "import XCTest\n",
+    });
+    const { sources, layout } = layoutOf(spm, "EXDevMenu", tested);
+    expect(sources.ignoredDirs).toEqual(["Test", "Tests", "UITests", "Views/SnapshotTests", "WorkletsTests"]);
+    expect(sources).toMatchObject({ hasClang: false, hasCxx: false });
+    expect(layout).toBe("pure-swift");
+    const exclude = 'exclude: ["Test", "Tests", "UITests", "Views/SnapshotTests", "WorkletsTests"]';
+    expect(emit(spm, "EXDevMenu", tested, "pure-swift", sources).manifest).toContain(exclude);
+    expect(emit(spm, "EXDevMenu", tested, "mixed", sources).manifest).toContain(exclude);
+
+    // Anchored, case-sensitive and plural: these are sources.
+    const plain = moduleFixture("Contest", {
+      "ios/Contest.swift": "",
+      "ios/Latest/Latest.m": "int latest(void) { return 1; }\n",
+      "ios/Contests/Contests.mm": "int contests() { return 1; }\n",
+      "ios/TestsSupport/Support.swift": "",
+      "ios/UITest/Helper.swift": "",
+    });
+    const scanned = layoutOf(spm, "Contest", plain);
+    expect(scanned.sources.ignoredDirs).toEqual([]);
+    expect(scanned.sources).toMatchObject({ hasClang: true, hasCxx: true });
+    expect(scanned.layout).toBe("mixed");
+    expect(emit(spm, "Contest", plain, "mixed", scanned.sources).manifest).not.toContain("exclude:");
+  });
 });
 
 describe.skipIf(shared58 === undefined)("Expo 58 golden", () => {

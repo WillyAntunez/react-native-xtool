@@ -45,8 +45,9 @@ of its own. SDK 58 and newer keep using the plugin installed in the app.
          checked against the files in it.
        - Not split, its files built as before P6 (in the module's target without the flags, or not
          at all outside the source directory): a directory with Swift, without C-family sources,
-         equal to or outside the source directory, or inside an ignored one (`Tests`); a subspec
-         whose target name an earlier subspec already took (`Foo-Bar` and `Foo_Bar`).
+         equal to or outside the source directory, or inside an ignored one (`Tests`, `UITests`, any
+         `*Tests`); a subspec whose target name an earlier subspec already took (`Foo-Bar` and
+         `Foo_Bar`).
        - Overlapping directories, in podspec order: a subspec whose directory is inside an earlier
          subspec's is not split, and its files are compiled in the outer subspec's target with the
          outer subspec's flags. A subspec whose directory contains an earlier subspec's is not split
