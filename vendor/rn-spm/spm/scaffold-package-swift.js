@@ -119,16 +119,21 @@ const SCAFFOLDER_VERSION_LINE_RE = /^\/\/ AUTO-SCAFFOLDED-VERSION: (\d+)$/m;
 // older revision) or with a lower number is regenerated. Revision 2: own
 // `-Swift.h` importers out of the Swift umbrella, `#{package['version']}`
 // evaluated, header_mappings_dir under header_dir, and the Swift importer
-// paths marker (IMPORTER_PATHS_MARKER).
-const RN_XTOOL_SCAFFOLD_REVISION = 2;
+// paths marker (IMPORTER_PATHS_MARKER). Revision 3: that marker on clang-only
+// targets too.
+const RN_XTOOL_SCAFFOLD_REVISION = 3;
 const RN_XTOOL_SCAFFOLD_REVISION_RE = /^\/\/ rn-xtool-scaffold-revision: (\d+)$/m;
 
-// A Swift module built with a bridging header makes every Swift importer
-// re-read that header, so the importer needs the header search paths the
-// header's own includes resolve with. A mixed manifest records them, as a JSON
-// array of package-relative paths in the manifest's order, on this line right
-// after the revision line; rn-xtool passes them to Swift importers as `-Xcc -I`.
-// Paths that leave the package (absolute, or with a `..` segment) are left out.
+// An importer (Swift, or a Clang module) builds the target's module from its
+// public headers with only the public headers path on its search path, so a
+// header that includes another by one of the target's own header search paths
+// fails there: a mixed target's bridging header, or screens 4.30's
+// ios/RNSConvert.h with "RNSDefines.h" from ios/utils. The manifest records
+// those paths, as a JSON array of package-relative paths in the manifest's
+// order, on this line right after the revision line; rn-xtool passes them to
+// Swift importers as `-Xcc -I`. Every mixed manifest has the line, and a
+// clang-only one when it searches beyond its public headers path. Paths that
+// leave the package (absolute, or with a `..` segment) are left out.
 const IMPORTER_PATHS_MARKER = '// rn-xtool-swift-importer-paths: ';
 
 // CocoaPods pods (not React Native / Expo modules, not autolinked siblings) whose
@@ -1389,13 +1394,17 @@ let rnSpmBridgingHeader = Context.packageDirectory + "/${mixed.bridgingHeader}"
     mixed != null
       ? `\n            swiftSettings: [.unsafeFlags(["-import-objc-header", rnSpmBridgingHeader])],`
       : '';
+  const importerPaths = spec.headerSearchPaths.filter(
+    p => !path.posix.isAbsolute(p) && !p.split('/').includes('..'),
+  );
+  // SwiftPM's default publicHeadersPath is `include`.
+  const publicHeaders = spec.publicHeadersPath ?? 'include';
+  const pureSwift =
+    spec.sources.length > 0 && spec.sources.every(isSwiftSource);
   const importerPathsLine =
-    mixed != null
-      ? `\n${IMPORTER_PATHS_MARKER}${JSON.stringify(
-          spec.headerSearchPaths.filter(
-            p => !path.posix.isAbsolute(p) && !p.split('/').includes('..'),
-          ),
-        )}`
+    mixed != null ||
+    (!pureSwift && importerPaths.some(p => p !== publicHeaders))
+      ? `\n${IMPORTER_PATHS_MARKER}${JSON.stringify(importerPaths)}`
       : '';
 
   return `${toolsVersionLine}

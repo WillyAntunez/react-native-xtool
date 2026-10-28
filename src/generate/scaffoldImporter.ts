@@ -1,7 +1,10 @@
 import { readdir, readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 
-/** The line rn-xtool's scaffolder writes in a mixed manifest: the Swift importer paths, package-relative, as JSON. */
+/**
+ * The line rn-xtool's scaffolder writes in a mixed manifest, and in a clang-only one that searches beyond its public
+ * headers path: the Swift importer paths, package-relative, as JSON.
+ */
 export const IMPORTER_MARKER = "// rn-xtool-swift-importer-paths: ";
 
 const MARKER_RX = /^\/\/ rn-xtool-swift-importer-paths: (.*)$/m;
@@ -10,10 +13,10 @@ const packageRelative = (p: unknown): p is string =>
   typeof p === "string" && !isAbsolute(p) && !p.split(/[\\/]/).includes("..");
 
 /**
- * The header search paths every scaffolded mixed library records for Swift importers of its umbrella (screens'
- * RNSReactBaseView.h needs `ios/bridging`), so the App's Swift can import it too. Libraries are read at React
- * Native's `<autolinkingDir>/libs/<name>` aliases and their paths resolved against the real library directory;
- * de-duplicated, in lib-name then marker order. Empty without libs/ or without a marker.
+ * The header search paths every scaffolded library with the marker records for Swift importers of its module (screens
+ * 4.26's RNSReactBaseView.h needs `ios/bridging`, 4.30's RNSConvert.h `ios/utils`), so the App's Swift can import it
+ * too. Libraries are read at React Native's `<autolinkingDir>/libs/<name>` aliases and their paths resolved against the
+ * real library directory; de-duplicated, in lib-name then marker order. Empty without libs/ or without a marker.
  */
 export async function scaffoldedImporterPaths(autolinkingDir: string): Promise<string[]> {
   const libsDir = join(autolinkingDir, "libs");

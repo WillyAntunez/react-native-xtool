@@ -26,7 +26,7 @@ export interface AppTargetInputs {
   cxxStandard?: string;
   /** Where Swift Build writes `App-Swift.h` (see `swiftHeadersDir`), for Objective-C sources. */
   swiftHeadersDir: string;
-  /** Absolute; the autolinked scaffolded mixed libraries' Swift importer paths (see `scaffoldedImporterPaths`). */
+  /** Absolute; the Swift importer paths of the autolinked scaffolded libraries (see `scaffoldedImporterPaths`). */
   importerPaths?: string[];
 }
 
@@ -93,7 +93,7 @@ function appSwiftSettings(app: AppTargetInputs): string {
   return settingLines([flags(["-import-objc-header", app.bridgingHeader, ...clang.flatMap((f) => ["-Xcc", f])])]);
 }
 
-/** Swift re-reads a scaffolded mixed library's umbrella in every importer, the App included: give it what that needs. */
+/** Swift builds a scaffolded library's module from its headers in each importer, the App too: give it what it needs. */
 function importerSwiftSettings(app: AppTargetInputs): string {
   const paths = app.importerPaths ?? [];
   return paths.length ? settingLines([flags(paths.flatMap((p) => ["-Xcc", `-I${p}`]))]) : "";

@@ -22,9 +22,9 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   - React Native's scaffolder (`patches/react-native+0.88.0.patch` and `vendor/rn-spm/`, fixes 14 to 17 in
     `docs/upstream/react-native-scaffolder.md`): no own `-Swift.h` in the Swift umbrella, `#{package['version']}` in
     flags and defines, subspec `header_mappings_dir` under `header_dir`, and the Swift importer paths recorded in
-    each mixed manifest (found on react-native-reanimated 4.5, react-native-worklets 0.10 and react-native-screens
-    4.26).
-  - The App target gets the Swift importer paths of every autolinked scaffolded mixed library.
+    each mixed manifest, and in each clang-only manifest whose header search paths go beyond its public headers path
+    (found on react-native-reanimated 4.5, react-native-worklets 0.10 and react-native-screens 4.26 and 4.30).
+  - The App target gets the Swift importer paths of every autolinked scaffolded library that records them.
 - The clean-machine harness takes `e2e.sh project --sdk <n>` (template `blank-typescript@sdk-<n>`).
 
 ### Changed
@@ -35,8 +35,9 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   names a scene delegate.
 - When several bundled patches name one package, the one for the installed version is staged, else the highest
   version (which keeps SDK 58's "pin" message).
-- The scaffolder revision is now 2: scaffolded mixed manifests carry a `// rn-xtool-swift-importer-paths:` line, and
-  the `patches` step warns about persisted scaffold patches written by revision 1 and says which file to delete.
+- The scaffolder revision is now 3: scaffolded mixed manifests, and clang-only ones whose header search paths go beyond
+  their public headers path, carry a `// rn-xtool-swift-importer-paths:` line, and the `patches` step warns about
+  persisted scaffold patches written by an older revision and says which file to delete.
   Generated manifests of SDK 58 and bare apps change only where one of the fixes above applies.
 
 ### Fixed

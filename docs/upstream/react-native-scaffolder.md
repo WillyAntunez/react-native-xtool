@@ -525,12 +525,22 @@ failed with `'RNSReactBaseView.h' file not found` through the scaffolded RNScree
 Fix: every scaffolded mixed manifest records them on one line right after the revision line:
 `// rn-xtool-swift-importer-paths: <JSON array>`, the target's header search paths in the manifest's order,
 package-relative (paths that leave the package, absolute or with a `..` segment, are left out). For example
-`[…,"ios","ios/bridging",…,".","include","rn-spm-swift"]`. Pure-Swift and clang-only manifests carry no marker.
+`[…,"ios","ios/bridging",…,".","include","rn-spm-swift"]`. Pure-Swift manifests carry no marker.
 rn-xtool's Expo plugin (X6c) passes them as `-Xcc -I<package>/<path>` to the Expo packages that depend on the
 library, and the app target gets them the same way (X6d). Fixes 14 to 17 come with `RN_XTOOL_SCAFFOLD_REVISION` 2, so
-revision-1 scaffolds are regenerated. On the eight libraries the reference app persists in `patches/`, revision 2
-changes only the revision line, and on the one mixed manifest (react-native-pager-view 9.0.7) also adds the importer
-line (golden in `tests/fixtures/scaffold-golden/`, captured with revision 1).
+revision-1 scaffolds are regenerated.
+
+A clang-only target has the same problem without a bridging header: an importer builds its module from the public
+headers with only `publicHeadersPath` on the search path. react-native-screens 4.30 has no Swift file, so it is
+scaffolded clang-only; its `ios/RNSConvert.h` (under `publicHeadersPath: "ios"`) imports `"RNSDefines.h"`, which is in
+`ios/utils`, and expo-router failed with `'RNSDefines.h' file not found` while building module `RNScreens`. So a
+clang-only manifest also carries the marker, with the same list, whenever one of its header search paths is not its
+`publicHeadersPath` (SwiftPM's default `include` when it has none). This comes with `RN_XTOOL_SCAFFOLD_REVISION` 3, so
+revision-2 clang-only scaffolds, which lack the marker, are regenerated. On the eight libraries the reference app
+persists in `patches/`, revision 3 changes only the revision line and adds the importer line to every manifest: the
+mixed one (react-native-pager-view 9.0.7) and the five clang-only ones, whose search paths all include at least `.`
+(golden in `tests/fixtures/scaffold-golden/`; react-native-reanimated and react-native-worklets ship their own
+manifests and are not scaffolded).
 
 ## Known limitation (deferred): pure-Swift packages importing a mixed Expo module
 
@@ -548,6 +558,6 @@ every generated or scaffolded Swift target that depends on a mixed module the sa
 fixes against fixtures (skipped when the reference app is not present; set `RN_XTOOL_REF_APP` to point at it). It also
 asserts that each hunk is present in the installed RN files. Fixes 14 to 17 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
 against podspec fixtures from the SDK 57 pins in `tests/fixtures/podspecs/` (worklets 0.10.1, reanimated 4.5.1,
-screens 4.26.2, gesture-handler 2.32.0). A golden test re-scaffolds the reference app's libraries and compares them
+screens 4.26.2, gesture-handler 2.32.0) and from screens 4.30.1 (the clang-only importer paths). A golden test re-scaffolds the reference app's libraries and compares them
 with `tests/fixtures/scaffold-golden/`. Upstream, equivalent tests belong in
 RN's own `__tests__` next to `read-podspec` and `scaffold-package-swift`.

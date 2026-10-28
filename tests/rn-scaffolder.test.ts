@@ -104,7 +104,7 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
     it("the scaffolder has the fixes 14–17 hunks", () => {
       expect(src("read-podspec.js")).toContain("function resolvePackageVersion");
       const f = src("scaffold-package-swift.js");
-      expect(f).toContain("RN_XTOOL_SCAFFOLD_REVISION = 2");
+      expect(f).toContain("RN_XTOOL_SCAFFOLD_REVISION = 3");
       expect(f).toContain("rn-xtool-swift-importer-paths");
       expect(f).toContain("function importsOwnSwiftHeader");
     });
@@ -1027,7 +1027,7 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
 
       it("emits the rn-xtool-scaffold-revision marker next to AUTO-SCAFFOLDED-VERSION", () => {
         const pkg = readFileSync(path.join(fresh(), "Package.swift"), "utf8");
-        expect(pkg).toMatch(/^\/\/ AUTO-SCAFFOLDED-VERSION: \d+\n\/\/ rn-xtool-scaffold-revision: 2$/m);
+        expect(pkg).toMatch(/^\/\/ AUTO-SCAFFOLDED-VERSION: \d+\n\/\/ rn-xtool-scaffold-revision: 3$/m);
       });
 
       it("keeps a scaffold that carries the current marker", () => {
@@ -1040,14 +1040,14 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
         writeFileSync(file, readFileSync(file, "utf8").replace(/^\/\/ rn-xtool-scaffold-revision: \d+\n/m, "").replace("exact:", "from:"));
         expect(scaffoldAgain(root)).toBe("written");
         const pkg = readFileSync(file, "utf8");
-        expect(pkg).toContain("rn-xtool-scaffold-revision: 2");
+        expect(pkg).toContain("rn-xtool-scaffold-revision: 3");
         expect(pkg).toContain('exact: "1.5.0"');
       });
 
       it("regenerates a scaffold whose marker is lower than the current revision", () => {
         const root = fresh();
         const file = path.join(root, "Package.swift");
-        writeFileSync(file, readFileSync(file, "utf8").replace("revision: 2", "revision: 1"));
+        writeFileSync(file, readFileSync(file, "utf8").replace("revision: 3", "revision: 2"));
         expect(scaffoldAgain(root)).toBe("written");
       });
     });
@@ -1076,7 +1076,7 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
 
 // Fixes 14–17 (React Native 0.88.0 patch), exercised on the vendored copy, so they never skip.
 // The podspec fixtures are the SDK 57 pins: worklets 0.10.1, reanimated 4.5.1, screens 4.26.2 and
-// gesture-handler 2.32.0.
+// gesture-handler 2.32.0, plus screens 4.30.1, which has no Swift (a clang-only target).
 describe("scaffolder fixes 14–17 (vendor/rn-spm)", () => {
   const req = createRequire(import.meta.url);
   const load = <T>(f: string) => req(path.join(VENDORED_RN_SPM, f)) as T;
@@ -1117,7 +1117,7 @@ describe("scaffolder fixes 14–17 (vendor/rn-spm)", () => {
   const defineOf = (pkg: string, name: string) => pkg.match(new RegExp(`\\.define\\("${name}", to: "([^"]*)"\\)`))?.[1];
 
   it.skipIf(!GOLDEN_LIBS.every((l) => existsSync(path.join(APP, "node_modules", l))))(
-    "revision 2 changes only the revision and importer lines",
+    "scaffolds the reference app's libraries as the golden",
     () => {
       const golden = readGolden();
       const now = scaffoldLibraries(
@@ -1127,23 +1127,13 @@ describe("scaffolder fixes 14–17 (vendor/rn-spm)", () => {
       expect(now.statuses).toEqual(golden.statuses);
       const manifests = Object.keys(now.files).filter((k) => /\/Package(@swift-[\d.]+)?\.swift$/.test(k));
       expect(manifests.length).toBeGreaterThan(0);
-      for (const k of manifests) {
-        const text = now.files[k]!;
-        expect(text, k).toMatch(/^\/\/ rn-xtool-scaffold-revision: 2$/m);
-        // A mixed manifest (pager-view) gains the importer line right after the revision line.
-        const mixed = /^\/\/ swift-tools-version: 6\.(4;\(experimentalMultiLang\)|5)\n/.test(text);
-        if (mixed) expect(text, k).toMatch(/^\/\/ rn-xtool-scaffold-revision: 2\n\/\/ rn-xtool-swift-importer-paths: \[.+\]$/m);
-        else expect(text, k).not.toMatch(IMPORTER);
-      }
       expect(manifests.some((k) => k.startsWith("react-native-pager-view/"))).toBe(true);
-      expect(now.files["react-native-pager-view/Package.swift"]).toMatch(IMPORTER);
-      const asRevision1 = Object.fromEntries(
-        Object.entries(now.files).map(([k, text]) => [
-          k,
-          text.replace(/^\/\/ rn-xtool-scaffold-revision: 2$/m, "// rn-xtool-scaffold-revision: 1").replace(/^\/\/ rn-xtool-swift-importer-paths: .*\n/m, ""),
-        ]),
-      );
-      expect(asRevision1).toEqual(golden.files);
+      // Mixed (pager-view) or clang-only, each of these targets searches beyond its public headers path, so each
+      // manifest records its importer paths right after the revision line.
+      for (const k of manifests) {
+        expect(now.files[k], k).toMatch(/^\/\/ rn-xtool-scaffold-revision: 3\n\/\/ rn-xtool-swift-importer-paths: \[.+\]$/m);
+      }
+      expect(now.files).toEqual(golden.files);
     },
   );
 
@@ -1235,20 +1225,47 @@ describe("scaffolder fixes 14–17 (vendor/rn-spm)", () => {
     expect(readFileSync(path.join(root, "include/main/B.h"), "utf8")).toContain('#import "../../other/B.h"');
   });
 
+  /** The manifest's own header search paths, in its order. */
+  const searchPaths = (pkg: string) =>
+    [...pkg.split("\n").find((l) => l.trim().startsWith("cSettings:"))!.matchAll(/\.headerSearchPath\("([^"]*)"\)/g)].map((m) => m[1]);
+
   it("17: records the Swift importer paths", () => {
     for (const manifest of ["Package.swift", "Package@swift-6.5.swift"]) {
       const pkg = file(`react-native-screens/${manifest}`);
-      expect(pkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 2\n\/\/ rn-xtool-swift-importer-paths: \[.*\]$/m);
+      expect(pkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 3\n\/\/ rn-xtool-swift-importer-paths: \[.*\]$/m);
       const paths = JSON.parse(pkg.match(IMPORTER)![1]!) as string[];
       expect(paths).toContain(".");
       expect(paths).toContain("ios/bridging");
-      // The manifest's own header search paths, in its order.
-      const hsp = [...pkg.split("\n").find((l) => l.trim().startsWith("cSettings:"))!.matchAll(/\.headerSearchPath\("([^"]*)"\)/g)].map((m) => m[1]);
-      expect(paths).toEqual(hsp);
+      expect(paths).toEqual(searchPaths(pkg));
     }
+  });
+
+  it("17: records them for a clang-only target whose headers search beyond its public headers (screens 4.30.1)", () => {
+    // No .swift file: one Objective-C target. ios/RNSConvert.h imports "RNSDefines.h" from ios/utils.
+    const { files } = scaffoldLibraries(VENDORED_RN_SPM, { "react-native-screens": fixture("RNScreens-4.30.1") });
+    const pkg = files["react-native-screens/Package.swift"]!;
+    expect(pkg.split("\n")[0]).toBe("// swift-tools-version: 6.0");
+    expect(files["react-native-screens/Package@swift-6.5.swift"]).toBeUndefined();
+    expect(pkg).toContain('publicHeadersPath: "ios",');
+    expect(pkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 3\n\/\/ rn-xtool-swift-importer-paths: \[.*\]$/m);
+    const paths = JSON.parse(pkg.match(IMPORTER)![1]!) as string[];
+    expect(paths).toContain("ios/utils");
+    expect(paths).toEqual(searchPaths(pkg));
+    // The SDK 57 pins' clang-only targets too.
     for (const lib of ["react-native-worklets", "react-native-reanimated", "react-native-gesture-handler"]) {
-      expect(file(`${lib}/Package.swift`)).not.toMatch(IMPORTER);
+      const text = file(`${lib}/Package.swift`);
+      expect(JSON.parse(text.match(IMPORTER)![1]!), lib).toEqual(searchPaths(text));
     }
+  });
+
+  it("17: records none for a clang-only target that searches only its public headers, nor for pure Swift", () => {
+    const clang = scaffoldOne(lib({ "ios/Foo.h": "", "ios/Foo.c": "" }, '  s.source_files = "ios/**/*.{h,c}"'));
+    expect(clang.pkg).toContain('publicHeadersPath: "ios",');
+    expect(searchPaths(clang.pkg)).toEqual(["ios"]);
+    expect(clang.pkg).not.toMatch(IMPORTER);
+    const swift = scaffoldOne(lib({ "ios/Foo.swift": "import Foundation\n" }, '  s.source_files = "ios/**/*.swift"'));
+    expect(swift.status).toBe("written");
+    expect(swift.pkg).not.toMatch(IMPORTER);
   });
 
   it("17: leaves search paths outside the package out of the marker", () => {

@@ -1,7 +1,8 @@
 // swift-tools-version: 6.0
 // AUTO-SCAFFOLDED by react-native spm scaffold — safe to edit & commit via patch-package.
 // AUTO-SCAFFOLDED-VERSION: 20
-// rn-xtool-scaffold-revision: 1
+// rn-xtool-scaffold-revision: 3
+// rn-xtool-swift-importer-paths: ["common/cpp","apple/Brushes","apple/Elements","apple/Filters/MetalCI","apple/Filters","apple","apple/Shapes","apple/Text","apple/Utils","apple/ViewManagers","common/cpp/react/renderer/components/rnsvg",".","include"]
 // Cache slot: 0.86.3/dual-flavor
 // Edit the contents below if needed and re-run `npx patch-package <dep-name>`
 // to persist across `npm install`. To regenerate from the podspec, remove

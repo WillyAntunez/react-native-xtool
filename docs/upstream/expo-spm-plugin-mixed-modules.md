@@ -172,6 +172,7 @@ leaves Expo 58's generated packages for the modules above byte-identical (`tests
 11. **X6c: the importer paths of a scaffolded mixed library** (`manifests.js#swiftImporterFlags`). Swift reads a
     scaffolded mixed library's Clang module through its umbrella, whose headers include others by the
     library's own header search paths (`RNSFullWindowOverlay.h` → `RNSReactBaseView.h` in `ios/bridging`).
+    A clang-only library can need them too (screens 4.30: `RNSConvert.h` → `RNSDefines.h` in `ios/utils`).
     rn-xtool's scaffolder records them in the manifest as
     `// rn-xtool-swift-importer-paths: <JSON array of package-relative paths>`. A generated package
     (pure Swift or mixed) that depends on that library adds

@@ -163,10 +163,11 @@ patch above is what makes that scaffolder work for real-world podspecs.
   building; the package is simply re-scaffolded after the next fresh install.
 - Mapped external dependencies (for example SwiftUIIntrospect, pinned to an exact version) are fetched from GitHub on
   the first clean build; offline builds with `rnArtifactsDir` need them already cached in `ios-xtool/.build`.
-- Swift code that imports a scaffolded mixed library (the App, or an Expo module such as expo-router importing
-  RNScreens) re-reads that library's headers, so it needs the library's header search paths. The scaffolder records
-  them in the manifest (`// rn-xtool-swift-importer-paths: [...]`), and rn-xtool passes them as `-Xcc -I...` to the App
-  target and to the Expo packages that depend on the library.
+- Swift code that imports a scaffolded library (the App, or an Expo module such as expo-router importing RNScreens)
+  builds that library's module from its headers, so it needs the library's header search paths. The scaffolder records
+  them in the manifest of every mixed library, and of a clang-only one whose search paths go beyond its public
+  headers (`// rn-xtool-swift-importer-paths: [...]`), and rn-xtool passes them as `-Xcc -I...` to the App target and
+  to the Expo packages that depend on the library.
 - A persisted patch written by an older scaffolder revision (or for another React Native version) gets a warning at the
   `patches` step naming the file to delete and the library to reinstall; rn-xtool then regenerates it.
 

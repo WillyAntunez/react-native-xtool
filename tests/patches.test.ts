@@ -451,7 +451,7 @@ describe("patch-package failure detection", () => {
 
 describe("scaffold patches from another React Native version", () => {
   /** A persisted scaffold patch; `revision: null` is a hand-made patch without rn-xtool's marker. */
-  const scaffoldPatch = (slot: string | null, revision: number | null = 2) =>
+  const scaffoldPatch = (slot: string | null, revision: number | null = 3) =>
     [
       "diff --git a/node_modules/lib/Package.swift b/node_modules/lib/Package.swift",
       "new file mode 100644",
@@ -484,22 +484,27 @@ describe("scaffold patches from another React Native version", () => {
     ]);
   });
 
-  it("warns about a revision-1 scaffold patch", async () => {
+  it("warns about a scaffold patch from an older revision", async () => {
     const { root } = await tempProject();
     await installPkg(root, "react-native", "0.87.1");
     await mkdir(path.join(root, "patches"));
     await writeFile(path.join(root, "patches", "react-native-screens+4.30.0.patch"), scaffoldPatch("0.87.1", 1));
     await writeFile(path.join(root, "patches", "@scope+lib+1.0.0.patch"), scaffoldPatch(null, 1));
-    await writeFile(path.join(root, "patches", "react-native-svg+15.16.0.patch"), scaffoldPatch("0.87.1", 2));
+    // Revision 2 wrote no importer paths for a clang-only target.
+    await writeFile(path.join(root, "patches", "react-native-screens+4.30.1.patch"), scaffoldPatch("0.87.1", 2));
+    await writeFile(path.join(root, "patches", "react-native-svg+15.16.0.patch"), scaffoldPatch("0.87.1", 3));
     // Both stale: the slot warning wins, one line per patch.
     await writeFile(path.join(root, "patches", "react-native-safe-area-context+5.6.0.patch"), scaffoldPatch("0.86.3", 1));
     expect(scaffoldPatchWarnings(root)).toEqual([
-      "⚠ patches/@scope+lib+1.0.0.patch was written by an older rn-xtool scaffolder (revision 1, now 2); delete it so rn-xtool " +
+      "⚠ patches/@scope+lib+1.0.0.patch was written by an older rn-xtool scaffolder (revision 1, now 3); delete it so rn-xtool " +
         "regenerates it (also remove node_modules/@scope/lib and reinstall: that copy still has the old Package.swift)",
       "⚠ patches/react-native-safe-area-context+5.6.0.patch was scaffolded for React Native 0.86.3; delete it so rn-xtool " +
         "regenerates it for 0.87.1 (also remove node_modules/react-native-safe-area-context and reinstall: that copy still has " +
         "the old Package.swift)",
-      "⚠ patches/react-native-screens+4.30.0.patch was written by an older rn-xtool scaffolder (revision 1, now 2); delete it so " +
+      "⚠ patches/react-native-screens+4.30.0.patch was written by an older rn-xtool scaffolder (revision 1, now 3); delete it so " +
+        "rn-xtool regenerates it (also remove node_modules/react-native-screens and reinstall: that copy still has the old " +
+        "Package.swift)",
+      "⚠ patches/react-native-screens+4.30.1.patch was written by an older rn-xtool scaffolder (revision 2, now 3); delete it so " +
         "rn-xtool regenerates it (also remove node_modules/react-native-screens and reinstall: that copy still has the old " +
         "Package.swift)",
     ]);

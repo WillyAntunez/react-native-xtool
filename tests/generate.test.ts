@@ -7,6 +7,7 @@ import { renderXtoolYml } from "../src/generate/xtoolYml.js";
 import { sceneDelegateClassNames, writeIosXtool } from "../src/generate/iosXtool.js";
 import { expoClangImporterInputs, type ClangImporterInputs } from "../src/generate/expoImporter.js";
 import { IMPORTER_MARKER, scaffoldedImporterPaths } from "../src/generate/scaffoldImporter.js";
+import { PODSPEC_FIXTURES, VENDORED_RN_SPM, scaffoldLibraries } from "./support/rnScaffold.js";
 import { projectPaths, swiftHeadersDir } from "../src/paths.js";
 import { openPbxproj, readTargetContent } from "../src/project/pbxproj.js";
 import type { ProjectInfo } from "../src/project/index.js";
@@ -707,6 +708,17 @@ describe("scaffoldedImporterPaths", () => {
       `${real.RNScreens}/ios/bridging`,
       `${real.RNScreens}/.`,
     ]);
+  });
+
+  it("reads a scaffolded clang-only library's marker (screens 4.30.1)", async () => {
+    const { roots } = scaffoldLibraries(VENDORED_RN_SPM, { "react-native-screens": join(PODSPEC_FIXTURES, "RNScreens-4.30.1") });
+    const root = await mkdtemp(join(tmpdir(), "xt-libs-"));
+    tmps.push(root);
+    const autolinking = join(root, "autolinking");
+    await mkdir(join(autolinking, "libs"), { recursive: true });
+    await symlink(roots["react-native-screens"]!, join(autolinking, "libs", "RNScreens"));
+    const real = await realpath(roots["react-native-screens"]!);
+    expect(await scaffoldedImporterPaths(autolinking)).toEqual(expect.arrayContaining([`${real}/ios`, `${real}/ios/utils`]));
   });
 
   it("returns nothing without libs/, and skips a dangling alias", async () => {

@@ -24,6 +24,7 @@ import {
   shared58Spm,
   vendoredSpm,
 } from "./support/expoSpm.js";
+import { PODSPEC_FIXTURES, VENDORED_RN_SPM, scaffoldLibraries } from "./support/rnScaffold.js";
 
 // Exercises the PATCHED Expo SwiftPM plugin (patches/expo+58.0.19.patch) as installed in the
 // reference app (override with RN_XTOOL_REF_APP). Skipped when that app is not on this machine.
@@ -539,6 +540,22 @@ describe.skipIf(shared58 === undefined).each([
     const unmarked = manifestWith(null, "pure-swift");
     expect(unmarked.manifest).not.toContain(unmarked.real);
     expect(unmarked.manifest).not.toContain('"-Xcc"');
+  });
+
+  it("X6c passes a scaffolded clang-only dependency's importer paths to Swift (screens 4.30.1)", () => {
+    // React Native's scaffolder (vendor/rn-spm) on screens 4.30.1, which has no Swift: ios/RNSConvert.h, in the
+    // module's umbrella, imports "RNSDefines.h" from ios/utils.
+    const { roots } = scaffoldLibraries(VENDORED_RN_SPM, { "react-native-screens": path.join(PODSPEC_FIXTURES, "RNScreens-4.30.1") });
+    const screens = roots["react-native-screens"]!;
+    const router = moduleFixture("ExpoRouter", { "ios/Router.swift": "import RNScreens\n" }, ROUTER_PODSPEC);
+    const { facts, sources } = layoutOf(spm, "ExpoRouter", router);
+    const { outputDir, autolinking } = autolinkedScreens(screens);
+    const localDeps = plugin().localDependencies({ podName: "ExpoRouter", podspec: facts }, plugin().libraryPackageIndex(autolinking, outputDir));
+    const { manifest } = emit(spm, "ExpoRouter", router, "pure-swift", sources, { localDeps });
+    const swiftSettings = /swiftSettings: \[(.*)\],\n/.exec(manifest)?.[1] ?? "";
+    const real = realpathSync(screens);
+    expect(swiftSettings).toContain(`"-Xcc", "-I${real}/ios/utils"`);
+    expect(swiftSettings).toContain(`"-Xcc", "-I${real}/ios"`);
   });
 
   it("X6c refuses a marker that is not a JSON array of paths inside the package", () => {
