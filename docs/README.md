@@ -5,14 +5,15 @@ Wi‑Fi installs, troubleshooting, library compatibility, and the research and d
 
 ## Guides
 
-- [how-it-works.md](how-it-works.md): what `setup` installs, the bundled patches, the build steps, Expo SDK 57 through
-  the vendored Expo SwiftPM plugin, mixed-language manifests, CocoaPods-only libraries and reference timings.
-- [bare-react-native.md](bare-react-native.md): bare React Native projects (0.86.2, 0.86.3, 0.87.1, 0.88.0) and 0.88.0
-  hybrids with Expo modules: supported versions, detection, what is read from the Xcode project, sources, resources,
-  Metro, limits.
+- [how-it-works.md](how-it-works.md): what `setup` installs, the bundled patches, the build steps, Expo SDK 58's
+  version floor and the precompiled framework check (G4), Expo SDK 57 through the vendored Expo SwiftPM plugin,
+  mixed-language manifests, CocoaPods-only libraries and reference timings.
+- [bare-react-native.md](bare-react-native.md): bare React Native projects (0.86.2, 0.86.3, 0.87.1, 0.88.0, 0.88.1)
+  and 0.88.1 hybrids with Expo modules: supported versions, detection, what is read from the Xcode project, sources,
+  resources, Metro, limits.
 - [wifi-install.md](wifi-install.md): installing over Wi‑Fi without the cable, WSL2 pair records, Wi‑Fi troubleshooting.
 - [troubleshooting.md](troubleshooting.md): first-run checklist on the iPhone and fixes for common build, Metro and
-  signing problems, and the Expo SDK 57 version messages.
+  signing problems, and the Expo SDK 58 and 57 version messages.
 - [libraries.md](libraries.md): library compatibility matrix (Expo and bare), tested on a physical iPhone.
 
 ## Reference
@@ -48,6 +49,8 @@ Fixes carried as patches, written up for the upstream projects:
   SDK 57 through Expo 58's SwiftPM plugin and React Native 0.88's SwiftPM scripts.
 - [research/compat-suite-proposal.md](research/compat-suite-proposal.md): library popularity and linkage mechanisms,
   a proposal for a library compatibility suite.
+- [research/expo-58-drift.md](research/expo-58-drift.md): Expo SDK 58 version drift (58.0.19 to 58.0.21), how Expo
+  picks its precompiled modules, and the support model behind the 58.0.21 floor and G4.
 
 ## Design records
 

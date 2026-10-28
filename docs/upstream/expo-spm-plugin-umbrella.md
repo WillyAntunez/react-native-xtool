@@ -1,6 +1,7 @@
 # Expo SwiftPM plugin: Swift files without imports lose UIKit
 
-Target: `expo/expo`, `packages/expo/scripts/spm/manifests.js` (`emitPackage`). Seen with expo 58.0.17; still present in 58.0.19.
+Target: `expo/expo`, `packages/expo/scripts/spm/manifests.js` (`emitPackage`). Seen with expo 58.0.17; still present in 58.0.19
+and 58.0.21 (whose `scripts/spm/` is byte-identical to 58.0.19's).
 
 ## Bug
 
@@ -34,4 +35,4 @@ umbrellaFlags.push('-import-objc-header', umbrella);   // appended to the swiftS
 
 The mechanism emulates Swift's implicit import of the pod's underlying Clang module.
 
-The full diff is the `manifests.js` hunks of `patches/expo+58.0.19.patch`.
+The full diff is the `manifests.js` hunks of `patches/expo+58.0.21.patch`.

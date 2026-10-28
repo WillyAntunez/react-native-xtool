@@ -50,20 +50,25 @@ headers, modulemaps and `.swiftinterface` files. ExpoModulesCore's interface was
 imports fine with Swift 6.4.1.
 
 `src/pipeline/patches.ts` (`selectBundledPatches`) stages the bundled patch-package patches from `patches/` whose
-package is installed: per package the patch for the installed version, else the highest version, which then fails to
-apply with the "pin" message (react-native: only its exact version). With the vendored Expo plugin (SDK 57) only exact
-versions are staged. It applies them, then the project's own `patches/` (persisted library `Package.swift` files) when
-present. An Expo SDK 58 project gets these four:
+package is installed: per package the patch for the installed version, else the highest version (react-native: only
+its exact version). On a newer 58.x than the floor, the highest is the floor's patch: patch-package applies it with
+its version warning, or, when it does not apply, the build stops with "rn-xtool could not patch <package>", whose SDK
+58 remedy is an npm `"overrides"` block with the verified set, or waiting for an rn-xtool release. With the vendored
+Expo plugin (SDK 57) only exact versions are staged. It applies them, then the project's own `patches/` (persisted
+library `Package.swift` files) when present. Before that, the project read checks SDK 58's floor set (G1–G3,
+`checkExpoPackages` in `src/project/expo.ts`, texts in [troubleshooting.md](troubleshooting.md#expo-sdk-58)). An Expo
+SDK 58 project gets these four:
 
 | Patch | Effect |
 | --- | --- |
-| `patches/expo-modules-autolinking+58.0.15.patch` | Removes the `process.platform !== 'darwin'` gate in the `@ExpoModule` scanner (the Linux macros binary `@expo/modules-macros-linux-x64` works). |
-| `patches/expo+58.0.19.patch` | Expo's SPM plugin (`expo/scripts/spm/`): resolves the macro plugin binary per platform; adds the umbrella Foundation/UIKit imports to pure-Swift modules; builds mixed Swift + Objective-C and Objective-C-only modules; skips meta pods and placeholder files; links generated packages to their podspec dependencies (`s.dependency` and `add_dependency(s, "<Pod>")`, React Native libraries with a Package.swift included); leaves headers that import the module's own `<Product>-Swift.h` out of the Swift umbrella (X3); adds a scaffolded mixed dependency's importer paths to `swiftSettings` (X6c); excludes Xcode-only resources; refuses vendored-C modules (expo-sqlite). See `docs/upstream/expo-spm-plugin-umbrella.md` and `docs/upstream/expo-spm-plugin-mixed-modules.md`. |
-| `patches/expo-modules-jsi+58.0.19.patch` | Swift 6.4 rejects a `public` member in an extension of a C++ type under library evolution (`CppError.message`); made internal. |
-| `patches/react-native+0.88.0.patch` | About 1.95k lines across `read-podspec.js`, `scaffold-package-swift.js` and `spm-utils.js`: 16 generic fixes to RN's `spm scaffold` (Ruby bare lists and locals, subspecs, `header_dir`, platform-scoped fields, defines, mixed Swift + Objective-C/C++ targets, known CocoaPods dependencies mapped to SwiftPM packages, Swift umbrellas without the module's own `-Swift.h`, `#{package['version']}` in flags and defines, subspec `header_mappings_dir`, the `// rn-xtool-swift-importer-paths:` marker, ...) and a header-less module map for the per-app header farm. Scaffold revision 3. See `docs/upstream/react-native-scaffolder.md`. |
+| `patches/expo-modules-autolinking+58.0.16.patch` | Removes the `process.platform !== 'darwin'` gate in the `@ExpoModule` scanner (the Linux macros binary `@expo/modules-macros-linux-x64` works). |
+| `patches/expo+58.0.21.patch` | Expo's SPM plugin (`expo/scripts/spm/`): resolves the macro plugin binary per platform; adds the umbrella Foundation/UIKit imports to pure-Swift modules; builds mixed Swift + Objective-C and Objective-C-only modules; skips meta pods and placeholder files; links generated packages to their podspec dependencies (`s.dependency` and `add_dependency(s, "<Pod>")`, React Native libraries with a Package.swift included); leaves headers that import the module's own `<Product>-Swift.h` out of the Swift umbrella (X3); adds a scaffolded mixed dependency's importer paths to `swiftSettings` (X6c); excludes Xcode-only resources; refuses vendored-C modules (expo-sqlite). See `docs/upstream/expo-spm-plugin-umbrella.md` and `docs/upstream/expo-spm-plugin-mixed-modules.md`. |
+| `patches/expo-modules-jsi+58.0.21.patch` | Swift 6.4 rejects a `public` member in an extension of a C++ type under library evolution (`CppError.message`); made internal. |
+| `patches/react-native+0.88.1.patch` | About 1.95k lines across `read-podspec.js`, `scaffold-package-swift.js` and `spm-utils.js`: 16 generic fixes to RN's `spm scaffold` (Ruby bare lists and locals, subspecs, `header_dir`, platform-scoped fields, defines, mixed Swift + Objective-C/C++ targets, known CocoaPods dependencies mapped to SwiftPM packages, Swift umbrellas without the module's own `-Swift.h`, `#{package['version']}` in flags and defines, subspec `header_mappings_dir`, the `// rn-xtool-swift-importer-paths:` marker, ...) and a header-less module map for the per-app header farm. Scaffold revision 3. See `docs/upstream/react-native-scaffolder.md`. |
 
-The fifth bundled patch, `patches/expo-modules-jsi+57.1.3.patch`, is the same `CppError.message` fix for
-expo-modules-jsi 57.1.3, and the only one an Expo SDK 57 project gets.
+Two more are bundled. `patches/react-native+0.88.0.patch` is a byte-identical copy of the react-native patch for bare
+React Native 0.88.0 (a test keeps the two identical, so a fix edits both). `patches/expo-modules-jsi+57.1.3.patch` is
+the same `CppError.message` fix for expo-modules-jsi 57.1.3, and the only one an Expo SDK 57 project gets.
 
 `expo-dev-client` builds through the Expo patch (dev-launcher and dev-menu as mixed targets, json-utils as an Objective-C target); its asset catalogs are dropped (no `actool` on Linux), so launcher and menu icons are missing.
 
@@ -96,6 +101,13 @@ the runtime frameworks: React, ReactNativeDependencies, hermesvm, ExpoModulesCor
 dynamic ones, plus the freshly built ExpoModulesJSI. `stageFrameworks` in `src/frameworks.ts` copies them
 (dereferencing symlinks) into `ios-xtool/Frameworks`, which `xtool.yml` embeds as a resource. `scripts/stage-frameworks.sh`
 is kept only as a reference of the original manual recipe; the CLI does not call it.
+
+Before staging, `checkFrameworkSymbols` in `src/pipeline/symbols.ts` (G4) runs, for each of those frameworks,
+`llvm-nm --arch=arm64 -m --undefined-only` and `llvm-nm --arch=arm64 --defined-only --extern-only -j` on
+`<framework>/<executable>`. Every non-weak import `(from <Lib>)` whose `<Lib>` is the executable of another framework
+in the set must be among that framework's exports; otherwise the step throws one line per gap, naming the packages
+where the build resolves them. `llvm-nm` comes from the Swift toolchain on `toolEnv()`'s `PATH`. What it cannot
+detect: [troubleshooting.md](troubleshooting.md#expo-sdk-58).
 
 ## 7. Generated `ios-xtool/`
 
@@ -195,7 +207,7 @@ differences:
   and `xcode` next to it, never from rn-xtool's own copies). The scaffold rerun adds `--scaffold` and skips `expo`
   (D1): the plugin provides it, and refuses an `expo` with a scaffolded `Package.swift`.
 - **Section 3**: `selectBundledPatches` with `exactOnly` stages only `expo-modules-jsi+57.1.3.patch`. Expo's plugin is
-  the vendored `vendor/expo-spm/spm/plugin.js`: expo 58.0.19's `scripts/spm/`, plus `patches/expo+58.0.19.patch`, plus
+  the vendored `vendor/expo-spm/spm/plugin.js`: expo 58.0.19's `scripts/spm/`, plus `patches/expo+58.0.21.patch`, plus
   the vendored-only edits P1–P6 of `vendor/expo-spm/rn-xtool-edits.patch` (see
   [vendor/expo-spm/README.md](../vendor/expo-spm/README.md)). It calls expo-modules-autolinking 58.0.15 and loads the
   macro plugin of expo-modules-macros 0.22.0, both exact dependencies of rn-xtool, so Expo source modules compile with

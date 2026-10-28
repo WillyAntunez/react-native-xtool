@@ -1,8 +1,8 @@
 # Expo SwiftPM plugin: build mixed, Objective-C-only and placeholder modules; skip meta pods; dev client
 
 Target: `expo/expo`, `packages/expo/scripts/spm/` (`classify.js`, `podspec.js`, `plugin.js`, `manifests.js`,
-`diagnostics.js`). Seen with expo 58.0.17. The full diff is `patches/expo+58.0.19.patch` (every hunk marked
-`rn-xtool`).
+`diagnostics.js`). Seen with expo 58.0.17. The full diff is `patches/expo+58.0.21.patch` (every hunk marked
+`rn-xtool`; 58.0.21's `scripts/spm/` is byte-identical to 58.0.19's, so the content is the one made for 58.0.19).
 
 **Status at 58.0.19:** upstream still refuses these modules (`mixed-no-manifest`), so every hunk is kept. 58.0.19
 reworked `plugin.js` around a new `buildFromSource` autolinking option (both passes re-run until no pod falls back

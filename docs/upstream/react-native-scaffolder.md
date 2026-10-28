@@ -1,14 +1,18 @@
-# React Native SwiftPM scaffolder: generic fixes (0.88.0)
+# React Native SwiftPM scaffolder: generic fixes (0.88.0 and 0.88.1)
 
 These bugs make `react-native spm scaffold` emit an invalid or incomplete `Package.swift` for
 CocoaPods-only libraries such as `react-native-gesture-handler`. The fixes live in
-`patches/react-native+0.88.0.patch` and are meant to be upstreamed to facebook/react-native.
+`patches/react-native+0.88.0.patch` and `patches/react-native+0.88.1.patch` and are meant to be upstreamed to
+facebook/react-native.
 
-Where the fixes live in rn-xtool: in `patches/react-native+0.88.0.patch` (applied only to an installed
-react-native 0.88.0) and, for bare React Native 0.86.2, 0.86.3 and 0.87.1, already applied in the vendored copy of the
-0.88.0 scripts in `vendor/rn-spm/` ([README](../../vendor/rn-spm/README.md)).
+Where the fixes live in rn-xtool: in `patches/react-native+0.88.0.patch` and `patches/react-native+0.88.1.patch`
+(each applied only to an installed react-native of its version; the three patched files are byte-identical in 0.88.0
+and 0.88.1, so the two patches are the same file, and `tests/patches.test.ts` keeps them identical: a fix edits both)
+and, for bare React Native 0.86.2, 0.86.3 and 0.87.1, already applied in the vendored copy of the 0.88.0 scripts in
+`vendor/rn-spm/` ([README](../../vendor/rn-spm/README.md)).
 
-Refreshing for a new React Native 0.88.x: refresh `patches/react-native+0.88.0.patch` against it, regenerate
+Refreshing for a new React Native 0.88.x: add `patches/react-native+0.88.<x>.patch` for it (refreshed against it, or a
+copy when the patched files are unchanged, as for 0.88.1), regenerate
 `vendor/rn-spm` from the new tarball plus that patch plus `vendor/rn-spm/rn-xtool-edits.patch`, and update the pinned
 tarball and integrity in `tests/vendor-rn-spm.test.ts`. The supported-version list in `src/versions.ts` then needs the
 new version added.
@@ -187,7 +191,7 @@ single-line `ident = 'str' | "str" | ["a", "b"]` assignments (first wins), repla
 known string constants, and rewrites `s.<field> = ident` (and `ss.`/`s.ios.` forms) to the literal value. Unknown
 interpolations and identifiers are left untouched; `ENV[...]` and `if` conditions are not
 evaluated. The existing field regexes are unchanged. See the `resolveRubyConstants` hunk in
-`patches/react-native+0.88.0.patch`.
+`patches/react-native+0.88.1.patch`.
 
 ## 4. `scripts/spm/read-podspec.js`: the regex parser is blind to subspec blocks
 

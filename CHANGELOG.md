@@ -18,15 +18,16 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   `docs/libraries.md` (expo-router, expo-dev-client, reanimated and worklets, gesture-handler, screens and
   safe-area-context, haptics, image-picker, file-system).
 - Generic fixes, on every SDK and on bare projects:
-  - Expo's plugin (`patches/expo+58.0.19.patch`): headers that import the module's own `-Swift.h` stay out of its Swift
+  - Expo's plugin (`patches/expo+58.0.21.patch`): headers that import the module's own `-Swift.h` stay out of its Swift
     umbrella; `add_dependency(s, "<Pod>")` counts as a pod dependency, and a generated package can depend on a React
     Native library with a `Package.swift` (expo-router on react-native-screens); a generated package that depends on a
     scaffolded mixed library gets that library's header search paths for Swift.
-  - React Native's scaffolder (`patches/react-native+0.88.0.patch` and `vendor/rn-spm/`, fixes 14 to 18 in
-    `docs/upstream/react-native-scaffolder.md`): no own `-Swift.h` in the Swift umbrella, `#{package['version']}` in
-    flags and defines, subspec `header_mappings_dir` under `header_dir`, and the Swift importer paths recorded in
-    each mixed manifest, and in each clang-only manifest whose header search paths go beyond its public headers path
-    (found on react-native-reanimated 4.5, react-native-worklets 0.10 and react-native-screens 4.26 and 4.30), and a
+  - React Native's scaffolder (`patches/react-native+0.88.0.patch`, `patches/react-native+0.88.1.patch` and
+    `vendor/rn-spm/`, fixes 14 to 18 in `docs/upstream/react-native-scaffolder.md`): no own `-Swift.h` in the Swift
+    umbrella, `#{package['version']}` in flags and defines, subspec `header_mappings_dir` under `header_dir`, and the
+    Swift importer paths recorded in each mixed manifest, and in each clang-only manifest whose header search paths go
+    beyond its public headers path (found on react-native-reanimated 4.5, react-native-worklets 0.10 and
+    react-native-screens 4.26 and 4.30), and a
     clang-only target's module without the headers its podspec leaves out (react-native-screens 4.30's `ios/gamma`).
   - The App target gets the Swift importer paths of every autolinked scaffolded library that records them.
 - The clean-machine harness takes `e2e.sh project --sdk <n>` (template `blank-typescript@sdk-<n>`).
@@ -36,15 +37,40 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   existing project patches for the same fix working. It scans the project's top-level and scoped packages, never
   edits a package linked from outside the project (it logs a `manifest — skipped` line instead), and stops with a named
   error when `node_modules` is read-only.
+- Bare React Native 0.88.1, with its own bundled `patches/react-native+0.88.1.patch` (the same content as the 0.88.0
+  one; a test keeps the two identical). `doctor` and `build` accept 0.86.2, 0.86.3, 0.87.1, 0.88.0 and 0.88.1.
+- G4, in the `frameworks` step: before staging, `llvm-nm` (from the Swift toolchain) checks that every symbol an
+  embedded framework imports from another embedded framework is exported by it. A gap stops the build naming both
+  frameworks, their packages and a missing symbol, instead of an app that closes at launch with `dyld: Symbol not
+  found`. It runs on every project kind, with no bypass; a missing `llvm-nm` is an error. It does not see C++ or
+  Swift layout changes that keep the same symbols, or lookups by name at runtime (see `docs/troubleshooting.md`).
 
 ### Changed
+- Expo SDK 58 builds on the 58.0.21 set as a floor: react-native 0.88.1 exactly, and at least expo 58.0.21,
+  expo-modules-core 58.0.28, expo-modules-jsi 58.0.21, expo-modules-autolinking 58.0.16, expo-file-system 58.0.13 and
+  expo-font 58.0.11. An older or missing package stops `doctor` and `build`. The remedy removes the expo-modules-*
+  pins in package.json (`npm uninstall …`), moves `expo` when it is listed (`npx expo install expo@~58.0.21`), runs
+  `npx expo install --fix`, and ends with `npx expo install react-native@0.88.1` (Expo's versions API lists
+  react-native 0.88.0 for SDK 58, so `--fix` alone leaves it there); a hybrid app is sent to the bare docs' React
+  Native upgrade sequence instead of that last command. A newer 58.x prints a warning and the build continues with
+  the floor's patches. The 58.0.19 set of 0.1.0-alpha.2 is no longer accepted: npm no longer resolves it on its own.
+  A nested expo-modules-jsi now stops `doctor` and `build` with "Remove any expo-modules-jsi pin or override from
+  package.json", then `npm update expo-modules-jsi` (a reinstall keeps the copy where package-lock.json put it),
+  instead of failing at `rn-spm` with Expo's headers message. expo-modules-macros' Linux binary is checked where
+  expo-modules-core resolves it; when it is missing, the message names its version and gives
+  `npm install --include=optional` (a lockfile written on macOS can lack it). Hybrid apps (bare + Expo modules) get
+  the same checks, and need React Native 0.88.1 and Expo SDK 58 or newer.
+- The bundled SDK 58 patches are named after the 58.0.21 set (`expo+58.0.21.patch`, `expo-modules-jsi+58.0.21.patch`,
+  `expo-modules-autolinking+58.0.16.patch`); their content is unchanged.
 - An Expo SDK older than 57 now gets `Expo SDK <n> is not supported; rn-xtool supports SDK 57 (expo 57.0.31) and SDK 58
   or newer.` An SDK 57 project stops in `doctor` and `build` when a pinned version differs, when the expo-modules-jsi
   the build uses is not the top-level copy, or when rn-xtool's expo-modules-macros has no Linux binary for the host.
 - `SceneDelegate.swift` is optional on every SDK; it is required only when Info.plist's `UIApplicationSceneManifest`
   names a scene delegate.
 - When several bundled patches name one package, the one for the installed version is staged, else the highest
-  version (which keeps SDK 58's "pin" message).
+  version (on a newer 58.x, the floor's patch). When the floor's patch does not apply, the message says to pin `expo`
+  to 58.0.21 and run `npx expo install --fix`, and not to pin expo-modules-* packages (a pin there nests the copy expo
+  uses, or patches a copy expo does not use); SDK 57 and react-native keep the "pin <package>" message.
 - The scaffolder revision is now 3: scaffolded mixed manifests, and clang-only ones whose header search paths go beyond
   their public headers path, carry a `// rn-xtool-swift-importer-paths:` line, and the `patches` step warns about
   persisted scaffold patches written by an older revision and says which file to delete.
@@ -54,6 +80,8 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 - Expo's plugin skips every `*Tests` folder of a module, as podspecs do (`ios/*Tests/**/*`), not only `Tests`: SDK 57's
   expo-dev-menu compiled its `UITests` XCTest helpers into the app, which then closed at launch.
 - SDK 57's expo-dev-launcher `Unsafe` subspec now builds, with its own compiler flags (vendored edit P6).
+- With two bundled react-native patches, a react-native version is refused only when neither matches it, and the
+  message names both (`the bundled react-native patches are for 0.88.0 and 0.88.1`).
 
 ## [0.1.0-alpha.2] - 2026-10-27
 
