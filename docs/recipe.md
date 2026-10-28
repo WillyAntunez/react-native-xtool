@@ -196,7 +196,7 @@ differences:
   (D1): the plugin provides it, and refuses an `expo` with a scaffolded `Package.swift`.
 - **Section 3**: `selectBundledPatches` with `exactOnly` stages only `expo-modules-jsi+57.1.3.patch`. Expo's plugin is
   the vendored `vendor/expo-spm/spm/plugin.js`: expo 58.0.19's `scripts/spm/`, plus `patches/expo+58.0.19.patch`, plus
-  the vendored-only edits P1–P5 of `vendor/expo-spm/rn-xtool-edits.patch` (see
+  the vendored-only edits P1–P6 of `vendor/expo-spm/rn-xtool-edits.patch` (see
   [vendor/expo-spm/README.md](../vendor/expo-spm/README.md)). It calls expo-modules-autolinking 58.0.15 and loads the
   macro plugin of expo-modules-macros 0.22.0, both exact dependencies of rn-xtool, so Expo source modules compile with
   `-load-plugin-executable` pointing at `@expo/modules-macros-linux-<arch>/ExpoModulesMacros`. rn-xtool's

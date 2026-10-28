@@ -176,6 +176,88 @@ function sourceFacts(text) {
 }
 
 // ---------------------------------------------------------------------------
+// rn-xtool P6: subspecs with compiler flags of their own
+// ---------------------------------------------------------------------------
+
+const SUBSPEC_RX = /^\s*\w+\.subspec\s+['"]([^'"]+)['"]\s*do\s*\|\s*(\w+)\s*\|/;
+const STRING_LITERAL_RX = /'([^'\\]*)'|"([^"\\]*)"/g;
+const LITERAL = `(?:'[^'\\\\]*'|"[^"\\\\]*")`;
+const LITERAL_LIST = `${LITERAL}(?:\\s*,\\s*${LITERAL})*`;
+// `'a'`, `'a', "b"` or `['a', "b"]`, and nothing else: no condition, operator, variable or call.
+const LITERAL_VALUE_RX = new RegExp(`^(?:${LITERAL_LIST}|\\[\\s*${LITERAL_LIST}\\s*,?\\s*\\])$`);
+const GLOB_CHAR_RX = /[*?[{]/;
+
+/**
+ * What `line` sets `<name>.(ios.)<attribute>` to: undefined when it does not mention it; the
+ * strings when it assigns a literal value (comments are already stripped); else null, the value
+ * then being Ruby to evaluate (`'-w' if ENV['X']`, `'-w', flags`, `+=`, `<<`, interpolation).
+ */
+function attributeValue(line, name, attribute) {
+  const attr = `^\\s*${name}\\.(?:ios\\.)?${attribute}\\b`;
+  if (!new RegExp(attr).test(line)) return undefined;
+  const rhs = new RegExp(`${attr}\\s*=(?!=)(.*)$`).exec(line)?.[1].trim();
+  if (rhs == null || !LITERAL_VALUE_RX.test(rhs)) return null;
+  const values = [...rhs.matchAll(STRING_LITERAL_RX)].map((m) => m[1] ?? m[2]);
+  return values.some((v) => v.includes('#{') || v.includes('$(')) ? null : values;
+}
+
+/**
+ * The directory a `<dir>/**\/<pattern>` or `<dir>/<pattern>` glob takes its files from, or ''
+ * for any other shape. The whole directory is then the subspec's: an approximation, as the
+ * pattern's file types are not checked against the directory.
+ */
+function globDirectory(glob) {
+  const parts = glob.split('/');
+  const first = parts.findIndex((p) => GLOB_CHAR_RX.test(p));
+  const rest = parts.slice(first);
+  const shaped = rest.length === 1 || (rest.length === 2 && rest[0] === '**');
+  return first > 0 && shaped ? parts.slice(0, first).join('/') : '';
+}
+
+/**
+ * CocoaPods compiles a subspec's files with its `compiler_flags` (expo-dev-launcher 57's `Unsafe`
+ * subspec: `-x objective-c++ -std=c++20 -fno-objc-arc`), which one SwiftPM target cannot do per
+ * file. Each subspec whose flags and `source_files` are literal values (see `attributeValue`),
+ * its globs under one directory, as
+ * `{ name, dir, compilerFlags }` with `dir` absolute; `manifests.js` gives it a target of its own.
+ * Text-only like the rest: nested subspecs and test specs are not read.
+ */
+function flaggedSubspecs(text, podspecDir) {
+  const found = [];
+  let current = null;
+  for (const { text: line } of podspecBodyLines(text)) {
+    if (current == null) {
+      const open = SUBSPEC_RX.exec(line);
+      if (open != null) {
+        const depth = blockDelta(line);
+        // A one-line block is not read.
+        if (depth > 0) current = { name: open[1], variable: open[2], depth };
+      }
+      continue;
+    }
+    // The last mention wins, as the last assignment does in Ruby; null marks a value not read.
+    const sourceFiles = attributeValue(line, current.variable, 'source_files');
+    if (sourceFiles !== undefined) current.globs = sourceFiles;
+    const compilerFlags = attributeValue(line, current.variable, 'compiler_flags');
+    if (compilerFlags !== undefined) current.flags = compilerFlags;
+    current.depth += blockDelta(line);
+    if (current.depth > 0) continue;
+    const { name, globs, flags } = current;
+    current = null;
+    if (!Array.isArray(globs) || !Array.isArray(flags)) continue;
+    const dirs = new Set(globs.map(globDirectory));
+    const [dir] = dirs;
+    if (dirs.size !== 1 || dir === '') continue;
+    found.push({
+      name,
+      dir: path.join(podspecDir, dir),
+      compilerFlags: flags.join(' ').split(/\s+/).filter(Boolean),
+    });
+  }
+  return found;
+}
+
+// ---------------------------------------------------------------------------
 // I/O
 // ---------------------------------------------------------------------------
 
@@ -260,10 +342,13 @@ function readPodspecFacts({ podName, podspecDir, moduleRoot }) {
     podspecsIn(podspecDir).flatMap((file) => podspecDependencies(readText(file) ?? ''))
   );
   // rn-xtool: no podspec found counts as declaring sources, so nothing is taken for a meta pod.
-  const texts = podspecFiles(podName, dirs).map((file) => readText(file) ?? '');
+  const files = podspecFiles(podName, dirs);
+  const texts = files.map((file) => readText(file) ?? '');
   const facts = texts.map(sourceFacts);
   return {
     ...readPodspecs(podName, dirs),
+    // rn-xtool P6: source globs are relative to the podspec that declares them.
+    flaggedSubspecs: texts.flatMap((text, i) => flaggedSubspecs(text, path.dirname(files[i]))),
     dependencies: [...dependencies],
     declaresSourceFiles: !texts.length || facts.some((f) => f.declaresSourceFiles),
     referencesVendor: facts.some((f) => f.referencesVendor),
@@ -286,4 +371,5 @@ module.exports = {
   readPodspecFacts,
   sourceFacts,
   c99Identifier,
+  flaggedSubspecs,
 };

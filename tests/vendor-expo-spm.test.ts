@@ -10,7 +10,10 @@ import {
   EXPO_INTEGRITY,
   EXPO_SHARED_PATCH,
   EXPO_TARBALL,
+  type Classify,
+  type EmitContext,
   type Plugin,
+  type Podspec,
   emit,
   layoutOf,
   loadSpm,
@@ -279,6 +282,75 @@ const prefixFixture = () =>
 
 const PREFIX_PCH = "#ifdef __OBJC__\n#import <UIKit/UIKit.h>\n#endif\n";
 
+type FlaggedSubspec = { name: string; dir: string; compilerFlags: string[] };
+type EmitSourceModule = {
+  emitSourceModule(
+    identity: object,
+    hasManifest: boolean,
+    ctx: EmitContext,
+    dumpManifest: null,
+    generatedPackages: Map<string, unknown>,
+  ): { ok: { packageDep: { path: string } } };
+};
+
+/** expo-dev-launcher 57.0.21's podspec, abridged: its `Unsafe` subspec is Objective-C++ without ARC. */
+const UNSAFE_PODSPEC = `Pod::Spec.new do |s|
+  s.name           = 'expo-dev-launcher'
+  s.source_files   = 'ios/**/*.{h,m,mm,swift,cpp}'
+  s.exclude_files  = 'ios/Unsafe/**/*.{h,m,mm,swift,cpp}', 'ios/Tests/**/*.{h,m,swift}'
+  s.requires_arc   = true
+  s.header_dir     = 'EXDevLauncher'
+
+  s.subspec 'Unsafe' do |unsafe|
+    unsafe.source_files = 'ios/Unsafe/**/*.{h,m,mm,swift,cpp}'
+    unsafe.compiler_flags = '-x objective-c++ -std=c++20 -fno-objc-arc' # Disable Automatic Reference Counting
+  end
+
+  s.subspec 'Main' do |main|
+    main.dependency "expo-dev-launcher/Unsafe"
+  end
+
+  s.test_spec 'Tests' do |test_spec|
+    test_spec.source_files = 'ios/Tests/**/*.{h,m,mm,swift}'
+    test_spec.compiler_flags = '-fno-objc-arc'
+  end
+
+  s.default_subspec = 'Main'
+end
+`;
+
+/** expo-dev-launcher 57's layout: mixed, with the `Unsafe` subspec's sources in ios/Unsafe. */
+const unsafeFixture = () =>
+  moduleFixture("EXDevLauncher", {
+    "expo-dev-launcher.podspec": UNSAFE_PODSPEC,
+    "ios/Launcher.swift": "import Foundation\n",
+    "ios/EXDevLauncherController.h": "#import <Foundation/Foundation.h>\n@interface EXDevLauncherController : NSObject\n@end\n",
+    "ios/EXDevLauncherController.m":
+      "#import <EXDevLauncher/EXDevLauncherController.h>\n#import <EXDevLauncher/NSObject+EXUnsafe.h>\n@implementation EXDevLauncherController\n@end\n",
+    "ios/Unsafe/NSObject+EXUnsafe.h": "#import <Foundation/Foundation.h>\n@interface NSObject (EXUnsafe)\n- (void)ex_unsafe;\n@end\n",
+    "ios/Unsafe/NSObject+EXUnsafe.m":
+      "#import <EXDevLauncher/NSObject+EXUnsafe.h>\n#import <EXDevLauncher/EXDevLauncherController.h>\n#import <mutex>\n" +
+      "@implementation NSObject (EXUnsafe)\n- (void)ex_unsafe { static std::mutex m; std::lock_guard<std::mutex> l(m); [[NSObject new] release]; }\n@end\n",
+    "ios/Tests/LauncherTests.swift": "",
+  });
+
+/** The `.target(…)` block named `name` in a rendered manifest, or "" without one. */
+function targetBlock(manifest: string, name: string): string {
+  const start = manifest.indexOf(`.target(\n            name: "${name}",`);
+  if (start < 0) return "";
+  const end = manifest.indexOf("\n        )", start);
+  return manifest.slice(start, end);
+}
+
+/** The value of one `<key>: [...]` line of a target block. */
+const settingLine = (block: string, key: string) =>
+  block
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l.startsWith(`${key}: [`)) ?? "";
+
+const UNSAFE_FLAGS = '.unsafeFlags(["-x", "objective-c++", "-std=c++20", "-fno-objc-arc", "-fno-cxx-modules"])';
+
 describe("vendor/expo-spm edits", () => {
   it("P1 finds expo-modules-macros next to the vendored copy when core lacks it", () => {
     const core = mkTmp("vendor-p1-core-");
@@ -371,6 +443,180 @@ describe("vendor/expo-spm edits", () => {
     expect(settings("cxxSettings")).toContain(include);
   });
 
+  it("P6 reads the compiler flags of a subspec with its own source directory", () => {
+    const podspec = loadSpm<{ readPodspecFacts(o: object): { flaggedSubspecs?: FlaggedSubspec[] } }>(vendoredSpm(), "podspec.js");
+    const root = unsafeFixture();
+    expect(podspec.readPodspecFacts({ podName: "expo-dev-launcher", podspecDir: root, moduleRoot: root }).flaggedSubspecs).toEqual([
+      { name: "Unsafe", dir: path.join(root, "ios", "Unsafe"), compilerFlags: ["-x", "objective-c++", "-std=c++20", "-fno-objc-arc"] },
+    ]);
+
+    // Globs are relative to the podspec; flags without source files of their own, interpolated
+    // Ruby, a source glob outside one directory and test specs are not read.
+    const nested = moduleFixture(
+      "EXNested",
+      { "ios/Legacy/L.m": "" },
+      [
+        "s.subspec 'Legacy' do |legacy|",
+        "    legacy.source_files = ['Legacy/*.{h,m}', 'Legacy/**/*.mm']",
+        "    legacy.ios.compiler_flags = '-fno-objc-arc', '-Wno-deprecated'",
+        "  end",
+        "  s.subspec 'Flagged' do |f|",
+        "    f.compiler_flags = '-fno-objc-arc'",
+        "  end",
+        "  s.subspec 'Interpolated' do |i|",
+        "    i.source_files = 'Other/**/*.m'",
+        "    i.compiler_flags = \"#{flags}\"",
+        "  end",
+        "  s.subspec 'Spread' do |w|",
+        "    w.source_files = '**/*.m'",
+        "    w.compiler_flags = '-fno-objc-arc'",
+        "  end",
+      ].join("\n"),
+    );
+    expect(
+      podspec.readPodspecFacts({ podName: "EXNested", podspecDir: path.join(nested, "ios"), moduleRoot: nested }).flaggedSubspecs,
+    ).toEqual([{ name: "Legacy", dir: path.join(nested, "ios", "Legacy"), compilerFlags: ["-fno-objc-arc", "-Wno-deprecated"] }]);
+    const constants = constantsFixture();
+    expect(podspec.readPodspecFacts({ podName: "EXConstants", podspecDir: path.join(constants, "ios"), moduleRoot: constants }).flaggedSubspecs).toEqual([]);
+  });
+
+  it("P6 builds a flagged subspec as its own Clang target with its flags", () => {
+    const spm = vendoredSpm();
+    const root = unsafeFixture();
+    const sources = loadSpm<Classify>(spm, "classify.js").scanAppleSources(root);
+    const facts = loadSpm<Podspec>(spm, "podspec.js").readPodspecFacts({ podName: "expo-dev-launcher", podspecDir: root, moduleRoot: root });
+    const identity = { moduleRoot: root, packageName: "expo-dev-launcher", podName: "expo-dev-launcher", iosDeploymentTarget: null, spmPackages: [], sources, podspec: facts };
+    const ctx = { frameworkSearchPath: "/fw", outDir: mkTmp("vendor-p6-out-"), macroFlags: [] };
+    const plugin = loadSpm<EmitSourceModule>(spm, "plugin.js");
+    const dir = plugin.emitSourceModule(identity, false, ctx, null, new Map()).ok.packageDep.path;
+    const manifest = readFileSync(path.join(dir, "Package.swift"), "utf8");
+
+    expect(manifest).toContain('.library(name: "EXDevLauncher", targets: ["EXDevLauncher", "EXDevLauncher_Unsafe"])');
+    const main = targetBlock(manifest, "EXDevLauncher");
+    expect(main).toContain('path: "root/ios",');
+    expect(settingLine(main, "exclude")).toBe('exclude: ["Tests", "Unsafe"],');
+    expect(main).not.toContain("objective-c++");
+
+    const unsafe = targetBlock(manifest, "EXDevLauncher_Unsafe");
+    expect(unsafe).toContain('path: "root/ios/Unsafe",');
+    expect(unsafe).toContain('dependencies: [\n                "EXDevLauncher",\n            ],');
+    expect(unsafe).toContain('publicHeadersPath: ".",');
+    // The main target's Clang settings (header search paths, prefix header), then the subspec's flags.
+    for (const key of ["cSettings", "cxxSettings"]) {
+      const own = settingLine(main, key).slice(0, -2);
+      expect(settingLine(unsafe, key), key).toBe(`${own}, ${UNSAFE_FLAGS}],`);
+    }
+    // The subspec's header stays reachable as <EXDevLauncher/…>, from both targets.
+    expect(readFileSync(path.join(dir, "pod-headers", "EXDevLauncher", "NSObject+EXUnsafe.h"), "utf8")).toBe(
+      `#import "${path.join(root, "ios", "Unsafe", "NSObject+EXUnsafe.h")}"\n`,
+    );
+    // The versioned 6.5 manifest carries the same targets.
+    expect(readFileSync(path.join(dir, "Package@swift-6.5.swift"), "utf8")).toContain('name: "EXDevLauncher_Unsafe",');
+  });
+
+  /** A C-family file that is not a placeholder (an empty one would make the module pure Swift). */
+  const C_SOURCE = "int odd(void) { return 1; }\n";
+  /** An EXOdd module (mixed, at the root) with `files` and a root `EXOdd.podspec` of `subspecs`; its facts and manifest. */
+  function oddPackage(files: Record<string, string>, subspecs: string) {
+    const spm = vendoredSpm();
+    const root = moduleFixture(
+      "EXOdd",
+      { "ios/Odd.swift": "", "ios/Odd.h": "", "ios/Odd.m": C_SOURCE, ...files, "EXOdd.podspec": `Pod::Spec.new do |s|\n${subspecs}\nend\n` },
+      "s.source_files = 'ios/**/*'",
+    );
+    const sources = loadSpm<Classify>(spm, "classify.js").scanAppleSources(root);
+    const facts = loadSpm<Podspec>(spm, "podspec.js").readPodspecFacts({ podName: "EXOdd", podspecDir: root, moduleRoot: root }) as {
+      flaggedSubspecs?: FlaggedSubspec[];
+    };
+    const identity = { moduleRoot: root, packageName: "expo-odd", podName: "EXOdd", iosDeploymentTarget: null, spmPackages: [], sources, podspec: facts };
+    const ctx = { frameworkSearchPath: "/fw", outDir: mkTmp("vendor-p6-odd-"), macroFlags: [] };
+    const dir = loadSpm<EmitSourceModule>(spm, "plugin.js").emitSourceModule(identity, false, ctx, null, new Map()).ok.packageDep.path;
+    return { root, facts, manifest: readFileSync(path.join(dir, "Package.swift"), "utf8") };
+  }
+  const subspec = (name: string, glob: string, flags = "'-fno-objc-arc'") =>
+    `  s.subspec '${name}' do |x|\n    x.source_files = '${glob}'\n    x.compiler_flags = ${flags}\n  end`;
+  const targetNames = (manifest: string) => [...manifest.matchAll(/\.target\(\n {12}name: "([^"]+)"/g)].map((m) => m[1]);
+
+  it("P6 leaves a flagged subspec it cannot split in the main target", () => {
+    // Swift in the directory, only headers, the whole source directory, a directory outside it,
+    // one inside an ignored directory.
+    for (const [files, glob] of [
+      [{ "ios/X/X.swift": "", "ios/X/X.m": C_SOURCE }, "ios/X/**/*"],
+      [{ "ios/X/X.h": "" }, "ios/X/**/*"],
+      [{}, "ios/**/*.m"],
+      [{ "common/X.m": "" }, "common/*.m"],
+      [{ "ios/Tests/X/X.m": C_SOURCE }, "ios/Tests/X/*.m"],
+    ] as const) {
+      const { facts, manifest } = oddPackage(files, subspec("X", glob));
+      expect(facts.flaggedSubspecs?.map((f) => f.name), glob).toEqual(["X"]);
+      expect(targetNames(manifest), glob).toEqual(["EXOdd"]);
+      expect(manifest, glob).not.toContain("-fno-objc-arc");
+    }
+  });
+
+  it("P6 reads only compiler flags and sources that are literal values", () => {
+    for (const [flags, globs] of [
+      ["'-fno-objc-arc' if ENV['MRC']", "'ios/X/*.m'"],
+      ["'-w', extra_flags", "'ios/X/*.m'"],
+      ["ENV['X'] || '-w'", "'ios/X/*.m'"],
+      ["'-w'.freeze", "'ios/X/*.m'"],
+      ["'-fno-objc-arc'", "'ios/X/*.m', more_globs"],
+      ["'-fno-objc-arc'", "['ios/X/*.m'] + extra"],
+    ]) {
+      const body = `  s.subspec 'X' do |x|\n    x.source_files = ${globs}\n    x.compiler_flags = ${flags}\n  end`;
+      const { facts, manifest } = oddPackage({ "ios/X/X.m": C_SOURCE }, body);
+      expect(facts.flaggedSubspecs, `${flags} / ${globs}`).toEqual([]);
+      expect(targetNames(manifest)).toEqual(["EXOdd"]);
+    }
+    // An append to a literal is not a literal value either.
+    const appended = `  s.subspec 'X' do |x|\n    x.source_files = 'ios/X/*.m'\n    x.compiler_flags = '-w'\n    x.compiler_flags += ' -fno-objc-arc'\n  end`;
+    expect(oddPackage({ "ios/X/X.m": C_SOURCE }, appended).facts.flaggedSubspecs).toEqual([]);
+    // Literal forms that are read: one string, several, an array, with a comment after.
+    for (const flags of ["'-w -fno-objc-arc'", "'-w', \"-fno-objc-arc\"", "[ '-w', '-fno-objc-arc', ] # MRC"]) {
+      expect(oddPackage({ "ios/X/X.m": C_SOURCE }, subspec("X", "ios/X/*.m", flags)).facts.flaggedSubspecs?.[0]?.compilerFlags, flags).toEqual([
+        "-w",
+        "-fno-objc-arc",
+      ]);
+    }
+  });
+
+  it("P6 splits several subspecs and adds -fno-cxx-modules only for C++", () => {
+    const { manifest } = oddPackage(
+      { "ios/A/A.m": C_SOURCE, "ios/B/B.c": C_SOURCE },
+      [subspec("A", "ios/A/**/*.{h,m}", "'-xobjective-c++ -fno-objc-arc'"), subspec("B", "ios/B/*.c", "'-x c -w'")].join("\n"),
+    );
+    expect(targetNames(manifest)).toEqual(["EXOdd", "EXOdd_A", "EXOdd_B"]);
+    expect(manifest).toContain('.library(name: "EXOdd", targets: ["EXOdd", "EXOdd_A", "EXOdd_B"])');
+    expect(settingLine(targetBlock(manifest, "EXOdd"), "exclude")).toBe('exclude: ["A", "B"],');
+    expect(settingLine(targetBlock(manifest, "EXOdd_A"), "cSettings")).toContain(
+      '.unsafeFlags(["-xobjective-c++", "-fno-objc-arc", "-fno-cxx-modules"])],',
+    );
+    expect(settingLine(targetBlock(manifest, "EXOdd_B"), "cSettings")).toContain('.unsafeFlags(["-x", "c", "-w"])],');
+  });
+
+  it("P6 keeps one target per directory and per name", () => {
+    // A subspec nested in another's directory is compiled with the outer subspec's flags.
+    const nested = oddPackage({ "ios/A/A.m": C_SOURCE, "ios/A/B/B.m": C_SOURCE }, [subspec("A", "ios/A/**/*.m"), subspec("B", "ios/A/B/*.m", "'-w'")].join("\n"));
+    expect(nested.facts.flaggedSubspecs?.map((f) => f.name)).toEqual(["A", "B"]);
+    expect(targetNames(nested.manifest)).toEqual(["EXOdd", "EXOdd_A"]);
+    expect(nested.manifest).not.toContain('"-w"');
+    // Two names with one C99 identifier: the first keeps it, the second stays in the module's target.
+    const clash = oddPackage({ "ios/X/X.m": C_SOURCE, "ios/Y/Y.m": C_SOURCE }, [subspec("Foo-Bar", "ios/X/*.m"), subspec("Foo_Bar", "ios/Y/*.m", "'-w'")].join("\n"));
+    expect(targetNames(clash.manifest)).toEqual(["EXOdd", "EXOdd_Foo_Bar"]);
+    expect(targetBlock(clash.manifest, "EXOdd_Foo_Bar")).toContain('path: "root/ios/X",');
+    expect(settingLine(targetBlock(clash.manifest, "EXOdd"), "exclude")).toBe('exclude: ["X"],');
+    expect(clash.manifest).not.toContain('"-w"');
+  });
+
+  it("P6 carries the module's excludes under a subspec's directory over to its target", () => {
+    const { manifest } = oddPackage(
+      { "ios/A/A.m": C_SOURCE, "ios/A/View.xib": "", "ios/A/Media.xcassets/Contents.json": "{}", "ios/A/Tests/ATests.m": C_SOURCE },
+      subspec("A", "ios/A/**/*.m"),
+    );
+    expect(settingLine(targetBlock(manifest, "EXOdd_A"), "exclude")).toBe('exclude: ["Tests", "Media.xcassets", "View.xib"],');
+    expect(settingLine(targetBlock(manifest, "EXOdd"), "exclude")).toContain('"A"]');
+  });
+
   it("P5 extracts without AppleDouble entries or xattr warnings", () => {
     const src = mkTmp("vendor-p5-src-");
     mkdirSync(path.join(src, "X.xcframework"));
@@ -401,6 +647,11 @@ describe("vendor/expo-spm edits", () => {
     const { dir, manifest } = emit(spm, "EXLegacy", legacy, l.layout!, l.sources);
     expect(existsSync(path.join(dir, "prefix.pch"))).toBe(false);
     expect(manifest).not.toContain("prefix.pch");
+    const unsafe = unsafeFixture();
+    const u = layoutOf(spm, "EXDevLauncher", unsafe);
+    const podspec = loadSpm<{ readPodspecFacts(o: object): { flaggedSubspecs?: unknown } }>(spm, "podspec.js");
+    expect(podspec.readPodspecFacts({ podName: "expo-dev-launcher", podspecDir: unsafe, moduleRoot: unsafe }).flaggedSubspecs).toBeUndefined();
+    expect(emit(spm, "EXDevLauncher", unsafe, u.layout!, u.sources).manifest).not.toContain("EXDevLauncher_Unsafe");
   });
 });
 

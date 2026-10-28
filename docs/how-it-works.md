@@ -93,8 +93,9 @@ rn-xtool builds it with a vendored copy of Expo SDK 58's plugin, on the same dri
   [troubleshooting.md](troubleshooting.md#expo-sdk-57). SDK 58 and newer keep their installed plugin; SDK 56 and older
   are refused.
 - **The vendored plugin.** `vendor/expo-spm/` is expo 58.0.19's `scripts/spm/` with rn-xtool's Expo patch applied and
-  five vendored-only edits (P1–P5: the macro lookup, app packages resolved from the app root, CocoaPods' default header
-  dir and prefix header, tarballs extracted without macOS AppleDouble entries); provenance and the edits in
+  six vendored-only edits (P1–P6: the macro lookup, app packages resolved from the app root, CocoaPods' default header
+  dir and prefix header, tarballs extracted without macOS AppleDouble entries, a subspec's own compiler flags as a
+  target of its own); provenance and the edits in
   [vendor/expo-spm/README.md](../vendor/expo-spm/README.md). expo-modules-autolinking 58.0.15 and expo-modules-macros
   0.22.0 (with the host's `@expo/modules-macros-linux-<arch>` binary) are exact dependencies of rn-xtool, which the
   plugin finds in rn-xtool's `node_modules`; every package of the app is resolved from the app.

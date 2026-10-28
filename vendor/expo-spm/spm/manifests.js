@@ -12,6 +12,7 @@ const path = require('path');
 const { appleSourceDir, scanAppleSources, walkSourceTree } = require('./classify');
 const { reactProductDependencies, reactPackageDeclarations } = require('./react-descriptor');
 const { pluginError } = require('./diagnostics');
+const { c99Identifier } = require('./podspec');
 
 // ---------------------------------------------------------------------------
 // Pure: parse `swift package dump-package` JSON → { name, products, targets }
@@ -1231,6 +1232,7 @@ function generatedSourceManifest({
   headerDir = null,
   headerDirHeaders = [],
   pkgDir,
+  subspecTargets = [],
   ...options
 }) {
   const base = pureSwiftManifest(options);
@@ -1273,6 +1275,24 @@ function generatedSourceManifest({
           ...swiftImporterFlags(options.localDeps ?? []),
         ]
       : [];
+  // rn-xtool P6: each flagged subspec is a Clang target over its directory, which the module's
+  // target excludes. It has the module's Clang settings, then the subspec's flags last, and
+  // depends on the module's target; its headers keep their `<header_dir/…>` forwarders.
+  const subspecs = subspecTargets.map(({ name, rel, flags, exclude }) => {
+    const own = `.unsafeFlags([${flags.map((f) => `"${escapeSwiftString(f)}"`).join(', ')}])`;
+    return {
+      name,
+      path: path.join(options.srcRel, rel),
+      // SwiftPM 6.4 rejects the default `include` here ("invalid or not contained in the target").
+      publicHeadersPath: '.',
+      exclude,
+      sources: [],
+      resources: [],
+      settings: [],
+      dependencies: [{ name: options.product, platforms: [] }],
+      rawSettings: { c: [...clang, own], cxx: [...cxx, own], swift: [] },
+    };
+  });
   return {
     ...base,
     pureSwift: false,
@@ -1281,12 +1301,74 @@ function generatedSourceManifest({
     umbrellaHeaders: language === 'mixed' ? umbrellaHeaders : [],
     headerDir,
     headerDirHeaders: headerDir != null ? headerDirHeaders : [],
-    targets: base.targets.map((t) => ({
-      ...t,
-      publicHeadersPath: '.',
-      rawSettings: { c: clang, cxx, swift },
+    products: base.products.map((p) => ({
+      ...p,
+      targets: [...p.targets, ...subspecs.map((sub) => sub.name)],
     })),
+    targets: [
+      ...base.targets.map((t) => ({
+        ...t,
+        exclude: [...t.exclude, ...subspecTargets.map((sub) => sub.rel)],
+        publicHeadersPath: '.',
+        rawSettings: { c: clang, cxx, swift },
+      })),
+      ...subspecs,
+    ],
   };
+}
+
+const C_FAMILY_SOURCE_RX = /\.(m|mm|c|cpp|cc)$/;
+const CXX_LANGUAGE_RX = /^(?:objective-c|c)\+\+$/;
+
+/**
+ * rn-xtool P6: the podspec's flagged subspecs (`podspec.js#flaggedSubspecs`) that become targets
+ * of their own: those whose directory lies strictly inside the source directory and outside an
+ * ignored one, does not overlap an earlier subspec's (a nested one is then compiled with the outer
+ * one's flags), has C-family sources and no Swift (a Swift file would make SwiftPM build the
+ * target as Swift), and whose target name is not taken yet. The others stay where they were.
+ * Each takes over the module's `excludes` under its directory, rebased to it.
+ * `-x objective-c++` or `-x c++` gets `-fno-cxx-modules`, as SwiftPM passes it to its own C++:
+ * with C++ modules on, React's C++ headers are redefined through the React module.
+ */
+function subspecTargetsOf(flaggedSubspecs, srcDir, ignoredDirs, excludes, product) {
+  const real = (p) => {
+    try {
+      return fs.realpathSync(p);
+    } catch {
+      return null;
+    }
+  };
+  const realSrcDir = real(srcDir);
+  const taken = [];
+  const within = (a, b) => a === b || a.startsWith(`${b}/`);
+  const targets = [];
+  for (const { name: subspec, dir, compilerFlags } of flaggedSubspecs) {
+    const realDir = real(dir);
+    if (realSrcDir == null || realDir == null) continue;
+    const rel = path.relative(realSrcDir, realDir).split(path.sep).join('/');
+    if (rel === '' || rel === '..' || rel.startsWith('../') || path.isAbsolute(rel)) continue;
+    if (ignoredDirs.some((d) => within(rel, d))) continue;
+    if (taken.some((d) => within(rel, d) || within(d, rel))) continue;
+    const name = `${product}_${c99Identifier(subspec)}`;
+    if (targets.some((t) => t.name === name)) continue;
+    const { files } = walkSourceTree(realDir);
+    if (files.some((f) => f.endsWith('.swift')) || !files.some((f) => C_FAMILY_SOURCE_RX.test(f))) {
+      continue;
+    }
+    taken.push(rel);
+    const cxx = compilerFlags.some(
+      (f, i) =>
+        (f === '-x' && CXX_LANGUAGE_RX.test(compilerFlags[i + 1] ?? '')) ||
+        (f.startsWith('-x') && CXX_LANGUAGE_RX.test(f.slice(2)))
+    );
+    targets.push({
+      name,
+      rel,
+      flags: [...compilerFlags, ...(cxx ? ['-fno-cxx-modules'] : [])],
+      exclude: excludes.filter((e) => e.startsWith(`${rel}/`)).map((e) => e.slice(rel.length + 1)),
+    });
+  }
+  return targets;
 }
 
 /**
@@ -1305,6 +1387,7 @@ function emitGeneratedSourcePackage(
     sources = scanAppleSources(moduleRoot),
     headerDir = null,
     localDeps = [],
+    flaggedSubspecs = [],
   },
   emitContext
 ) {
@@ -1322,6 +1405,7 @@ function emitGeneratedSourcePackage(
     const text = fs.readFileSync(file, 'utf8');
     return !isCxxHeader(text) && !ownSwiftHeader.test(text);
   });
+  const excludes = [...sources.ignoredDirs, ...(sources.appleOnlyResources ?? [])];
   const manifest = generatedSourceManifest({
     language,
     hasCxx: sources.hasCxx,
@@ -1332,9 +1416,11 @@ function emitGeneratedSourcePackage(
     headerDirHeaders: headers,
     localDeps,
     pkgDir: path.join(emitContext.outDir, 'expo-source', product),
+    // rn-xtool P6.
+    subspecTargets: subspecTargetsOf(flaggedSubspecs, srcDir, sources.ignoredDirs, excludes, product),
     product,
     srcRel: path.relative(moduleRoot, srcDir),
-    excludes: [...sources.ignoredDirs, ...(sources.appleOnlyResources ?? [])],
+    excludes,
     iosDeploymentTarget,
     hasPrivacyManifest: fs.existsSync(path.join(srcDir, PRIVACY_MANIFEST)),
     packages: spmPackages.map(documentedPackage),

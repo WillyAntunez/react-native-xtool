@@ -8,7 +8,7 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 ### Added
 - Expo SDK 57 projects, on exact versions only: expo 57.0.31, react-native 0.86.3, expo-modules-core 57.0.24,
   expo-modules-autolinking 57.0.16 and expo-modules-jsi 57.1.3. They build through a vendored copy of Expo SDK 58's
-  SwiftPM plugin (`vendor/expo-spm/`: expo 58.0.19's `scripts/spm/` with rn-xtool's Expo patch and five vendored-only
+  SwiftPM plugin (`vendor/expo-spm/`: expo 58.0.19's `scripts/spm/` with rn-xtool's Expo patch and six vendored-only
   edits), the vendored React Native scripts and the adapted 0.86.3 artifacts, with SDK 57's own precompiled
   ExpoModulesCore. The `jsi` step runs before `rn-spm` and also writes the `ExpoModulesJSIHeaders.xcframework` SDK 57
   does not ship. Nothing is injected into `ios/`. expo-modules-autolinking 58.0.15 and expo-modules-macros 0.22.0 are

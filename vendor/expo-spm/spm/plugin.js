@@ -769,6 +769,8 @@ function emitSourceModule(
       language: layout,
       headerDir: podspec.headerDir,
       localDeps,
+      // rn-xtool P6.
+      flaggedSubspecs: podspec.flaggedSubspecs,
     },
     emitContext
   );
@@ -1496,3 +1498,4 @@ module.exports.libraryPackageIndex = libraryPackageIndex;
 module.exports.dependencyPackageIndex = dependencyPackageIndex;
 module.exports.unmappedDependencies = unmappedDependencies;
 module.exports.localDependencies = localDependencies;
+module.exports.emitSourceModule = emitSourceModule;
