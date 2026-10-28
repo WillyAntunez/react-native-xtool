@@ -383,3 +383,63 @@ SDK).
 - gesture-handler 2.32.0's scaffolder gaps count toward the same reanimated/worklets checkpoint.
 - The P1–P5 unit tests live in `tests/vendor-expo-spm.test.ts`; shared fixture helpers move to `tests/support/expoSpm.ts`.
 - Failure mode added: nested expo-modules-jsi (the copy the build resolves from core is not the top-level `node_modules/expo-modules-jsi`, the only copy patch-package patches) — handle (gate error, Task 2): `expo-modules-jsi <installed> resolves from <relative path>, not from the project's top-level node_modules: rn-xtool patches and builds only the top-level copy. Pin expo-modules-jsi to 57.1.3 in package.json and reinstall (npm dedupe may also fix it).`
+
+## Amendment: SDK 58 version drift (2026-10-28)
+
+Evidence: `docs/research/expo-58-drift.md`. Plan: Tasks 18–22.
+
+**Intent.** A fresh SDK 58 project resolves expo 58.0.21 and react-native 0.88.1, which alpha.2 refuses. `expo@58.0.19`
+alone no longer resolves a working set: it pulls core 58.0.28, which nests jsi 58.0.21. Holding core back builds an app
+that crashes at launch, because expo-file-system 58.0.13 and expo-font 58.0.11 are precompiled against a newer core.
+This amendment moves SDK 58 to the current set and adds a gate that turns that launch crash into a build error.
+
+**Decisions.**
+- Willy:
+  - **SDK 58's verified set is a floor:** expo 58.0.21, react-native 0.88.1, expo-modules-core 58.0.28, expo-modules-jsi
+    58.0.21 (top-level), expo-modules-autolinking 58.0.16, and expo-file-system 58.0.13 / expo-font 58.0.11 as resolved
+    under expo.
+    - Older than the floor → error, remedy `npx expo install --fix`, drop pins or lockfile holds.
+    - Newer 58.x than verified → warning, and the build continues.
+    - Hard errors: a bundled patch that does not apply, a react-native version outside the exact list, G2, G3, G4.
+    - The 58.0.19 set is dropped, because npm no longer resolves it on its own.
+  - **Bare React Native supports 0.88.0 and 0.88.1.** The patch content is unchanged. `rnPatchMismatch` flags a
+    mismatch only when no bundled react-native patch matches.
+  - **G4, precompiled coherence.** In the `frameworks` step, before `xtool-build`, `llvm-nm` lists every embedded
+    framework's non-weak undefined symbols. Each symbol imported from another embedded framework must be exported by it,
+    or the build fails with a remedy. Accepted limit: C++ layout drift and by-name runtime lookups are not detected. The
+    mitigation is the exact react-native pin. The limit is written in the PR and in `docs/troubleshooting.md`.
+- Controller:
+  - G4 uses `llvm-nm` from the Swift toolchain that `setup` installs (on `toolEnv()`'s PATH).
+  - The four bundled patches are renamed with `git mv`, content identical: `expo+58.0.21.patch`,
+    `expo-modules-jsi+58.0.21.patch`, `expo-modules-autolinking+58.0.16.patch`, `react-native+0.88.1.patch`.
+    `react-native+0.88.0.patch` stays as a byte-identical copy for bare 0.88.0.
+  - G2 on SDK 58: one expo-modules-jsi copy, the top-level one. Remedy: remove the jsi pin. `docs/bare-react-native.md`
+    stops telling hybrid users to pin jsi.
+  - G3: the macros Linux binary is resolved through core's expo-modules-macros.
+  - The vendored SDK 57 plugin stays at expo 58.0.19 (`scripts/spm` is byte-identical in 58.0.21).
+  - The drift-watch CI job is **deferred** to the compat-suite block.
+  - `../app` moves to the 58.0.21 set and drops the core 58.0.26 lockfile hold for the Task 15 retest (Task 21).
+- Planning (flagged for review):
+  - **Patch selection under the warn policy.** react-native gets only its exact-version patch. Every other package gets
+    its exact-version patch, else the highest bundled one. So a newer 58.x gets the floor patch, and patch-package's own
+    version warning is let through. If that patch does not apply, the existing "pin `<pkg>` to `<floor>`" error stops
+    the build.
+  - **Hybrid apps run the same SDK 58 gate (G1–G3)** when Expo modules are active. They need react-native 0.88.1,
+    because Expo's precompiled modules are built against it.
+  - G4 runs on every build (SDK 57, SDK 58, bare, hybrid), before staging. It has no bypass flag, so a false positive is
+    a release bug. A missing `llvm-nm` is an error that points to `rn-xtool setup`. Symbols are shown mangled.
+  - SDK 59 and newer stay ungated (no table), with G4 as their only coherence check.
+
+**Failure walk** (process hops from the research, §6):
+
+| # | Hop | Fails how | Who learns | Ruling |
+|---|---|---|---|---|
+| 1 | npm resolution (`create-expo-app`, `npm install`, `npx expo install <lib>`) | A pin or lockfile holds core below the modules; a jsi pin nests a second jsi; the template moves to a new RN; Expo publishes after an rn-xtool release | nobody: npm is silent | **handle** through hops 2 and 5 (G1, G2, G4); **defer** upstream-release detection to the drift watch (compat-suite block) |
+| 2 | Gate (`doctor`, project read in `build`) | A package below the floor or missing; RN not 0.88.1; a nested jsi; no macros binary; modules nested under `expo/node_modules` read from the wrong place | user, by a G1/G2/G3 text naming versions and the remedy | **handle**: G1–G3 with exact-text tests, nested and hoisted cases (Task 19). **accept** newer 58.x with a warning (Willy) |
+| 3 | Patches (patch-package) | A patch no longer applies; partial: earlier patches applied before the failure; the patch applies but upstream semantics changed | user, by the "pin" text; semantic drift later, loudly | **handle** non-apply (renamed files, floor selection, `rnPatchMismatch` fix, tests in Task 18); **accept** partial application (a reinstall clears it; in troubleshooting); **accept** semantic drift (caught at hop 4 or 6) |
+| 4 | `rn-spm` (RN 0.88.1 `setup-apple-spm.js` + Expo plugin) | jsi headers stamp ≠ installed jsi; RN 0.88.1's changed SwiftPM scripts or jsi 58.0.21's new C++ break the Linux flow; `PluginFrameworkMismatchError` | user, by the plugin's or RN's text | **handle** the stamp case by G2 running first; **handle** 0.88.1 and jsi 58.0.21 by real builds of the template, `../app` and `app-bare` (Task 21); **accept** `PluginFrameworkMismatchError` (RN's own text) |
+| 5 | Precompiled fetch (tarball → `expo-xcframeworks` → `xcframeworks/*/plugins`) | Missing or damaged tarball; mixed sources; **modules built against another core or jsi** | upstream errors; nobody for the third | **accept** the first two (upstream texts are clear); **handle** incoherence by G4 + tests (Task 20) |
+| 6 | Link (`xtool-build`) | Source modules against a precompiled core fail to link; precompiled pairs are never relinked | user, by a linker error; nobody for precompiled pairs | **accept** linker errors; precompiled pairs **handled** by G4 |
+| 7 | Launch (dyld on the iPhone) | `Symbol not found`; C++ layout drift; by-name runtime lookups | user, by a crash with no rn-xtool text | **handle** the symbol class by G4; **accept** layout drift and by-name lookups (Willy), mitigated by the exact RN pin, written in the PR and troubleshooting; template and `../app` launches before release (Task 21, manual) |
+| 8 | G4 itself (`llvm-nm` on each framework) | `llvm-nm` missing; a false positive (re-exported symbols, an unusual install name) blocks a working app | user, by the G4 or llvm-nm text | **handle** a missing `llvm-nm` (named error + test); **handle** false positives by building every reference app kind with G4 on (Task 21); **accept** no bypass flag |
+| 9 | alpha.2 users on the 58.0.19 set upgrade rn-xtool | G1 refuses the old set | user, by the G1 text | **handle**: G1's remedy; CHANGELOG and README name the new set (Task 22) |
