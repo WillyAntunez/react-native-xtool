@@ -16,6 +16,7 @@ import {
   stageBundledPatches,
   patchFailureMessage,
   patchPackageOutputFailed,
+  rnPatchMismatch,
   scaffoldPatchWarnings,
   SCAFFOLD_REVISION,
 } from "../src/pipeline/patches.js";
@@ -78,7 +79,7 @@ describe("rnSpmArgs", () => {
 });
 
 describe("patches", () => {
-  it("has exactly 5 patch-package files", () => {
+  it("has exactly 6 patch-package files", () => {
     const files = readdirSync(path.join(packageRoot(), "patches")).filter((f) => f.endsWith(".patch"));
     expect(files.sort()).toEqual([
       "expo+58.0.19.patch",
@@ -86,8 +87,15 @@ describe("patches", () => {
       "expo-modules-jsi+57.1.3.patch",
       "expo-modules-jsi+58.0.19.patch",
       "react-native+0.88.0.patch",
+      "react-native+0.88.1.patch",
     ]);
     for (const f of files) expect(f).toMatch(/^[^+]+\+\d+\.\d+\.\d+\.patch$/);
+  });
+
+  it("keeps the two react-native patches identical", () => {
+    // A scaffolder fix edits both: bare 0.88.0 and 0.88.1 share the scaffolder files the patch touches.
+    const read = (v: string) => readFileSync(path.join(packageRoot(), "patches", `react-native+${v}.patch`));
+    expect(read("0.88.0").equals(read("0.88.1"))).toBe(true);
   });
 
   it("applyPatchesArgv passes the staged dir relative to the project root", () => {
@@ -151,13 +159,39 @@ describe("bundled patch selection", () => {
 describe("react-native patch scope", () => {
   const bundled = path.join(packageRoot(), "patches");
 
-  it("stages the react-native patch only for the version it was made for", async () => {
-    const a = await tempProject();
-    await installPkg(a.root, "react-native", "0.86.3");
-    expect(selectBundledPatches(a.root, bundled)).toEqual([]);
-    const b = await tempProject();
-    await installPkg(b.root, "react-native", "0.88.0");
-    expect(selectBundledPatches(b.root, bundled)).toEqual(["react-native+0.88.0.patch"]);
+  it("bare 0.88.0 and 0.88.1 each get their own react-native patch", async () => {
+    for (const [rn, expected] of [
+      ["0.88.0", ["react-native+0.88.0.patch"]],
+      ["0.88.1", ["react-native+0.88.1.patch"]],
+      ["0.86.3", []],
+    ] as const) {
+      const { root } = await tempProject();
+      await installPkg(root, "react-native", rn);
+      expect(selectBundledPatches(root, bundled), rn).toEqual(expected);
+    }
+  });
+
+  it("flags react-native only when no bundled patch matches", async () => {
+    for (const rn of ["0.88.0", "0.88.1"]) {
+      const { root } = await tempProject();
+      await installPkg(root, "react-native", rn);
+      expect(rnPatchMismatch(root, bundled), rn).toBeUndefined();
+    }
+    const none = await tempProject();
+    expect(rnPatchMismatch(none.root, bundled)).toBeUndefined();
+
+    const { root } = await tempProject();
+    await installPkg(root, "react-native", "0.88.2");
+    expect(rnPatchMismatch(root, bundled)).toEqual({
+      pkg: "react-native",
+      installed: "0.88.2",
+      patchFile: "react-native+0.88.1.patch",
+      patched: "0.88.1",
+    });
+    const calls: string[][] = [];
+    const exec = async (_c: string, args: string[]) => (calls.push(args), { exitCode: 0 });
+    await expect(applyPatches(root, exec, { rnScripts: "installed" })).rejects.toThrow(/pin "react-native" to 0\.88\.1/);
+    expect(calls).toHaveLength(0);
   });
 
   it("keeps staging the expo patches whatever their installed version", async () => {
@@ -246,17 +280,8 @@ describe("react-native patch scope", () => {
     await installPkg(root, "react-native", "0.86.3");
     const calls: string[][] = [];
     const exec = async (_c: string, args: string[]) => (calls.push(args), { exitCode: 0 });
-    await expect(applyPatches(root, exec, { rnScripts: "installed" })).rejects.toThrow(/pin "react-native" to 0\.88\.0/);
+    await expect(applyPatches(root, exec, { rnScripts: "installed" })).rejects.toThrow(/pin "react-native" to 0\.88\.1/);
     await expect(applyPatches(root, exec, { rnScripts: "vendored" })).resolves.toBeUndefined();
-    expect(calls).toHaveLength(0);
-  });
-
-  it("stops an installed-scripts project whose react-native differs from the patch", async () => {
-    const { root } = await tempProject();
-    await installPkg(root, "react-native", "0.88.1");
-    const calls: string[][] = [];
-    const exec = async (_c: string, args: string[]) => (calls.push(args), { exitCode: 0 });
-    await expect(applyPatches(root, exec, { rnScripts: "installed" })).rejects.toThrow(/pin "react-native" to 0\.88\.0/);
     expect(calls).toHaveLength(0);
   });
 });

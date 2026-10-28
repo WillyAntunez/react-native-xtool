@@ -14,9 +14,9 @@ import {
   withRnRoot,
 } from "./support/rnScaffold.js";
 
-// Exercises the PATCHED react-native SwiftPM scaffolder (patches/react-native+0.88.0.patch)
-// as installed in the reference app (override with RN_XTOOL_REF_APP). Skipped when that app is
-// not on this machine.
+// Exercises the PATCHED react-native SwiftPM scaffolder (patches/react-native+<version>.patch, the
+// bundled patch for the React Native the reference app has installed) as installed in the reference
+// app (override with RN_XTOOL_REF_APP). Skipped when that app is not on this machine.
 const APP = process.env["RN_XTOOL_REF_APP"] ?? path.resolve(import.meta.dirname, "../../app");
 const SPM = path.join(APP, "node_modules/react-native/scripts/spm");
 const RNGH_PODSPEC = path.join(
@@ -24,7 +24,14 @@ const RNGH_PODSPEC = path.join(
   "node_modules/react-native-gesture-handler/RNGestureHandler.podspec",
 );
 const SVG_PODSPEC = path.join(APP, "node_modules/react-native-svg/RNSVG.podspec");
-const PATCH = path.resolve(import.meta.dirname, "../patches/react-native+0.88.0.patch");
+const APP_RN = ((): string | undefined => {
+  try {
+    return JSON.parse(readFileSync(path.join(APP, "node_modules/react-native/package.json"), "utf8")).version;
+  } catch {
+    return undefined;
+  }
+})();
+const PATCH = path.resolve(import.meta.dirname, `../patches/react-native+${APP_RN}.patch`);
 const SCREENS_PODSPEC = path.join(APP, "node_modules/react-native-screens/RNScreens.podspec");
 const available = existsSync(path.join(SPM, "read-podspec.js"));
 const hasPatchBinary = spawnSync("patch", ["--version"]).error === undefined;
@@ -139,10 +146,14 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
     expect(map).not.toMatch(/umbrella|header "/);
   });
 
-  it.skipIf(!hasPatchBinary)("the committed patch reverse-applies cleanly to the installed RN files", async () => {
-    const r = await execa("patch", ["-R", "-p1", "-F0", "--dry-run", "-i", PATCH], { cwd: APP, reject: false });
-    expect(r.exitCode, `${r.stdout}\n${r.stderr}`).toBe(0);
-  });
+  if (existsSync(PATCH)) {
+    it.skipIf(!hasPatchBinary)(`the committed ${path.basename(PATCH)} reverse-applies cleanly to the installed RN files`, async () => {
+      const r = await execa("patch", ["-R", "-p1", "-F0", "--dry-run", "-i", PATCH], { cwd: APP, reject: false });
+      expect(r.exitCode, `${r.stdout}\n${r.stderr}`).toBe(0);
+    });
+  } else {
+    it.skip(`the committed patch reverse-applies: no bundled patch for the reference app's React Native ${APP_RN}`, () => {});
+  }
 
   describe("read-podspec getArrayField", () => {
     const read = (body: string) =>

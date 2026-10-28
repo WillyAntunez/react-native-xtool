@@ -48,6 +48,7 @@ export const SUPPORTED_RN = {
   "0.86.3": "vendored",
   "0.87.1": "vendored",
   "0.88.0": "installed",
+  "0.88.1": "installed",
 } as const;
 export type RnScripts = "installed" | "vendored";
 
@@ -55,8 +56,16 @@ export function rnScriptsFor(version: string): RnScripts | undefined {
   return Object.hasOwn(SUPPORTED_RN, version) ? SUPPORTED_RN[version as keyof typeof SUPPORTED_RN] : undefined;
 }
 
-/** "0.86.2, 0.86.3, 0.87.1 and 0.88.0" */
+/** "0.86.2, 0.86.3, 0.87.1, 0.88.0 and 0.88.1" */
 export function supportedRnList(): string {
   const all = Object.keys(SUPPORTED_RN);
   return `${all.slice(0, -1).join(", ")} and ${all[all.length - 1]}`;
+}
+
+/** Numeric x.y.z comparison (anything after the patch number is ignored). */
+export function compareVersions(a: string, b: string): number {
+  const parts = (v: string) => v.split(/[.-]/, 3).map((n) => Number.parseInt(n, 10) || 0);
+  const [pa, pb] = [parts(a), parts(b)];
+  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i]! - pb[i]!;
+  return 0;
 }

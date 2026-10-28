@@ -66,10 +66,16 @@ describe("readBareProject", () => {
     }
   });
 
+  it("accepts bare React Native 0.88.1", async () => {
+    const p = await readBareProject(await tempBare({ rn: "0.88.1" }));
+    expect(p.rnVersion).toBe("0.88.1");
+    expect(p.rnScripts).toBe("installed");
+  });
+
   it("rejects unsupported versions with the supported list", async () => {
-    for (const rn of ["0.86.0", "0.86.1", "0.87.0", "0.85.0", "0.89.0", "0.88.1", "0.88.0-rc.1"]) {
+    for (const rn of ["0.86.0", "0.86.1", "0.87.0", "0.85.0", "0.89.0", "0.88.2", "0.88.0-rc.1", "0.88.1-rc.1"]) {
       await expect(readBareProject(await tempBare({ rn }))).rejects.toThrow(
-        `React Native ${rn} is not supported; rn-xtool supports 0.86.2, 0.86.3, 0.87.1 and 0.88.0 (bare). Pin react-native to one of them.`,
+        `React Native ${rn} is not supported; rn-xtool supports 0.86.2, 0.86.3, 0.87.1, 0.88.0 and 0.88.1 (bare). Pin react-native to one of them.`,
       );
     }
   });
@@ -78,7 +84,7 @@ describe("readBareProject", () => {
     const dir = await tempBare({ rn: "0.87.0", modulesCore: true, expo: true });
     await expect(readBareProject(dir)).rejects.toThrow(
       (
-        "React Native 0.87.0 is not supported; rn-xtool supports 0.86.2, 0.86.3, 0.87.1 and 0.88.0 (bare). Pin react-native to one of them. Expo SDK 58 needs React Native 0.88.0."
+        "React Native 0.87.0 is not supported; rn-xtool supports 0.86.2, 0.86.3, 0.87.1, 0.88.0 and 0.88.1 (bare). Pin react-native to one of them. Expo SDK 58 needs React Native 0.88.0."
       ),
     );
   });

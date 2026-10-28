@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { execa } from "execa";
 import { projectPaths } from "../paths.js";
-import type { ExpoPlugin, RnScripts } from "../versions.js";
+import { compareVersions, type ExpoPlugin, type RnScripts } from "../versions.js";
 import { packageRoot, toolEnv } from "../tools/exec.js";
 
 /** The patch-package pinned in this CLI's own dependencies, not whatever npx would fetch. */
@@ -67,14 +67,6 @@ export function installedVersion(projectRoot: string, pkg: string): string | und
   return readVersion(path.join(modules, pkg)) ?? readVersion(path.join(modules, "expo", "node_modules", pkg));
 }
 
-/** Numeric x.y.z comparison (anything after the patch number is ignored). */
-function compareVersions(a: string, b: string): number {
-  const parts = (v: string) => v.split(/[.-]/, 3).map((n) => Number.parseInt(n, 10) || 0);
-  const [pa, pb] = [parts(a), parts(b)];
-  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i]! - pb[i]!;
-  return 0;
-}
-
 /**
  * Bundled patch files whose package is installed in the project (bare RN has no expo packages).
  * The react-native patch is only for the exact version it was made against: other versions are
@@ -116,20 +108,26 @@ export async function stageBundledPatches(
   return names;
 }
 
-/** The bundled react-native patch when react-native is installed at another version. */
+/**
+ * The mismatch when react-native is installed at a version no bundled react-native patch was made for, naming the
+ * highest bundled one (what the "pin" text suggests); undefined when react-native is not installed or a patch matches.
+ */
 export function rnPatchMismatch(
   projectRoot: string,
   bundledDir: string,
 ): Omit<PatchFailureDetails, "output"> | undefined {
-  for (const patchFile of readdirSync(bundledDir).sort()) {
+  const installed = installedVersion(projectRoot, "react-native");
+  if (installed === undefined) return undefined;
+  let highest: { patchFile: string; version: string } | undefined;
+  for (const patchFile of readdirSync(bundledDir)) {
     const info = parsePatchFileName(patchFile);
     if (info?.pkg !== "react-native") continue;
-    const installed = installedVersion(projectRoot, info.pkg);
-    if (installed !== undefined && installed !== info.version) {
-      return { pkg: info.pkg, installed, patchFile, patched: info.version };
+    if (info.version === installed) return undefined;
+    if (highest === undefined || compareVersions(info.version, highest.version) > 0) {
+      highest = { patchFile, version: info.version };
     }
   }
-  return undefined;
+  return highest && { pkg: "react-native", installed, patchFile: highest.patchFile, patched: highest.version };
 }
 
 /** Finds a bundled patch whose package is installed at a different version. */
@@ -198,7 +196,7 @@ const SCAFFOLD_MARKER_RE = /(?:rn|expo)-xtool-scaffold-revision/;
 const SLOT_LABEL_RE = /^\+\/\/ Cache slot: (\S+)\/dual-flavor\s*$/m;
 const REVISION_RE = /^\+\/\/ (?:rn|expo)-xtool-scaffold-revision: (\d+)\s*$/m;
 
-/** The scaffolder's RN_XTOOL_SCAFFOLD_REVISION (patches/react-native+0.88.0.patch and vendor/rn-spm). */
+/** The scaffolder's RN_XTOOL_SCAFFOLD_REVISION (patches/react-native+0.88.{0,1}.patch and vendor/rn-spm). */
 export const SCAFFOLD_REVISION = 3;
 
 /**

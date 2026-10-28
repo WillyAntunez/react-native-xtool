@@ -57,7 +57,7 @@ export function swiftHeadersDir(iosXtool: string): string {
   return join(iosXtool, ".build", "out", "Intermediates.noindex", "GeneratedModuleMaps-iphoneos");
 }
 
-/** Read by the RN scaffolder's mixed Swift + Objective-C manifests (patches/react-native+0.88.0.patch). */
+/** Read by the RN scaffolder's mixed Swift + Objective-C manifests (patches/react-native+0.88.{0,1}.patch). */
 export const SWIFT_HEADERS_DIR_ENV = "RN_SPM_SWIFT_HEADERS_DIR";
 
 /** Env that lets scaffolded mixed-language manifests find `<Module>-Swift.h`; needed wherever SwiftPM evaluates them. */
