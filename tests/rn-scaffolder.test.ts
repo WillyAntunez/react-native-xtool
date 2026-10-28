@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -1278,6 +1278,21 @@ describe("scaffolder fixes 14–17 (vendor/rn-spm)", () => {
     const paths = JSON.parse(pkg.match(IMPORTER)![1]!) as string[];
     expect(paths).toContain("ios");
     expect(paths).not.toContain("../shared");
+  });
+
+  it("the harness scaffolds a copy, never the library a symlink points at", () => {
+    // RN_XTOOL_REF_APP replicas link node_modules/<lib> to the reference app's real libraries.
+    const real = lib(
+      { "ios/Foo.h": "", "ios/Foo.m": "", "package.json": JSON.stringify({ name: "react-native-foo", version: "1.0.0" }) },
+      '  s.source_files = "ios/**/*.{h,m}"',
+    );
+    const before = readdirSync(real).sort();
+    const link = path.join(tempDir(), "react-native-foo");
+    symlinkSync(real, link, "dir");
+    const { statuses, files } = scaffoldLibraries(VENDORED_RN_SPM, { "react-native-foo": link });
+    expect(statuses["react-native-foo"]).toBe("written");
+    expect(files["react-native-foo/Package.swift"]).toBeDefined();
+    expect(readdirSync(real).sort()).toEqual(before);
   });
 
   it("gesture-handler 2.32.0 scaffolds", () => {

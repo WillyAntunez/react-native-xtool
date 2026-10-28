@@ -3,7 +3,7 @@
  * test loads) over real libraries, the way rn-xtool's driver does (`scaffoldAll`, `force`, a cache
  * slot label), and collects what it wrote.
  */
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -85,9 +85,13 @@ export function scaffoldLibraries(
   for (const [name, src] of Object.entries(libs)) {
     const root = path.join(base, "node_modules", name);
     roots[name] = root;
-    cpSync(src, root, {
+    // By value: a symlinked library (an RN_XTOOL_REF_APP replica's) would otherwise be copied as the link, and the
+    // scaffolder would write into the library it points at.
+    const real = realpathSync(src);
+    cpSync(real, root, {
       recursive: true,
-      filter: (f) => path.dirname(f) !== src || !NOT_COPIED.has(path.basename(f)),
+      dereference: true,
+      filter: (f) => path.dirname(f) !== real || !NOT_COPIED.has(path.basename(f)),
     });
     const manifest = path.join(root, "Package.swift");
     if (existsSync(manifest) && readFileSync(manifest, "utf8").includes(SCAFFOLDER_MARKER)) rmSync(manifest);
