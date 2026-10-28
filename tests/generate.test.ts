@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { renderPackageSwift } from "../src/generate/packageSwift.js";
 import { renderXtoolYml } from "../src/generate/xtoolYml.js";
-import { writeIosXtool } from "../src/generate/iosXtool.js";
+import { sceneDelegateClassNames, writeIosXtool } from "../src/generate/iosXtool.js";
 import { expoClangImporterInputs, type ClangImporterInputs } from "../src/generate/expoImporter.js";
 import { projectPaths, swiftHeadersDir } from "../src/paths.js";
 import { openPbxproj, readTargetContent } from "../src/project/pbxproj.js";
@@ -232,6 +232,7 @@ describe("writeIosXtool", () => {
     const project: ProjectInfo = {
       kind: "expo", root: tmp, name: "app", slug: "app", version: "1.0.0", buildNumber: "1",
       bundleIdentifier: "com.example.app", moduleName: "main", sdkVersion: 58, rnVersion: "0.88.0",
+      rnScripts: "installed", expoPlugin: "installed",
       iosTargetName: "app", iosTargetDir: target, infoPlistPath: join(target, "Info.plist"),
       hasExpoModules: true, hasExpoConstants: true, hasDevClient: false,
     };
@@ -256,6 +257,61 @@ describe("writeIosXtool", () => {
     expect(pkg.match(/"-F"/g)).toHaveLength(3); // compile-interfaces + 2 unique searchPaths
     expect(pkg).toContain("ExpoModulesJSIHeaders");
     expect(await readFile(join(paths.iosXtool, "xtool.yml"), "utf8")).toContain("  - EXConstants.bundle");
+  });
+
+  /** An Expo project whose app target is a copy of `fixture` (a directory under tests/fixtures). */
+  async function expoProject(fixture: string, o: { sdkVersion?: number; drop?: string[] } = {}) {
+    const root = await mkdtemp(join(tmpdir(), "xt7-expo-"));
+    tmps.push(root);
+    const target = join(root, "ios", "app");
+    await mkdir(target, { recursive: true });
+    const source = new URL(`./fixtures/${fixture}`, import.meta.url).pathname;
+    await cp(source, target, { recursive: true });
+    for (const file of o.drop ?? []) await rm(join(target, file));
+    const project: ProjectInfo = {
+      kind: "expo", root, name: "app", slug: "app", version: "1.0.0", buildNumber: "1",
+      bundleIdentifier: "com.example.app", moduleName: "main", sdkVersion: o.sdkVersion ?? 58, rnVersion: "0.88.0",
+      rnScripts: "installed", expoPlugin: "installed",
+      iosTargetName: "app", iosTargetDir: target, infoPlistPath: join(target, "Info.plist"),
+      hasExpoModules: true, hasExpoConstants: true, hasDevClient: false,
+    };
+    const paths = projectPaths(root);
+    return { source, target, paths, ctx: { project, paths, frameworks, metroPort: 8081, lanIp: "192.168.1.5" } };
+  }
+
+  it("copies AppDelegate only for an SDK 57 shell", async () => {
+    const { source, paths, ctx } = await expoProject("expo-57/ios/Spike57", { sdkVersion: 57 });
+    await writeIosXtool(ctx);
+    expect((await readdir(paths.sources)).sort()).toEqual(["AppDelegate.swift", "ExpoModulesProvider.swift"]);
+    expect(await readFile(join(paths.sources, "AppDelegate.swift"))).toEqual(await readFile(join(source, "AppDelegate.swift")));
+    expect((await lstat(join(paths.sources, "ExpoModulesProvider.swift"))).isSymbolicLink()).toBe(true);
+  });
+
+  it("copies both delegates when present", async () => {
+    const { source, paths, ctx } = await expoProject("ios-target");
+    await writeIosXtool(ctx);
+    for (const file of ["AppDelegate.swift", "SceneDelegate.swift"]) {
+      expect(await readFile(join(paths.sources, file))).toEqual(await readFile(join(source, file)));
+    }
+  });
+
+  it("stops when the scene manifest names a missing SceneDelegate", async () => {
+    const { target, ctx } = await expoProject("ios-target", { drop: ["SceneDelegate.swift"] });
+    await expect(writeIosXtool(ctx)).rejects.toThrow(
+      `Missing SceneDelegate.swift: ${join(target, "SceneDelegate.swift")} ` +
+        "(Info.plist's UIApplicationSceneManifest names $(PRODUCT_MODULE_NAME).SceneDelegate)",
+    );
+  });
+
+  it("still requires AppDelegate.swift", async () => {
+    const { target, ctx } = await expoProject("expo-57/ios/Spike57", { sdkVersion: 57, drop: ["AppDelegate.swift"] });
+    await expect(writeIosXtool(ctx)).rejects.toThrow(`Missing AppDelegate.swift: ${join(target, "AppDelegate.swift")}`);
+  });
+
+  it("reads scene delegate class names", async () => {
+    const plistText = (fixture: string) => readFile(new URL(`./fixtures/${fixture}/Info.plist`, import.meta.url), "utf8");
+    expect(sceneDelegateClassNames(await plistText("expo-57/ios/Spike57"))).toEqual([]);
+    expect(sceneDelegateClassNames(await plistText("ios-target"))).toEqual(["$(PRODUCT_MODULE_NAME).SceneDelegate"]);
   });
 
   /** A bare project laid out like the with-objc pbxproj fixture, with every listed file on disk. */
@@ -288,6 +344,7 @@ describe("writeIosXtool", () => {
     const project: ProjectInfo = {
       kind: "bare", root, name: "HelloWorld", slug: "HelloWorld", version: "1.0", buildNumber: "1",
       bundleIdentifier: "org.reactjs.native.example.HelloWorld", moduleName: "HelloWorld", rnVersion: "0.88.0",
+      rnScripts: "installed", expoPlugin: "installed",
       iosTargetName: "HelloWorld", iosTargetDir: app, infoPlistPath: join(app, "Info.plist"),
       hasExpoModules: false, hasExpoConstants: false, hasDevClient: false,
       bare: readTargetContent(openPbxproj(ios), ios),
@@ -376,6 +433,7 @@ describe("writeIosXtool", () => {
       project: {
         kind: "bare", root, name: "HelloWorld", slug: "HelloWorld", version: "1.0", buildNumber: "1",
         bundleIdentifier: "org.reactjs.native.example.HelloWorld", moduleName: "HelloWorld", rnVersion: "0.88.0",
+        rnScripts: "installed", expoPlugin: "installed",
         iosTargetName: "HelloWorld", iosTargetDir: app, infoPlistPath: join(app, "Info.plist"),
         hasExpoModules: false, hasExpoConstants: false, hasDevClient: false,
         bare: readTargetContent(openPbxproj(ios), ios),
@@ -478,6 +536,7 @@ describe("writeIosXtool", () => {
       project: {
         kind: "expo", root: tmp, name: "app", slug: "app", version: "1.0.0", buildNumber: "1",
         bundleIdentifier: "com.example.app", moduleName: "main", sdkVersion: 58, rnVersion: "0.88.0",
+        rnScripts: "installed", expoPlugin: "installed",
         iosTargetName: "app", iosTargetDir: target, infoPlistPath: join(target, "Info.plist"),
         hasExpoModules: true, hasExpoConstants: true, hasDevClient: false,
       },
@@ -504,6 +563,7 @@ describe("writeIosXtool", () => {
       project: {
         kind: "expo", root: tmp, name: "app", slug: "app", version: "1.0.0", buildNumber: "1",
         bundleIdentifier: "com.example.app", moduleName: "main", sdkVersion: 58, rnVersion: "0.88.0",
+        rnScripts: "installed", expoPlugin: "installed",
         iosTargetName: "app", iosTargetDir: target, infoPlistPath: join(target, "Info.plist"),
         hasExpoModules: true, hasExpoConstants: true, hasDevClient: false,
       },
