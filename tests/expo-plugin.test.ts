@@ -26,12 +26,12 @@ import {
 } from "./support/expoSpm.js";
 import { PODSPEC_FIXTURES, VENDORED_RN_SPM, scaffoldLibraries } from "./support/rnScaffold.js";
 
-// Exercises the PATCHED Expo SwiftPM plugin (patches/expo+58.0.19.patch) as installed in the
+// Exercises the PATCHED Expo SwiftPM plugin (patches/expo+58.0.21.patch) as installed in the
 // reference app (override with RN_XTOOL_REF_APP). Skipped when that app is not on this machine.
 const APP = process.env["RN_XTOOL_REF_APP"] ?? path.resolve(import.meta.dirname, "../../app");
 const SPM = path.join(APP, "node_modules/expo/scripts/spm");
 const MANIFESTS = path.join(SPM, "manifests.js");
-const COMMITTED_PATCH = path.resolve(import.meta.dirname, "../patches/expo+58.0.19.patch");
+const COMMITTED_PATCH = path.resolve(import.meta.dirname, "../patches/expo+58.0.21.patch");
 // The functional test re-runs `setup-apple-spm.js update` and rewrites the app's ios/build, so it
 // is opt-in: RN_XTOOL_E2E=1.
 const e2e = process.env["RN_XTOOL_E2E"] === "1";

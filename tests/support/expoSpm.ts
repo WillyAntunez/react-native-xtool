@@ -69,7 +69,7 @@ export const EXPO_TARBALL = path.join(ROOT, "tests", ".cache", "expo-58.0.19.tgz
 export const EXPO_INTEGRITY =
   "sha512-+MHH9Bu7OFWsAl8Ox44KgqbVIe72xbxzAi3vLPtVf14o5zHE39iCD//uw/4nyBlqZii6cFUZsvtJDbeRo5OhMA==";
 export const EXPO_FETCH_CMD = "mkdir -p tests/.cache && npm pack expo@58.0.19 --pack-destination tests/.cache";
-export const EXPO_SHARED_PATCH = path.join(ROOT, "patches", "expo+58.0.19.patch");
+export const EXPO_SHARED_PATCH = path.join(ROOT, "patches", "expo+58.0.21.patch");
 
 const tmp: string[] = [];
 afterAll(() => {

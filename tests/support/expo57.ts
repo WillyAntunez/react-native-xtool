@@ -7,7 +7,7 @@ import path from "node:path";
 import type { ExpoPinName } from "../../src/versions.js";
 
 /** The exact SDK 57 pins, written out here so the tests do not read them from the code under test. */
-export const EXPO57_PINS: Record<ExpoPinName, string> = {
+export const EXPO57_PINS: Partial<Record<ExpoPinName, string>> = {
   expo: "57.0.31",
   "react-native": "0.86.3",
   "expo-modules-core": "57.0.24",
@@ -22,6 +22,8 @@ const RESOLVER: Record<ExpoPinName, string> = {
   "expo-modules-core": "node_modules/expo",
   "expo-modules-autolinking": "node_modules/expo",
   "expo-modules-jsi": "node_modules/expo-modules-core",
+  "expo-file-system": "node_modules/expo",
+  "expo-font": "node_modules/expo",
 };
 
 async function writePackage(dir: string, name: string, version: string): Promise<void> {

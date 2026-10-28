@@ -5,7 +5,7 @@ import { getConfig, modifyConfigAsync } from "@expo/config";
 import { IOSConfig } from "@expo/config-plugins";
 import { createRequire } from "node:module";
 import type { BuildVars } from "../plist.js";
-import { expoPinsFor, expoPluginFor, SUPPORTED_EXPO, type ExpoPinName } from "../versions.js";
+import { expoPinPolicyFor, expoPinsFor, expoPluginFor, SUPPORTED_EXPO, type ExpoPinName } from "../versions.js";
 import type { ProjectInfo, ReadProjectOptions } from "./types.js";
 
 /** True when `pkg` resolves from the project root (Node's lookup: root/node_modules, then the parents'). */
@@ -41,8 +41,9 @@ function packageDirFrom(from: string, pkg: string): string | undefined {
 }
 
 /**
- * Where the build resolves a pinned Expo package: expo and react-native from the root, expo-modules-core from expo,
- * expo-modules-jsi from core, expo-modules-autolinking from the root and else from expo (npx's order).
+ * Where the build resolves a pinned Expo package: expo and react-native from the root; expo-modules-core,
+ * expo-file-system and expo-font from expo (npm nests the last two under `expo/node_modules`); expo-modules-jsi from
+ * core; expo-modules-autolinking from the root and else from expo (npx's order).
  * The one copy of this chain: the gate and the JSI build use it.
  */
 export function expoPackageDir(root: string, pkg: ExpoPinName): string | undefined {
@@ -57,6 +58,8 @@ export function expoPackageDir(root: string, pkg: ExpoPinName): string | undefin
     case "expo-modules-autolinking":
       return packageDirFrom(root, pkg) ?? from("expo");
     case "expo-modules-core":
+    case "expo-file-system":
+    case "expo-font":
       return from("expo");
     case "expo-modules-jsi":
       return from("expo-modules-core");
@@ -73,13 +76,13 @@ function versionAt(dir: string | undefined): string | undefined {
   }
 }
 
-/** The installed version of each pinned package, read where the build resolves it (undefined: not installed). */
-export function readExpoPins(root: string): Record<ExpoPinName, string | undefined> {
-  const names = Object.keys(SUPPORTED_EXPO[57].pins) as ExpoPinName[];
-  return Object.fromEntries(names.map((name) => [name, versionAt(expoPackageDir(root, name))])) as Record<
-    ExpoPinName,
-    string | undefined
-  >;
+/**
+ * The installed version of each package the SDK pins, read where the build resolves it (undefined: not installed);
+ * `{}` when the SDK pins nothing.
+ */
+export function readExpoPins(root: string, sdk: number): Partial<Record<ExpoPinName, string | undefined>> {
+  const names = Object.keys(expoPinsFor(sdk) ?? {}) as ExpoPinName[];
+  return Object.fromEntries(names.map((name) => [name, versionAt(expoPackageDir(root, name))]));
 }
 
 /** The error when rn-xtool's expo-modules-macros has no Linux binary for the host (an `--omit=optional` install or another arch). */
@@ -106,8 +109,8 @@ function andList(items: string[]): string {
 }
 
 /** The SDK's exact pins, each read where the build resolves it; then expo-modules-jsi must be the top-level copy. */
-function checkExpoPins(root: string, sdk: number, pins: Readonly<Record<ExpoPinName, string>>): void {
-  const installed = readExpoPins(root);
+function checkExpoPins(root: string, sdk: number, pins: Readonly<Partial<Record<ExpoPinName, string>>>): void {
+  const installed = readExpoPins(root, sdk);
   const names = Object.keys(pins) as ExpoPinName[];
   const off = names.filter((name) => installed[name] !== pins[name]);
   if (off.length > 0) {
@@ -219,8 +222,9 @@ export async function readExpoProject(root: string, opts: ReadProjectOptions = {
       `Expo SDK ${sdkVersion} is not supported; rn-xtool supports SDK 57 (expo ${SUPPORTED_EXPO[57].pins.expo}) and SDK 58 or newer.`,
     );
   }
+  // Only exact pins (SDK 57) stop the read here; the SDK 58 floor (checkPins) is not enforced by it.
   const pins = expoPinsFor(sdkVersion);
-  if (pins) checkExpoPins(root, sdkVersion, pins);
+  if (pins && expoPinPolicyFor(sdkVersion) === "exact") checkExpoPins(root, sdkVersion, pins);
   if (expoPlugin === "vendored") {
     const macros = expoMacrosBinaryError();
     if (macros) throw new Error(macros);

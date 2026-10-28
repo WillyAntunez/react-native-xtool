@@ -6,7 +6,7 @@ of its own. SDK 58 and newer keep using the plugin installed in the app.
 
 - Origin: expo 58.0.19, MIT, 650 Industries, Inc. (aka Expo) (see `LICENSE`).
 - Modifications, in order:
-  1. rn-xtool's fixes to Expo's plugin, applied with `patches/expo+58.0.19.patch` (`patch -p4`,
+  1. rn-xtool's fixes to Expo's plugin, applied with `patches/expo+58.0.21.patch` (`patch -p4`,
      run in the extracted `scripts/`), the same patch rn-xtool applies to SDK 58 apps.
   2. Six vendored-only edits (P1-P6) in `rn-xtool-edits.patch` (`patch -p1`, run in this
      directory). SDK 58 never runs them:
@@ -72,4 +72,4 @@ of its own. SDK 58 and newer keep using the plugin installed in the app.
 `tests/vendor-expo-spm.test.ts` re-derives this directory from the pristine tarball and compares
 bytes (skipped until the tarball is fetched with
 `mkdir -p tests/.cache && npm pack expo@58.0.19 --pack-destination tests/.cache`). After a change to
-`patches/expo+58.0.19.patch`, re-derive this directory the same way so the test stays green.
+`patches/expo+58.0.21.patch`, re-derive this directory the same way so the test stays green.

@@ -82,10 +82,10 @@ describe("patches", () => {
   it("has exactly 6 patch-package files", () => {
     const files = readdirSync(path.join(packageRoot(), "patches")).filter((f) => f.endsWith(".patch"));
     expect(files.sort()).toEqual([
-      "expo+58.0.19.patch",
-      "expo-modules-autolinking+58.0.15.patch",
+      "expo+58.0.21.patch",
+      "expo-modules-autolinking+58.0.16.patch",
       "expo-modules-jsi+57.1.3.patch",
-      "expo-modules-jsi+58.0.19.patch",
+      "expo-modules-jsi+58.0.21.patch",
       "react-native+0.88.0.patch",
       "react-native+0.88.1.patch",
     ]);
@@ -197,21 +197,39 @@ describe("react-native patch scope", () => {
   it("keeps staging the expo patches whatever their installed version", async () => {
     const { root } = await tempProject();
     await installPkg(root, "expo", "58.0.20");
-    expect(selectBundledPatches(root, bundled)).toEqual(["expo+58.0.19.patch"]);
+    expect(selectBundledPatches(root, bundled)).toEqual(["expo+58.0.21.patch"]);
   });
 
-  it("stages exactly the four bundled patches for Expo 58 on React Native 0.88.0", async () => {
+  const FLOOR_PATCHES = [
+    "expo+58.0.21.patch",
+    "expo-modules-autolinking+58.0.16.patch",
+    "expo-modules-jsi+58.0.21.patch",
+    "react-native+0.88.1.patch",
+  ];
+
+  it("stages the 58.0.21 set's patches", async () => {
     const { root } = await tempProject();
-    await installPkg(root, "expo", "58.0.19");
-    await installPkg(root, "expo-modules-autolinking", "58.0.15");
-    await installPkg(root, "expo-modules-jsi", "58.0.19");
-    await installPkg(root, "react-native", "0.88.0");
-    expect(selectBundledPatches(root, bundled)).toEqual([
-      "expo+58.0.19.patch",
-      "expo-modules-autolinking+58.0.15.patch",
-      "expo-modules-jsi+58.0.19.patch",
-      "react-native+0.88.0.patch",
-    ]);
+    await installPkg(root, "expo", "58.0.21");
+    await installPkg(root, "expo-modules-autolinking", "58.0.16");
+    await installPkg(root, "expo-modules-jsi", "58.0.21");
+    await installPkg(root, "react-native", "0.88.1");
+    expect(selectBundledPatches(root, bundled)).toEqual(FLOOR_PATCHES);
+  });
+
+  it("stages the floor patches for a newer 58.x", async () => {
+    const { root } = await tempProject();
+    await installPkg(root, "expo", "58.0.22");
+    await installPkg(root, "expo-modules-autolinking", "58.0.17");
+    await installPkg(root, "expo-modules-jsi", "58.0.23");
+    await installPkg(root, "react-native", "0.88.1");
+    expect(selectBundledPatches(root, bundled)).toEqual(FLOOR_PATCHES);
+    const exec = async () => ({
+      exitCode: 1,
+      all: "**ERROR** Failed to apply patch for package expo-modules-jsi\n  patch file: expo-modules-jsi+58.0.21.patch",
+    });
+    await expect(applyPatches(root, exec, { rnScripts: "installed", expoPlugin: "installed" })).rejects.toThrow(
+      /pin "expo-modules-jsi" to 58\.0\.21/,
+    );
   });
 
   it("stages only the jsi patch on an SDK 57 project", async () => {
@@ -247,32 +265,15 @@ describe("react-native patch scope", () => {
     expect((err as Error).message).not.toMatch(/pin "/);
   });
 
-  it("stages the highest patch when no version matches", async () => {
-    const { root } = await tempProject();
-    await installPkg(root, "expo", "58.0.19");
-    await installPkg(root, "expo-modules-jsi", "58.0.20");
-    expect(selectBundledPatches(root, bundled)).toEqual(["expo+58.0.19.patch", "expo-modules-jsi+58.0.19.patch"]);
-    const exec = async () => ({ exitCode: 1, all: "**ERROR** Failed to apply patch for package expo-modules-jsi" });
-    await expect(applyPatches(root, exec, { rnScripts: "installed", expoPlugin: "installed" })).rejects.toThrow(
-      /pin "expo-modules-jsi" to 58\.0\.19/,
-    );
-  });
-
   it("keeps a bare 0.88 hybrid unchanged", async () => {
     const { root, patchesDir } = await tempProject();
-    await installPkg(root, "expo", "58.0.19");
-    await installPkg(root, path.join("expo", "node_modules", "expo-modules-autolinking"), "58.0.15");
-    await installPkg(root, path.join("expo", "node_modules", "expo-modules-jsi"), "58.0.19");
-    await installPkg(root, "react-native", "0.88.0");
-    const expected = [
-      "expo+58.0.19.patch",
-      "expo-modules-autolinking+58.0.15.patch",
-      "expo-modules-jsi+58.0.19.patch",
-      "react-native+0.88.0.patch",
-    ];
-    expect(selectBundledPatches(root, bundled)).toEqual(expected);
+    await installPkg(root, "expo", "58.0.21");
+    await installPkg(root, path.join("expo", "node_modules", "expo-modules-autolinking"), "58.0.16");
+    await installPkg(root, path.join("expo", "node_modules", "expo-modules-jsi"), "58.0.21");
+    await installPkg(root, "react-native", "0.88.1");
+    expect(selectBundledPatches(root, bundled)).toEqual(FLOOR_PATCHES);
     await applyPatches(root, async () => ({ exitCode: 0 }), { rnScripts: "installed", expoPlugin: "installed" });
-    expect(readdirSync(patchesDir).sort()).toEqual(expected);
+    expect(readdirSync(patchesDir).sort()).toEqual(FLOOR_PATCHES);
   });
 
   it("runs no bundled patch for a vendored project", async () => {
@@ -288,10 +289,10 @@ describe("react-native patch scope", () => {
 
 describe("parsePatchFileName", () => {
   it("parses plain and scoped package patches", () => {
-    expect(parsePatchFileName("expo+58.0.19.patch")).toEqual({ pkg: "expo", version: "58.0.19" });
-    expect(parsePatchFileName("expo-modules-autolinking+58.0.15.patch")).toEqual({
+    expect(parsePatchFileName("expo+58.0.21.patch")).toEqual({ pkg: "expo", version: "58.0.21" });
+    expect(parsePatchFileName("expo-modules-autolinking+58.0.16.patch")).toEqual({
       pkg: "expo-modules-autolinking",
-      version: "58.0.15",
+      version: "58.0.16",
     });
     expect(parsePatchFileName("@expo+config+58.0.7.patch")).toEqual({ pkg: "@expo/config", version: "58.0.7" });
   });
@@ -306,15 +307,15 @@ describe("patchFailureMessage", () => {
     const output = Array.from({ length: 50 }, (_, i) => `line ${i + 1}`).join("\n");
     const msg = patchFailureMessage({
       pkg: "expo",
-      installed: "58.0.20",
-      patchFile: "expo+58.0.19.patch",
-      patched: "58.0.19",
+      installed: "58.0.22",
+      patchFile: "expo+58.0.21.patch",
+      patched: "58.0.21",
       output,
     });
     expect(msg.split("\n").slice(0, 4)).toEqual([
-      "rn-xtool could not patch expo@58.0.20 (patch file: expo+58.0.19.patch): the installed version differs from the one this release of rn-xtool patches (58.0.19).",
+      "rn-xtool could not patch expo@58.0.22 (patch file: expo+58.0.21.patch): the installed version differs from the one this release of rn-xtool patches (58.0.21).",
       "This is a known limitation of rn-xtool, not of your project.",
-      'Options: pin "expo" to 58.0.19 in package.json, or report the new version at https://github.com/WillyAntunez/react-native-xtool/issues so the patch can be refreshed.',
+      'Options: pin "expo" to 58.0.21 in package.json, or report the new version at https://github.com/WillyAntunez/react-native-xtool/issues so the patch can be refreshed.',
       "--- patch-package output ---",
     ]);
     expect(msg).toContain("line 50");
@@ -335,22 +336,22 @@ describe("findPatchMismatch", () => {
     for (const [n, v] of Object.entries(nested)) await put(path.join(root, "node_modules", "expo", "node_modules", n), v);
     const patchDir = path.join(root, "patches");
     await mkdir(patchDir);
-    await writeFile(path.join(patchDir, "expo+58.0.19.patch"), "");
-    await writeFile(path.join(patchDir, "expo-modules-autolinking+58.0.15.patch"), "");
+    await writeFile(path.join(patchDir, "expo+58.0.21.patch"), "");
+    await writeFile(path.join(patchDir, "expo-modules-autolinking+58.0.16.patch"), "");
     return { root, patchDir };
   }
 
   it("detects a version mismatch, including nested installs", async () => {
-    const { root, patchDir } = await fakeProject({ expo: "58.0.19" }, { "expo-modules-autolinking": "58.1.0" });
+    const { root, patchDir } = await fakeProject({ expo: "58.0.21" }, { "expo-modules-autolinking": "58.1.0" });
     expect(findPatchMismatch(root, patchDir)).toEqual({
       pkg: "expo-modules-autolinking",
       installed: "58.1.0",
-      patchFile: "expo-modules-autolinking+58.0.15.patch",
-      patched: "58.0.15",
+      patchFile: "expo-modules-autolinking+58.0.16.patch",
+      patched: "58.0.16",
     });
   });
   it("returns undefined when versions match or packages are missing", async () => {
-    const { root, patchDir } = await fakeProject({ expo: "58.0.19", "expo-modules-autolinking": "58.0.15" });
+    const { root, patchDir } = await fakeProject({ expo: "58.0.21", "expo-modules-autolinking": "58.0.16" });
     expect(findPatchMismatch(root, patchDir)).toBeUndefined();
     const bare = await fakeProject({});
     expect(findPatchMismatch(bare.root, bare.patchDir)).toBeUndefined();
@@ -369,7 +370,7 @@ describe("findPatchMismatch", () => {
     expect(findPatchMismatch(root, patchDir, both)?.pkg).toBe("expo-modules-autolinking");
   });
   it("matches the patch file prefix and the node_modules path", () => {
-    expect(outputNamesPackage("applying expo+58.0.19.patch", "expo")).toBe(true);
+    expect(outputNamesPackage("applying expo+58.0.21.patch", "expo")).toBe(true);
     expect(outputNamesPackage("at node_modules/expo/package.json", "expo")).toBe(true);
     expect(outputNamesPackage("applying @expo+config+1.0.0.patch", "@expo/config")).toBe(true);
     expect(outputNamesPackage("node_modules/@expo/config", "@expo/config")).toBe(true);

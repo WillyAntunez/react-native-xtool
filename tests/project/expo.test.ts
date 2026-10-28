@@ -1,11 +1,11 @@
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildVars, defaultBundleIdentifier, MissingBundleIdentifierError, readExpoProject } from "../../src/project/index.js";
 import { expoMacrosBinaryError, expoPackageDir, readExpoPins } from "../../src/project/expo.js";
-import { expoPinsFor, expoPluginFor, type ExpoPinName } from "../../src/versions.js";
+import { checkPins, expoPinPolicyFor, expoPinsFor, expoPluginFor, type ExpoPinName } from "../../src/versions.js";
 import { EXPO57_PINS, fakeExpo57Modules } from "../support/expo57.js";
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures");
@@ -202,7 +202,6 @@ describe("Expo SDK 57", () => {
 
   it("has the SDK 57 pins and plugin in the supported table", () => {
     expect(expoPinsFor(57)).toEqual(EXPO57_PINS);
-    expect(expoPinsFor(58)).toBeUndefined();
     expect([expoPluginFor(56), expoPluginFor(57), expoPluginFor(58), expoPluginFor(59)]).toEqual([
       undefined, "vendored", "installed", "installed",
     ]);
@@ -213,10 +212,10 @@ describe("Expo SDK 57", () => {
     const p = await readExpoProject(dir);
     expect(p).toMatchObject({ sdkVersion: 57, rnVersion: "0.86.3", rnScripts: "vendored", expoPlugin: "vendored" });
     expect(p.iosTargetDir).toBe(path.join(dir, "ios", "Spike57"));
-    expect(readExpoPins(dir)).toEqual(EXPO57_PINS);
+    expect(readExpoPins(dir, 57)).toEqual(EXPO57_PINS);
   });
 
-  const NEXT_PATCH: Record<ExpoPinName, string> = {
+  const NEXT_PATCH: Partial<Record<ExpoPinName, string>> = {
     expo: "57.0.32",
     "react-native": "0.86.4",
     "expo-modules-core": "57.0.25",
@@ -244,9 +243,9 @@ describe("Expo SDK 57", () => {
     await expect(readExpoProject(nestedCore)).rejects.toThrow(PIN_ERROR("expo-modules-core 57.0.25"));
 
     const nestedAutolinking = await expo57({ "expo-modules-autolinking": null }, { "expo-modules-autolinking": "57.0.16" });
-    expect(readExpoPins(nestedAutolinking)["expo-modules-autolinking"]).toBe("57.0.16");
+    expect(readExpoPins(nestedAutolinking, 57)["expo-modules-autolinking"]).toBe("57.0.16");
     const rootAutolinking = await expo57({}, { "expo-modules-autolinking": "57.0.17" });
-    expect(readExpoPins(rootAutolinking)["expo-modules-autolinking"]).toBe("57.0.16");
+    expect(readExpoPins(rootAutolinking, 57)["expo-modules-autolinking"]).toBe("57.0.16");
 
     // Hoisted core's own jsi is the top-level copy.
     const hoisted = await expo57();
@@ -281,6 +280,66 @@ describe("Expo SDK 57", () => {
     expect(asked).toEqual(["@expo/modules-macros-linux-arm64/ExpoModulesMacros"]);
     // The real resolver finds the binary npm installed for this host.
     expect(expoMacrosBinaryError()).toBeUndefined();
+  });
+});
+
+describe("Expo SDK 58 floor model", () => {
+  /** The SDK 58 floor, written out here so the tests do not read it from the code under test. */
+  const EXPO58_FLOOR: Record<ExpoPinName, string> = {
+    expo: "58.0.21",
+    "react-native": "0.88.1",
+    "expo-modules-core": "58.0.28",
+    "expo-modules-jsi": "58.0.21",
+    "expo-modules-autolinking": "58.0.16",
+    "expo-file-system": "58.0.13",
+    "expo-font": "58.0.11",
+  };
+
+  it("SDK 58 pins the 58.0.21 set as a floor", () => {
+    expect(expoPinsFor(58)).toEqual(EXPO58_FLOOR);
+    expect(Object.keys(expoPinsFor(58)!)).toEqual(Object.keys(EXPO58_FLOOR));
+    expect([56, 57, 58, 59].map(expoPinPolicyFor)).toEqual([undefined, "exact", "floor", undefined]);
+    expect(expoPinsFor(59)).toBeUndefined();
+  });
+
+  it("checkPins classifies a floor set", () => {
+    const installed = {
+      expo: "58.0.22",
+      "react-native": "0.88.0",
+      "expo-modules-core": "58.0.26",
+      "expo-modules-jsi": "58.0.21",
+      "expo-modules-autolinking": "58.0.16",
+      "expo-file-system": undefined,
+      "expo-font": "58.0.11",
+    };
+    const checks = checkPins(58, installed)!;
+    expect(checks.map((c) => c.status)).toEqual(["newer", "off", "below", "ok", "ok", "missing", "ok"]);
+    expect(checks[2]).toEqual({ name: "expo-modules-core", wanted: "58.0.28", installed: "58.0.26", status: "below" });
+    expect(checks[5]).toEqual({ name: "expo-file-system", wanted: "58.0.13", installed: undefined, status: "missing" });
+    expect(checkPins(58, { ...installed, "react-native": "0.88.2" })![1]!.status).toBe("off");
+    const sdk57 = checkPins(57, { ...EXPO57_PINS, "expo-modules-core": "57.0.25" })!;
+    expect(sdk57.map((c) => c.status)).toEqual(["ok", "ok", "off", "ok", "ok"]);
+    expect(checkPins(59, installed)).toBeUndefined();
+  });
+
+  it("reads each SDK 58 pin where the build resolves it", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "rn-xtool-expo58-"));
+    tempDirs.push(dir);
+    const write = async (rel: string, name: string, version: string) => {
+      await mkdir(path.join(dir, rel), { recursive: true });
+      await writeFile(path.join(dir, rel, "package.json"), JSON.stringify({ name, version }));
+    };
+    await write("node_modules/expo", "expo", "58.0.21");
+    await write("node_modules/expo-file-system", "expo-file-system", "58.0.11");
+    await write("node_modules/expo/node_modules/expo-file-system", "expo-file-system", "58.0.13");
+    await write("node_modules/expo-font", "expo-font", "58.0.11");
+    expect(expoPackageDir(dir, "expo-file-system")).toBe(path.join(dir, "node_modules", "expo", "node_modules", "expo-file-system"));
+    expect(readExpoPins(dir, 58)["expo-file-system"]).toBe("58.0.13");
+    expect(readExpoPins(dir, 58)["expo-font"]).toBe("58.0.11");
+    expect(Object.keys(readExpoPins(dir, 57))).toEqual([
+      "expo", "react-native", "expo-modules-core", "expo-modules-autolinking", "expo-modules-jsi",
+    ]);
+    expect(readExpoPins(dir, 59)).toEqual({});
   });
 });
 
