@@ -116,9 +116,20 @@ const SCAFFOLDER_VERSION_LINE_RE = /^\/\/ AUTO-SCAFFOLDED-VERSION: (\d+)$/m;
 
 // rn-xtool's own revision of this patched scaffolder, independent of
 // upstream's SCAFFOLDER_VERSION. A scaffold without the marker (emitted by an
-// older revision) or with a lower number is regenerated.
-const RN_XTOOL_SCAFFOLD_REVISION = 1;
+// older revision) or with a lower number is regenerated. Revision 2: own
+// `-Swift.h` importers out of the Swift umbrella, `#{package['version']}`
+// evaluated, header_mappings_dir under header_dir, and the Swift importer
+// paths marker (IMPORTER_PATHS_MARKER).
+const RN_XTOOL_SCAFFOLD_REVISION = 2;
 const RN_XTOOL_SCAFFOLD_REVISION_RE = /^\/\/ rn-xtool-scaffold-revision: (\d+)$/m;
+
+// A Swift module built with a bridging header makes every Swift importer
+// re-read that header, so the importer needs the header search paths the
+// header's own includes resolve with. A mixed manifest records them, as a JSON
+// array of package-relative paths in the manifest's order, on this line right
+// after the revision line; rn-xtool passes them to Swift importers as `-Xcc -I`.
+// Paths that leave the package (absolute, or with a `..` segment) are left out.
+const IMPORTER_PATHS_MARKER = '// rn-xtool-swift-importer-paths: ';
 
 // CocoaPods pods (not React Native / Expo modules, not autolinked siblings) whose
 // SwiftPM package is known: a podspec `s.dependency "<pod>"` becomes
@@ -262,6 +273,32 @@ function stripCplusplusBlocks(text /*: string */) /*: string */ {
     if (!skipping()) out.push(line);
   }
   return out.join('\n');
+}
+
+// Whether a header (outside `#if __cplusplus` branches) imports the module's
+// own generated `<Module>-Swift.h`, under any of the module's names and with or
+// without a `<Module>/` prefix. Swift writes that header only after it has
+// compiled the module, so the Swift umbrella of the same module cannot hold it
+// (react-native-screens 4.26: `ios/bridging/Swift-Bridging.h` → "RNScreens-Swift.h
+// file not found").
+function importsOwnSwiftHeader(
+  depRoot /*: string */,
+  header /*: string */,
+  moduleNames /*: Array<string> */,
+) /*: boolean */ {
+  let text = '';
+  try {
+    text = stripCplusplusBlocks(fs.readFileSync(path.join(depRoot, header), 'utf8'));
+  } catch {
+    return false;
+  }
+  const names = moduleNames
+    .map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|');
+  return new RegExp(
+    `^\\s*#\\s*(?:import|include)\\s*[<"](?:[^>"\\n]*/)?(?:${names})-Swift\\.h[>"]`,
+    'm',
+  ).test(text);
 }
 
 // The module headers Swift can import: CocoaPods' umbrella holds every public
@@ -849,7 +886,7 @@ function translatePodspecToSpmTarget(
   // CocoaPods `header_dir` exposes a spec's headers, flattened, as
   // `<header_dir/X.h>` whatever their subdirectory. Mirror each as a stub in
   // include/<header_dir>/ and put include/ on the header search path.
-  const headerDirShims /*: Array<{dir: string, headers: Array<string>}> */ = [];
+  const headerDirShims /*: Array<{dir: string, headers: Array<string>, names: Array<string>}> */ = [];
   const headerDirsSeen /*: Set<string> */ = new Set();
   for (const scope of model.headerDirScopes ?? []) {
     // The directory name is written under include/: refuse anything that could
@@ -889,6 +926,25 @@ function translatePodspecToSpmTarget(
       );
       continue;
     }
+    // A header under the scope's `header_mappings_dir` keeps its path below
+    // that dir (`<header_dir>/<path>`), as CocoaPods maps it; any other is
+    // flattened to its basename. The deepest mappings dir that holds it wins (a
+    // subspec's own over the inherited one). One that is absolute or contains
+    // '..' is ignored.
+    const mappingsDirs = (scope.headerMappingsDirs ?? [])
+      .map(d => d.replace(/^\.\//, '').replace(/\/+$/, ''))
+      .filter(
+        d =>
+          d.length > 0 &&
+          d !== '.' &&
+          !path.posix.isAbsolute(d) &&
+          !d.split('/').includes('..'),
+      )
+      .sort((a, b) => b.length - a.length);
+    const stubName = (h /*: string */) /*: string */ => {
+      const mapped = mappingsDirs.find(d => h.startsWith(`${d}/`));
+      return mapped != null ? h.slice(mapped.length + 1) : path.posix.basename(h);
+    };
     const byDepth = files
       .filter(f => isHeader(f) && !f.startsWith('include/'))
       .sort(
@@ -897,17 +953,21 @@ function translatePodspecToSpmTarget(
       );
     const seen /*: Map<string, string> */ = new Map();
     for (const h of byDepth) {
-      const base = path.posix.basename(h);
-      if (seen.has(base)) {
+      const name = stubName(h);
+      if (seen.has(name)) {
         warnings.push(
-          `Header basename collision in include/${scope.headerDir}/: keeping '${seen.get(base) ?? ''}', skipping '${h}'.`,
+          `Header name collision in include/${scope.headerDir}/: keeping '${seen.get(name) ?? ''}', skipping '${h}'.`,
         );
         continue;
       }
-      seen.set(base, h);
+      seen.set(name, h);
     }
     if (seen.size > 0) {
-      headerDirShims.push({dir: scope.headerDir, headers: [...seen.values()]});
+      headerDirShims.push({
+        dir: scope.headerDir,
+        headers: [...seen.values()],
+        names: [...seen.keys()],
+      });
     }
   }
   if (
@@ -1016,7 +1076,16 @@ function translatePodspecToSpmTarget(
         headerSearchPaths,
         includeRoots,
       );
-      umbrellaHeaders = safe;
+      const moduleNames = Array.from(new Set([swiftName, podModule]));
+      const importsSwift = safe.filter(h =>
+        importsOwnSwiftHeader(dep.root, h, moduleNames),
+      );
+      umbrellaHeaders = safe.filter(h => !importsSwift.includes(h));
+      if (importsSwift.length > 0) {
+        warnings.push(
+          `Left ${importsSwift.length} header(s) that import the module's own ${swiftHeader} out of the Swift umbrella (${MIXED_SUPPORT_DIR}/${MIXED_UMBRELLA_HEADER}): ${importsSwift.join(', ')}. Swift writes that header after compiling the module.`,
+        );
+      }
       if (cxx.length > 0) {
         warnings.push(
           `Left ${cxx.length} C++ header(s) out of the Swift umbrella (${MIXED_SUPPORT_DIR}/${MIXED_UMBRELLA_HEADER}): ${cxx.join(', ')}. Swift cannot import C++; Objective-C(++) sources still see them.`,
@@ -1320,11 +1389,19 @@ let rnSpmBridgingHeader = Context.packageDirectory + "/${mixed.bridgingHeader}"
     mixed != null
       ? `\n            swiftSettings: [.unsafeFlags(["-import-objc-header", rnSpmBridgingHeader])],`
       : '';
+  const importerPathsLine =
+    mixed != null
+      ? `\n${IMPORTER_PATHS_MARKER}${JSON.stringify(
+          spec.headerSearchPaths.filter(
+            p => !path.posix.isAbsolute(p) && !p.split('/').includes('..'),
+          ),
+        )}`
+      : '';
 
   return `${toolsVersionLine}
 ${SCAFFOLDER_MARKER}
 // AUTO-SCAFFOLDED-VERSION: ${SCAFFOLDER_VERSION}
-// rn-xtool-scaffold-revision: ${RN_XTOOL_SCAFFOLD_REVISION}${slotComment}
+// rn-xtool-scaffold-revision: ${RN_XTOOL_SCAFFOLD_REVISION}${importerPathsLine}${slotComment}
 // Edit the contents below if needed and re-run \`npx patch-package <dep-name>\`
 // to persist across \`npm install\`. To regenerate from the podspec, remove
 // this file (or just this marker) and re-run \`npx react-native spm scaffold\`.
@@ -1736,19 +1813,20 @@ function scaffoldPackageSwiftForDep(
       }
     }
     // `header_dir` namespaces: one stub per header in include/<header_dir>/.
-    for (const {dir, headers} of spec.headerDirShims) {
+    for (const {dir, headers, names} of spec.headerDirShims) {
       const nsDir = path.join(dep.root, 'include', dir);
-      fs.mkdirSync(nsDir, {recursive: true});
-      for (const header of headers) {
-        const name = path.posix.basename(header);
+      headers.forEach((header, i) => {
+        const name = names?.[i] ?? path.posix.basename(header);
+        const stub = path.join(nsDir, name);
+        fs.mkdirSync(path.dirname(stub), {recursive: true});
         fs.writeFileSync(
-          path.join(nsDir, name),
+          stub,
           `// AUTO-SCAFFOLDED by react-native spm scaffold — the <${dir}/${name}>\n` +
             `// spelling CocoaPods' header_dir gives the header.\n` +
-            `#import "${'../'.repeat(dir.split('/').length + 1)}${header}"\n`,
+            `#import "${'../'.repeat(dir.split('/').length + name.split('/').length)}${header}"\n`,
           'utf8',
         );
-      }
+      });
     }
   }
 

@@ -1,0 +1,10 @@
+{
+  "react-native-screens": "written",
+  "react-native-pager-view": "written",
+  "react-native-gesture-handler": "written",
+  "react-native-reanimated": "skipped-self-managed",
+  "react-native-worklets": "skipped-self-managed",
+  "react-native-svg": "written",
+  "react-native-webview": "written",
+  "@react-native-community/datetimepicker": "written"
+}

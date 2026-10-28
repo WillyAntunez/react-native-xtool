@@ -239,16 +239,56 @@ function resolveRubyConstants(content /*: string */) /*: string */ {
   );
 }
 
+// The library's own version. Podspecs load the package.json next to them
+// (`package = JSON.parse(File.read(File.join(__dir__, "package.json")))`, or
+// `File.dirname(__FILE__)`) and interpolate `#{package['version']}` (also
+// `#{package["version"]}`, any variable name) into flags such as
+// `-DWORKLETS_VERSION=...`. Those references are replaced by the version read
+// from that package.json, inside double-quoted strings only (as in Ruby);
+// anything else stays as written, so other interpolations are still dropped.
+function resolvePackageVersion(
+  content /*: string */,
+  podspecDir /*: string */,
+) /*: string */ {
+  const loadRe =
+    /^[ \t]*([A-Za-z_]\w*)[ \t]*=[ \t]*JSON\.parse\(\s*File\.read\(\s*File\.join\(\s*(?:__dir__|File\.dirname\(\s*__FILE__\s*\))\s*,\s*(["'])package\.json\2\s*\)\s*\)\s*\)/gm;
+  const vars = Array.from(content.matchAll(loadRe), m => m[1]);
+  if (vars.length === 0) return content;
+  let version = null;
+  try {
+    version = JSON.parse(
+      fs.readFileSync(path.join(podspecDir, 'package.json'), 'utf8'),
+    ).version;
+  } catch {
+    return content;
+  }
+  if (typeof version !== 'string' || version.length === 0) return content;
+  const ref = new RegExp(
+    `#\\{\\s*(?:${Array.from(new Set(vars)).join('|')})\\s*\\[\\s*(["'])version\\1\\s*\\]\\s*\\}`,
+    'g',
+  );
+  const v /*: string */ = version;
+  // A double-quoted literal may hold `#{package["version"]}` with its own
+  // quotes, so the scan steps over `#{...}` as a unit.
+  return content.replace(
+    /"(?:[^"\\\n#]|\\.|#\{[^}\n]*\}|#(?!\{))*"|'(?:[^'\\\n]|\\.)*'/g,
+    lit => (lit[0] === '"' ? lit.replace(ref, () => v) : lit),
+  );
+}
+
 // Comment-only lines are dropped so a commented-out `# s.header_dir` cannot win
 // over the live one. A trailing `#` and a `#` inside a string survive: only the
 // first non-whitespace character counts.
 function readPodspecSource(podspecPath /*: string */) /*: string */ {
   return resolveRubyConstants(
-    fs
-      .readFileSync(podspecPath, 'utf8')
-      .split('\n')
-      .filter(line => !/^\s*#/.test(line))
-      .join('\n'),
+    resolvePackageVersion(
+      fs
+        .readFileSync(podspecPath, 'utf8')
+        .split('\n')
+        .filter(line => !/^\s*#/.test(line))
+        .join('\n'),
+      path.dirname(podspecPath),
+    ),
   );
 }
 
@@ -694,6 +734,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
           i === 0
             ? getIdentityField('header_dir')
             : getStringField('header_dir', l.text, l.recv),
+        headerMappingsDir: getStringField('header_mappings_dir', l.text, l.recv),
         sourceFiles: getArrayField('source_files', l.text, l.recv),
       })),
     ),
@@ -752,14 +793,27 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
  * CocoaPods `header_dir` puts a spec's headers, flattened, under one namespace
  * (`<header_dir/Header.h>`). Layer 0 is the main spec: its `header_dir` covers
  * its own sources plus those of every subspec that sets none; a subspec's own
- * `header_dir` covers only that subspec's sources.
+ * `header_dir` covers only that subspec's sources. A `header_mappings_dir`
+ * keeps the path below it instead of flattening (`<header_dir/sub/Header.h>`):
+ * each scope lists the mappings dirs of its layers, plus the main spec's, which
+ * subspecs inherit.
  */
 function headerDirScopes(
-  layers /*: Array<{headerDir: ?string, sourceFiles: Array<string>}> */,
-) /*: Array<{headerDir: string, sourceFiles: Array<string>}> */ {
+  layers /*: Array<{headerDir: ?string, headerMappingsDir?: ?string, sourceFiles: Array<string>}> */,
+) /*: Array<{headerDir: string, headerMappingsDirs: Array<string>, sourceFiles: Array<string>}> */ {
   const mainDir = layers.length > 0 ? layers[0].headerDir : null;
+  const mainMappings = layers.length > 0 ? layers[0].headerMappingsDir : null;
+  const mappingsOf = (l /*: {headerMappingsDir?: ?string, ...} */) =>
+    Array.from(
+      new Set(
+        [l.headerMappingsDir, mainMappings].filter(
+          d => typeof d === 'string' && d.length > 0,
+        ),
+      ),
+    );
   const scopes = [];
   const inherited = [];
+  const inheritedMappings = [];
   layers.forEach((l, i) => {
     if (i > 0 && l.headerDir === '') {
       // A subspec's `header_dir = ""` is the root namespace: no stubs for its
@@ -767,13 +821,22 @@ function headerDirScopes(
       return;
     }
     if (i > 0 && l.headerDir != null && l.headerDir.length > 0) {
-      scopes.push({headerDir: l.headerDir, sourceFiles: l.sourceFiles});
+      scopes.push({
+        headerDir: l.headerDir,
+        headerMappingsDirs: mappingsOf(l),
+        sourceFiles: l.sourceFiles,
+      });
     } else {
       inherited.push(...l.sourceFiles);
+      inheritedMappings.push(...mappingsOf(l));
     }
   });
   if (mainDir != null && mainDir.length > 0) {
-    scopes.unshift({headerDir: mainDir, sourceFiles: inherited});
+    scopes.unshift({
+      headerDir: mainDir,
+      headerMappingsDirs: Array.from(new Set(inheritedMappings)),
+      sourceFiles: inherited,
+    });
   }
   return scopes;
 }
@@ -1142,6 +1205,11 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
             // $FlowFixMe[incompatible-use] dynamic shape
             headerDir:
               l != null && typeof l.header_dir === 'string' ? l.header_dir : null,
+            // $FlowFixMe[incompatible-use] dynamic shape
+            headerMappingsDir:
+              l != null && typeof l.header_mappings_dir === 'string'
+                ? l.header_mappings_dir
+                : null,
             sourceFiles: mergeArrayFieldOf(l, 'source_files'),
           })),
         ),
