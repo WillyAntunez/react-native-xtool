@@ -1,4 +1,4 @@
-import { mkdtemp, rm, mkdir, cp, readFile, readdir, lstat, readlink, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, mkdir, cp, readFile, readdir, lstat, readlink, realpath, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -6,6 +6,7 @@ import { renderPackageSwift } from "../src/generate/packageSwift.js";
 import { renderXtoolYml } from "../src/generate/xtoolYml.js";
 import { sceneDelegateClassNames, writeIosXtool } from "../src/generate/iosXtool.js";
 import { expoClangImporterInputs, type ClangImporterInputs } from "../src/generate/expoImporter.js";
+import { IMPORTER_MARKER, scaffoldedImporterPaths } from "../src/generate/scaffoldImporter.js";
 import { projectPaths, swiftHeadersDir } from "../src/paths.js";
 import { openPbxproj, readTargetContent } from "../src/project/pbxproj.js";
 import type { ProjectInfo } from "../src/project/index.js";
@@ -85,10 +86,26 @@ describe("renderPackageSwift", () => {
       expo: expoInputs({
         clangImporter: { swiftHeadersDir: "/h", includeDirs: ["/e/A/pod-headers"], moduleMaps: ["/h/A.modulemap"] },
       }),
-      app: noApp,
+      app: { ...noApp, importerPaths: [] },
     });
     expect(o.manifest).toBe(snapshot);
     expect(o.manifest65).toBeUndefined();
+  });
+
+  it("gives the App's Swift the scaffolded importer paths, after the Expo and bridging flags", () => {
+    const o = renderPackageSwift({
+      iosDir: "/p/ios",
+      frameworks: [],
+      iosMin: "16.4",
+      expo: expoInputs(),
+      app: { ...noApp, mixed: true, bridgingHeader: "/x/B.h", importerPaths: ["/s/.", "/s/ios/bridging"] },
+    }).manifest;
+    const swift = o.slice(o.indexOf("swiftSettings: ["), o.indexOf("linkerSettings: ["));
+    const line = '.unsafeFlags(["-Xcc", "-I/s/.", "-Xcc", "-I/s/ios/bridging"]),';
+    expect(swift).toContain(line);
+    expect(swift.indexOf(line)).toBeGreaterThan(swift.indexOf('"-import-objc-header"'));
+    expect(swift.indexOf(line)).toBeGreaterThan(swift.indexOf('"-F", "/p/ci"'));
+    expect(o.match(/-I\/s\//g)).toHaveLength(2); // Swift only, not C/C++
   });
 
   it("renders the Swift-only bare manifest", () => {
@@ -572,6 +589,44 @@ describe("writeIosXtool", () => {
     expect(await readFile(join(paths.iosXtool, "ip.txt"), "utf8")).toBe("192.168.1.100\n");
   });
 
+  /** Aliases `libs/<name>` → a library dir holding `manifest` as Package.swift (none when undefined); returns its realpath. */
+  async function autolinkedLib(paths: { autolinking: string }, root: string, name: string, manifest?: string) {
+    const dir = join(root, "node_modules", name);
+    await mkdir(dir, { recursive: true });
+    if (manifest !== undefined) await writeFile(join(dir, "Package.swift"), manifest);
+    await mkdir(join(paths.autolinking, "libs"), { recursive: true });
+    await symlink(dir, join(paths.autolinking, "libs", name));
+    return realpath(dir);
+  }
+  const scaffolded = (paths: string[]) =>
+    `// swift-tools-version: 6.4;(experimentalMultiLang)\n// rn-xtool-scaffold-revision: 2\n${IMPORTER_MARKER}${JSON.stringify(paths)}\nimport PackageDescription\n`;
+
+  it("adds a scaffolded mixed library's importer paths to the App", async () => {
+    const expo = await expoProject("ios-target");
+    const bare = await bareProject();
+    const hybrid = await bareProject();
+    hybrid.ctx.project.hasExpoModules = true;
+    for (const { paths, ctx } of [expo, bare, hybrid]) {
+      const root = ctx.project.root;
+      const dir = await autolinkedLib(paths, root, "RNScreens", scaffolded([".", "ios/bridging"]));
+      await autolinkedLib(paths, root, "RNSVG", "// swift-tools-version: 6.0\nimport PackageDescription\n");
+      await autolinkedLib(paths, root, "RNPlain");
+      await writeIosXtool(ctx);
+      const pkg = await readFile(join(paths.iosXtool, "Package.swift"), "utf8");
+      const swift = pkg.slice(pkg.indexOf("swiftSettings: ["), pkg.indexOf("linkerSettings: ["));
+      expect(swift).toContain(`.unsafeFlags(["-Xcc", "-I${dir}/.", "-Xcc", "-I${dir}/ios/bridging"]),`);
+    }
+  });
+
+  it("adds no importer flags when no library in libs/ has the marker", async () => {
+    const { root, paths, ctx } = await bareProject();
+    await writeIosXtool(ctx);
+    const before = await readFile(join(paths.iosXtool, "Package.swift"), "utf8");
+    await autolinkedLib(paths, root, "RNSVG", "// swift-tools-version: 6.0\nimport PackageDescription\n");
+    await writeIosXtool(ctx);
+    expect(await readFile(join(paths.iosXtool, "Package.swift"), "utf8")).toBe(before);
+  });
+
   it("names a file the app target lists but the disk lacks", async () => {
     const { app, ctx } = await bareProject();
     await rm(join(app, "Fonts", "Inter.ttf"));
@@ -619,5 +674,54 @@ describe("expoClangImporterInputs", () => {
     const dir = await autolinking({ Swifty: ["pod-headers/Swifty/Swifty-Swift.h"] });
     expect(await expoClangImporterInputs(dir, "/h")).toBeUndefined();
     expect(await expoClangImporterInputs(join(dir, "missing"), "/h")).toBeUndefined();
+  });
+});
+
+describe("scaffoldedImporterPaths", () => {
+  async function libs(manifests: Record<string, string | undefined>): Promise<{ autolinking: string; real: Record<string, string> }> {
+    const root = await mkdtemp(join(tmpdir(), "xt-libs-"));
+    tmps.push(root);
+    const autolinking = join(root, "autolinking");
+    await mkdir(join(autolinking, "libs"), { recursive: true });
+    const real: Record<string, string> = {};
+    for (const [name, manifest] of Object.entries(manifests)) {
+      const dir = join(root, "pkgs", name);
+      await mkdir(dir, { recursive: true });
+      if (manifest !== undefined) await writeFile(join(dir, "Package.swift"), manifest);
+      await symlink(dir, join(autolinking, "libs", name));
+      real[name] = await realpath(dir);
+    }
+    return { autolinking, real };
+  }
+  const marker = (paths: unknown) => `// rn-xtool-scaffold-revision: 2\n${IMPORTER_MARKER}${JSON.stringify(paths)}\n`;
+
+  it("resolves each marker against the library's real dir, in lib-name then marker order, without duplicates", async () => {
+    const { autolinking, real } = await libs({
+      RNScreens: marker(["ios/bridging", ".", "ios/bridging"]),
+      Alpha: marker(["include"]),
+      Plain: "// swift-tools-version: 6.0\n",
+      NoManifest: undefined,
+    });
+    expect(await scaffoldedImporterPaths(autolinking)).toEqual([
+      `${real.Alpha}/include`,
+      `${real.RNScreens}/ios/bridging`,
+      `${real.RNScreens}/.`,
+    ]);
+  });
+
+  it("returns nothing without libs/, and skips a dangling alias", async () => {
+    const { autolinking } = await libs({});
+    expect(await scaffoldedImporterPaths(join(autolinking, "missing"))).toEqual([]);
+    await symlink(join(autolinking, "nowhere"), join(autolinking, "libs", "Dangling"));
+    expect(await scaffoldedImporterPaths(autolinking)).toEqual([]);
+  });
+
+  it("refuses a marker that is not a JSON array of package-relative paths", async () => {
+    for (const bad of ['"x"', '["../up"]', '["/abs"]', "[1]", "[oops"]) {
+      const { autolinking, real } = await libs({ Bad: `${IMPORTER_MARKER}${bad}\n` });
+      await expect(scaffoldedImporterPaths(autolinking)).rejects.toThrow(
+        `${real.Bad}/Package.swift records its Swift importer paths as ${bad}`,
+      );
+    }
   });
 });

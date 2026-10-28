@@ -9,6 +9,7 @@ import { IOS_MIN } from "../versions.js";
 import { copyBareTarget } from "./bareSources.js";
 import { expoClangImporterInputs } from "./expoImporter.js";
 import { renderPackageSwift, type AppTargetInputs } from "./packageSwift.js";
+import { scaffoldedImporterPaths } from "./scaffoldImporter.js";
 import { BASE_RESOURCES, DEFAULT_RESOURCES, renderXtoolYml } from "./xtoolYml.js";
 
 export interface GenerateContext {
@@ -154,7 +155,7 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
           jsiHeaders: true,
         }
       : undefined,
-    app,
+    app: { ...app, importerPaths: await scaffoldedImporterPaths(paths.autolinking) },
   });
   await writeFile(join(paths.iosXtool, "Package.swift"), manifest);
   if (manifest65 !== undefined) await writeFile(join(paths.iosXtool, MANIFEST_6_5), manifest65);
