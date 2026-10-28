@@ -13,7 +13,10 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   ExpoModulesCore. The `jsi` step runs before `rn-spm` and also writes the `ExpoModulesJSIHeaders.xcframework` SDK 57
   does not ship. Nothing is injected into `ios/`. expo-modules-autolinking 58.0.15 and expo-modules-macros 0.22.0 are
   new exact dependencies of rn-xtool, and `patches/expo-modules-jsi+57.1.3.patch` is the only bundled patch an SDK 57
-  project gets. `doctor` reports `(vendored Expo SwiftPM plugin and SwiftPM scripts)` for these projects.
+  project gets. `doctor` reports `(vendored Expo SwiftPM plugin and SwiftPM scripts)` for these projects. Verified on
+  a physical iPhone on 2026-10-28: the template with Fast Refresh, and the libraries in the `Expo 57` column of
+  `docs/libraries.md` (expo-router, expo-dev-client, reanimated and worklets, gesture-handler, screens and
+  safe-area-context, haptics, image-picker, file-system).
 - Generic fixes, on every SDK and on bare projects:
   - Expo's plugin (`patches/expo+58.0.19.patch`): headers that import the module's own `-Swift.h` stay out of its Swift
     umbrella; `add_dependency(s, "<Pod>")` counts as a pod dependency, and a generated package can depend on a React

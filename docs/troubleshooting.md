@@ -55,14 +55,21 @@ far with their fixes. Wi‑Fi install problems have their own list in [wifi-inst
   `RNSVGFilters.bundle`, declared in the podspec through `s.ios.resource_bundles`. The scaffolder does not read resource
   bundles yet (on any host, macOS included), so the bundle is never built or copied into the app. Skipping `.metal`
   compilation is the only Linux-specific part. Rendering that does not use those filters is unaffected.
+- **An Expo config plugin change is missing from the app** (for example expo-image-picker's photo library text in
+  Info.plist): `build` runs `expo prebuild` only when `ios/` is missing. After adding or changing a config plugin in
+  `app.json`, run `rn-xtool build --clean` (or `run --clean`), which re-runs `expo prebuild --clean`.
 - **A committed project patch no longer applies** (after a library upgrade): delete it from `patches/` and let
   `rn-xtool build` re-scaffold it.
-- **"⚠ patches/<name> was written by an older rn-xtool scaffolder (revision 1, now 2)":** the `patches` step found a
-  persisted scaffold patch from before the Swift importer paths (fix 17 in
-  [upstream/react-native-scaffolder.md](upstream/react-native-scaffolder.md)). Without them, Swift code that imports a
-  scaffolded mixed library (the app, or expo-router importing react-native-screens) can fail with
-  `'RNSReactBaseView.h' file not found`. Do what the warning says: delete the patch, remove the library from
-  `node_modules` and reinstall it, then build; rn-xtool scaffolds it again and persists the new patch.
+- **"⚠ patches/<name> was written by an older rn-xtool scaffolder (revision <n>, now 3); delete it so rn-xtool
+  regenerates it (also remove node_modules/<package> and reinstall: that copy still has the old Package.swift)":** the
+  `patches` step found a persisted scaffold patch from an older scaffolder. Revision 1 patches lack the Swift importer
+  paths of mixed libraries, and revision 2 patches lack those of clang-only libraries and their module map (fixes 17
+  and 18 in [upstream/react-native-scaffolder.md](upstream/react-native-scaffolder.md)). Without them, Swift code that
+  imports a scaffolded library (the app, or expo-router importing react-native-screens) can fail with
+  `'RNSReactBaseView.h' file not found` (a mixed library, such as react-native-screens 4.26) or
+  `'RNSDefines.h' file not found` (a clang-only one, such as react-native-screens 4.30). Do what the warning says:
+  delete the patch, remove the library from `node_modules` and reinstall it, then build; rn-xtool scaffolds it again
+  and persists the new patch.
 - **"Missing SceneDelegate.swift: <path> (Info.plist's UIApplicationSceneManifest names ...)":** `SceneDelegate.swift`
   is optional (SDK 57's template has none), but Info.plist names a scene delegate class and the file is missing, so
   `ios/` is incomplete. `rn-xtool build --clean` regenerates it with `expo prebuild --clean`.
@@ -111,8 +118,16 @@ rn-xtool builds Expo SDK 57 only with exact versions (see [how-it-works.md](how-
 
 **Install SDK 57's reanimated and worklets explicitly.** expo-router declares react-native-reanimated as a `*` peer.
 When the app does not install it, npm installs the latest reanimated and react-native-worklets, and that worklets is
-outside the range expo-modules-core 57 accepts (`^0.7.4 || ^0.8.0 || ^0.9.0 || ^0.10.0`). Install SDK 57's versions
-(reanimated 4.5.1, worklets 0.10.1) with `npx expo install react-native-reanimated react-native-worklets`.
+outside the range expo-modules-core 57 accepts (`^0.7.4 || ^0.8.0 || ^0.9.0 || ^0.10.0`). Such an app (reanimated
+4.7.1, worklets 0.13.1, gesture-handler 3.4.0, screens 4.30.1) built and launched on 2026-10-28, but only the launch
+was checked. Install SDK 57's versions (reanimated 4.5.1, worklets 0.10.1) with
+`npx expo install react-native-reanimated react-native-worklets`.
+
+**After `npx expo install expo-router`, run `npx expo install react-dom`.** npm adds react-dom 19.3.1 as a peer of
+expo-router's web dependencies, and it needs react ^19.3.1 while the SDK 57 template has react 19.2.3. npm only prints
+`npm warn ERESOLVE overriding peer dependency` at first, but the next `npx expo install <package>` stops with
+`ERESOLVE could not resolve`: `expo install` still writes the package into `package.json`, and nothing is installed.
+`npx expo install react-dom` installs SDK 57's react-dom 19.2.3 and clears it; the native build does not use react-dom.
 
 ## Device and signing
 
