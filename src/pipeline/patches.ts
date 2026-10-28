@@ -193,17 +193,22 @@ export function hasProjectPatches(projectRoot: string): boolean {
   }
 }
 
-const SCAFFOLD_MARKER = "rn-xtool-scaffold-revision";
+/** rn-xtool's scaffold marker; `expo-xtool-scaffold-revision` is its name before the rename (pre-release apps). */
+const SCAFFOLD_MARKER_RE = /(?:rn|expo)-xtool-scaffold-revision/;
 const SLOT_LABEL_RE = /^\+\/\/ Cache slot: (\S+)\/dual-flavor\s*$/m;
+const REVISION_RE = /^\+\/\/ (?:rn|expo)-xtool-scaffold-revision: (\d+)\s*$/m;
+
+/** The scaffolder's RN_XTOOL_SCAFFOLD_REVISION (patches/react-native+0.88.0.patch and vendor/rn-spm). */
+export const SCAFFOLD_REVISION = 2;
 
 /**
- * Warnings for the project's persisted scaffold patches (`patches/*.patch` with rn-xtool's scaffold marker) whose
- * cache-slot label names another React Native version than the installed one: their Package.swift was written for
- * that version, and the scaffolder only regenerates it when the manifest is missing.
+ * Warnings for the project's persisted scaffold patches (`patches/*.patch` with rn-xtool's scaffold marker): their
+ * Package.swift is only regenerated when the manifest is missing, so one is stale when its cache-slot label names
+ * another React Native version than the installed one, or when an older scaffolder revision wrote it. One line per
+ * patch; the slot warning wins when both apply.
  */
 export function scaffoldPatchWarnings(projectRoot: string): string[] {
   const installed = installedVersion(projectRoot, "react-native");
-  if (installed === undefined) return [];
   const dir = path.join(projectRoot, "patches");
   let names: string[];
   try {
@@ -219,15 +224,24 @@ export function scaffoldPatchWarnings(projectRoot: string): string[] {
     } catch {
       continue;
     }
-    if (!text.includes(SCAFFOLD_MARKER)) continue;
-    const slot = SLOT_LABEL_RE.exec(text)?.[1];
-    if (slot === undefined || slot === installed) continue;
+    if (!SCAFFOLD_MARKER_RE.test(text)) continue;
     const pkg = parsePatchFileName(name)?.pkg;
     const reinstall = pkg === undefined ? "the library" : `node_modules/${pkg}`;
-    warnings.push(
-      `⚠ patches/${name} was scaffolded for React Native ${slot}; delete it so rn-xtool regenerates it for ${installed} ` +
-        `(also remove ${reinstall} and reinstall: that copy still has the old Package.swift)`,
-    );
+    const tail = `(also remove ${reinstall} and reinstall: that copy still has the old Package.swift)`;
+    const slot = SLOT_LABEL_RE.exec(text)?.[1];
+    if (installed !== undefined && slot !== undefined && slot !== installed) {
+      warnings.push(
+        `⚠ patches/${name} was scaffolded for React Native ${slot}; delete it so rn-xtool regenerates it for ${installed} ${tail}`,
+      );
+      continue;
+    }
+    const revision = REVISION_RE.exec(text)?.[1];
+    if (revision !== undefined && Number(revision) < SCAFFOLD_REVISION) {
+      warnings.push(
+        `⚠ patches/${name} was written by an older rn-xtool scaffolder (revision ${revision}, now ${SCAFFOLD_REVISION}); ` +
+          `delete it so rn-xtool regenerates it ${tail}`,
+      );
+    }
   }
   return warnings;
 }

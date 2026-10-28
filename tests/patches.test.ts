@@ -1,5 +1,5 @@
 import { lstat, mkdir, mkdtemp, readlink, rm, writeFile } from "node:fs/promises";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -16,6 +16,8 @@ import {
   stageBundledPatches,
   patchFailureMessage,
   patchPackageOutputFailed,
+  scaffoldPatchWarnings,
+  SCAFFOLD_REVISION,
 } from "../src/pipeline/patches.js";
 import { AUTOLINKING_CONFIG_COMMAND, rnSpmArgs } from "../src/pipeline/rnSpm.js";
 import { packageRoot } from "../src/tools/exec.js";
@@ -448,7 +450,8 @@ describe("patch-package failure detection", () => {
 });
 
 describe("scaffold patches from another React Native version", () => {
-  const scaffoldPatch = (slot: string, marker = true) =>
+  /** A persisted scaffold patch; `revision: null` is a hand-made patch without rn-xtool's marker. */
+  const scaffoldPatch = (slot: string | null, revision: number | null = 2) =>
     [
       "diff --git a/node_modules/lib/Package.swift b/node_modules/lib/Package.swift",
       "new file mode 100644",
@@ -457,8 +460,8 @@ describe("scaffold patches from another React Native version", () => {
       "@@ -0,0 +1,5 @@",
       "+// swift-tools-version: 6.0",
       "+// AUTO-SCAFFOLDED-VERSION: 20",
-      ...(marker ? ["+// rn-xtool-scaffold-revision: 1"] : []),
-      `+// Cache slot: ${slot}/dual-flavor`,
+      ...(revision !== null ? [`+// rn-xtool-scaffold-revision: ${revision}`] : []),
+      ...(slot !== null ? [`+// Cache slot: ${slot}/dual-flavor`] : []),
       "+import PackageDescription",
       "",
     ].join("\n");
@@ -470,7 +473,7 @@ describe("scaffold patches from another React Native version", () => {
     await writeFile(path.join(root, "patches", "react-native-screens+4.30.0.patch"), scaffoldPatch("0.86.3"));
     await writeFile(path.join(root, "patches", "@scope+lib+1.0.0.patch"), scaffoldPatch("0.88.0"));
     await writeFile(path.join(root, "patches", "react-native-svg+15.16.0.patch"), scaffoldPatch("0.87.1"));
-    await writeFile(path.join(root, "patches", "hand-made+1.0.0.patch"), scaffoldPatch("0.86.3", false));
+    await writeFile(path.join(root, "patches", "hand-made+1.0.0.patch"), scaffoldPatch("0.86.3", null));
     const lines: string[] = [];
     await applyPatches(root, async () => ({ exitCode: 0 }), { rnScripts: "vendored", log: (l) => lines.push(l) });
     expect(lines).toEqual([
@@ -479,6 +482,50 @@ describe("scaffold patches from another React Native version", () => {
       "⚠ patches/react-native-screens+4.30.0.patch was scaffolded for React Native 0.86.3; delete it so rn-xtool regenerates it for 0.87.1 " +
         "(also remove node_modules/react-native-screens and reinstall: that copy still has the old Package.swift)",
     ]);
+  });
+
+  it("warns about a revision-1 scaffold patch", async () => {
+    const { root } = await tempProject();
+    await installPkg(root, "react-native", "0.87.1");
+    await mkdir(path.join(root, "patches"));
+    await writeFile(path.join(root, "patches", "react-native-screens+4.30.0.patch"), scaffoldPatch("0.87.1", 1));
+    await writeFile(path.join(root, "patches", "@scope+lib+1.0.0.patch"), scaffoldPatch(null, 1));
+    await writeFile(path.join(root, "patches", "react-native-svg+15.16.0.patch"), scaffoldPatch("0.87.1", 2));
+    // Both stale: the slot warning wins, one line per patch.
+    await writeFile(path.join(root, "patches", "react-native-safe-area-context+5.6.0.patch"), scaffoldPatch("0.86.3", 1));
+    expect(scaffoldPatchWarnings(root)).toEqual([
+      "⚠ patches/@scope+lib+1.0.0.patch was written by an older rn-xtool scaffolder (revision 1, now 2); delete it so rn-xtool " +
+        "regenerates it (also remove node_modules/@scope/lib and reinstall: that copy still has the old Package.swift)",
+      "⚠ patches/react-native-safe-area-context+5.6.0.patch was scaffolded for React Native 0.86.3; delete it so rn-xtool " +
+        "regenerates it for 0.87.1 (also remove node_modules/react-native-safe-area-context and reinstall: that copy still has " +
+        "the old Package.swift)",
+      "⚠ patches/react-native-screens+4.30.0.patch was written by an older rn-xtool scaffolder (revision 1, now 2); delete it so " +
+        "rn-xtool regenerates it (also remove node_modules/react-native-screens and reinstall: that copy still has the old " +
+        "Package.swift)",
+    ]);
+  });
+
+  it("reads the pre-rename expo-xtool-scaffold-revision marker too", async () => {
+    const { root } = await tempProject();
+    await installPkg(root, "react-native", "0.88.1");
+    await mkdir(path.join(root, "patches"));
+    const legacy = (slot: string) => scaffoldPatch(slot, 1).replace("rn-xtool-scaffold-revision", "expo-xtool-scaffold-revision");
+    await writeFile(path.join(root, "patches", "react-native-screens+4.30.0.patch"), legacy("0.88.0"));
+    await writeFile(path.join(root, "patches", "react-native-svg+15.16.0.patch"), legacy("0.88.1"));
+    expect(scaffoldPatchWarnings(root)).toEqual([
+      "⚠ patches/react-native-screens+4.30.0.patch was scaffolded for React Native 0.88.0; delete it so rn-xtool regenerates " +
+        "it for 0.88.1 (also remove node_modules/react-native-screens and reinstall: that copy still has the old Package.swift)",
+      "⚠ patches/react-native-svg+15.16.0.patch was written by an older rn-xtool scaffolder (revision 1, now 3); delete it " +
+        "so rn-xtool regenerates it (also remove node_modules/react-native-svg and reinstall: that copy still has the old " +
+        "Package.swift)",
+    ]);
+  });
+
+  it("keeps SCAFFOLD_REVISION in step with the scaffolder's RN_XTOOL_SCAFFOLD_REVISION", () => {
+    const patch = readFileSync(path.join(packageRoot(), "patches", "react-native+0.88.0.patch"), "utf8");
+    const m = /const RN_XTOOL_SCAFFOLD_REVISION = (\d+);/.exec(patch);
+    expect(m).not.toBeNull();
+    expect(SCAFFOLD_REVISION).toBe(Number(m![1]));
   });
 
   it("stays quiet when every scaffold patch matches the installed version", async () => {
