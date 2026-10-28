@@ -144,9 +144,9 @@ Willy chose B after the spike.
 - Autolinking and macros: `expo-modules-autolinking` **58.0.15** and `expo-modules-macros` **0.22.0** become exact
   dependencies of rn-xtool. npm installs the host's `@expo/modules-macros-linux-<arch>`, so x64 and arm64 are both
   covered. The vendored plugin finds both through rn-xtool's `node_modules`, as RN's vendored scripts find `yargs`.
-  rn-xtool's autolinking copy is **not** patched. The `@ExpoModule` scanner it gates needs `expo-modules-macros` inside
-  core, which 57 lacks: the scanner prints its "Couldn't load expo-modules-macros" warning and only
-  `expo-module.config.json` modules link, the same set as 57's own autolinking (see the decisions below).
+  rn-xtool's autolinking copy is **not** patched. On Linux the `@ExpoModule` scanner it gates returns early, without a
+  warning (it would also need `expo-modules-macros` inside core, which 57 lacks), so only `expo-module.config.json`
+  modules link, the same set as 57's own autolinking (see the decisions below).
 - `tests/vendor-expo-spm.test.ts`:
   - Provenance, the way `vendor-rn-spm.test.ts` does it. The pristine `tests/.cache/expo-58.0.19.tgz` (sha512 pinned
     from the registry, skipped when absent) plus the Expo patch plus `rn-xtool-edits.patch` must equal

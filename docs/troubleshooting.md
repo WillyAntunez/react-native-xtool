@@ -57,9 +57,48 @@ far with their fixes. Wi‑Fi install problems have their own list in [wifi-inst
   compilation is the only Linux-specific part. Rendering that does not use those filters is unaffected.
 - **A committed project patch no longer applies** (after a library upgrade): delete it from `patches/` and let
   `rn-xtool build` re-scaffold it.
+- **"⚠ patches/<name> was written by an older rn-xtool scaffolder (revision 1, now 2)":** the `patches` step found a
+  persisted scaffold patch from before the Swift importer paths (fix 17 in
+  [upstream/react-native-scaffolder.md](upstream/react-native-scaffolder.md)). Without them, Swift code that imports a
+  scaffolded mixed library (the app, or expo-router importing react-native-screens) can fail with
+  `'RNSReactBaseView.h' file not found`. Do what the warning says: delete the patch, remove the library from
+  `node_modules` and reinstall it, then build; rn-xtool scaffolds it again and persists the new patch.
+- **"Missing SceneDelegate.swift: <path> (Info.plist's UIApplicationSceneManifest names ...)":** `SceneDelegate.swift`
+  is optional (SDK 57's template has none), but Info.plist names a scene delegate class and the file is missing, so
+  `ios/` is incomplete. `rn-xtool build --clean` regenerates it with `expo prebuild --clean`.
 - **"rn-xtool could not patch <package>":** your project has a different version of an Expo package than the one this
   release of rn-xtool patches. The message names the versions: pin the package to the patched version, or report the
   new version in the issue tracker so the patch can be refreshed.
+
+## Expo SDK 57
+
+rn-xtool builds Expo SDK 57 only with exact versions (see [how-it-works.md](how-it-works.md#expo-sdk-57)). `doctor`
+(the `project` check) and `build` stop with these messages:
+
+- **"Expo SDK <n> is not supported; rn-xtool supports SDK 57 (expo 57.0.31) and SDK 58 or newer."** The project is on
+  SDK 56 or older.
+- **"Expo SDK 57 needs exactly expo 57.0.31, react-native 0.86.3, expo-modules-core 57.0.24, expo-modules-autolinking
+  57.0.16 and expo-modules-jsi 57.1.3; installed: <package> <version>, .... Pin those versions in package.json and
+  reinstall."** The installed list names only the packages at another version (or `not installed`). Each is read
+  where the build resolves it: expo-modules-core from `expo`, expo-modules-jsi from expo-modules-core,
+  expo-modules-autolinking from the project root, else from `expo`.
+- **"expo-modules-jsi <version> resolves from <path>, not from the project's top-level node_modules: rn-xtool patches
+  and builds only the top-level copy. Pin expo-modules-jsi to 57.1.3 in package.json and reinstall (npm dedupe may
+  also fix it)."** npm nested the copy the build uses (under expo-modules-core), and patch-package patches only
+  `node_modules/expo-modules-jsi`.
+- **"expo-modules-macros 0.22.0 has no Linux binary for <arch> (@expo/modules-macros-linux-<arch>); reinstall
+  react-native-xtool without --omit=optional."** SDK 57's own macro plugin is macOS-only, so rn-xtool brings
+  expo-modules-macros 0.22.0, whose Linux binary is an optional npm dependency: an install with `--omit=optional`, or
+  a host architecture without a binary, leaves it out.
+- **"ExpoModulesJSI needs React Native's headers at <dir>, which does not exist. rnArtifactsDir must hold adapted
+  0.86.3 slots, as rn-xtool's rn-artifacts step writes them."** At the `jsi` step: `rnArtifactsDir` points at raw
+  0.86.3 artifacts. Build once without `rnArtifactsDir` and point it at that project's `ios/build/rn-artifacts/0.86.3`
+  (see [bare-react-native.md](bare-react-native.md#older-artifacts-086)).
+
+**Install SDK 57's reanimated and worklets explicitly.** expo-router declares react-native-reanimated as a `*` peer.
+When the app does not install it, npm installs the latest reanimated and react-native-worklets, and that worklets is
+outside the range expo-modules-core 57 accepts (`^0.7.4 || ^0.8.0 || ^0.9.0 || ^0.10.0`). Install SDK 57's versions
+(reanimated 4.5.1, worklets 0.10.1) with `npx expo install react-native-reanimated react-native-worklets`.
 
 ## Device and signing
 

@@ -5,6 +5,40 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 
 ## [Unreleased]
 
+### Added
+- Expo SDK 57 projects, on exact versions only: expo 57.0.31, react-native 0.86.3, expo-modules-core 57.0.24,
+  expo-modules-autolinking 57.0.16 and expo-modules-jsi 57.1.3. They build through a vendored copy of Expo SDK 58's
+  SwiftPM plugin (`vendor/expo-spm/`: expo 58.0.19's `scripts/spm/` with rn-xtool's Expo patch and five vendored-only
+  edits), the vendored React Native scripts and the adapted 0.86.3 artifacts, with SDK 57's own precompiled
+  ExpoModulesCore. The `jsi` step runs before `rn-spm` and also writes the `ExpoModulesJSIHeaders.xcframework` SDK 57
+  does not ship. Nothing is injected into `ios/`. expo-modules-autolinking 58.0.15 and expo-modules-macros 0.22.0 are
+  new exact dependencies of rn-xtool, and `patches/expo-modules-jsi+57.1.3.patch` is the only bundled patch an SDK 57
+  project gets. `doctor` reports `(vendored Expo SwiftPM plugin and SwiftPM scripts)` for these projects.
+- Generic fixes, on every SDK and on bare projects:
+  - Expo's plugin (`patches/expo+58.0.19.patch`): headers that import the module's own `-Swift.h` stay out of its Swift
+    umbrella; `add_dependency(s, "<Pod>")` counts as a pod dependency, and a generated package can depend on a React
+    Native library with a `Package.swift` (expo-router on react-native-screens); a generated package that depends on a
+    scaffolded mixed library gets that library's header search paths for Swift.
+  - React Native's scaffolder (`patches/react-native+0.88.0.patch` and `vendor/rn-spm/`, fixes 14 to 17 in
+    `docs/upstream/react-native-scaffolder.md`): no own `-Swift.h` in the Swift umbrella, `#{package['version']}` in
+    flags and defines, subspec `header_mappings_dir` under `header_dir`, and the Swift importer paths recorded in
+    each mixed manifest (found on react-native-reanimated 4.5, react-native-worklets 0.10 and react-native-screens
+    4.26).
+  - The App target gets the Swift importer paths of every autolinked scaffolded mixed library.
+- The clean-machine harness takes `e2e.sh project --sdk <n>` (template `blank-typescript@sdk-<n>`).
+
+### Changed
+- An Expo SDK older than 57 now gets `Expo SDK <n> is not supported; rn-xtool supports SDK 57 (expo 57.0.31) and SDK 58
+  or newer.` An SDK 57 project stops in `doctor` and `build` when a pinned version differs, when the expo-modules-jsi
+  the build uses is not the top-level copy, or when rn-xtool's expo-modules-macros has no Linux binary for the host.
+- `SceneDelegate.swift` is optional on every SDK; it is required only when Info.plist's `UIApplicationSceneManifest`
+  names a scene delegate.
+- When several bundled patches name one package, the one for the installed version is staged, else the highest
+  version (which keeps SDK 58's "pin" message).
+- The scaffolder revision is now 2: scaffolded mixed manifests carry a `// rn-xtool-swift-importer-paths:` line, and
+  the `patches` step warns about persisted scaffold patches written by revision 1 and says which file to delete.
+  Generated manifests of SDK 58 and bare apps change only where one of the fixes above applies.
+
 ## [0.1.0-alpha.2] - 2026-10-27
 
 ### Added

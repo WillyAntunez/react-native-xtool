@@ -23,12 +23,23 @@ of its own. SDK 58 and newer keep using the plugin installed in the app.
      - P5 (`flavored-frameworks.js`): precompiled tarballs are extracted without macOS AppleDouble
        (`._*`) entries and pax xattrs. Its tar flags assume GNU tar: rn-xtool targets Linux, and
        busybox tar and bsdtar are not supported (accepted limitation).
+- How rn-xtool runs it: the driver (`scripts/rn-spm-generate.js --expo-plugin <this>/spm/plugin.js`)
+  sets `RN_SPM_EXPO_PLUGIN` to this plugin, which the vendored React Native scripts load as `expo`'s
+  autolinking plugin (edit E5 in `vendor/rn-spm`), and `RN_XTOOL_PROJECT_ROOT` to the app root.
 - Environment: `RN_XTOOL_PROJECT_ROOT` (the app root, required; the plugin throws without it) and
-  `EXPO_PRECOMPILED_MODULES_PATH` (optional, as upstream).
+  `EXPO_PRECOMPILED_MODULES_PATH` (optional, as upstream). rn-xtool sets the latter to
+  `ios/build/expo-precompiled`, where its `jsi` step writes the `ExpoModulesJSIHeaders.xcframework`
+  that SDK 57 does not ship.
 - `expo-modules-autolinking` 58.0.15 and `expo-modules-macros` 0.22.0 (with the host's
   `@expo/modules-macros-linux-<arch>`) are exact dependencies of rn-xtool; this copy finds them in
   rn-xtool's `node_modules`. Every package of the app (`expo`, `expo-modules-core`, the modules,
   `react-native`, `@expo/config-plugins`) is resolved from the app.
+- rn-xtool's `expo-modules-autolinking` is not patched. On Linux its `@ExpoModule` scanner returns
+  early, without a warning, so only modules declared in `expo-module.config.json` are linked: the
+  same set as SDK 57's own autolinking, which has no scanner.
 - `package.json` (`{ "type": "commonjs" }`) is needed because rn-xtool is `"type": "module"`.
 
-`tests/vendor-expo-spm.test.ts` re-derives this directory from the pristine tarball and compares bytes.
+`tests/vendor-expo-spm.test.ts` re-derives this directory from the pristine tarball and compares
+bytes (skipped until the tarball is fetched with
+`mkdir -p tests/.cache && npm pack expo@58.0.19 --pack-destination tests/.cache`). After a change to
+`patches/expo+58.0.19.patch`, re-derive this directory the same way so the test stays green.
