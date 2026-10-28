@@ -113,6 +113,7 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
     },
     generateAppConfig: rec("app-config"),
     readFrameworks: () => [{ name: "A" } as never],
+    checkFrameworkSymbols: async () => {},
     stageFrameworks: rec("frameworks"),
     writeIosXtool,
     isPortFree: over.isPortFree ?? (async () => true),
@@ -277,6 +278,54 @@ describe("build", () => {
     const bareJsi = vi.fn(async () => ({ name: "ExpoModulesJSI" }) as never);
     await build(b.root, {}, { ...b.deps, buildJsi: bareJsi });
     expect(bareJsi.mock.calls).toEqual([[expect.objectContaining({ root: b.root })]]);
+  });
+  it("checks symbols before staging", async () => {
+    const jsi = { name: "ExpoModulesJSI" } as never;
+    const frameworks = [{ name: "A" }, { name: "B" }] as never[];
+    const order: unknown[][] = [];
+    const t = setup({ hasIos: true });
+    await build(t.root, {}, {
+      ...t.deps,
+      buildJsi: async () => jsi,
+      readFrameworks: (...args) => {
+        order.push(["readFrameworks", ...args]);
+        return frameworks;
+      },
+      checkFrameworkSymbols: async (...args) => {
+        order.push(["checkFrameworkSymbols", ...args]);
+      },
+      stageFrameworks: async (...args) => {
+        order.push(["stageFrameworks", ...args]);
+      },
+    });
+    expect(order.map((c) => c[0])).toEqual(["readFrameworks", "checkFrameworkSymbols", "stageFrameworks"]);
+    expect(order[1]).toEqual(["checkFrameworkSymbols", t.root, [...frameworks, jsi]]);
+    expect(order[2][1]).toEqual([...frameworks, jsi]);
+
+    const r = setup({ hasIos: true });
+    const stageFrameworks = vi.fn(async () => {});
+    const devBuild = vi.fn(async () => {});
+    const checkFrameworkSymbols = async () => {
+      throw new Error("ExpoFileSystem.framework needs 2 symbols");
+    };
+    await expect(build(r.root, {}, { ...r.deps, checkFrameworkSymbols, stageFrameworks, devBuild })).rejects.toThrow(
+      "ExpoFileSystem.framework needs 2 symbols",
+    );
+    expect(stageFrameworks).not.toHaveBeenCalled();
+    expect(devBuild).not.toHaveBeenCalled();
+
+    const kinds = [
+      { over: { hasIos: true, project: sdk57 }, flags: { ...expoFlags, expoPlugin: "vendored" as const, rnArtifacts: true, hasIos: true } },
+      { over: { hasIos: true }, flags: { ...expoFlags, hasIos: true } },
+      { over: { project: { kind: "bare" as const, hasExpoModules: false, hasExpoConstants: false } }, flags: { ...bareFlags, hasIos: false } },
+    ];
+    for (const { over, flags } of kinds) {
+      const k = setup(over);
+      const check = vi.fn(async () => {});
+      await build(k.root, {}, { ...k.deps, checkFrameworkSymbols: check });
+      expect(check).toHaveBeenCalledOnce();
+      expect(k.logs.filter((l) => l.startsWith("▸ "))).toEqual(buildSteps({ ...flags, clean: false }).map((s) => `▸ ${s}`));
+    }
   });
   it("records the React Native version in the state", async () => {
     const t = setup({ project: { kind: "bare", rnScripts: "vendored", rnVersion: "0.86.3" } });

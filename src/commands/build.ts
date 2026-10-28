@@ -12,6 +12,7 @@ import { applyPatches } from "../pipeline/patches.js";
 import { prepareRnArtifacts } from "../pipeline/rnArtifactsStep.js";
 import type { ExpoPlugin, RnScripts } from "../versions.js";
 import { runRnSpm } from "../pipeline/rnSpm.js";
+import { checkFrameworkSymbols } from "../pipeline/symbols.js";
 import { readProject, RN_CLI_MISSING, type ProjectInfo, type ProjectKind, type ReadProjectOptions } from "../project/index.js";
 import { readState, writeState, type BuildState } from "../state.js";
 import { run } from "../tools/exec.js";
@@ -107,6 +108,8 @@ export interface BuildDeps {
   buildJsi: (paths: ProjectPaths, opts?: { rnHeaders?: JsiRnHeaders; headersXcframework?: boolean }) => Promise<RuntimeFramework>;
   generateAppConfig: (paths: ProjectPaths) => Promise<void>;
   readFrameworks: (dir: string, flavor: "debug" | "release") => RuntimeFramework[];
+  /** G4: throws when an embedded framework imports a symbol another embedded framework does not export. */
+  checkFrameworkSymbols: (root: string, fws: RuntimeFramework[]) => Promise<void>;
   stageFrameworks: (fws: RuntimeFramework[], dest: string) => Promise<void>;
   writeIosXtool: typeof writeIosXtool;
   isPortFree: (port: number) => Promise<boolean>;
@@ -136,6 +139,7 @@ const realDeps: BuildDeps = {
   buildJsi: buildExpoModulesJsi,
   generateAppConfig,
   readFrameworks: readFlavoredFrameworks,
+  checkFrameworkSymbols: (root, fws) => checkFrameworkSymbols(root, fws),
   stageFrameworks,
   writeIosXtool,
   isPortFree: (p) => isPortFree(p),
@@ -228,6 +232,8 @@ export async function build(
   if (planned("app-config")) await step("app-config", () => d.generateAppConfig(paths));
   const frameworks = await step("frameworks", async () => {
     const fws = [...d.readFrameworks(paths.xcframeworks, "debug"), ...(jsi ? [jsi] : [])];
+    // Before staging: a precompiled module built against another core would crash the app at launch.
+    await d.checkFrameworkSymbols(paths.root, fws);
     await d.stageFrameworks(fws, paths.frameworks);
     return fws;
   });
