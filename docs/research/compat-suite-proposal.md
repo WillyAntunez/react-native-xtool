@@ -2,6 +2,26 @@
 
 Read-only research. Nothing was built or run. The maintainer decides what goes in.
 
+## Principles: mechanisms over versions (agreed 2026-10-28)
+
+Agreed with the maintainer on 2026-10-28, during the Expo SDK 58 drift work. Upstream packages keep moving, so
+rn-xtool should rely on what it checks, not on the version numbers it has seen:
+
+- **Invariant checks rather than version gates.** Check the property whose failure breaks the app, as G4 checks that
+  every symbol an embedded framework imports is exported (`docs/how-it-works.md#precompiled-frameworks-g4`). A list of
+  versions only records what was verified (SDK 58's floor), and is not what keeps a build safe.
+- **Patches selected by content and applicability.** A fix applies where its target is found, as the `patches` step
+  rewrites the `CFGetTypeID` manifest snippet in any version that has it; a version in a file name is a hint, not the
+  rule.
+- **Upstream our fixes.** Every fix rn-xtool carries has a write-up in `docs/upstream/` and is meant to go upstream,
+  so that it can be dropped once a release ships it.
+- **A daily drift-watch CI.** A scheduled job runs `npm view` on the verified sets, a strict `patch -F0` dry-run of the
+  bundled patches and the G4 matrix on a template lockfile, and opens an issue when something moves (P3 in
+  `docs/research/expo-58-drift.md`, deferred to this block).
+- **Support documented by mechanism.** The docs say which mechanism a library goes through (Expo source package,
+  precompiled framework, its own `Package.swift`, scaffolded) and which mechanisms are verified, rather than only
+  which versions were tried.
+
 ## Sources and method
 
 - **Downloads**: `https://api.npmjs.org/downloads/point/last-week/<pkg>`, fetched 2026-10-27. The window is
