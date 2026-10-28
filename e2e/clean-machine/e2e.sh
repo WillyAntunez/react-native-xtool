@@ -8,7 +8,8 @@
 #   e2e.sh install [<npm spec>]    install react-native-xtool (default: github:WillyAntunez/react-native-xtool)
 #   e2e.sh setup                   rn-xtool setup --xcode-xip (the slow part: Swift, xtool, Darwin SDK)
 #   e2e.sh auth                    copy the host's xtool login and the iPhone pair record into the container
-#   e2e.sh project [<name>]        npx create-expo-app <name> (default: demo)
+#   e2e.sh project [--sdk <n>] [<name>]
+#                                  npx create-expo-app <name> (default: demo); --sdk <n> picks the Expo SDK (blank-typescript@sdk-<n>), not with --bare
 #   e2e.sh project --bare [<name>] [--rn <version>]
 #                                  bare React Native app (default 0.88.0) via @react-native-community/cli init, without pod install (default name: demo)
 #   e2e.sh sh [<cmd...>]           run a command (or a shell) as the test user, in the project dir if it exists
@@ -72,24 +73,31 @@ cmd_auth() {
 }
 
 cmd_project() {
-  local bare=0 rn="" name=""
+  local bare=0 rn="" sdk="" name=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --bare) bare=1; shift ;;
       --rn)
         [ $# -ge 2 ] || { echo "--rn needs a version" >&2; exit 1; }
         rn="$2"; shift 2 ;;
+      --sdk)
+        { [ $# -ge 2 ] && [[ "$2" =~ ^[0-9]+$ ]]; } || { echo "--sdk needs a version" >&2; exit 1; }
+        sdk="$2"; shift 2 ;;
       *) name="$1"; shift ;;
     esac
   done
   [ -z "$rn" ] || [ "$bare" -eq 1 ] || { echo "--rn needs --bare" >&2; exit 1; }
+  [ -z "$sdk" ] || [ "$bare" -eq 0 ] || { echo "--sdk cannot be combined with --bare" >&2; exit 1; }
   name="${name:-demo}"
+  local qname="${name//\'/\'\\\'\'}" # single-quote-safe: ' becomes '\''
   rn="${rn:-0.88.0}"
   if [ "$bare" -eq 1 ]; then
     # --install-pods false: the container has no CocoaPods, and rn-xtool does not need Pods. npm deps are installed.
-    as_user /home/me "npx --yes @react-native-community/cli@latest init '$name' --version $rn --install-pods false --skip-git-init"
+    as_user /home/me "npx --yes @react-native-community/cli@latest init '$qname' --version $rn --install-pods false --skip-git-init"
   else
-    as_user /home/me "npx --yes create-expo-app@latest '$name' --template blank-typescript"
+    local template="blank-typescript"
+    [ -z "$sdk" ] || template="blank-typescript@sdk-$sdk"
+    as_user /home/me "npx --yes create-expo-app@latest '$qname' --template $template"
   fi
   echo "$name" > "$PROJECT_FILE"
 }

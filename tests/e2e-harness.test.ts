@@ -64,4 +64,43 @@ describe("e2e.sh project", () => {
       expect(r.docker).toBe("");
     }
   });
+
+  it("project --sdk 57 creates an SDK 57 app", async () => {
+    for (const args of [["--sdk", "57", "app"], ["app", "--sdk", "57"]]) {
+      const r = await project(args);
+      expect(r.exitCode).toBe(0);
+      expect(r.docker).toContain("create-expo-app@latest 'app' --template blank-typescript@sdk-57");
+    }
+  });
+
+  it("project without --sdk is unchanged", async () => {
+    const r = await project(["app"]);
+    expect(r.exitCode).toBe(0);
+    expect(r.docker).toContain("create-expo-app@latest 'app' --template blank-typescript");
+    expect(r.docker).not.toContain("@sdk-");
+  });
+
+  it("project --sdk with --bare is refused", async () => {
+    for (const args of [["--sdk", "57", "--bare"], ["--bare", "--sdk", "57"]]) {
+      const r = await project(args);
+      expect(r.exitCode).toBe(1);
+      expect(r.all).toContain("--sdk cannot be combined with --bare");
+      expect(r.docker).toBe("");
+    }
+  });
+
+  it("project --sdk needs a numeric version", async () => {
+    for (const args of [["--sdk"], ["app", "--sdk"], ["--sdk", "5x"], ["--sdk", "57; rm -rf ~"], ["--sdk", ""]]) {
+      const r = await project(args);
+      expect(r.exitCode).toBe(1);
+      expect(r.all).toContain("--sdk needs a version");
+      expect(r.docker).toBe("");
+    }
+  });
+
+  it("project quotes a name containing a single quote", async () => {
+    const r = await project(["--sdk", "57", "it's"]);
+    expect(r.exitCode).toBe(0);
+    expect(r.docker).toContain("create-expo-app@latest 'it'\\''s' --template blank-typescript@sdk-57");
+  });
 });
