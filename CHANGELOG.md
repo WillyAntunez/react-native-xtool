@@ -19,11 +19,12 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
     umbrella; `add_dependency(s, "<Pod>")` counts as a pod dependency, and a generated package can depend on a React
     Native library with a `Package.swift` (expo-router on react-native-screens); a generated package that depends on a
     scaffolded mixed library gets that library's header search paths for Swift.
-  - React Native's scaffolder (`patches/react-native+0.88.0.patch` and `vendor/rn-spm/`, fixes 14 to 17 in
+  - React Native's scaffolder (`patches/react-native+0.88.0.patch` and `vendor/rn-spm/`, fixes 14 to 18 in
     `docs/upstream/react-native-scaffolder.md`): no own `-Swift.h` in the Swift umbrella, `#{package['version']}` in
     flags and defines, subspec `header_mappings_dir` under `header_dir`, and the Swift importer paths recorded in
     each mixed manifest, and in each clang-only manifest whose header search paths go beyond its public headers path
-    (found on react-native-reanimated 4.5, react-native-worklets 0.10 and react-native-screens 4.26 and 4.30).
+    (found on react-native-reanimated 4.5, react-native-worklets 0.10 and react-native-screens 4.26 and 4.30), and a
+    clang-only target's module without the headers its podspec leaves out (react-native-screens 4.30's `ios/gamma`).
   - The App target gets the Swift importer paths of every autolinked scaffolded library that records them.
 - The clean-machine harness takes `e2e.sh project --sdk <n>` (template `blank-typescript@sdk-<n>`).
 

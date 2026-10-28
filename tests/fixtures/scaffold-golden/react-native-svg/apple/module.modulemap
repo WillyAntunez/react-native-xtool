@@ -1,0 +1,8 @@
+// AUTO-SCAFFOLDED by react-native spm scaffold — safe to edit & commit via patch-package.
+// The module SwiftPM would make of publicHeadersPath, minus the headers the podspec leaves
+// out of the target, which an importer could not build.
+module RNSVG {
+    umbrella "."
+    exclude header "Utils/RNSVGFabricConversions.h"
+    export *
+}

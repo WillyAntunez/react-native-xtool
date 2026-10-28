@@ -120,7 +120,8 @@ const SCAFFOLDER_VERSION_LINE_RE = /^\/\/ AUTO-SCAFFOLDED-VERSION: (\d+)$/m;
 // `-Swift.h` importers out of the Swift umbrella, `#{package['version']}`
 // evaluated, header_mappings_dir under header_dir, and the Swift importer
 // paths marker (IMPORTER_PATHS_MARKER). Revision 3: that marker on clang-only
-// targets too.
+// targets too, and their module map without the headers they leave out
+// (CLANG_MODULE_MAP).
 const RN_XTOOL_SCAFFOLD_REVISION = 3;
 const RN_XTOOL_SCAFFOLD_REVISION_RE = /^\/\/ rn-xtool-scaffold-revision: (\d+)$/m;
 
@@ -412,6 +413,75 @@ function podspecBridgingHeader(
     .replace(/\$[({]PODS_TARGET_SRCROOT[)}]\/?/g, '')
     .replace(/^\.\//, '');
   return /\$[({]|#\{/.test(rel) || path.posix.isAbsolute(rel) ? null : rel;
+}
+
+// An importer builds a clang-only target's module from the module map SwiftPM
+// generates, `umbrella "<publicHeadersPath>"`: every header under that
+// directory, whatever the target compiles. A header the podspec leaves out of
+// the target (exclude_files, or a source glob that misses it) may not build
+// there: react-native-screens 4.30's ios/gamma, excluded unless
+// RNS_GAMMA_ENABLED, failed with "'RNSViewFrameChangeDelegate.h' file not
+// found". Nor can a header that imports the module's own -Swift.h, which a
+// clang-only target never has (fix 14). For those the scaffold writes the same
+// module map into publicHeadersPath, which SwiftPM then uses as is, with an
+// `exclude header` for each. Header membership stays SwiftPM's: an importer's
+// `#import "X.h"` of a kept header still resolves to the module.
+const CLANG_MODULE_MAP = 'module.modulemap';
+// Every file the scaffolder generates starts with this (include/ stubs too).
+const SCAFFOLDER_BANNER = 'AUTO-SCAFFOLDED by react-native spm scaffold';
+
+// The headers under publicHeadersPath that a clang-only module must leave out,
+// relative to it and sorted, or null when SwiftPM's own module map does not
+// take in the whole directory (an umbrella header named after the module) or
+// the library ships a module map there.
+function clangModuleExcludes(
+  depRoot /*: string */,
+  publicHeadersPath /*: string */,
+  keptHeaders /*: Array<string> */,
+  moduleNames /*: Array<string> */,
+) /*: ?Array<string> */ {
+  const dir = path.join(depRoot, publicHeadersPath);
+  const own = path.join(dir, CLANG_MODULE_MAP);
+  if (
+    fs.existsSync(own) &&
+    !fs.readFileSync(own, 'utf8').includes(SCAFFOLDER_MARKER)
+  ) {
+    return null;
+  }
+  if (
+    moduleNames.some(
+      n =>
+        fs.existsSync(path.join(dir, `${n}.h`)) ||
+        fs.existsSync(path.join(dir, n, `${n}.h`)),
+    )
+  ) {
+    return null;
+  }
+  const kept = new Set(keptHeaders);
+  const excludes /*: Array<string> */ = [];
+  const walk = (rel /*: string */) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(path.join(depRoot, rel), {withFileTypes: true});
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const f = path.posix.join(rel, e.name);
+      if (e.isDirectory()) {
+        if (e.name !== 'node_modules') walk(f);
+      } else if (e.isFile() && /\.(h|hh|hpp|hxx)$/i.test(e.name)) {
+        const leftOut = kept.has(f)
+          ? importsOwnSwiftHeader(depRoot, f, moduleNames)
+          : !fs
+              .readFileSync(path.join(depRoot, f), 'utf8')
+              .includes(SCAFFOLDER_BANNER);
+        if (leftOut) excludes.push(path.posix.relative(publicHeadersPath, f));
+      }
+    }
+  };
+  walk(publicHeadersPath.replace(/\/$/, ''));
+  return excludes.sort();
 }
 
 // Names of deps the scaffolder always refuses to touch — `react-native`
@@ -1116,9 +1186,39 @@ function translatePodspecToSpmTarget(
     }
   }
 
+  // A clang-only target's module (see CLANG_MODULE_MAP).
+  let clangModuleMap = null;
+  if (
+    mixedLanguage == null &&
+    publicHeadersPath != null &&
+    expandedSources.some(isClangSource)
+  ) {
+    const moduleName = toC99Name(swiftName);
+    const podModule = toC99Name(
+      model.moduleName ?? model.headerDir ?? model.name ?? swiftName,
+    );
+    const excludes = clangModuleExcludes(
+      dep.root,
+      publicHeadersPath,
+      Array.from(new Set(headerFiles)),
+      Array.from(new Set([swiftName, moduleName, podModule])),
+    );
+    if (excludes != null && excludes.length > 0) {
+      clangModuleMap = {moduleName, excludes};
+      const shown = excludes
+        .slice(0, 5)
+        .map(h => `${publicHeadersPath}/${h}`);
+      const more = excludes.length - shown.length;
+      warnings.push(
+        `Left ${excludes.length} header(s) under ${publicHeadersPath}/ that the target does not compile out of its module (${publicHeadersPath}/${CLANG_MODULE_MAP}): ${shown.join(', ')}${more > 0 ? `, and ${more} more` : ''}.`,
+      );
+    }
+  }
+
   return {
     swiftName,
     mixedLanguage,
+    clangModuleMap,
     reactBareHeaders,
     sources: expandedSources,
     headerSearchPaths,
@@ -1841,6 +1941,33 @@ function scaffoldPackageSwiftForDep(
 
   if (!ctx.dryRun && spec.mixedLanguage != null) {
     writeMixedLanguageSupport(dep.root, spec.mixedLanguage);
+  }
+  if (!ctx.dryRun && spec.publicHeadersPath != null) {
+    const mapPath = path.join(
+      dep.root,
+      spec.publicHeadersPath,
+      CLANG_MODULE_MAP,
+    );
+    const map = spec.clangModuleMap;
+    if (map != null) {
+      fs.writeFileSync(
+        mapPath,
+        `${SCAFFOLDER_MARKER}\n` +
+          '// The module SwiftPM would make of publicHeadersPath, minus the headers the podspec leaves\n' +
+          '// out of the target, which an importer could not build.\n' +
+          `module ${map.moduleName} {\n` +
+          '    umbrella "."\n' +
+          map.excludes.map(h => `    exclude header "${h}"\n`).join('') +
+          '    export *\n' +
+          '}\n',
+        'utf8',
+      );
+    } else if (
+      fs.existsSync(mapPath) &&
+      fs.readFileSync(mapPath, 'utf8').includes(SCAFFOLDER_MARKER)
+    ) {
+      fs.rmSync(mapPath, {force: true});
+    }
   }
   if (!ctx.dryRun) {
     const bareDir = path.join(dep.root, REACT_BARE_HEADERS_DIR);

@@ -542,6 +542,39 @@ mixed one (react-native-pager-view 9.0.7) and the five clang-only ones, whose se
 (golden in `tests/fixtures/scaffold-golden/`; react-native-reanimated and react-native-worklets ship their own
 manifests and are not scaffolded).
 
+## 18. `scripts/spm/scaffold-package-swift.js`: a clang-only module takes in headers the target leaves out
+
+An importer builds a clang-only target's module from the module map SwiftPM generates, `umbrella
+"<publicHeadersPath>"`, which takes in every header under that directory, whatever the target compiles.
+react-native-screens 4.30 keeps `ios/gamma/**` out of its sources unless `RNS_GAMMA_ENABLED` is set, and expo-router
+failed with `'RNSViewFrameChangeDelegate.h' file not found` while building module `RNScreens` from
+`ios/gamma/stack/header/RNSStackHeaderConfigComponentView.h`. A mixed target never had this problem: SwiftPM's module
+map for it holds only the `-Swift.h`, and importers see the Objective-C side through the generated umbrella, which is
+built from the source headers (screens 4.26.2: 72 headers, none from `ios/gamma`).
+
+Fix: when headers under `publicHeadersPath` are not among the target's headers (`exclude_files`, or a source glob
+that misses them), or a kept one imports the module's own `-Swift.h` (fix 14; a clang-only target has none), the
+scaffold writes `<publicHeadersPath>/module.modulemap`. SwiftPM uses it instead of its own. It is SwiftPM's module
+with an `exclude header` per such header:
+
+```
+module RNScreens {
+    umbrella "."
+    exclude header "gamma/modals/form-sheet/RNSFormSheetConfigurationApplicator.h"
+    …
+    export *
+}
+```
+
+Header membership stays SwiftPM's, so an importer's `#import "X.h"` of a kept header still resolves to the module. A
+separate umbrella header outside the directory, as for mixed targets, would make such includes textual. None is
+written when nothing is left out, when SwiftPM would use an umbrella header named after the module, or over a
+module map the library ships. A stale one of the scaffolder's own is removed. Generated `include/` stubs count as
+kept. Not covered: if `publicHeadersPath` changes between two scaffolds, the old directory keeps its map. On the
+reference app's libraries, react-native-screens 4.30.0 gets 72 `ios/gamma` excludes, and react-native-svg gets one,
+`Utils/RNSVGFabricConversions.h`. The regex reader applies that one from the podspec's old-architecture branch, and
+the header is C++, so no importer could build it in Objective-C. Ships with `RN_XTOOL_SCAFFOLD_REVISION` 3.
+
 ## Known limitation (deferred): pure-Swift packages importing a mixed Expo module
 
 A Swift module built with a bridging header (every mixed target) makes each Swift importer re-read that
@@ -556,8 +589,8 @@ every generated or scaffolded Swift target that depends on a mixed module the sa
 
 `tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks the
 fixes against fixtures (skipped when the reference app is not present; set `RN_XTOOL_REF_APP` to point at it). It also
-asserts that each hunk is present in the installed RN files. Fixes 14 to 17 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
+asserts that each hunk is present in the installed RN files. Fixes 14 to 18 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
 against podspec fixtures from the SDK 57 pins in `tests/fixtures/podspecs/` (worklets 0.10.1, reanimated 4.5.1,
-screens 4.26.2, gesture-handler 2.32.0) and from screens 4.30.1 (the clang-only importer paths). A golden test re-scaffolds the reference app's libraries and compares them
+screens 4.26.2, gesture-handler 2.32.0) and from screens 4.30.1 (the clang-only importer paths and module map). A golden test re-scaffolds the reference app's libraries and compares them
 with `tests/fixtures/scaffold-golden/`. Upstream, equivalent tests belong in
 RN's own `__tests__` next to `read-podspec` and `scaffold-package-swift`.

@@ -1,7 +1,7 @@
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { execa } from "execa";
 import { afterAll, describe, expect, it } from "vitest";
@@ -44,6 +44,18 @@ function tempDir(): string {
 afterAll(() => {
   for (const d of tmp) rmSync(d, { recursive: true, force: true });
 });
+/**
+ * A copy of one of the reference app's podspecs, with what it reads (package.json, svg's scripts/): reading a podspec
+ * writes a temporary `.spm-scaffold-*.podspec` next to it, which must not land in the app's node_modules.
+ */
+function podspecCopy(file: string): string {
+  const dir = tempDir();
+  for (const f of [path.basename(file), "package.json", "scripts"]) {
+    const src = path.join(path.dirname(file), f);
+    if (existsSync(src)) cpSync(src, path.join(dir, f), { recursive: true, dereference: true });
+  }
+  return path.join(dir, path.basename(file));
+}
 
 describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
   const req = createRequire(import.meta.url);
@@ -101,12 +113,13 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
     it("scaffold-package-swift.js has the pod→SwiftPM map hunk", () => {
       expect(src("scaffold-package-swift.js")).toContain("const KNOWN_POD_SPM_PACKAGES");
     });
-    it("the scaffolder has the fixes 14–17 hunks", () => {
+    it("the scaffolder has the fixes 14–18 hunks", () => {
       expect(src("read-podspec.js")).toContain("function resolvePackageVersion");
       const f = src("scaffold-package-swift.js");
       expect(f).toContain("RN_XTOOL_SCAFFOLD_REVISION = 3");
       expect(f).toContain("rn-xtool-swift-importer-paths");
       expect(f).toContain("function importsOwnSwiftHeader");
+      expect(f).toContain("function clangModuleExcludes");
     });
     it("spm-utils.js has the header-less ReactAppHeaders module map hunk", () => {
       expect(src("spm-utils.js")).toContain("module ReactAppHeaders {");
@@ -148,7 +161,7 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       expect(read('s.source_files = "a/*.h"')).toEqual(["a/*.h"]);
     });
     it.skipIf(!existsSync(RNGH_PODSPEC))("reads all globs of the real RNGH podspec", () => {
-      const globs = load<ReadPodspec>("read-podspec.js").readPodspecCached(RNGH_PODSPEC).sourceFiles;
+      const globs = load<ReadPodspec>("read-podspec.js").readPodspecCached(podspecCopy(RNGH_PODSPEC)).sourceFiles;
       expect(globs).toContain("shared/**/*.{h,cpp}");
       expect(globs.length).toBeGreaterThan(1);
     });
@@ -175,7 +188,7 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       expect(read('s.source_files = "a/*.#{x}"')).toEqual(["a/*.#{x}"]);
     });
     it.skipIf(!existsSync(SCREENS_PODSPEC))("reads the real RNScreens podspec", () => {
-      const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(SCREENS_PODSPEC) as Model & {
+      const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(podspecCopy(SCREENS_PODSPEC)) as Model & {
         excludeFiles: string[];
       };
       expect(m.sourceFiles.some((g) => g.startsWith("ios/**"))).toBe(true);
@@ -213,7 +226,7 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       expect(m.sourceFiles).toEqual(["m/*.mm", "a/*.cpp"]);
     });
     it.skipIf(!existsSync(SCREENS_PODSPEC))("reads the real RNScreens common subspec", () => {
-      const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(SCREENS_PODSPEC) as Model & {
+      const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(podspecCopy(SCREENS_PODSPEC)) as Model & {
         headerSearchPaths: string[];
       };
       expect(m.sourceFiles.some((g) => g.startsWith("ios/**"))).toBe(true);
@@ -332,7 +345,7 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       expect(m.excludeFiles).not.toContain("**/*.ios.{h,m,mm}");
     });
     it.skipIf(!existsSync(SVG_PODSPEC))("reads the real react-native-svg podspec", () => {
-      const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(SVG_PODSPEC) as Model & {
+      const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(podspecCopy(SVG_PODSPEC)) as Model & {
         excludeFiles: string[];
       };
       expect(m.excludeFiles).toContain("**/*.macos.{h,m,mm}");
@@ -401,7 +414,7 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
         expect(names(m.preprocessorDefines)).toEqual([]);
       });
       it.skipIf(!existsSync(SVG_PODSPEC))("the real react-native-svg podspec gets REACT_NATIVE_MINOR_VERSION", () => {
-        const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(SVG_PODSPEC) as unknown as Model;
+        const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(podspecCopy(SVG_PODSPEC)) as unknown as Model;
         expect(names(m.preprocessorDefines)).toContain(`REACT_NATIVE_MINOR_VERSION=${minor}`);
       });
     });
@@ -1074,10 +1087,10 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
   });
 });
 
-// Fixes 14–17 (React Native 0.88.0 patch), exercised on the vendored copy, so they never skip.
+// Fixes 14–18 (React Native 0.88.0 patch), exercised on the vendored copy, so they never skip.
 // The podspec fixtures are the SDK 57 pins: worklets 0.10.1, reanimated 4.5.1, screens 4.26.2 and
 // gesture-handler 2.32.0, plus screens 4.30.1, which has no Swift (a clang-only target).
-describe("scaffolder fixes 14–17 (vendor/rn-spm)", () => {
+describe("scaffolder fixes 14–18 (vendor/rn-spm)", () => {
   const req = createRequire(import.meta.url);
   const load = <T>(f: string) => req(path.join(VENDORED_RN_SPM, f)) as T;
   const IMPORTER = /^\/\/ rn-xtool-swift-importer-paths: (.*)$/m;
@@ -1278,6 +1291,105 @@ describe("scaffolder fixes 14–17 (vendor/rn-spm)", () => {
     const paths = JSON.parse(pkg.match(IMPORTER)![1]!) as string[];
     expect(paths).toContain("ios");
     expect(paths).not.toContain("../shared");
+  });
+
+  it("18: leaves headers the podspec excludes out of a clang-only module (screens 4.30.1 ios/gamma)", () => {
+    const { files, results } = scaffoldLibraries(VENDORED_RN_SPM, { "react-native-screens": fixture("RNScreens-4.30.1") });
+    expect(files["react-native-screens/ios/module.modulemap"]).toBe(
+      "// AUTO-SCAFFOLDED by react-native spm scaffold — safe to edit & commit via patch-package.\n" +
+        "// The module SwiftPM would make of publicHeadersPath, minus the headers the podspec leaves\n" +
+        "// out of the target, which an importer could not build.\n" +
+        "module RNScreens {\n" +
+        '    umbrella "."\n' +
+        '    exclude header "gamma/stack/RNSViewFrameChangeDelegate.h"\n' +
+        '    exclude header "gamma/stack/header/RNSStackHeaderConfigComponentView.h"\n' +
+        "    export *\n" +
+        "}\n",
+    );
+    expect(results[0]?.warnings?.some((w) => w.includes("2 header(s) under ios/") && w.includes("ios/module.modulemap"))).toBe(true);
+  });
+
+  it("18: writes no module map when nothing is left out, for a mixed target, or over the library's own", () => {
+    const map = (root: string) => path.join(root, "ios", "module.modulemap");
+    const kept = lib({ "ios/A.h": "", "ios/A.m": "", "ios/sub/Bar.h": "" }, '  s.source_files = "ios/**/*.{h,m}"');
+    expect(scaffoldOne(kept).pkg).toContain('publicHeadersPath: "ios",');
+    expect(existsSync(map(kept))).toBe(false);
+    const mixed = lib(
+      { "ios/A.swift": "import Foundation\n", "ios/A.h": "", "ios/A.m": "", "ios/extra/Bar.h": "" },
+      '  s.source_files = "ios/*.{h,m,swift}"',
+    );
+    scaffoldOne(mixed);
+    expect(existsSync(map(mixed))).toBe(false);
+    const own = lib(
+      { "ios/A.h": "", "ios/A.m": "", "ios/extra/Bar.h": "", "ios/module.modulemap": "module Foo { umbrella \".\" }\n" },
+      '  s.source_files = "ios/*.{h,m}"',
+    );
+    expect(scaffoldOne(own).pkg).toContain('publicHeadersPath: "ios",');
+    expect(readFileSync(map(own), "utf8")).toBe('module Foo { umbrella "." }\n');
+    // SwiftPM's own umbrella-header layout (ios/Foo.h, no subdirectories) never takes in the whole directory.
+    const umbrella = lib({ "ios/Foo.h": "", "ios/Foo.m": "", "ios/Old.h": "" }, '  s.source_files = "ios/*.{h,m}"\n  s.exclude_files = "ios/Old.h"');
+    expect(scaffoldOne(umbrella).pkg).toContain('publicHeadersPath: "ios",');
+    expect(existsSync(map(umbrella))).toBe(false);
+  });
+
+  it("18: leaves out a header that imports the module's own -Swift.h, and removes its own map once unneeded", () => {
+    const root = lib(
+      { "ios/A.h": "", "ios/A.m": "", "ios/Swifty.h": '#import "Foo-Swift.h"\n' },
+      '  s.source_files = "ios/*.{h,m}"',
+    );
+    scaffoldOne(root);
+    const map = path.join(root, "ios", "module.modulemap");
+    expect(readFileSync(map, "utf8")).toContain('    exclude header "Swifty.h"\n');
+    writeFileSync(path.join(root, "ios", "Swifty.h"), "");
+    scaffoldOne(root);
+    expect(existsSync(map)).toBe(false);
+  });
+
+  it("18: keeps its own include/ stubs in the module on a re-scaffold, and leaves out a stray header there", () => {
+    // A root-level podspec: publicHeadersPath is the generated include/ shim (include/Foo/Bar.h).
+    const root = lib({ "Bar.h": "", "Bar.m": "" }, '  s.source_files = "*.{h,m}"');
+    const map = path.join(root, "include", "module.modulemap");
+    expect(scaffoldOne(root).pkg).toContain('publicHeadersPath: "include",');
+    expect(readFileSync(path.join(root, "include", "Foo", "Bar.h"), "utf8")).toContain("AUTO-SCAFFOLDED");
+    // The second run finds the first run's stubs on disk.
+    scaffoldOne(root);
+    expect(existsSync(map)).toBe(false);
+    writeFileSync(path.join(root, "include", "Stray.h"), "");
+    scaffoldOne(root);
+    const text = readFileSync(map, "utf8");
+    expect(text.split("\n").filter((l) => l.includes("exclude header"))).toEqual(['    exclude header "Stray.h"']);
+  });
+
+  const clang = [path.join(homedir(), ".local/share/swiftly/bin/clang"), "clang"].find(
+    (c) => spawnSync(c, ["--version"]).status === 0,
+  );
+  it.skipIf(clang === undefined)("18: clang builds the module from the map, without the headers it leaves out", () => {
+    const root = lib(
+      {
+        "ios/A.h": "#pragma once\nint a(void);\n",
+        "ios/A.c": '#include "A.h"\nint a(void) { return 1; }\n',
+        "ios/old/Old.h": '#include "missing.h"\n',
+      },
+      '  s.source_files = "ios/*.{h,c}"',
+    );
+    scaffoldOne(root);
+    const map = path.join(root, "ios", "module.modulemap");
+    expect(existsSync(map)).toBe(true);
+    const importer = path.join(tempDir(), "importer.c");
+    writeFileSync(importer, '#include "A.h"\nint main(void) { return a(); }\n');
+    const build = () =>
+      spawnSync(
+        clang!,
+        ["-fmodules", `-fmodules-cache-path=${tempDir()}`, `-fmodule-map-file=${map}`, "-I", path.join(root, "ios"), "-fsyntax-only", "-Rmodule-import", importer],
+        { encoding: "utf8" },
+      );
+    const ok = build();
+    expect(ok.status, ok.stderr).toBe(0);
+    // A kept header is still a member: the importer's #include becomes a module import.
+    expect(ok.stderr).toContain("importing module 'Foo'");
+    // SwiftPM's own map, the whole directory, does not build.
+    writeFileSync(map, 'module Foo {\n    umbrella "."\n    export *\n}\n');
+    expect(build().stderr).toContain("'missing.h' file not found");
   });
 
   it("the harness scaffolds a copy, never the library a symlink points at", () => {

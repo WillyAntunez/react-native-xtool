@@ -96,6 +96,10 @@ export function scaffoldLibraries(
     const manifest = path.join(root, "Package.swift");
     if (existsSync(manifest) && readFileSync(manifest, "utf8").includes(SCAFFOLDER_MARKER)) rmSync(manifest);
     for (const out of SCAFFOLD_OUTPUTS) rmSync(path.join(root, out), { recursive: true, force: true });
+    // A clang-only target's module map, in its public headers directory.
+    for (const f of listFiles(root).filter((f) => path.basename(f) === "module.modulemap")) {
+      if (readFileSync(path.join(root, f), "utf8").includes(SCAFFOLDER_MARKER)) rmSync(path.join(root, f));
+    }
     for (const f of listFiles(root)) before.set(path.join(name, f), readFileSync(path.join(root, f)));
     const podspec = readdirSync(root).find((f) => f.endsWith(".podspec"));
     const version = (JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")) as { version: string }).version;

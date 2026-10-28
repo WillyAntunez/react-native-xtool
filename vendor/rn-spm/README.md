@@ -6,7 +6,7 @@ versions that ship no `scripts/spm` of their own.
 
 - Origin: react-native 0.88.0, MIT, Meta Platforms, Inc. and affiliates (see `LICENSE`).
 - Modifications, in order:
-  1. The 17 fixes of `docs/upstream/react-native-scaffolder.md`, applied with
+  1. The 18 fixes of `docs/upstream/react-native-scaffolder.md`, applied with
      `patches/react-native+0.88.0.patch` (`patch -p4`, run in the extracted `scripts/`).
   2. Five rn-xtool edits (E1-E5) in `rn-xtool-edits.patch` (`patch -p1`, run in this directory):
      the codegen template resolves relative to this copy, the installed React Native root comes
