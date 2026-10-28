@@ -2,9 +2,19 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { DetectError } from "./detect.js";
-import { defaultBundleIdentifier, installedRnVersion, isInstalled, MissingBundleIdentifierError, resolvesFromRoot } from "./expo.js";
+import {
+  checkExpoPackages,
+  defaultBundleIdentifier,
+  installedExpoMajor,
+  installedExpoVersion,
+  installedRnVersion,
+  isInstalled,
+  MissingBundleIdentifierError,
+  resolvesFromRoot,
+  RN_UPGRADE_DOCS,
+} from "./expo.js";
 import { buildSetting, openPbxproj, readTargetContent, resolveSetting } from "./pbxproj.js";
-import { rnScriptsFor, supportedRnList, type RnScripts } from "../versions.js";
+import { rnScriptsFor, supportedRnList, SUPPORTED_EXPO, type RnScripts } from "../versions.js";
 import type { ProjectInfo, ReadProjectOptions } from "./types.js";
 
 /** Shown by doctor (warn) and build (error) when a bare project lacks the React Native CLI. */
@@ -13,7 +23,7 @@ export const RN_CLI_MISSING =
   "through it. Install it with `npm install --save-dev @react-native-community/cli` (the React Native template has it " +
   "as a devDependency; `npm ci --omit=dev` leaves it out)";
 
-const EXPO_NEEDS_088 = "Expo SDK 58 needs React Native 0.88.0.";
+const EXPO_NEEDS_088 = "Expo SDK 58 needs React Native 0.88.1.";
 
 function checkRnVersion(version: string, hasExpoModulesCore: boolean): RnScripts {
   const scripts = rnScriptsFor(version);
@@ -42,8 +52,9 @@ export async function readBareProject(root: string, opts: ReadProjectOptions = {
   const iosDir = path.join(root, "ios");
   if (!resolvesFromRoot(root, "react-native")) {
     throw new DetectError(
-      `react-native is not installed in ${root}: run \`npm install\` (a fresh clone has no node_modules yet), or add it ` +
-        `with \`npm install react-native@0.88.0\``,
+      `react-native is not installed in ${root}: run \`npm install\` (a fresh clone has no node_modules yet). To add it, ` +
+        `or to move to another React Native version, follow ${RN_UPGRADE_DOCS} (a single ` +
+        "`npm install react-native@<version>` can fail with ERESOLVE on the template's exact @react-native/* peers).",
     );
   }
   const rnVersion = await installedRnVersion(root);
@@ -70,6 +81,20 @@ export async function readBareProject(root: string, opts: ReadProjectOptions = {
       );
       hasExpoModules = false;
     }
+  }
+  if (hasExpoModules) {
+    // Active Expo modules are the installed expo's precompiled ones, built by its own SwiftPM plugin: SDK 58 or newer,
+    // on that SDK's set (G1–G3).
+    const sdk = installedExpoMajor(root);
+    if (sdk !== undefined && sdk < 58) {
+      const { expo, "react-native": rn } = SUPPORTED_EXPO[58].pins;
+      throw new DetectError(
+        `Expo SDK ${sdk} (expo ${installedExpoVersion(root)}) with Expo modules is not supported in a bare app. Expo modules ` +
+          `in a bare app need Expo SDK 58 or newer: install expo ~${expo} and run \`npx expo install --fix\`, then move ` +
+          `react-native to ${rn} as ${RN_UPGRADE_DOCS} describes.`,
+      );
+    }
+    if (sdk !== undefined) checkExpoPackages(root, sdk, opts.log, { kind: "bare" });
   }
 
   return {

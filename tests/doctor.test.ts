@@ -14,6 +14,7 @@ import {
 import { MissingBundleIdentifierError } from "../src/project/index.js";
 import { XTOOL_SHA256, XTOOL_VERSION } from "../src/versions.js";
 import { fakeExpo57Modules } from "./support/expo57.js";
+import { fakeExpo58Modules } from "./support/expo58.js";
 
 const expoProbe: ProjectProbe = {
   kind: "expo",
@@ -454,6 +455,25 @@ describe("readProjectProbe", () => {
       expect(await readProjectProbe(dir)).toMatchObject({
         kind: "expo", sdkVersion: 57, rnVersion: "0.86.3", rnScripts: "vendored", expoPlugin: "vendored", warnings: [],
       });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+  it("shows the newer-than-floor warning", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "doctor-expo58-"));
+    try {
+      await cp(path.join(fixtures, "project"), dir, { recursive: true });
+      await fakeExpo58Modules(dir, { expo: "58.0.22" });
+      const probe = await readProjectProbe(dir);
+      expect(probe).toMatchObject({ kind: "expo", sdkVersion: 58, rnVersion: "0.88.1", expoPlugin: "installed" });
+      expect(probe.warnings).toEqual([
+        "Newer than the Expo SDK 58 set this rn-xtool release was verified with: expo 58.0.22. Verified: expo 58.0.21, " +
+          "react-native 0.88.1, expo-modules-core 58.0.28, expo-modules-jsi 58.0.21, expo-modules-autolinking 58.0.16, " +
+          "expo-file-system 58.0.13 and expo-font 58.0.11. The build continues; if it fails or the app crashes at launch, " +
+          "report it at https://github.com/WillyAntunez/react-native-xtool/issues.",
+      ]);
+      const project = (await doctorWithProbes({ ...good, project: async () => probe }, "/p")).checks.find((c) => c.name === "project");
+      expect(project?.status).toBe("warn");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
