@@ -37,6 +37,11 @@ export interface ExpoLine {
   pins: Readonly<Partial<Record<ExpoPinName, string>>>;
   /** The create-expo-app templates the drift watch creates. */
   templates: readonly string[];
+  /**
+   * The create-expo the drift watch creates the line's projects with: the version create-expo-app@latest ran when the
+   * line was verified (create-expo-app itself only forwards to create-expo, with an open range).
+   */
+  createExpo: string;
 }
 
 /** A React Native minor rn-xtool builds as a bare project, and where its SwiftPM scripts come from. */
@@ -47,6 +52,11 @@ export interface BareLine {
   verified: readonly string[];
   scripts: RnScripts;
   artifacts: RnArtifacts;
+  /**
+   * The @react-native-community/cli the drift watch creates the line's project with: the version the template of the
+   * last verified release declares (`template/package.json` devDependencies of @react-native-community/template).
+   */
+  cli: string;
 }
 
 export type SupportedLine = ExpoLine | BareLine;
@@ -72,6 +82,7 @@ export const SUPPORTED_LINES: readonly SupportedLine[] = [
       "expo-modules-jsi": "57.1.3",
     },
     templates: ["blank-typescript"],
+    createExpo: "5.1.5",
   },
   {
     kind: "expo",
@@ -90,6 +101,7 @@ export const SUPPORTED_LINES: readonly SupportedLine[] = [
       "expo-font": "58.0.11",
     },
     templates: ["blank-typescript", "default"],
+    createExpo: "5.1.5",
   },
   {
     kind: "bare",
@@ -98,6 +110,7 @@ export const SUPPORTED_LINES: readonly SupportedLine[] = [
     verified: ["0.86.2", "0.86.3"],
     scripts: "vendored",
     artifacts: "adapted",
+    cli: "20.1.0",
   },
   {
     kind: "bare",
@@ -106,6 +119,7 @@ export const SUPPORTED_LINES: readonly SupportedLine[] = [
     verified: ["0.87.1"],
     scripts: "vendored",
     artifacts: "published",
+    cli: "20.2.0",
   },
   {
     kind: "bare",
@@ -114,6 +128,7 @@ export const SUPPORTED_LINES: readonly SupportedLine[] = [
     verified: ["0.88.0", "0.88.1"],
     scripts: "installed",
     artifacts: "published",
+    cli: "20.2.0",
   },
 ];
 

@@ -28,6 +28,7 @@ describe("supported lines", () => {
         artifacts: "adapted",
         pins: EXPO57_PINS,
         templates: ["blank-typescript"],
+        createExpo: "5.1.5",
       },
       {
         kind: "expo",
@@ -38,6 +39,7 @@ describe("supported lines", () => {
         artifacts: "published",
         pins: EXPO58_PINS,
         templates: ["blank-typescript", "default"],
+        createExpo: "5.1.5",
       },
       {
         kind: "bare",
@@ -46,6 +48,7 @@ describe("supported lines", () => {
         verified: ["0.86.2", "0.86.3"],
         scripts: "vendored",
         artifacts: "adapted",
+        cli: "20.1.0",
       },
       {
         kind: "bare",
@@ -54,6 +57,7 @@ describe("supported lines", () => {
         verified: ["0.87.1"],
         scripts: "vendored",
         artifacts: "published",
+        cli: "20.2.0",
       },
       {
         kind: "bare",
@@ -62,11 +66,25 @@ describe("supported lines", () => {
         verified: ["0.88.0", "0.88.1"],
         scripts: "installed",
         artifacts: "published",
+        cli: "20.2.0",
       },
     ]);
     const pinsOf = (sdk: number) => SUPPORTED_LINES.find((l) => l.kind === "expo" && l.sdk === sdk);
     expect(Object.keys((pinsOf(57) as { pins: object }).pins)).toEqual(Object.keys(EXPO57_PINS));
     expect(Object.keys((pinsOf(58) as { pins: object }).pins)).toEqual(Object.keys(EXPO58_PINS));
+  });
+
+  it("pins the CLI each bare line's template declares", () => {
+    // @react-native-community/template@<last verified>'s template/package.json devDependencies (npm pack, 2026-10-29).
+    const cli = Object.fromEntries(SUPPORTED_LINES.flatMap((l) => (l.kind === "bare" ? [[l.minor, l.cli]] : [])));
+    expect(cli).toStrictEqual({ "0.86": "20.1.0", "0.87": "20.2.0", "0.88": "20.2.0" });
+  });
+
+  it("pins the create-expo each Expo line's drift project is created with", () => {
+    // create-expo-app@latest resolved to create-expo 5.1.5 on 2026-10-23 (local npx cache); create-expo-app 5.0.0 is
+    // only `require('create-expo')` with the range ">=5.0.1", so the pin is on create-expo itself.
+    const pins = Object.fromEntries(SUPPORTED_LINES.flatMap((l) => (l.kind === "expo" ? [[l.sdk, l.createExpo]] : [])));
+    expect(pins).toStrictEqual({ 57: "5.1.5", 58: "5.1.5" });
   });
 
   it("reads today's answers from the table", () => {
