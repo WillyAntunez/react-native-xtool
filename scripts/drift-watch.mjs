@@ -16,6 +16,7 @@ import { parseArgs } from "node:util";
 import { checkTarget, spawnRun } from "../dist/drift/check.js";
 import {
   applyDrill,
+  checkDrill,
   commandRunner,
   groupByLine,
   readResults,
@@ -143,6 +144,11 @@ switch (sub) {
       fail(`${e.message}\n${USAGE}`);
     }
     if (values.results === undefined || values.targets === undefined) fail(USAGE);
+    try {
+      checkDrill(values.drill);
+    } catch (e) {
+      fail(e.message);
+    }
     const targets = matrixTargets(values.targets);
     const { results, errors } = await readResults(path.resolve(values.results));
     for (const e of errors) console.error(`drift-watch: ${e}`);

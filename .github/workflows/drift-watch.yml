@@ -1,0 +1,210 @@
+# Drift watch: does rn-xtool still work with the newest patch releases of the lines it supports?
+#
+# Daily (23 5 * * *): each supported line gets a fresh project (the newest patch of its line), and the project gates,
+# the bundled patches and the manifest rewrite are checked on it. Nothing is compiled: there is no Swift and no
+# Darwin SDK here. One `drift` issue is kept per broken line; it is closed when the line is green again.
+# Weekly (47 5 * * 1): a report-only exploration of older lines (Expo SDK 54-56, bare React Native 0.81-0.85). It
+# writes a capability table to the run summary and opens no issue.
+# By hand: workflow_dispatch with mode `daily` or `explore`; `drill` (a line id, such as bare-0.88) marks that line
+# broken for one daily run, to test the issue path end to end.
+#
+# GitHub disables scheduled workflows after 60 days without repository activity. A monthly manual workflow_dispatch
+# re-arms the watch (failure row 1: accepted, the watch is best effort).
+
+name: Drift watch
+
+on:
+  schedule:
+    - cron: "23 5 * * *"
+    - cron: "47 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "daily: check the supported lines; explore: report on older lines"
+        type: choice
+        options:
+          - daily
+          - explore
+        default: daily
+      drill:
+        description: "A line id to report as broken in this daily run (empty: none)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  targets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      mode: ${{ steps.pick.outputs.mode }}
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # npm ci runs the package's prepare script, which builds dist/; the drift-watch script imports from it.
+      - name: Install and build
+        run: |
+          npm ci
+          test -f dist/drift/explore.js
+      - name: Pick the mode and the targets
+        id: pick
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+          MODE_INPUT: ${{ inputs.mode }}
+        run: |
+          if [ "$SCHEDULE" = "47 5 * * 1" ] || [ "$MODE_INPUT" = "explore" ]; then mode=explore; else mode=daily; fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          node scripts/drift-watch.mjs targets "$mode" >> "$GITHUB_OUTPUT"
+
+  check:
+    needs: targets
+    if: needs.targets.outputs.mode == 'daily'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.targets.outputs.matrix) }}
+    env:
+      # patch must print its English messages: the offset and "already applied" checks read them.
+      LC_ALL: C
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # npm ci runs the package's prepare script, which builds dist/; the drift-watch script imports from it.
+      - name: Install and build
+        run: |
+          npm ci
+          test -f dist/drift/explore.js
+      - name: Check the target
+        env:
+          TARGET: ${{ toJSON(matrix.target) }}
+          SLUG: ${{ matrix.slug }}
+        run: |
+          dir="$RUNNER_TEMP/drift/$SLUG/app"
+          rm -rf "$dir"
+          node scripts/drift-watch.mjs check --target "$TARGET" --dir "$dir" --out "drift-results/$SLUG.json"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: drift-${{ matrix.slug }}
+          path: drift-results/
+          retention-days: 14
+
+  report:
+    needs: [targets, check]
+    if: ${{ !cancelled() && needs.targets.outputs.mode == 'daily' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    # Two runs at once (the cron and a dispatch) could both list the issues before either creates one.
+    concurrency:
+      group: drift-watch-report
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # npm ci runs the package's prepare script, which builds dist/; the drift-watch script imports from it.
+      - name: Install and build
+        run: |
+          npm ci
+          test -f dist/drift/explore.js
+      # A target without a result is reported as "could not run", so a failed download must not stop the report.
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: drift-*
+          merge-multiple: true
+          path: drift-results
+      - name: Report drift
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MATRIX: ${{ needs.targets.outputs.matrix }}
+          DRILL: ${{ inputs.drill }}
+        run: node scripts/drift-watch.mjs report --results drift-results --targets "$MATRIX" --drill="$DRILL"
+
+  explore:
+    needs: targets
+    if: needs.targets.outputs.mode == 'explore'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Report only (failure row 10): a target that fails or times out reads "unknown" in the table.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.targets.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # npm ci runs the package's prepare script, which builds dist/; the drift-watch script imports from it.
+      - name: Install and build
+        run: |
+          npm ci
+          test -f dist/drift/explore.js
+      - name: Explore the target
+        env:
+          TARGET: ${{ toJSON(matrix.target) }}
+          SLUG: ${{ matrix.slug }}
+        run: |
+          dir="$RUNNER_TEMP/explore/$SLUG/app"
+          rm -rf "$dir"
+          node scripts/drift-watch.mjs explore --target "$TARGET" --dir "$dir" --out "explore-results/$SLUG.json"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: explore-${{ matrix.slug }}
+          path: explore-results/
+          retention-days: 14
+
+  explore-summary:
+    needs: [targets, explore]
+    if: ${{ !cancelled() && needs.targets.outputs.mode == 'explore' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # npm ci runs the package's prepare script, which builds dist/; the drift-watch script imports from it.
+      - name: Install and build
+        run: |
+          npm ci
+          test -f dist/drift/explore.js
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: explore-*
+          merge-multiple: true
+          path: explore-results
+      - name: Write the exploration table
+        env:
+          MATRIX: ${{ needs.targets.outputs.matrix }}
+        run: node scripts/drift-watch.mjs explore-summary --results explore-results --targets "$MATRIX"

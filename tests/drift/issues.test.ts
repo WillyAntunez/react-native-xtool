@@ -5,6 +5,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import type { StepResult, TargetResult } from "../../src/drift/check.js";
 import {
   applyDrill,
+  checkDrill,
   commandRunner,
   type Gh,
   groupByLine,
@@ -140,6 +141,18 @@ describe("lines", () => {
     expect(() => applyDrill(lines, "x")).toThrow(
       'unknown drift line "x"; lines: expo-57, expo-58, bare-0.86, bare-0.87, bare-0.88',
     );
+  });
+
+  it("accepts only a line id, or nothing", () => {
+    for (const ok of ["", "expo-57", "expo-58", "bare-0.86", "bare-0.87", "bare-0.88"]) {
+      expect(() => checkDrill(ok), ok).not.toThrow();
+    }
+    const bads = ["-x", "--dry-run", " bare-0.88", "bare-0.88\n--dry-run", "bare-0.89", "expo-57/blank-typescript"];
+    for (const bad of bads) {
+      expect(() => checkDrill(bad), bad).toThrow(
+        `unknown drift line ${JSON.stringify(bad)}; lines: expo-57, expo-58, bare-0.86, bare-0.87, bare-0.88`,
+      );
+    }
   });
 });
 

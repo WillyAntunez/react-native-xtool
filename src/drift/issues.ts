@@ -76,14 +76,20 @@ export function groupByLine(results: TargetResult[]): LineResult[] {
   return lines;
 }
 
+/** Throws unless `drill` is "" or the id of a supported line (`SUPPORTED_LINES`); anything else is never a drill. */
+export function checkDrill(drill: string): void {
+  if (drill === "") return;
+  const ids = SUPPORTED_LINES.map(lineId);
+  if (!ids.includes(drill)) throw new Error(`unknown drift line ${JSON.stringify(drill)}; lines: ${ids.join(", ")}`);
+}
+
 /**
  * The workflow_dispatch input `drill`: "" changes nothing; a line id turns that line red with a drill step on each of
  * its targets (their own statuses stay, so a target that could not run still fails the run).
  */
 export function applyDrill(lines: LineResult[], drill: string): LineResult[] {
+  checkDrill(drill);
   if (drill === "") return lines;
-  const ids = SUPPORTED_LINES.map(lineId);
-  if (!ids.includes(drill)) throw new Error(`unknown drift line "${drill}"; lines: ${ids.join(", ")}`);
   if (!lines.some((l) => l.line === drill)) throw new Error(`drift line "${drill}" has no target in this run`);
   return lines.map((l) =>
     l.line !== drill
