@@ -176,9 +176,14 @@ async function attempt(t: WatchTarget, dir: string, run: Run): Promise<{ ok: boo
 
 /**
  * Creates the project. A network failure is retried once, in an emptied directory: neither create tool cleans up after
- * a failed install, and both refuse a non-empty directory.
+ * a failed install, and both refuse a non-empty directory. `kind` is set when the create failed: "network" twice, or
+ * "drift". The weekly exploration creates its projects the same way.
  */
-async function create(t: WatchTarget, dir: string, run: Run): Promise<{ step: StepResult; kind?: "network" | "drift" }> {
+export async function createProject(
+  t: WatchTarget,
+  dir: string,
+  run: Run,
+): Promise<{ step: StepResult; kind?: "network" | "drift" }> {
   await mkdir(path.dirname(dir), { recursive: true });
   const first = await attempt(t, dir, run);
   if (first.ok) return { step: { step: "create", ok: true, output: first.output } };
@@ -214,7 +219,7 @@ export async function checkTarget(
 ): Promise<TargetResult> {
   const steps: StepResult[] = [];
   if (!deps.existing) {
-    const created = await create(t, dir, deps.run);
+    const created = await createProject(t, dir, deps.run);
     steps.push(created.step);
     if (created.kind !== undefined) {
       const status = created.kind === "network" ? "unknown" : "red";

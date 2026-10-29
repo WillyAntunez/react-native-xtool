@@ -70,6 +70,60 @@ export function watchTargets(rnVersions: readonly string[]): WatchTarget[] {
   return targets;
 }
 
+/** The Expo SDKs the weekly exploration looks at (older than every Expo row), from the blank-typescript template. */
+export const EXPLORE_EXPO_SDKS: readonly number[] = [54, 55, 56];
+/** The bare React Native minors the weekly exploration looks at (older than every bare row), at their newest patch. */
+export const EXPLORE_RN_MINORS: readonly string[] = ["0.81", "0.82", "0.83", "0.84", "0.85"];
+/**
+ * The @react-native-community/cli each explored minor is created with, from package/template/package.json of
+ * @react-native-community/template at the minor's newest patch (0.81.6, 0.82.1, 0.83.10, 0.84.1, 0.85.3), the same
+ * source as the bare rows' `cli`. Pinned, never `@latest`: a CLI that drops an old minor would hide the evidence.
+ */
+export const EXPLORE_RN_CLI: Readonly<Record<string, string>> = {
+  "0.81": "20.0.0",
+  "0.82": "20.0.0",
+  "0.83": "20.0.0",
+  "0.84": "20.1.0",
+  "0.85": "20.1.0",
+};
+/** The create-expo the explored SDKs are created with: the Expo rows' pin. */
+export const EXPLORE_CREATE_EXPO = "5.1.5";
+
+/**
+ * The weekly exploration's targets: each explored SDK's blank-typescript template, then each explored minor at the
+ * newest release `rnVersions` lists (none listed: no version, and the target cannot be created).
+ */
+export function exploreTargets(rnVersions: readonly string[]): WatchTarget[] {
+  const template = "blank-typescript";
+  const expo = EXPLORE_EXPO_SDKS.map((sdk): WatchTarget => {
+    const id = `expo-${sdk}/${template}`;
+    return {
+      id,
+      slug: id.replace(/\//g, "-"),
+      line: `expo-${sdk}`,
+      title: `Explore: Expo SDK ${sdk}`,
+      kind: "expo",
+      sdk,
+      template,
+      createExpo: EXPLORE_CREATE_EXPO,
+    };
+  });
+  const bare = EXPLORE_RN_MINORS.map((minor): WatchTarget => {
+    const version = newestOfMinor(rnVersions, minor);
+    return {
+      id: `bare-${minor}`,
+      slug: `bare-${minor}`,
+      line: `bare-${minor}`,
+      title: `Explore: React Native ${minor} (bare)`,
+      kind: "bare",
+      minor,
+      ...(version !== undefined && { version }),
+      cli: EXPLORE_RN_CLI[minor]!,
+    };
+  });
+  return [...expo, ...bare];
+}
+
 /**
  * The command that creates the target's project in `dir`, as the clean-machine e2e harness does: create-expo with the
  * SDK's template, or the React Native CLI without pods. Both are pinned per line, never `@latest`: a tooling release
