@@ -144,7 +144,7 @@ export class ManifestWriteError extends Error {
 const READ_ONLY_CODES = new Set(["EACCES", "EPERM", "EROFS"]);
 
 /** True when `real` lies outside `realModules` (npm link, `file:` dependencies, workspaces). */
-function outside(realModules: string, real: string): boolean {
+export function outside(realModules: string, real: string): boolean {
   const rel = path.relative(realModules, real);
   return rel === ".." || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
 }

@@ -1,11 +1,12 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { mkdir, rm, symlink } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, symlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { execa } from "execa";
 import { projectPaths } from "../paths.js";
 import { compareVersions, expoPinPolicyFor, expoPinsFor, type ExpoPlugin, type RnScripts } from "../versions.js";
 import { packageRoot, toolEnv } from "../tools/exec.js";
+import { outside, packagesWithManifest } from "./manifests.js";
 
 /** The patch-package pinned in this CLI's own dependencies, not whatever npx would fetch. */
 export function patchPackageScript(): string {
@@ -344,6 +345,124 @@ function floorRemedy(projectRoot: string, pkg: string, patched: string): { overr
   return { overrides, direct: Object.hasOwn(declared, pkg) };
 }
 
+/** Every file the scaffolder generates carries this (SCAFFOLDER_BANNER in vendor/rn-spm/spm/scaffold-package-swift.js). */
+const SCAFFOLDER_BANNER = "AUTO-SCAFFOLDED by react-native spm scaffold";
+const MANIFEST_REVISION_RE = /^\/\/ (?:rn|expo)-xtool-scaffold-revision: (\d+)\s*$/m;
+const MANIFEST_SLOT_RE = /^\/\/ Cache slot: (\S+)\/dual-flavor\s*$/m;
+
+/** A patch's file entries: the path it writes (`b/…`), whether it creates the file, and whether the file is generated. */
+function patchEntries(text: string): { rel: string; created: boolean; scaffolded: boolean }[] {
+  return text
+    .split(/^(?=diff --git )/m)
+    .filter((entry) => entry.startsWith("diff --git "))
+    .map((entry) => ({
+      rel: /^diff --git a\/\S+ b\/(\S+)/.exec(entry)?.[1] ?? "",
+      created: /\nnew file mode /.test(entry),
+      scaffolded: entry.includes(SCAFFOLDER_BANNER),
+    }));
+}
+
+/** `revision 1 for React Native 0.88.0` */
+const marks = (revision: number, slot: string | undefined) =>
+  `revision ${revision}${slot === undefined ? "" : ` for React Native ${slot}`}`;
+
+/**
+ * Before the project's patches apply: rn-xtool owns the scaffolded `node_modules/<pkg>/Package.swift`, and RN only
+ * scaffolds a missing one, so an older copy would build as is. With a current persisted patch (no warning for it) and
+ * an older copy (lower revision, the pre-rename marker, or another cache slot), the patch's new files are removed so
+ * patch-package writes them again (it passes a new-file patch over an existing file). That happens only when every
+ * entry of the patch is a new scaffolded file: a patch that also changes the library's own files (`patch-package
+ * <name>` folds the user's fix in) would then apply neither way, so the copy is kept and a `⚠` line names the
+ * reinstall. Without any persisted patch, a copy rn-xtool's scaffolder wrote at an older revision or for another
+ * React Native is removed, so the rn-spm step scaffolds and persists it again. Copies without rn-xtool's marker,
+ * packages linked from outside the project, and packages whose persisted patch is stale (warned about) are left alone.
+ * Returns the `ℹ` lines for the replaced copies, which the caller logs once patch-package has written them.
+ */
+export async function refreshStaleScaffolds(projectRoot: string, log: (line: string) => void): Promise<string[]> {
+  const installedRn = installedVersion(projectRoot, "react-native");
+  const patchesDir = path.join(projectRoot, "patches");
+  let patchNames: string[] = [];
+  try {
+    patchNames = readdirSync(patchesDir).filter((n) => n.endsWith(".patch")).sort();
+  } catch {
+    // no patches/
+  }
+  const persisted = new Map<string, { name: string; text: string }[]>();
+  for (const name of patchNames) {
+    const pkg = parsePatchFileName(name)?.pkg;
+    if (pkg === undefined) continue;
+    let text = "";
+    try {
+      text = readFileSync(path.join(patchesDir, name), "utf8");
+    } catch {
+      // unreadable: patch-package reports it
+    }
+    persisted.set(pkg, [...(persisted.get(pkg) ?? []), { name, text }]);
+  }
+  const replaced: string[] = [];
+  const found = await packagesWithManifest(projectRoot);
+  if (found.length === 0) return replaced;
+  const realModules = await realpath(path.join(projectRoot, "node_modules"));
+  for (const { pkg, dir } of found) {
+    if (outside(realModules, await realpath(dir))) continue;
+    const manifest = await readFile(path.join(dir, "Package.swift"), "utf8").catch(() => "");
+    if (!manifest.includes(SCAFFOLDER_BANNER)) continue;
+    const revisionLine = MANIFEST_REVISION_RE.exec(manifest)?.[1];
+    const revision = Number(revisionLine ?? 0);
+    const slot = MANIFEST_SLOT_RE.exec(manifest)?.[1];
+    const patches = persisted.get(pkg);
+    const shown = `node_modules/${pkg}/Package.swift`;
+    if (patches === undefined) {
+      // Only what rn-xtool's scaffolder provably wrote: a library may ship the upstream scaffolder's output itself.
+      if (revisionLine === undefined) continue;
+      let why: string | undefined;
+      if (installedRn !== undefined && slot !== undefined && slot !== installedRn) {
+        why = `was scaffolded for React Native ${slot}, not ${installedRn}`;
+      } else if (revision < SCAFFOLD_REVISION) {
+        why = `was scaffolded by an older rn-xtool scaffolder (revision ${revision}, now ${SCAFFOLD_REVISION})`;
+      }
+      if (why === undefined) continue;
+      await rm(path.join(dir, "Package.swift"), { force: true });
+      log(`ℹ ${shown} ${why}: rn-xtool removed it so the rn-spm step scaffolds it again`);
+      continue;
+    }
+    // The patch that writes this Package.swift, when it is current (a stale one gets scaffoldPatchWarnings' line).
+    const patch = patches.find((p) => p.text.includes(`+++ b/node_modules/${pkg}/Package.swift`));
+    if (patch === undefined || !SCAFFOLD_MARKER_RE.test(patch.text)) continue;
+    const patchRevision = Number(REVISION_RE.exec(patch.text)?.[1] ?? 0);
+    const patchSlot = SLOT_LABEL_RE.exec(patch.text)?.[1];
+    if (patchRevision < SCAFFOLD_REVISION || (installedRn !== undefined && patchSlot !== undefined && patchSlot !== installedRn)) {
+      continue;
+    }
+    if (revision >= patchRevision && (patchSlot === undefined || slot === patchSlot)) continue;
+    const older =
+      `${shown} was scaffolded with ${marks(revision, slot)}, older than patches/${patch.name} ` +
+      `(revision ${patchRevision}${patchSlot === undefined ? "" : `, React Native ${patchSlot}`})`;
+    const prefix = `node_modules/${pkg}/`;
+    const entries = patchEntries(patch.text);
+    const onlyScaffold = entries.every(
+      (e) => e.created && e.scaffolded && e.rel.startsWith(prefix) && !e.rel.split("/").includes(".."),
+    );
+    if (!onlyScaffold) {
+      log(
+        `⚠ ${older}, and that patch also changes the library's own files, so rn-xtool does not replace it: ` +
+          `run rm -rf node_modules/${pkg} && npm install, then build again`,
+      );
+      continue;
+    }
+    let removed = 0;
+    for (const { rel } of entries) {
+      const file = path.join(projectRoot, rel);
+      const text = await readFile(file, "utf8").catch(() => undefined);
+      if (!text?.includes(SCAFFOLDER_BANNER)) continue;
+      await rm(file, { force: true });
+      removed++;
+    }
+    if (removed > 0) replaced.push(`ℹ ${older}: rn-xtool replaced it with the persisted one`);
+  }
+  return replaced;
+}
+
 type PatchExec = (cmd: string, args: string[], cwd: string) => Promise<ExecaResultLike>;
 interface ExecaResultLike {
   exitCode?: number | undefined;
@@ -396,12 +515,16 @@ export async function applyPatches(
       throw new Error(genericPatchFailureMessage(r, output));
     }
   }
-  if (!hasProjectPatches(projectRoot)) return;
   const log = opts.log ?? ((line: string) => console.log(line));
+  const replaced = await refreshStaleScaffolds(projectRoot, log);
+  if (!hasProjectPatches(projectRoot)) return;
   for (const warning of scaffoldPatchWarnings(projectRoot)) log(warning);
   const [pcmd, pargs] = projectPatchesArgv();
   const pr = await exec(pcmd, pargs, projectRoot);
   const poutput = pr.all ?? `${pr.stdout}\n${pr.stderr}`;
-  if (pr.exitCode === 0 && !pr.failed && !patchPackageOutputFailed(poutput)) return;
+  if (pr.exitCode === 0 && !pr.failed && !patchPackageOutputFailed(poutput)) {
+    for (const line of replaced) log(line);
+    return;
+  }
   throw new Error(`Applying the project's patches/ failed.\n${genericPatchFailureMessage(pr, poutput)}`);
 }
