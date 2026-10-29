@@ -172,6 +172,40 @@ export function outputNamesPackage(output: string, pkg: string): boolean {
   return prefix.test(output) || modulePath.test(output);
 }
 
+/**
+ * The staged bundled patch that failed although its package is installed at the patch's version: patch-package then
+ * applied it neither forward nor in reverse, so the package's files are neither the original nor the patched ones.
+ */
+export function findStalePatchedPackage(
+  projectRoot: string,
+  patchDir: string,
+  output: string,
+): Omit<PatchFailureDetails, "output"> | undefined {
+  if (!existsSync(patchDir)) return undefined;
+  for (const patchFile of readdirSync(patchDir).sort()) {
+    const info = parsePatchFileName(patchFile);
+    if (!info || !outputNamesPackage(output, info.pkg)) continue;
+    if (installedVersion(projectRoot, info.pkg) === info.version) {
+      return { pkg: info.pkg, installed: info.version, patchFile, patched: info.version };
+    }
+  }
+  return undefined;
+}
+
+/** Message for a bundled patch over a package that is already patched differently (an upgrade from alpha.2). */
+export function stalePatchedMessage(d: PatchFailureDetails): string {
+  const tail = d.output.trimEnd().split("\n").slice(-40).join("\n");
+  return [
+    `rn-xtool could not apply its patch to ${d.pkg}@${d.installed} (patch file: ${d.patchFile}): node_modules/${d.pkg} is ` +
+      "the version the patch is for, but its files match neither the original package nor the patched one.",
+    "This usually means an earlier rn-xtool release (such as 0.1.0-alpha.2) patched it differently, or its files were " +
+      "edited by hand.",
+    `Reinstall the package, then build again: rm -rf node_modules/${d.pkg} && npm install`,
+    "--- patch-package output ---",
+    tail,
+  ].join("\n");
+}
+
 /** Message for a patch-package failure that matches no known version mismatch. */
 export function genericPatchFailureMessage(
   r: { exitCode?: number | undefined; shortMessage?: string | undefined; message?: string | undefined },
@@ -299,6 +333,8 @@ export async function applyPatches(
       // Only what was staged: a bundled patch that was left out is not the one that failed.
       const mismatch = findPatchMismatch(projectRoot, patchesDir, output);
       if (mismatch) throw new Error(patchFailureMessage({ ...mismatch, output }));
+      const stale = findStalePatchedPackage(projectRoot, patchesDir, output);
+      if (stale) throw new Error(stalePatchedMessage({ ...stale, output }));
       throw new Error(genericPatchFailureMessage(r, output));
     }
   }

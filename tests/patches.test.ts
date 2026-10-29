@@ -265,7 +265,8 @@ describe("react-native patch scope", () => {
     const output = "**ERROR** Failed to apply patch for package expo-modules-jsi at path\n    node_modules/expo-modules-jsi";
     const exec = async () => ({ exitCode: 1, all: output });
     const err = await applyPatches(root, exec, { rnScripts: "vendored", expoPlugin: "vendored" }).catch((e: Error) => e);
-    expect((err as Error).message).toMatch(/^patch-package failed \(exit 1\)/);
+    // The staged jsi patch is for the installed 57.1.3, so its failure means a differently patched copy.
+    expect((err as Error).message).toMatch(/^rn-xtool could not apply its patch to expo-modules-jsi@57\.1\.3 /);
     expect((err as Error).message).not.toMatch(/pin "/);
   });
 
@@ -379,6 +380,58 @@ describe("findPatchMismatch", () => {
     expect(outputNamesPackage("applying @expo+config+1.0.0.patch", "@expo/config")).toBe(true);
     expect(outputNamesPackage("node_modules/@expo/config", "@expo/config")).toBe(true);
   });
+});
+
+describe("a bundled patch over a package an earlier release patched differently", () => {
+  const JSI_FILE = "apple/Sources/ExpoModulesJSI/Runtime/Values/JavaScriptError.swift";
+  /** The lines around rn-xtool's one-line jsi change, with `line` where the change goes. */
+  const jsiSource = (line: string) =>
+    [
+      ...Array.from({ length: 87 }, (_, i) => `// line ${i + 1}`),
+      "/// via the `SWIFT_NAME(_message)` annotation in `CppError.h`. This extension",
+      "/// wraps it in a Swift `String` for cleaner call-site usage.",
+      "extension expo.CppError: Error {",
+      line,
+      "    return String(_getMessage())",
+      "  }",
+      "}",
+      "",
+    ].join("\n");
+
+  async function jsiProject(line: string) {
+    const { root } = await tempProject();
+    await writeFile(path.join(root, "package.json"), JSON.stringify({ name: "app", version: "1.0.0" }));
+    await installPkg(root, "expo-modules-jsi", "58.0.21");
+    const file = path.join(root, "node_modules", "expo-modules-jsi", JSI_FILE);
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, jsiSource(line));
+    return { root, file };
+  }
+
+  it("applies to the original file", async () => {
+    const { root, file } = await jsiProject("  public var message: String {");
+    await applyPatches(root, undefined, { rnScripts: "vendored", expoPlugin: "installed" });
+    expect(readFileSync(file, "utf8")).toContain("\n  var message: String {\n");
+  }, 30_000);
+
+  it("names the package and the reinstall when the patch applies neither way", async () => {
+    // Already patched differently: neither the original line nor the one the patch writes.
+    const { root } = await jsiProject("  internal var message: String {");
+    const err = (await applyPatches(root, undefined, { rnScripts: "vendored", expoPlugin: "installed" }).catch(
+      (e: unknown) => e,
+    )) as Error;
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message.split("\n").slice(0, 3)).toEqual([
+      "rn-xtool could not apply its patch to expo-modules-jsi@58.0.21 (patch file: expo-modules-jsi+58.0.21.patch): " +
+        "node_modules/expo-modules-jsi is the version the patch is for, but its files match neither the original " +
+        "package nor the patched one.",
+      "This usually means an earlier rn-xtool release (such as 0.1.0-alpha.2) patched it differently, or its files " +
+        "were edited by hand.",
+      "Reinstall the package, then build again: rm -rf node_modules/expo-modules-jsi && npm install",
+    ]);
+    expect(err.message).toContain("--- patch-package output ---");
+    expect(err.message).not.toContain("Report this");
+  }, 30_000);
 });
 
 describe("genericPatchFailureMessage", () => {
