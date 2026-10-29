@@ -5,21 +5,22 @@ Wi‑Fi installs, troubleshooting, library compatibility, and the research and d
 
 ## Guides
 
-- [how-it-works.md](how-it-works.md): what `setup` installs, the bundled patches, the build steps, Expo SDK 58's
-  version floor and the precompiled framework check (G4), Expo SDK 57 through the vendored Expo SwiftPM plugin,
-  mixed-language manifests, CocoaPods-only libraries and reference timings.
-- [bare-react-native.md](bare-react-native.md): bare React Native projects (0.86.2, 0.86.3, 0.87.1, 0.88.0, 0.88.1)
-  and 0.88.1 hybrids with Expo modules: supported versions, detection, what is read from the Xcode project, sources,
-  resources, Metro, limits.
+- [how-it-works.md](how-it-works.md): what `setup` installs, the bundled patches, the build steps, how the SwiftPM
+  scripts are chosen, the Expo SDK 58 and 57 version floors and the precompiled framework check (G4), Expo SDK 57
+  through the vendored Expo SwiftPM plugin, mixed-language manifests, CocoaPods-only libraries and reference timings.
+- [bare-react-native.md](bare-react-native.md): bare React Native projects (0.86.x from 0.86.2, 0.87.x from 0.87.1,
+  0.88.x from 0.88.0) and 0.88.1 hybrids with Expo modules: supported versions, detection, what is read from the
+  Xcode project, sources, resources, Metro, limits.
 - [wifi-install.md](wifi-install.md): installing over Wi‑Fi without the cable, WSL2 pair records, Wi‑Fi troubleshooting.
 - [troubleshooting.md](troubleshooting.md): first-run checklist on the iPhone and fixes for common build, Metro and
-  signing problems, and the Expo SDK 58 and 57 version messages.
+  signing problems, the Expo SDK 58 and 57 version messages, the warnings on versions newer than the verified ones,
+  and what each `doctor --project` line means.
 - [libraries.md](libraries.md): library compatibility matrix (Expo and bare), tested on a physical iPhone.
 
 ## Reference
 
 - [recipe.md](recipe.md): the technical recipe the CLI automates, step by step with file locations.
-- [RELEASING.md](RELEASING.md): release checklist and npm publishing under the `alpha` tag.
+- [RELEASING.md](RELEASING.md): release checklist, npm publishing under the `alpha` tag, and the daily drift watch.
 
 ## Upstream write-ups
 

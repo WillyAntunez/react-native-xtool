@@ -24,11 +24,11 @@ step with file locations.
 
 ## The build, step by step
 
-1. Applies the bundled patches to `node_modules` with patch-package, on Expo projects and bare React Native 0.88.0
-   and 0.88.1 projects (each patch only when its package is installed, so a bare project without Expo modules gets
-   only the React Native one). Bare 0.86 and 0.87 projects get none: the fixes live in the vendored scripts. An Expo
-   SDK 57 project gets only the patches made for its exact installed versions, which is
-   `expo-modules-jsi+57.1.3.patch` (see [Expo SDK 57](#expo-sdk-57)). An Expo SDK 58 project gets four patches, named
+1. Applies the bundled patches to `node_modules` with patch-package, on Expo projects and bare React Native 0.88.x
+   projects (each patch only when its package is installed, so a bare project without Expo modules gets only the
+   React Native one). Bare 0.86 and 0.87 projects get none: the fixes live in the vendored scripts. An Expo SDK 57
+   project gets only the patches of its installed versions' release lines, which is `expo-modules-jsi+57.1.3.patch`
+   (see [Expo SDK 57](#expo-sdk-57)). An Expo SDK 58 project gets four patches, named
    after the versions of the 58.0.21 set (a newer 58.x gets the same ones, see [Expo SDK 58](#expo-sdk-58)). Two are
    one-liners (the `@ExpoModule` scanner gate in `expo-modules-autolinking+58.0.16.patch`, a Swift 6.4 access-level
    error in `expo-modules-jsi+58.0.21.patch`). The other two are large:
@@ -54,7 +54,8 @@ step with file locations.
    Packages linked from outside the project are skipped, with a line saying so. Today the snippet is `CFGetTypeID`,
    checked in react-native-reanimated 4.7.1 and react-native-worklets 0.13.0 and 0.13.1
    ([upstream/reanimated-worklets-manifest.md](upstream/reanimated-worklets-manifest.md)).
-2. Bare projects on React Native 0.86 or 0.87, and Expo SDK 57 projects, first run the `rn-artifacts` step (downloads
+2. Bare projects on the vendored SwiftPM scripts (React Native 0.86 or 0.87), and Expo SDK 57 projects, first run the
+   `rn-artifacts` step (downloads
    and, for 0.86, adapts the prebuilt artifacts, see [bare-react-native.md](bare-react-native.md#older-artifacts-086)).
    Then runs React Native 0.88's SwiftPM pipeline (the vendored copy for 0.86 and 0.87, see
    [below](#vendored-swiftpm-scripts)) and Expo's SPM plugin (the vendored copy for SDK 57, see
@@ -72,11 +73,11 @@ Xcode project, ExpoModulesJSI only with Expo modules): see [bare-react-native.md
 
 ## Vendored SwiftPM scripts
 
-React Native 0.86 and 0.87 ship no `scripts/spm`. Rather than patching those installs, rn-xtool bundles the 0.88.0
-scripts in `vendor/rn-spm/` (the 17 scaffolder fixes already applied; provenance and how it is checked in
-[vendor/rn-spm/README.md](../vendor/rn-spm/README.md)) and the driver is given `--scripts-root` pointing at them. Expo
-SDK 57 (React Native 0.86.3) uses them too. The installed React Native keeps its own codegen. Five edits to the vendored
-copy:
+React Native 0.86 ships no SwiftPM scripts, and 0.87's lack exports and an option rn-xtool's driver calls. Rather
+than patching those installs, rn-xtool bundles the 0.88.0 scripts in `vendor/rn-spm/` (the 17 scaffolder fixes
+already applied; provenance and how it is checked in [vendor/rn-spm/README.md](../vendor/rn-spm/README.md)) and the
+driver is given `--scripts-root` pointing at them. Expo SDK 57 (React Native 0.86.3) uses them too. The installed
+React Native keeps its own codegen. Five edits to the vendored copy:
 
 - **E1**: the codegen template (`Package.swift.spm-template`, missing from 0.86) is read from the vendored copy.
 - **E2, E3**: the React Native root comes only from the `RN_SPM_RN_ROOT` environment variable (set by the driver to the
@@ -87,8 +88,30 @@ copy:
   `RN_SPM_EXPO_PLUGIN` environment variable (set by the driver's `--expo-plugin`) when `expo` declares none, which is
   the case on Expo SDK 57.
 
-React Native 0.88.0 and 0.88.1 keep using their installed scripts and the bundled patch for their exact version
-(`patches/react-native+0.88.0.patch` or `patches/react-native+0.88.1.patch`, the same content: a fix edits both).
+React Native 0.88.x keeps using its installed scripts and the bundled patch for its version, else the highest one of
+its release line (`patches/react-native+0.88.0.patch` or `patches/react-native+0.88.1.patch`, the same content: a fix
+edits both; 0.88.2 gets the 0.88.1 patch). If that patch does not apply, the build stops with
+`pin "react-native" to 0.88.1`.
+
+**Which scripts a bare project gets** is decided from the installed scripts' layout, not from the version number
+(`scriptsCapability` in `src/project/scriptsShape.ts`). rn-xtool reads seven files of `react-native/scripts` as text
+(it never loads them) and checks that each exists and has the exports and options rn-xtool calls. It recognises
+three layouts:
+
+- no scripts at all (0.86): the vendored copy, when rn-xtool bundles no react-native patch for the version's line;
+- 0.87's, which lacks `setup-apple-spm.js`'s `resolveAppIosDeploymentTarget`, `spm/scaffold-package-swift.js`'s
+  `refreshScaffoldedPlatformFloors` and `spm/sync-spm-autolinking.js`'s `--ios-deployment-target`: the vendored copy,
+  on the same condition;
+- 0.88's, with everything: the installed scripts, when rn-xtool bundles a react-native patch for the version's line.
+
+Anything else, including a known layout without its matching patch condition, is "not recognised": `doctor --project`
+says so and names what is missing, and the build falls back to the line's scripts mode in `SUPPORTED_LINES`
+(`src/versions.ts`). For every supported version the result equals that table: 0.86.x and 0.87.x vendored, 0.88.x
+installed. The scripts mode also plans the `rn-artifacts` step: with the vendored scripts rn-xtool downloads the
+artifacts itself (unless `rnArtifactsDir` is set), and with the installed ones the build first checks that a bundled
+react-native patch of the installed line exists. Expo projects do not use this detection: SDK 57 always takes the
+vendored scripts, because the vendored Expo plugin needs them (E5), and SDK 58 the installed ones; `doctor --project`
+still prints their layout.
 
 ## Expo SDK 58
 
@@ -119,13 +142,13 @@ second expo-modules-jsi). Hybrid apps (bare React Native with Expo modules) run 
 Native 0.88.1 and Expo SDK 58. SDK 59 and newer have no verified set yet: they are not checked against one, and G4
 is their only check.
 
-**Patches on a newer 58.x.** react-native gets only the patch for its exact version. Every other package gets the
-patch for its installed version, else the highest bundled one, so a newer 58.x gets the floor's patch and
-patch-package's own version warning is let through. If that patch does not apply, the build stops with
+**Patches on a newer 58.x.** Every package gets the patch for its installed version, else the highest bundled patch of
+its release line (packages other than react-native then fall back to the highest bundled one), so a newer 58.x gets the
+floor's patch and patch-package's own version warning is let through. If that patch does not apply, the build stops with
 "rn-xtool could not patch <package>". Its remedy is an npm `"overrides"` block that holds expo-modules-core,
 expo-modules-jsi and expo-modules-autolinking (and the failing package) on the verified set, built from the same table
-as G1, or waiting for an rn-xtool release. It says not to pin expo-modules-* packages as direct dependencies: such a
-pin nests the copy expo uses, which G2 refuses, while an override applies to every copy (see
+as G1, or waiting for an rn-xtool release. It says not to pin expo-modules-* packages as direct dependencies: such a pin
+nests the copy expo uses, which G2 refuses, while an override applies to every copy (see
 [troubleshooting.md](troubleshooting.md#build-and-patches)).
 
 ## Precompiled frameworks (G4)
@@ -153,12 +176,19 @@ without the commands the plugin calls, a macro plugin with no Linux binary, and 
 It does ship ExpoModulesCore (and ExpoModulesWorklets, ExpoFileSystem, ExpoFont) precompiled inside its npm packages.
 rn-xtool builds it with a vendored copy of Expo SDK 58's plugin, on the same driver path as bare projects:
 
-- **Exact versions.** SDK 57 builds only with expo 57.0.31, react-native 0.86.3, expo-modules-core 57.0.24,
-  expo-modules-autolinking 57.0.16 and expo-modules-jsi 57.1.3, each read where the build resolves it
-  (expo-modules-core from `expo`, expo-modules-jsi from expo-modules-core). expo-modules-jsi must also be the top-level
-  copy, the only one patch-package patches. `doctor` and `build` stop otherwise, with the messages in
-  [troubleshooting.md](troubleshooting.md#expo-sdk-57). SDK 58 and newer keep their installed plugin; SDK 56 and older
-  are refused.
+- **A floor.** SDK 57 is checked like SDK 58 (G1–G3, with SDK 58's G1 and G2 texts), on the 57 set: at least expo
+  57.0.31, expo-modules-core 57.0.24, expo-modules-autolinking 57.0.16 and expo-modules-jsi 57.1.3, each on SDK 57's
+  line (57.x), and react-native exactly 0.86.3, because Expo's precompiled modules are built against it. Each is read
+  where the build resolves it (expo-modules-core from `expo`, expo-modules-jsi from expo-modules-core). An older
+  version, a missing one, or one of another SDK's line (expo-modules-jsi 58.x) stops the build; a newer 57.x prints a
+  warning and the build continues. expo-modules-jsi must also be the top-level copy, the only one patch-package
+  patches. The messages are in [troubleshooting.md](troubleshooting.md#expo-sdk-57). SDK 58 and newer keep their
+  installed plugin; SDK 56 and older are refused.
+- **Patches by release line.** An SDK 57 project gets, for each package, the bundled patch for its installed version,
+  else the highest bundled patch of the same release line, and never another SDK's patch (`lineOnly`). Today that is
+  `expo-modules-jsi+57.1.3.patch`, also on a newer 57.x jsi. When it does not apply, the build stops with
+  "rn-xtool could not patch expo-modules-jsi@<version>" and the npm `"overrides"` block for the 57 set
+  ([troubleshooting.md](troubleshooting.md#build-and-patches)).
 - **The vendored plugin.** `vendor/expo-spm/` is expo 58.0.19's `scripts/spm/` with rn-xtool's Expo patch applied and
   six vendored-only edits (P1–P6: the macro lookup, app packages resolved from the app root, CocoaPods' default header
   dir and prefix header, tarballs extracted without macOS AppleDouble entries, a subspec's own compiler flags as a

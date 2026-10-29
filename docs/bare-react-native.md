@@ -1,25 +1,23 @@
 # Bare React Native projects
 
-A project made with `npx @react-native-community/cli init` (React Native 0.86.2, 0.86.3, 0.87.1, 0.88.0 or 0.88.1, see
-[Supported React Native versions](#supported-react-native-versions)) builds with the same commands as an Expo app
-(`doctor`, `build`, `install`, `start`, `run`). Nothing in
-`ios/` is modified: rn-xtool reads the Xcode project and generates its own `ios-xtool/` from it. CocoaPods is not
-needed: the `Podfile` and any `pod install` result are ignored. This page covers how the project is detected, what is
-read from it, and what is not carried over.
+A project made with `npx @react-native-community/cli init` (React Native 0.86.x from 0.86.2, 0.87.x from 0.87.1 or
+0.88.x from 0.88.0, see [Supported React Native versions](#supported-react-native-versions)) builds with the same
+commands as an Expo app (`doctor`, `build`, `install`, `start`, `run`). Nothing in `ios/` is modified: rn-xtool reads
+the Xcode project and generates its own `ios-xtool/` from it. CocoaPods is not needed: the `Podfile` and any
+`pod install` result are ignored. This page covers how the project is detected, what is read from it, and what is not
+carried over.
 
 [Back to README](../README.md)
 
 ## Supported React Native versions
 
-Exactly these versions, and nothing in between:
+One floor per minor: each line accepts its floor and every newer patch release of the same minor.
 
-| React Native | SwiftPM scripts | Status |
-| --- | --- | --- |
-| 0.88.1 | the installed copy (`node_modules/react-native/scripts`) | verified on a device |
-| 0.88.0 | the installed copy (`node_modules/react-native/scripts`) | verified on a device |
-| 0.87.1 | [vendored](#vendored-swiftpm-scripts-086-087) | verified on a device |
-| 0.86.3 | [vendored](#vendored-swiftpm-scripts-086-087), [older artifacts](#older-artifacts-086) | verified on a device |
-| 0.86.2 | [vendored](#vendored-swiftpm-scripts-086-087), [older artifacts](#older-artifacts-086) | build-verified only (not run on a device) |
+| Line | Accepts | Verified | SwiftPM scripts |
+| --- | --- | --- | --- |
+| 0.88 | 0.88.0 or newer 0.88.x | 0.88.0 and 0.88.1, on a device | the installed copy (`node_modules/react-native/scripts`) |
+| 0.87 | 0.87.1 or newer 0.87.x | 0.87.1, on a device | [vendored](#vendored-swiftpm-scripts-086-087) |
+| 0.86 | 0.86.2 or newer 0.86.x | 0.86.3 on a device; 0.86.2 build-verified only (not run on a device) | [vendored](#vendored-swiftpm-scripts-086-087), [older artifacts](#older-artifacts-086) |
 
 As of 2026-10-27, on a physical iPhone, 0.86.3 and 0.87.1 pass `doctor`, `build`, install over Wi‑Fi, Metro and Fast
 Refresh, and the library matrix in [libraries.md](libraries.md) (reanimated/worklets only on 0.86.3). 0.86.2 is
@@ -31,13 +29,24 @@ On 0.86.3 the first build downloads about 1.3 GB of artifacts (about 3 minutes i
 connection) and adapts them (about 2 s); later builds reuse the adapted slots (`rn-artifacts` 0.0 s). The library
 matrix build took about 4 minutes with four auto-scaffolds.
 
-Any other version (0.85 and older, 0.86.0, 0.86.1, 0.87.0, 0.88 prereleases, 0.88.x other than 0.88.0 and 0.88.1)
-stops `build` and `doctor` with one error naming this list and asking you to pin `react-native` to one of them.
-Hybrids (bare + Expo modules) work on 0.88.1 only: Expo SDK 58 needs React Native 0.88.1, so 0.86, 0.87 and 0.88.0
-with Expo modules stop with an error saying so (see [Hybrid](#hybrid-bare--expo-modules)). rn-xtool bundles its
-`react-native` patch twice, as `react-native+0.88.0.patch` and `react-native+0.88.1.patch` (the same content), and
-applies the one for the installed version; it is not applied to other versions (the vendored scripts already contain
-its fixes).
+A verified version builds silently. A newer patch of a line, for example 0.88.2 or 0.86.4, builds with a warning
+that names the verified versions and the one to move back to if the build or the app fails ("⚠ Newer than the React
+Native <minor> line this rn-xtool release was verified with: ...", see
+[troubleshooting.md](troubleshooting.md#newer-than-the-verified-versions)). Anything else stops `build` and `doctor`
+with one error: a version below its line's floor (0.86.0, 0.86.1, 0.87.0), a prerelease of any line (0.88.2-rc.1),
+or a minor without a line (0.85 and older, 0.89). It reads "React Native <version> is not supported; rn-xtool supports
+0.86.x from 0.86.2, 0.87.x from 0.87.1 and 0.88.x from 0.88.0 (bare). Pin react-native to one of them.", followed by
+"Expo SDK 58 needs React Native 0.88.1." when expo-modules-core is installed. `rn-xtool doctor --project`
+shows the line a project is on, and the reason when no line covers it
+([troubleshooting.md](troubleshooting.md#doctor---project)).
+
+Hybrids (bare + Expo modules) work on 0.88.1 only: Expo SDK 58 needs React Native 0.88.1, so 0.86, 0.87 and any other
+0.88.x with Expo modules stop with an error saying so (see [Hybrid](#hybrid-bare--expo-modules)). rn-xtool bundles its
+`react-native` patch twice, as `react-native+0.88.0.patch` and `react-native+0.88.1.patch` (the same content). It
+applies the one for the installed version, else the highest one of the installed version's line, so 0.88.2 gets the
+0.88.1 patch. If that patch does not apply to a newer 0.88.x, the build stops at `patches` with
+`pin "react-native" to 0.88.1`. 0.86 and 0.87 get no react-native patch: the vendored scripts already contain its
+fixes.
 
 Templates differ between versions. A 0.86 template (`@react-native-community/cli init --version 0.86.3`) has only
 `AppDelegate.swift` (no `SceneDelegate.swift`), imports `React_RCTAppDelegate` next to `React` and
@@ -75,10 +84,19 @@ expo-modules-* pins and move `expo` first, and React Native last, because `npx e
 
 ## Vendored SwiftPM scripts (0.86, 0.87)
 
-React Native 0.88 introduced the SwiftPM scripts (`scripts/setup-apple-spm.js`, `scripts/spm/`) that rn-xtool drives;
-0.86 and 0.87 do not ship them. For these versions rn-xtool uses the 0.88.0 scripts bundled in the package
-(`vendor/rn-spm/`, with the scaffolder fixes already applied) while still running the installed React Native's own
-codegen and reading its version's artifacts. How and why: [How it works](how-it-works.md#vendored-swiftpm-scripts).
+React Native 0.88 introduced the SwiftPM scripts (`scripts/setup-apple-spm.js`, `scripts/spm/`) that rn-xtool drives.
+0.86 ships none, and 0.87's lack two exports and one option that rn-xtool needs. For these versions rn-xtool
+uses the 0.88.0 scripts bundled in the package (`vendor/rn-spm/`, with the scaffolder fixes already applied) while
+still running the installed React Native's own codegen and reading its version's artifacts.
+
+rn-xtool decides this from the installed scripts' layout, not from the version number: it reads the files under
+`node_modules/react-native/scripts` as text and checks for the exports and options it calls. No scripts, or 0.87's,
+give the vendored copy on a line rn-xtool bundles no react-native patch for (0.86, 0.87). Scripts with everything
+rn-xtool needs (0.88's) are used as installed on a line it bundles that patch for (0.88). Anything else is reported by
+`doctor --project` as "not recognised", and the build then takes the scripts mode of the version's line (vendored for
+0.86 and 0.87, installed for 0.88). Today every supported version gets the same mode
+as before. The choice also decides whether the `rn-artifacts` step runs (see [Build steps](#build-steps)). How and
+why: [How it works](how-it-works.md#vendored-swiftpm-scripts).
 
 ## Older artifacts (0.86)
 
@@ -117,9 +135,9 @@ missing bundle identifier.
 
 ## Build steps
 
-`patches`, `rn-artifacts` (0.86 and 0.87, unless `rnArtifactsDir` is set), `rn-spm`, `jsi` (only with Expo modules),
-`app-config` (only when `expo-constants` is installed),
-`frameworks`, `generate` and `xtool-build`. `expo prebuild` never runs, and the `rn-spm` step runs React Native's
+`patches`, `rn-artifacts` (with the vendored SwiftPM scripts, so 0.86 and 0.87, unless `rnArtifactsDir` is set),
+`rn-spm`, `jsi` (only with Expo modules), `app-config` (only when `expo-constants` is installed), `frameworks`,
+`generate` and `xtool-build`. `expo prebuild` never runs, and the `rn-spm` step runs React Native's
 SwiftPM generation steps without injecting anything into your Xcode project (it writes `ios/build/` only). Your
 `Podfile` and any `pod install` result are ignored.
 
@@ -211,7 +229,7 @@ its `Package.swift` fix for Linux needs no patch, rn-xtool applies it on every b
 
 - One application target and one `.xcodeproj` per project.
 - `.xcconfig` files, entitlements, capabilities and script phases are not read; no asset catalogs or storyboards.
-- Only the React Native versions in [the table above](#supported-react-native-versions) are supported.
+- Only the React Native lines in [the table above](#supported-react-native-versions), from their floor, are supported.
 
 Implementation notes: the "Bare React Native notes" section of [recipe.md](recipe.md#bare-react-native-notes) and the
 design record [design/specs/2026-10-26-bare-react-native-design.md](design/specs/2026-10-26-bare-react-native-design.md).
