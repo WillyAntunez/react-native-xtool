@@ -65,8 +65,9 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 - G4, in the `frameworks` step: before staging, `llvm-nm` (from the Swift toolchain) checks that every symbol an
   embedded framework imports from another embedded framework is exported by it. A gap stops the build naming both
   frameworks, their packages and a missing symbol, instead of an app that closes at launch with `dyld: Symbol not
-  found`. It runs on every project kind, with no bypass; a missing `llvm-nm` is an error. It does not see C++ or
-  Swift layout changes that keep the same symbols, or lookups by name at runtime (see `docs/troubleshooting.md`).
+  found`. It runs on every project kind, with no bypass; a missing `llvm-nm` is an error, which `doctor` reports on
+  its `llvm-nm` line. It does not see C++ or Swift layout changes that keep the same symbols, or lookups by name at
+  runtime (see `docs/troubleshooting.md`).
 
 ### Changed
 - `install`'s first-run checklist explains the red screen "No script URL provided" that shows behind iOS's Local

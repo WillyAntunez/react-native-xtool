@@ -20,10 +20,10 @@ export const LLVM_NM_MISSING =
   "llvm-nm was not found on the Swift toolchain's PATH; rn-xtool checks the precompiled frameworks with it. " +
   `Run \`rn-xtool setup\` to install Swift ${SWIFT_VERSION} through swiftly.`;
 
-export function makeNmRunner(bin = "llvm-nm"): NmRunner {
+export function makeNmRunner(bin = "llvm-nm", timeoutMs?: number): NmRunner {
   return async (args) => {
     try {
-      const r = await execa(bin, args, { env: toolEnv(), extendEnv: false });
+      const r = await execa(bin, args, { env: toolEnv(), extendEnv: false, timeout: timeoutMs });
       return r.stdout;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === "ENOENT") throw new Error(LLVM_NM_MISSING);

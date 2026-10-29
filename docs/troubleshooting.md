@@ -231,6 +231,8 @@ messages and the two hybrid ones at the end, and print the sixth and go on; the 
   `(expo-modules-core <version> declares expo-modules-jsi <range>)`. The remedy is the same.
 - **"llvm-nm was not found on the Swift toolchain's PATH; rn-xtool checks the precompiled frameworks with it. Run
   `rn-xtool setup` to install Swift 6.4 through swiftly."** G4 uses `llvm-nm` from the Swift toolchain; run `setup`.
+  `doctor` shows the same text on its `llvm-nm` line. The Swift 6.4.1 toolchain `setup` installs ships it in
+  `usr/bin`; a custom toolchain without it fails here.
 - **"Expo SDK <n> (expo <version>) with Expo modules is not supported in a bare app. Expo modules in a bare app need
   Expo SDK 58 or newer: install expo ~58.0.21 and run `npx expo install --fix`, then move react-native to 0.88.1 as
   https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/bare-react-native.md#upgrading-react-native

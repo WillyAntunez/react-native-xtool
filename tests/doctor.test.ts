@@ -12,6 +12,7 @@ import {
   type ProjectProbe,
 } from "../src/commands/doctor.js";
 import { MissingBundleIdentifierError } from "../src/project/index.js";
+import { LLVM_NM_MISSING } from "../src/pipeline/symbols.js";
 import { XTOOL_SHA256, XTOOL_VERSION } from "../src/versions.js";
 import { fakeExpo57Modules } from "./support/expo57.js";
 import { fakeExpo58Modules } from "./support/expo58.js";
@@ -40,6 +41,7 @@ const bareProbe: ProjectProbe = {
 const good: DoctorProbes = {
   nodeVersion: () => "20.11.0",
   swiftVersion: async () => "6.4",
+  llvmNmVersion: async () => "21.0.0",
   xtoolPath: () => "/cache/xtool.AppImage",
   xtoolInstalled: () => true,
   xtoolVersion: async () => `xtool ${XTOOL_VERSION}`,
@@ -91,7 +93,7 @@ describe("doctorWithProbes", () => {
     const r = await doctorWithProbes(good);
     expect(r.ok).toBe(true);
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "swift", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
+      "node", "swift", "llvm-nm", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
     ]);
     expect(r.checks.every((c) => c.status === "ok")).toBe(true);
   });
@@ -130,6 +132,19 @@ describe("doctorWithProbes", () => {
     expect(r.checks.find((c) => c.name === "apple-login")?.detail).toContain(
       "run rn-xtool auth login",
     );
+  });
+
+  it("checks llvm-nm, which every build's frameworks step needs, with the build's remedy", async () => {
+    expect(statusOf(await doctorWithProbes(good), "llvm-nm")).toBe("ok");
+    expect((await doctorWithProbes(good)).checks.find((c) => c.name === "llvm-nm")?.detail).toBe("LLVM 21.0.0");
+    const r = await doctorWithProbes({
+      ...good,
+      llvmNmVersion: async () => {
+        throw new Error(LLVM_NM_MISSING);
+      },
+    });
+    expect(r.ok).toBe(false);
+    expect(r.checks.find((c) => c.name === "llvm-nm")).toEqual({ name: "llvm-nm", status: "fail", detail: LLVM_NM_MISSING });
   });
 
   it("fails on swift older than required", async () => {
@@ -294,7 +309,7 @@ describe("doctorWithProbes", () => {
     const r = await doctorWithProbes({ ...good, ufwActive: async () => true, buildState: async () => ({ metroPort: 8099, lanIp: "1.2.3.4" }) }, "/p");
     expect(r.checks.find((c) => c.name === "firewall")?.detail).toContain("ufw allow 8099/tcp");
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "swift", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip", "project", "project-config", "build-state", "deps", "metro-port",
+      "node", "swift", "llvm-nm", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip", "project", "project-config", "build-state", "deps", "metro-port",
     ]);
   });
 
