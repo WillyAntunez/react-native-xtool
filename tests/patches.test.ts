@@ -414,6 +414,16 @@ describe("findPatchMismatch", () => {
     const both = `${jsi}\nnode_modules/expo-modules-autolinking`;
     expect(findPatchMismatch(root, patchDir, both)?.pkg).toBe("expo-modules-autolinking");
   });
+  it("blames the package an error names, not one a version-mismatch warning names", async () => {
+    const { root, patchDir } = await fakeProject({ expo: "58.9.9", "expo-modules-autolinking": "58.9.9" });
+    const output = [
+      versionMismatchWarning("expo", "58.0.21", "58.9.9"),
+      applicationFailureError("expo-modules-autolinking", "58.0.16", "58.9.9"),
+      "---",
+      "patch-package finished with 1 warning(s), 1 error(s).",
+    ].join("\n");
+    expect(findPatchMismatch(root, patchDir, output)?.pkg).toBe("expo-modules-autolinking");
+  });
   it("matches the patch file prefix and the node_modules path", () => {
     expect(outputNamesPackage("applying expo+58.0.21.patch", "expo")).toBe(true);
     expect(outputNamesPackage("at node_modules/expo/package.json", "expo")).toBe(true);
@@ -472,7 +482,97 @@ describe("a bundled patch over a package an earlier release patched differently"
     expect(err.message).toContain("--- patch-package output ---");
     expect(err.message).not.toContain("Report this");
   }, 30_000);
+
+  it("blames the package patch-package failed on, not a newer expo whose patch applied", async () => {
+    // A newer 58.x expo still takes the floor patch (with a warning); jsi, at the patch's version, fails because
+    // alpha.2 patched it differently. The reinstall of jsi is the fix, not an overrides block for expo.
+    const { root } = await tempProject();
+    await installPkg(root, "expo", "58.0.22");
+    await installPkg(root, "expo-modules-autolinking", "58.0.16");
+    await installPkg(root, "expo-modules-jsi", "58.0.21");
+    await installPkg(root, "react-native", "0.88.1");
+    const output = [
+      "expo-modules-autolinking@58.0.16 ✔",
+      "react-native@0.88.1 ✔",
+      versionMismatchWarning("expo", "58.0.21", "58.0.22"),
+      brokenPatchFileError("expo-modules-jsi", "expo-modules-jsi+58.0.21.patch"),
+      "---",
+      "patch-package finished with 1 warning(s), 1 error(s).",
+    ].join("\n");
+    const err = (await applyPatches(root, async () => ({ exitCode: 1, all: output }), {
+      rnScripts: "installed",
+      expoPlugin: "installed",
+    }).catch((e: unknown) => e)) as Error;
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message.split("\n").slice(0, 3)).toEqual([
+      "rn-xtool could not apply its patch to expo-modules-jsi@58.0.21 (patch file: expo-modules-jsi+58.0.21.patch): " +
+        "node_modules/expo-modules-jsi is the version the patch is for, but its files match neither the original " +
+        "package nor the patched one.",
+      "This usually means an earlier rn-xtool release (such as 0.1.0-alpha.2) patched it differently, or its files " +
+        "were edited by hand.",
+      "Reinstall the package, then build again: rm -rf node_modules/expo-modules-jsi && npm install",
+    ]);
+    expect(err.message).not.toContain('"overrides"');
+  });
 });
+
+/** patch-package 8.0.1's texts (dist/applyPatches.js, no colour), so the tests read real output shapes. */
+function versionMismatchWarning(pkg: string, made: string, installed: string): string {
+  return `
+Warning: patch-package detected a patch file version mismatch
+
+  Don't worry! This is probably fine. The patch was still applied
+  successfully. Here's the deets:
+
+  Patch file created for
+
+    ${pkg}@${made}
+
+  applied to
+
+    ${pkg}@${installed}
+
+  At path
+
+    node_modules/${pkg}
+
+  This warning is just to give you a heads-up. There is a small chance of
+  breakage even though the patch was applied successfully. Make sure the package
+  still behaves like you expect (you wrote tests, right?) and then run
+
+    patch-package ${pkg}
+
+  to update the version in the patch file name and make this warning go away.
+`;
+}
+
+function brokenPatchFileError(pkg: string, patchFile: string): string {
+  return `
+**ERROR** Failed to apply patch for package ${pkg} at path
+
+    node_modules/${pkg}
+
+  This error was caused because patch-package cannot apply the following patch file:
+
+    patches/${patchFile}
+`;
+}
+
+function applicationFailureError(pkg: string, made: string, installed: string): string {
+  return `
+**ERROR** Failed to apply patch for package ${pkg} at path
+
+    node_modules/${pkg}
+
+  This error was caused because ${pkg} has changed since you
+  made the patch file for it.
+
+  Info:
+    Patch file: patches/${pkg}+${made}.patch
+    Patch was made for version: ${made}
+    Installed version: ${installed}
+`;
+}
 
 describe("genericPatchFailureMessage", () => {
   it("includes exit code, output tail and the report link", () => {

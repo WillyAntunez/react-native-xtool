@@ -173,7 +173,20 @@ function bundledVersionList(bundledDir: string, pkg: string): string {
   return versions.length < 2 ? versions.join("") : `${versions.slice(0, -1).join(", ")} and ${versions[versions.length - 1]}`;
 }
 
-/** Finds a bundled patch whose package is installed at a different version. */
+/**
+ * The part of patch-package's output that reports failures: from its first error on. patch-package prints every
+ * warning before the first error, and a version-mismatch warning names a package whose patch applied.
+ */
+function patchFailureOutput(output: string): string {
+  const plain = output.replace(/\u001b\[[0-9;]*m/g, "");
+  const first = /\*\*ERROR\*\*|^Error:/m.exec(plain);
+  return first === null ? plain : plain.slice(first.index);
+}
+
+/**
+ * Finds a bundled patch whose package is installed at a different version, preferring the one patch-package's
+ * failure output names.
+ */
 export function findPatchMismatch(
   projectRoot: string,
   patchDir: string,
@@ -189,7 +202,8 @@ export function findPatchMismatch(
       mismatches.push({ pkg: info.pkg, installed, patchFile, patched: info.version });
     }
   }
-  const named = mismatches.find((m) => outputNamesPackage(output, m.pkg));
+  const failures = patchFailureOutput(output);
+  const named = mismatches.find((m) => outputNamesPackage(failures, m.pkg));
   return named ?? mismatches[0];
 }
 
@@ -215,9 +229,10 @@ export function findStalePatchedPackage(
   output: string,
 ): Omit<PatchFailureDetails, "output"> | undefined {
   if (!existsSync(patchDir)) return undefined;
+  const failures = patchFailureOutput(output);
   for (const patchFile of readdirSync(patchDir).sort()) {
     const info = parsePatchFileName(patchFile);
-    if (!info || !outputNamesPackage(output, info.pkg)) continue;
+    if (!info || !outputNamesPackage(failures, info.pkg)) continue;
     if (installedVersion(projectRoot, info.pkg) === info.version) {
       return { pkg: info.pkg, installed: info.version, patchFile, patched: info.version };
     }
@@ -505,13 +520,14 @@ export async function applyPatches(
     const r = await exec(cmd, args, projectRoot);
     const output = r.all ?? `${r.stdout}\n${r.stderr}`;
     if (r.exitCode !== 0 || r.failed || patchPackageOutputFailed(output)) {
-      // Only what was staged: a bundled patch that was left out is not the one that failed.
+      // Only what was staged: a bundled patch that was left out is not the one that failed. A failed package at the
+      // patch's own version comes first: another package at a newer version may have taken its patch fine.
+      const stale = findStalePatchedPackage(projectRoot, patchesDir, output);
+      if (stale) throw new Error(stalePatchedMessage({ ...stale, output }));
       const mismatch = findPatchMismatch(projectRoot, patchesDir, output);
       if (mismatch) {
         throw new Error(patchFailureMessage({ ...mismatch, output }, { floor: floorRemedy(projectRoot, mismatch.pkg, mismatch.patched) }));
       }
-      const stale = findStalePatchedPackage(projectRoot, patchesDir, output);
-      if (stale) throw new Error(stalePatchedMessage({ ...stale, output }));
       throw new Error(genericPatchFailureMessage(r, output));
     }
   }
