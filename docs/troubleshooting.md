@@ -73,7 +73,36 @@ far with their fixes. Wi‑Fi install problems have their own list in [wifi-inst
 - **"⚠ patches/<name> was scaffolded for React Native <version>; delete it so rn-xtool regenerates it for <installed>
   (also remove node_modules/<package> and reinstall: that copy still has the old Package.swift)":** the persisted
   scaffold patch was made for another React Native version, for example after moving a project from 0.88.0 to 0.88.1.
-  Do the same as for the revision warning above.
+  Do the same as for the revision warning above. Both warnings also read patches with the marker's name before the
+  rename, `expo-xtool-scaffold-revision` (apps scaffolded before 0.1.0-alpha.1).
+- **"ℹ node_modules/<package>/Package.swift was scaffolded with revision <n> for React Native <version>, older than
+  patches/<name> (revision 3, React Native <installed>): rn-xtool replaced it with the persisted one":** a teammate
+  committed a regenerated scaffold patch, and your `node_modules` still had the copy an older patch wrote
+  (patch-package does not replace a file that exists). rn-xtool owns these generated files, so the `patches` step
+  removes the files the current patch creates and patch-package writes them again; the line is printed once
+  patch-package has done so. Nothing to do; files the older scaffold wrote and the current one does not stay in place.
+  This happens only when the patch holds nothing but scaffolded new files.
+- **"⚠ node_modules/<package>/Package.swift was scaffolded with revision <n> for React Native <version>, older than
+  patches/<name> (revision 3, React Native <installed>), and that patch also changes the library's own files, so
+  rn-xtool does not replace it: run rm -rf node_modules/<package> && npm install, then build again":** the same case,
+  but the persisted patch also holds your own fix to the library. rn-xtool persists a scaffold with
+  `patch-package <package>`, which writes everything that differs from the published package into one patch.
+  Removing only the scaffold files would leave a patch that patch-package can apply neither forward nor backward, so
+  rn-xtool changes nothing and the build goes on with the older manifest. Run the command: the reinstall gives the
+  published package, and the next build applies the whole patch.
+- **"ℹ node_modules/<package>/Package.swift was scaffolded by an older rn-xtool scaffolder (revision <n>, now 3)" (or
+  "was scaffolded for React Native <version>, not <installed>"), followed by "rn-xtool removed it so the rn-spm step
+  scaffolds it again":** a library has no persisted patch, and the manifest rn-xtool generated for it is out of date,
+  for example after you deleted a stale patch but kept the package installed. The `rn-spm` step scaffolds it again
+  and persists a new patch. Manifests without rn-xtool's marker (yours, or one a library ships) are never touched.
+- **"rn-xtool could not apply its patch to <package>@<version> (patch file: <file>): node_modules/<package> is the
+  version the patch is for, but its files match neither the original package nor the patched one.":** the message
+  goes on "This usually means an earlier rn-xtool release (such as 0.1.0-alpha.2) patched it differently, or its
+  files were edited by hand. Reinstall the package, then build again: rm -rf node_modules/<package> && npm install".
+  patch-package records nothing about which content it applied, so when a new rn-xtool release changes a bundled
+  patch for the same version (0.1.0-alpha.3 changed `react-native+0.88.0.patch` and the Expo patch), a
+  `node_modules/<package>` patched by the older release takes neither the new patch nor its reverse. rn-xtool does not
+  reinstall packages itself: run the command, then build again.
 - **"Missing SceneDelegate.swift: <path> (Info.plist's UIApplicationSceneManifest names ...)":** `SceneDelegate.swift`
   is optional (SDK 57's template has none), but Info.plist names a scene delegate class and the file is missing, so
   `ios/` is incomplete. `rn-xtool build --clean` regenerates it with `expo prebuild --clean`.

@@ -81,6 +81,13 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 - Expo's plugin skips every `*Tests` folder of a module, as podspecs do (`ios/*Tests/**/*`), not only `Tests`: SDK 57's
   expo-dev-menu compiled its `UITests` XCTest helpers into the app, which then closed at launch.
 - SDK 57's expo-dev-launcher `Unsafe` subspec now builds, with its own compiler flags (vendored edit P6).
+- A bundled patch over a package an earlier rn-xtool release patched differently (same version, other content) now
+  stops with a message that names the package and `rm -rf node_modules/<package> && npm install`, instead of
+  patch-package's output and "Report this". rn-xtool does not reinstall it itself.
+- A scaffolded `Package.swift` in `node_modules` older than its persisted patch (a teammate committed the regenerated
+  patch) is now replaced with the persisted one, and an out-of-date one without a persisted patch is removed so the
+  `rn-spm` step scaffolds it again; before, both were built as they were. The scaffold warnings and this check also
+  read the pre-rename `expo-xtool-scaffold-revision` marker.
 - With two bundled react-native patches, a react-native version is refused only when neither matches it, and the
   message names both (`the bundled react-native patches are for 0.88.0 and 0.88.1`).
 
