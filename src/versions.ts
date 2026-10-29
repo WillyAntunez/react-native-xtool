@@ -123,7 +123,8 @@ export function lineId(line: SupportedLine): string {
 }
 
 const expoLines = (): ExpoLine[] => SUPPORTED_LINES.filter((l): l is ExpoLine => l.kind === "expo");
-const bareLines = (): BareLine[] => SUPPORTED_LINES.filter((l): l is BareLine => l.kind === "bare");
+/** The bare React Native rows, oldest minor first. */
+export const bareLines = (): BareLine[] => SUPPORTED_LINES.filter((l): l is BareLine => l.kind === "bare");
 
 /** The row of an SDK that has one (57 and 58); undefined for any other SDK. */
 export function expoLineFor(sdk: number): ExpoLine | undefined {
