@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -167,6 +167,33 @@ describe("symbolGapMessage", () => {
     expect(jsiText).toContain(
       "another expo-modules-jsi (expo-modules-core 58.0.26 declares expo-modules-jsi ~58.0.21). Run `npx expo install --fix`, " +
         "remove any pin or lockfile hold on expo-modules-jsi,",
+    );
+  });
+});
+
+describe("symbolGapMessage remedy by project kind", () => {
+  const react = fw("react", "React");
+  const hermes = fw("hermes", "hermes");
+  const gap = { framework: react, from: hermes, missing: ["_hermes_new"] };
+
+  it("gives a bare app without Expo a remedy without Expo", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "symbols-bare-"));
+    await mkdir(path.join(root, "node_modules", "react-native"), { recursive: true });
+    await writeFile(path.join(root, "node_modules", "react-native", "package.json"), JSON.stringify({ version: "0.88.1" }));
+    const text = symbolGapMessage(root, [gap]);
+    expect(text).toBe(
+      "React.framework (react-native 0.88.1, from node_modules/react-native) needs 1 symbol that hermes.framework " +
+        `(react-native 0.88.1, from node_modules/react-native) does not export, for example _hermes_new. ${REMEDY("react-native")}. ` +
+        "Remove any pin or lockfile hold on react-native, reinstall, and build again.",
+    );
+    expect(text).not.toMatch(/\bexpo\b/i);
+  });
+
+  it("keeps `npx expo install --fix` where expo is installed (Expo and hybrid apps)", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "symbols-hybrid-"));
+    await fakeExpo58Modules(root);
+    expect(symbolGapMessage(root, [gap])).toMatch(
+      /\. Run `npx expo install --fix`, remove any pin or lockfile hold on react-native, reinstall, and build again\.$/,
     );
   });
 });

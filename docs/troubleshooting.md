@@ -228,7 +228,9 @@ messages and the two hybrid ones at the end, and print the sixth and go on; the 
   export, for example _$s15ExpoModulesCore9AnyModuleP11_classTypesSayAA12SharedObjectCmGvgZTq. ...`. When the
   framework lacking the symbols is ExpoModulesJSI, which rn-xtool builds, its origin reads
   `built by rn-xtool from <dir>` and the message adds the range expo-modules-core declares:
-  `(expo-modules-core <version> declares expo-modules-jsi <range>)`. The remedy is the same.
+  `(expo-modules-core <version> declares expo-modules-jsi <range>)`. The remedy is the same. In a bare app without
+  the `expo` package the last sentence reads "Remove any pin or lockfile hold on <package>, reinstall, and build
+  again."
 - **"llvm-nm was not found on the Swift toolchain's PATH; rn-xtool checks the precompiled frameworks with it. Run
   `rn-xtool setup` to install Swift 6.4 through swiftly."** G4 uses `llvm-nm` from the Swift toolchain; run `setup`.
   `doctor` shows the same text on its `llvm-nm` line. The Swift 6.4.1 toolchain `setup` installs ships it in

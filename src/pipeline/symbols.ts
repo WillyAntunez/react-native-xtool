@@ -171,8 +171,9 @@ function jsiNote(root: string): string {
   return ` (expo-modules-core ${core.version} declares expo-modules-jsi ${range})`;
 }
 
-/** G4's error: one line per gap. */
+/** G4's error: one line per gap. `npx expo install --fix` only where expo is installed (Expo and hybrid apps). */
 export function symbolGapMessage(root: string, gaps: readonly SymbolGap[]): string {
+  const fix = expoPackageDir(root, "expo") === undefined ? "Remove" : "Run `npx expo install --fix`, remove";
   return gaps
     .map(({ framework: f, from: l, missing }) => {
       const lib = frameworkOrigin(root, l);
@@ -183,7 +184,7 @@ export function symbolGapMessage(root: string, gaps: readonly SymbolGap[]): stri
         `that ${l.name}.framework (${originText(lib)}) does not export, for example ${missing[0]}. ` +
         "The app would crash at launch (dyld: Symbol not found). " +
         `Its precompiled binary was built against another ${lib.pkg}${note}. ` +
-        `Run \`npx expo install --fix\`, remove any pin or lockfile hold on ${lib.pkg}, reinstall, and build again.`
+        `${fix} any pin or lockfile hold on ${lib.pkg}, reinstall, and build again.`
       );
     })
     .join("\n");
