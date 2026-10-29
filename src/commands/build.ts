@@ -7,11 +7,13 @@ import { writeIosXtool } from "../generate/iosXtool.js";
 import { detectLanIp, detectLanRoute, findFreePort, isMetroRunning, isPortFree, suspiciousLanRoute, tunnelWarning, type LanRoute } from "../net.js";
 import { projectPaths, type ProjectPaths } from "../paths.js";
 import { generateAppConfig } from "../pipeline/appConfig.js";
-import { buildExpoModulesJsi } from "../pipeline/jsi.js";
+import { buildExpoModulesJsi, jsiRnHeaderDirs, type JsiRnHeaders } from "../pipeline/jsi.js";
+import { fixLibraryManifests } from "../pipeline/manifests.js";
 import { applyPatches } from "../pipeline/patches.js";
 import { prepareRnArtifacts } from "../pipeline/rnArtifactsStep.js";
-import type { RnScripts } from "../versions.js";
+import type { ExpoPlugin, RnScripts } from "../versions.js";
 import { runRnSpm } from "../pipeline/rnSpm.js";
+import { checkFrameworkSymbols } from "../pipeline/symbols.js";
 import { readProject, RN_CLI_MISSING, type ProjectInfo, type ProjectKind, type ReadProjectOptions } from "../project/index.js";
 import { readState, writeState, type BuildState } from "../state.js";
 import { run } from "../tools/exec.js";
@@ -34,18 +36,27 @@ export interface BuildPlanInput {
   clean: boolean;
   hasExpoModules: boolean;
   hasExpoConstants: boolean;
-  /** Vendored SwiftPM scripts without a user-supplied `rnArtifactsDir`: rn-xtool prepares the artifacts. */
+  /**
+   * Vendored SwiftPM scripts (bare) or the vendored Expo plugin (SDK 57), without a user-supplied `rnArtifactsDir`:
+   * rn-xtool prepares the artifacts.
+   */
   rnArtifacts: boolean;
+  expoPlugin: ExpoPlugin;
 }
 
 /**
  * Expo: every step but rn-artifacts, with `expo prebuild` first when `ios/` is missing or on `--clean`.
+ * Expo on the vendored plugin (SDK 57) also gets rn-artifacts (when planned), and jsi moves before rn-spm
+ * because the plugin needs the JSI headers.
  * Bare: never prebuild (`--clean` removes the build outputs instead), rn-artifacts only for the
  * vendored scripts, ExpoModulesJSI only with Expo modules set up, app-config only with expo-constants.
  */
 export function buildSteps(state: BuildPlanInput): string[] {
   if (state.kind === "expo") {
-    const steps: string[] = BUILD_STEP_NAMES.filter((s) => s !== "rn-artifacts");
+    const vendored = state.expoPlugin === "vendored";
+    const steps: string[] = BUILD_STEP_NAMES.filter(
+      (s) => (s !== "rn-artifacts" || (vendored && state.rnArtifacts)) && (s !== "jsi" || !vendored),
+    ).flatMap((s) => (vendored && s === "rn-spm" ? ["jsi", "rn-spm"] : [s]));
     if (!state.hasIos || state.clean) steps.unshift(state.clean ? "prebuild --clean" : "prebuild");
     return steps;
   }
@@ -88,13 +99,20 @@ export interface BuildDeps {
   /** Deletes a directory tree (no error when it is missing). */
   remove: (path: string) => Promise<void>;
   prebuild: (root: string, clean: boolean) => Promise<void>;
-  applyPatches: (root: string, rnScripts: RnScripts) => Promise<void>;
+  applyPatches: (root: string, sources: { rnScripts: RnScripts; expoPlugin: ExpoPlugin }) => Promise<void>;
+  /** After patch-package, before rn-spm: rewrites known non-portable snippets in the libraries' own manifests. */
+  fixLibraryManifests: (root: string, log: (s: string) => void) => Promise<void>;
   /** Downloads (and adapts when needed) RN's prebuilt artifacts; returns the root for `rn-spm --artifacts`. */
   prepareRnArtifacts: (paths: ProjectPaths, rnVersion: string) => Promise<string>;
-  runRnSpm: (paths: ProjectPaths, opts: { rnArtifactsDir?: string; kind: ProjectKind; rnScripts: RnScripts }) => Promise<void>;
-  buildJsi: (paths: ProjectPaths) => Promise<RuntimeFramework>;
+  runRnSpm: (
+    paths: ProjectPaths,
+    opts: { rnArtifactsDir?: string; kind: ProjectKind; rnScripts: RnScripts; expoPlugin: ExpoPlugin },
+  ) => Promise<void>;
+  buildJsi: (paths: ProjectPaths, opts?: { rnHeaders?: JsiRnHeaders; headersXcframework?: boolean }) => Promise<RuntimeFramework>;
   generateAppConfig: (paths: ProjectPaths) => Promise<void>;
   readFrameworks: (dir: string, flavor: "debug" | "release") => RuntimeFramework[];
+  /** G4: throws when an embedded framework imports a symbol another embedded framework does not export. */
+  checkFrameworkSymbols: (root: string, fws: RuntimeFramework[]) => Promise<void>;
   stageFrameworks: (fws: RuntimeFramework[], dest: string) => Promise<void>;
   writeIosXtool: typeof writeIosXtool;
   isPortFree: (port: number) => Promise<boolean>;
@@ -118,12 +136,14 @@ const realDeps: BuildDeps = {
     run("npx", ["expo", "prebuild", "--platform", "ios", "--no-install", ...(clean ? ["--clean"] : [])], {
       cwd: root,
     }),
-  applyPatches: (root, rnScripts) => applyPatches(root, undefined, { rnScripts }),
+  applyPatches: (root, sources) => applyPatches(root, undefined, sources),
+  fixLibraryManifests,
   prepareRnArtifacts: (paths, rnVersion) => prepareRnArtifacts(paths, rnVersion),
   runRnSpm,
   buildJsi: buildExpoModulesJsi,
   generateAppConfig,
   readFrameworks: readFlavoredFrameworks,
+  checkFrameworkSymbols: (root, fws) => checkFrameworkSymbols(root, fws),
   stageFrameworks,
   writeIosXtool,
   isPortFree: (p) => isPortFree(p),
@@ -165,13 +185,16 @@ export async function build(
     return result;
   };
 
+  // SDK 57: the vendored Expo plugin builds against RN's prebuilt artifacts and needs the JSI headers first.
+  const vendoredExpo = project.kind === "expo" && project.expoPlugin === "vendored";
   const steps = buildSteps({
     kind: project.kind,
     hasIos: d.exists(paths.ios),
     clean,
     hasExpoModules: project.hasExpoModules,
     hasExpoConstants: project.hasExpoConstants,
-    rnArtifacts: project.rnScripts === "vendored" && !config.rnArtifactsDir,
+    rnArtifacts: (project.rnScripts === "vendored" || vendoredExpo) && !config.rnArtifactsDir,
+    expoPlugin: project.expoPlugin,
   });
   const planned = (name: string): boolean => steps.includes(name);
 
@@ -185,21 +208,38 @@ export async function build(
       await d.remove(paths.iosXtool);
     });
   }
-  await step("patches", () => d.applyPatches(paths.root, project.rnScripts));
+  // Library manifests last: idempotent, so a project's persisted patch-package fix of the same snippet applies first.
+  await step("patches", async () => {
+    await d.applyPatches(paths.root, { rnScripts: project.rnScripts, expoPlugin: project.expoPlugin });
+    await d.fixLibraryManifests(paths.root, d.log);
+  });
   const preparedArtifacts = planned("rn-artifacts")
     ? await step("rn-artifacts", () => d.prepareRnArtifacts(paths, project.rnVersion))
     : undefined;
+  const artifactsRoot = preparedArtifacts ?? config.rnArtifactsDir;
+  const buildJsi = (): Promise<RuntimeFramework> => {
+    if (!vendoredExpo) return d.buildJsi(paths);
+    if (artifactsRoot === undefined) {
+      throw new Error("internal error: the SDK 57 jsi step has no React Native artifacts (rn-artifacts was not planned and rnArtifactsDir is unset)");
+    }
+    return d.buildJsi(paths, { rnHeaders: jsiRnHeaderDirs(artifactsRoot), headersXcframework: true });
+  };
+  let jsi = vendoredExpo && planned("jsi") ? await step("jsi", buildJsi) : undefined;
   await step("rn-spm", () =>
     d.runRnSpm(paths, {
-      rnArtifactsDir: preparedArtifacts ?? config.rnArtifactsDir,
+      rnArtifactsDir: artifactsRoot,
       kind: project.kind,
       rnScripts: project.rnScripts,
+      expoPlugin: project.expoPlugin,
     }),
   );
-  const jsi = planned("jsi") ? await step("jsi", () => d.buildJsi(paths)) : undefined;
+  // Expo 58 and bare: jsi after rn-spm, as before.
+  if (!vendoredExpo && planned("jsi")) jsi = await step("jsi", buildJsi);
   if (planned("app-config")) await step("app-config", () => d.generateAppConfig(paths));
   const frameworks = await step("frameworks", async () => {
     const fws = [...d.readFrameworks(paths.xcframeworks, "debug"), ...(jsi ? [jsi] : [])];
+    // Before staging: a precompiled module built against another core would crash the app at launch.
+    await d.checkFrameworkSymbols(paths.root, fws);
     await d.stageFrameworks(fws, paths.frameworks);
     return fws;
   });

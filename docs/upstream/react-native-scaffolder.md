@@ -1,14 +1,18 @@
-# React Native SwiftPM scaffolder: generic fixes (0.88.0)
+# React Native SwiftPM scaffolder: generic fixes (0.88.0 and 0.88.1)
 
 These bugs make `react-native spm scaffold` emit an invalid or incomplete `Package.swift` for
 CocoaPods-only libraries such as `react-native-gesture-handler`. The fixes live in
-`patches/react-native+0.88.0.patch` and are meant to be upstreamed to facebook/react-native.
+`patches/react-native+0.88.0.patch` and `patches/react-native+0.88.1.patch` and are meant to be upstreamed to
+facebook/react-native.
 
-Where the fixes live in rn-xtool: in `patches/react-native+0.88.0.patch` (applied only to an installed
-react-native 0.88.0) and, for bare React Native 0.86.2, 0.86.3 and 0.87.1, already applied in the vendored copy of the
-0.88.0 scripts in `vendor/rn-spm/` ([README](../../vendor/rn-spm/README.md)).
+Where the fixes live in rn-xtool: in `patches/react-native+0.88.0.patch` and `patches/react-native+0.88.1.patch`
+(each applied only to an installed react-native of its version; the three patched files are byte-identical in 0.88.0
+and 0.88.1, so the two patches are the same file, and `tests/patches.test.ts` keeps them identical: a fix edits both)
+and, for bare React Native 0.86.2, 0.86.3 and 0.87.1, already applied in the vendored copy of the 0.88.0 scripts in
+`vendor/rn-spm/` ([README](../../vendor/rn-spm/README.md)).
 
-Refreshing for a new React Native 0.88.x: refresh `patches/react-native+0.88.0.patch` against it, regenerate
+Refreshing for a new React Native 0.88.x: add `patches/react-native+0.88.<x>.patch` for it (refreshed against it, or a
+copy when the patched files are unchanged, as for 0.88.1), regenerate
 `vendor/rn-spm` from the new tarball plus that patch plus `vendor/rn-spm/rn-xtool-edits.patch`, and update the pinned
 tarball and integrity in `tests/vendor-rn-spm.test.ts`. The supported-version list in `src/versions.ts` then needs the
 new version added.
@@ -187,7 +191,7 @@ single-line `ident = 'str' | "str" | ["a", "b"]` assignments (first wins), repla
 known string constants, and rewrites `s.<field> = ident` (and `ss.`/`s.ios.` forms) to the literal value. Unknown
 interpolations and identifiers are left untouched; `ENV[...]` and `if` conditions are not
 evaluated. The existing field regexes are unchanged. See the `resolveRubyConstants` hunk in
-`patches/react-native+0.88.0.patch`.
+`patches/react-native+0.88.1.patch`.
 
 ## 4. `scripts/spm/read-podspec.js`: the regex parser is blind to subspec blocks
 
@@ -474,6 +478,107 @@ may fail to build — add it to the pod→SwiftPM map in scaffold-package-swift.
 of a clean `.build` need network (SwiftPM clones it). Verified on react-native-pager-view 9.0.7: re-scaffolded
 from scratch, it builds with no hand edit.
 
+## 14. `scripts/spm/scaffold-package-swift.js`: the Swift umbrella of a mixed target imports the module's own `-Swift.h`
+
+The Swift umbrella (`rn-spm-swift/umbrella.h`, fix 10) took every Swift-importable module header. react-native-screens
+4.26's `ios/bridging/Swift-Bridging.h` imports `<RNScreens/RNScreens-Swift.h>` (or `"RNScreens-Swift.h"`), the header
+Swift writes only after it has compiled the module, so the Swift compile of RNScreens failed with
+`'RNScreens-Swift.h' file not found` (screens 4.30 dropped that file).
+
+Fix: `importsOwnSwiftHeader` leaves out of the umbrella every header that imports `<Module>-Swift.h` under the target
+name or the CocoaPods module name (`module_name`, else `header_dir`, else the pod name, c99), with or without a
+`<Module>/` prefix. Lines inside `#if __cplusplus` branches do not count (Swift never sees them). One warning names the
+headers left out. Limit: each header is checked on its own, so a header that imports one of those still pulls it in.
+
+## 15. `scripts/spm/read-podspec.js`: `#{package['version']}` in flags and defines is dropped
+
+react-native-worklets 0.10 sets `version_flag = "-DWORKLETS_VERSION=#{package['version']}"` and puts it in
+`OTHER_CFLAGS` (reanimated 4.5 does the same with `REANIMATED_VERSION` and `reanimated_package_json`). The regex path
+cannot evaluate the interpolation, so the unresolved-token rule of bug 7 dropped the define:
+`WorkletsVersion.cpp:19:22: use of undeclared identifier 'WORKLETS_VERSION_STRING'`.
+
+Fix: `resolvePackageVersion` finds the variables a podspec loads its own `package.json` into
+(`<var> = JSON.parse(File.read(File.join(__dir__, "package.json")))`, or `File.dirname(__FILE__)`) and replaces
+`#{<var>['version']}` and `#{<var>["version"]}` inside double-quoted strings with the version read from the
+`package.json` next to the podspec, before the Ruby constants pass (fix 3) runs. Single-quoted strings are left
+alone, as in Ruby. Any other interpolation stays as written and is still dropped.
+
+## 16. `scripts/spm/*`: a subspec's `header_mappings_dir` under `header_dir` is flattened
+
+CocoaPods exposes a header under a `header_mappings_dir` as `<header_dir>/<path below the mappings dir>`.
+react-native-worklets 0.10 has `s.header_dir = "worklets"` and the subspecs `common` (`header_mappings_dir =
+"Common/cpp/worklets"`) and `apple` (`"apple/worklets"`), and includes `<worklets/apple/AnimationFrameQueue.h>`.
+The scaffolder flattened every `header_dir` stub to its basename, and the regex reader kept only the first
+subspec's mappings dir, so the build failed with `'worklets/apple/AnimationFrameQueue.h' file not found`.
+
+Fix: each `header_dir` scope (`headerDirScopes`, fix 5) carries the mappings dirs of its layers plus the main
+spec's (subspecs inherit it), read per layer on both the regex and the `pod ipc spec` path. A header under one of
+them gets its stub at `include/<header_dir>/<path below the deepest such dir>`
+(`include/worklets/apple/AnimationFrameQueue.h` → `apple/worklets/apple/AnimationFrameQueue.h`,
+`include/worklets/Tools/X.h` → `Common/cpp/worklets/Tools/X.h`). Other headers keep the flat stub. A mappings dir that
+is absolute or contains `..` is ignored. Not covered: a subspec with `header_dir = ""` (the root namespace, reanimated's
+`view` subspec) still gets no stubs. Also, the subspecs that inherit the main `header_dir` share one scope, so a header
+is mapped by whichever of their mappings dirs holds it, not only by its own subspec's.
+
+## 17. `scripts/spm/scaffold-package-swift.js`: Swift importers of a mixed target lack its header search paths
+
+A Swift module built with a bridging header makes every Swift importer re-read that header, so the importer needs
+the header search paths the header's includes resolve with. expo-router (`import RNScreens`) and the app target
+failed with `'RNSReactBaseView.h' file not found` through the scaffolded RNScreens umbrella.
+
+Fix: every scaffolded mixed manifest records them on one line right after the revision line:
+`// rn-xtool-swift-importer-paths: <JSON array>`, the target's header search paths in the manifest's order,
+package-relative (paths that leave the package, absolute or with a `..` segment, are left out). For example
+`[…,"ios","ios/bridging",…,".","include","rn-spm-swift"]`. Pure-Swift manifests carry no marker.
+rn-xtool's Expo plugin (X6c) passes them as `-Xcc -I<package>/<path>` to the Expo packages that depend on the
+library, and the app target gets them the same way (X6d). Fixes 14 to 17 come with `RN_XTOOL_SCAFFOLD_REVISION` 2, so
+revision-1 scaffolds are regenerated.
+
+A clang-only target has the same problem without a bridging header: an importer builds its module from the public
+headers with only `publicHeadersPath` on the search path. react-native-screens 4.30 has no Swift file, so it is
+scaffolded clang-only; its `ios/RNSConvert.h` (under `publicHeadersPath: "ios"`) imports `"RNSDefines.h"`, which is in
+`ios/utils`, and expo-router failed with `'RNSDefines.h' file not found` while building module `RNScreens`. So a
+clang-only manifest also carries the marker, with the same list, whenever one of its header search paths is not its
+`publicHeadersPath` (SwiftPM's default `include` when it has none). This comes with `RN_XTOOL_SCAFFOLD_REVISION` 3, so
+revision-2 clang-only scaffolds, which lack the marker, are regenerated. On the eight libraries the reference app
+persists in `patches/`, revision 3 changes only the revision line and adds the importer line to every manifest: the
+mixed one (react-native-pager-view 9.0.7) and the five clang-only ones, whose search paths all include at least `.`
+(golden in `tests/fixtures/scaffold-golden/`; react-native-reanimated and react-native-worklets ship their own
+manifests and are not scaffolded).
+
+## 18. `scripts/spm/scaffold-package-swift.js`: a clang-only module takes in headers the target leaves out
+
+An importer builds a clang-only target's module from the module map SwiftPM generates, `umbrella
+"<publicHeadersPath>"`, which takes in every header under that directory, whatever the target compiles.
+react-native-screens 4.30 keeps `ios/gamma/**` out of its sources unless `RNS_GAMMA_ENABLED` is set, and expo-router
+failed with `'RNSViewFrameChangeDelegate.h' file not found` while building module `RNScreens` from
+`ios/gamma/stack/header/RNSStackHeaderConfigComponentView.h`. A mixed target never had this problem: SwiftPM's module
+map for it holds only the `-Swift.h`, and importers see the Objective-C side through the generated umbrella, which is
+built from the source headers (screens 4.26.2: 72 headers, none from `ios/gamma`).
+
+Fix: when headers under `publicHeadersPath` are not among the target's headers (`exclude_files`, or a source glob
+that misses them), or a kept one imports the module's own `-Swift.h` (fix 14; a clang-only target has none), the
+scaffold writes `<publicHeadersPath>/module.modulemap`. SwiftPM uses it instead of its own. It is SwiftPM's module
+with an `exclude header` per such header:
+
+```
+module RNScreens {
+    umbrella "."
+    exclude header "gamma/modals/form-sheet/RNSFormSheetConfigurationApplicator.h"
+    …
+    export *
+}
+```
+
+Header membership stays SwiftPM's, so an importer's `#import "X.h"` of a kept header still resolves to the module. A
+separate umbrella header outside the directory, as for mixed targets, would make such includes textual. None is
+written when nothing is left out, when SwiftPM would use an umbrella header named after the module, or over a
+module map the library ships. A stale one of the scaffolder's own is removed. Generated `include/` stubs count as
+kept. Not covered: if `publicHeadersPath` changes between two scaffolds, the old directory keeps its map. On the
+reference app's libraries, react-native-screens 4.30.0 gets 72 `ios/gamma` excludes, and react-native-svg gets one,
+`Utils/RNSVGFabricConversions.h`. The regex reader applies that one from the podspec's old-architecture branch, and
+the header is C++, so no importer could build it in Objective-C. Ships with `RN_XTOOL_SCAFFOLD_REVISION` 3.
+
 ## Known limitation (deferred): pure-Swift packages importing a mixed Expo module
 
 A Swift module built with a bridging header (every mixed target) makes each Swift importer re-read that
@@ -488,5 +593,8 @@ every generated or scaffolded Swift target that depends on a mixed module the sa
 
 `tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks the
 fixes against fixtures (skipped when the reference app is not present; set `RN_XTOOL_REF_APP` to point at it). It also
-asserts that each hunk is present in the installed RN files. Upstream, equivalent tests belong in
+asserts that each hunk is present in the installed RN files. Fixes 14 to 18 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
+against podspec fixtures from the SDK 57 pins in `tests/fixtures/podspecs/` (worklets 0.10.1, reanimated 4.5.1,
+screens 4.26.2, gesture-handler 2.32.0) and from screens 4.30.1 (the clang-only importer paths and module map). A golden test re-scaffolds the reference app's libraries and compares them
+with `tests/fixtures/scaffold-golden/`. Upstream, equivalent tests belong in
 RN's own `__tests__` next to `read-podspec` and `scaffold-package-swift`.

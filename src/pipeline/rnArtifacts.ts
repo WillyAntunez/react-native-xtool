@@ -174,11 +174,14 @@ export function readXcframeworkLibraries(xcframeworkDir: string): XcframeworkLib
   });
 }
 
-/** `Info.plist` of a headers-only xcframework `name`: per slice `lib<name>-<slice>.a` plus `Headers/`. */
-export function headersXcframeworkInfoPlist(name: string, libs: XcframeworkLibrary[]): string {
+/**
+ * `Info.plist` of a headers-only xcframework `name`: per slice `lib<name>-<slice>.a` plus `Headers/`.
+ * `opts.archive` names one archive for every slice instead (Expo's layout).
+ */
+export function headersXcframeworkInfoPlist(name: string, libs: XcframeworkLibrary[], opts: { archive?: string } = {}): string {
   return plist.build({
     AvailableLibraries: libs.map((lib) => {
-      const archive = `lib${name}-${lib.LibraryIdentifier}.a`;
+      const archive = opts.archive ?? `lib${name}-${lib.LibraryIdentifier}.a`;
       return {
         BinaryPath: archive,
         HeadersPath: "Headers",
@@ -453,7 +456,7 @@ async function assemble(
 }
 
 /** Renames the finished `tmp` over `dest`; a previous `dest` is moved aside first and removed afterwards. */
-async function swapIn(tmp: string, dest: string, old: string): Promise<void> {
+export async function swapIn(tmp: string, dest: string, old: string): Promise<void> {
   const hadDest = existsSync(dest);
   if (hadDest) {
     await rm(old, { recursive: true, force: true });

@@ -1,12 +1,15 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { build, buildSteps, chooseMetroPort, type BuildDeps } from "../src/commands/build.js";
+import { jsiRnHeaderDirs } from "../src/pipeline/jsi.js";
+import { fixLibraryManifests } from "../src/pipeline/manifests.js";
 import { readState, writeState } from "../src/state.js";
 
-const expoFlags = { kind: "expo" as const, hasExpoModules: true, hasExpoConstants: true, rnArtifacts: false };
-const bareFlags = { kind: "bare" as const, hasExpoModules: false, hasExpoConstants: false, rnArtifacts: false };
+const expoFlags = { kind: "expo" as const, hasExpoModules: true, hasExpoConstants: true, rnArtifacts: false, expoPlugin: "installed" as const };
+const bareFlags = { kind: "bare" as const, hasExpoModules: false, hasExpoConstants: false, rnArtifacts: false, expoPlugin: "installed" as const };
 
 describe("buildSteps", () => {
   it("starts with prebuild when ios/ is missing", () => {
@@ -48,14 +51,28 @@ describe("buildSteps", () => {
       "patches", "rn-artifacts", "rn-spm", "frameworks", "generate", "xtool-build",
     ]);
   });
-  it("expo never gets rn-artifacts", () => {
+  it("expo 58 (installed plugin) never gets rn-artifacts", () => {
     expect(buildSteps({ ...expoFlags, rnArtifacts: true, hasIos: true, clean: false })).not.toContain("rn-artifacts");
+  });
+  it("expo 57: jsi before rn-spm, with rn-artifacts", () => {
+    const sdk57 = { ...expoFlags, expoPlugin: "vendored" as const, rnArtifacts: true, hasIos: true, clean: false };
+    expect(buildSteps(sdk57)).toEqual([
+      "patches", "rn-artifacts", "jsi", "rn-spm", "app-config", "frameworks", "generate", "xtool-build",
+    ]);
+    expect(buildSteps({ ...sdk57, rnArtifacts: false })).toEqual([
+      "patches", "jsi", "rn-spm", "app-config", "frameworks", "generate", "xtool-build",
+    ]);
+  });
+  it("expo 57 --clean re-creates artifacts and JSI headers before rn-spm", () => {
+    expect(buildSteps({ ...expoFlags, expoPlugin: "vendored", rnArtifacts: true, hasIos: true, clean: true })).toEqual([
+      "prebuild --clean", "patches", "rn-artifacts", "jsi", "rn-spm", "app-config", "frameworks", "generate", "xtool-build",
+    ]);
   });
 });
 
 type ProjectOver = { kind?: "expo" | "bare"; hasExpoModules?: boolean; hasExpoConstants?: boolean; hasDevClient?: boolean; hasRnCli?: boolean; rnVersion?: string };
 
-function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunning?: (p: number) => Promise<boolean>; hasIos?: boolean; cfg?: object; route?: { ip?: string; dev?: string }; project?: ProjectOver & { rnScripts?: "installed" | "vendored" }; applyPatches?: BuildDeps["applyPatches"] } = {}) {
+function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunning?: (p: number) => Promise<boolean>; hasIos?: boolean; cfg?: object; route?: { ip?: string; dev?: string }; project?: ProjectOver & { rnScripts?: "installed" | "vendored"; expoPlugin?: "installed" | "vendored" }; applyPatches?: BuildDeps["applyPatches"] } = {}) {
   const root = mkdtempSync(join(tmpdir(), "build-"));
   const calls: string[] = [];
   const logs: string[] = [];
@@ -76,6 +93,7 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
         hasDevClient: false,
         rnVersion: "0.88.0",
         rnScripts: "installed",
+        expoPlugin: "installed",
         ...over.project,
       }) as never,
     exists: () => over.hasIos ?? false,
@@ -86,6 +104,7 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
       calls.push(clean ? "prebuild --clean" : "prebuild");
     },
     applyPatches: over.applyPatches ?? rec("patches"),
+    fixLibraryManifests: async () => {},
     prepareRnArtifacts: async (_paths, version) => {
       calls.push("rn-artifacts");
       return `/adapted/${version}`;
@@ -97,6 +116,7 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
     },
     generateAppConfig: rec("app-config"),
     readFrameworks: () => [{ name: "A" } as never],
+    checkFrameworkSymbols: async () => {},
     stageFrameworks: rec("frameworks"),
     writeIosXtool,
     isPortFree: over.isPortFree ?? (async () => true),
@@ -155,11 +175,19 @@ describe("build", () => {
     await build(t.root, { clean: true }, t.deps);
     expect(t.calls[0]).toBe("prebuild --clean");
   });
-  it("passes the scripts source to the patches step", async () => {
+  it("passes the scripts and plugin sources to the patches step", async () => {
     const applyPatches = vi.fn(async () => {});
     const t = setup({ applyPatches, project: { kind: "bare", rnScripts: "vendored" } });
     await build(t.root, {}, t.deps);
-    expect(applyPatches).toHaveBeenCalledWith(t.root, "vendored");
+    expect(applyPatches).toHaveBeenCalledWith(t.root, { rnScripts: "vendored", expoPlugin: "installed" });
+    const sdk57 = vi.fn(async () => {});
+    const t57 = setup({ applyPatches: sdk57, project: { kind: "expo", rnScripts: "vendored", expoPlugin: "vendored", rnVersion: "0.86.3" } });
+    await build(t57.root, {}, t57.deps);
+    expect(sdk57).toHaveBeenCalledWith(t57.root, { rnScripts: "vendored", expoPlugin: "vendored" });
+    const sdk58 = vi.fn(async () => {});
+    const t58 = setup({ applyPatches: sdk58, project: { kind: "expo" } });
+    await build(t58.root, {}, t58.deps);
+    expect(sdk58).toHaveBeenCalledWith(t58.root, { rnScripts: "installed", expoPlugin: "installed" });
   });
 
   it("build passes the kind to runRnSpm and skips prebuild for bare", async () => {
@@ -169,7 +197,7 @@ describe("build", () => {
     });
     await build(t.root, {}, { ...t.deps, runRnSpm });
     expect(t.calls).toEqual(buildSteps({ ...bareFlags, hasIos: false, clean: false }));
-    expect(runRnSpm).toHaveBeenCalledWith(expect.objectContaining({ root: t.root }), { rnArtifactsDir: undefined, kind: "bare", rnScripts: "installed" });
+    expect(runRnSpm).toHaveBeenCalledWith(expect.objectContaining({ root: t.root }), { rnArtifactsDir: undefined, kind: "bare", rnScripts: "installed", expoPlugin: "installed" });
     const ctx = (t.writeIosXtool.mock.calls[0] as unknown[])[0] as { frameworks: { name: string }[] };
     expect(ctx.frameworks.map((f) => f.name)).toEqual(["A"]);
   });
@@ -192,7 +220,7 @@ describe("build", () => {
     const runRnSpm = vi.fn(async () => {});
     await build(t.root, {}, { ...t.deps, prepareRnArtifacts, runRnSpm });
     expect(prepareRnArtifacts).toHaveBeenCalledWith(expect.objectContaining({ root: t.root }), "0.86.3");
-    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: "/adapted/0.86.3", kind: "bare", rnScripts: "vendored" });
+    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: "/adapted/0.86.3", kind: "bare", rnScripts: "vendored", expoPlugin: "installed" });
   });
   it("rnArtifactsDir bypasses rn-artifacts", async () => {
     const t = setup({ cfg: { rnArtifactsDir: "/mine" }, project: { kind: "bare", rnScripts: "vendored", rnVersion: "0.86.3" } });
@@ -200,7 +228,7 @@ describe("build", () => {
     const runRnSpm = vi.fn(async () => {});
     await build(t.root, {}, { ...t.deps, prepareRnArtifacts, runRnSpm });
     expect(prepareRnArtifacts).not.toHaveBeenCalled();
-    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: "/mine", kind: "bare", rnScripts: "vendored" });
+    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: "/mine", kind: "bare", rnScripts: "vendored", expoPlugin: "installed" });
     expect(t.logs).not.toContain("▸ rn-artifacts");
   });
   it("never runs rn-artifacts for installed scripts", async () => {
@@ -210,6 +238,130 @@ describe("build", () => {
     const expo = setup();
     await build(expo.root, {}, { ...expo.deps, prepareRnArtifacts });
     expect(prepareRnArtifacts).not.toHaveBeenCalled();
+  });
+  const sdk57 = { kind: "expo" as const, rnScripts: "vendored" as const, expoPlugin: "vendored" as const, rnVersion: "0.86.3" };
+  it("expo 57 --clean re-creates artifacts and JSI headers before rn-spm", async () => {
+    const t = setup({ hasIos: true, project: sdk57 });
+    await build(t.root, { clean: true }, t.deps);
+    const order = buildSteps({ ...expoFlags, expoPlugin: "vendored", rnArtifacts: true, hasIos: true, clean: true });
+    expect(t.calls).toEqual(order);
+    expect(t.logs.filter((l) => l.startsWith("▸ "))).toEqual(order.map((s) => `▸ ${s}`));
+  });
+  it("expo 57 builds JSI from the prepared artifacts", async () => {
+    const t = setup({ hasIos: true, project: sdk57 });
+    const prepareRnArtifacts = vi.fn(async () => "/adapted/0.86.3");
+    const buildJsi = vi.fn(async () => ({ name: "ExpoModulesJSI" }) as never);
+    const runRnSpm = vi.fn(async () => {});
+    await build(t.root, {}, { ...t.deps, prepareRnArtifacts, buildJsi, runRnSpm });
+    expect(buildJsi).toHaveBeenCalledWith(expect.objectContaining({ root: t.root }), {
+      rnHeaders: jsiRnHeaderDirs("/adapted/0.86.3"),
+      headersXcframework: true,
+    });
+    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: "/adapted/0.86.3", kind: "expo", rnScripts: "vendored", expoPlugin: "vendored" });
+    const ctx = (t.writeIosXtool.mock.calls[0] as unknown[])[0] as { frameworks: { name: string }[] };
+    expect(ctx.frameworks.map((f) => f.name)).toEqual(["A", "ExpoModulesJSI"]);
+
+    const u = setup({ hasIos: true, cfg: { rnArtifactsDir: "/mine" }, project: sdk57 });
+    const prepare = vi.fn(async () => "/adapted/0.86.3");
+    const jsi = vi.fn(async () => ({ name: "ExpoModulesJSI" }) as never);
+    const spm = vi.fn(async () => {});
+    await build(u.root, {}, { ...u.deps, prepareRnArtifacts: prepare, buildJsi: jsi, runRnSpm: spm });
+    expect(prepare).not.toHaveBeenCalled();
+    expect(jsi).toHaveBeenCalledWith(expect.anything(), { rnHeaders: jsiRnHeaderDirs("/mine"), headersXcframework: true });
+    expect(spm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: "/mine", kind: "expo", rnScripts: "vendored", expoPlugin: "vendored" });
+  });
+  it("expo 58 and bare plans are unchanged", async () => {
+    const t = setup({ hasIos: true });
+    const buildJsi = vi.fn(async () => ({ name: "ExpoModulesJSI" }) as never);
+    const runRnSpm = vi.fn(async () => {});
+    await build(t.root, {}, { ...t.deps, buildJsi, runRnSpm });
+    expect(buildJsi.mock.calls).toEqual([[expect.objectContaining({ root: t.root })]]);
+    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: undefined, kind: "expo", rnScripts: "installed", expoPlugin: "installed" });
+    const b = setup({ project: { kind: "bare", hasExpoModules: true, hasExpoConstants: false } });
+    const bareJsi = vi.fn(async () => ({ name: "ExpoModulesJSI" }) as never);
+    await build(b.root, {}, { ...b.deps, buildJsi: bareJsi });
+    expect(bareJsi.mock.calls).toEqual([[expect.objectContaining({ root: b.root })]]);
+  });
+  it("makes library manifests portable in the patches step, after patch-package and before rn-spm", async () => {
+    const manifests = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "manifests");
+    const t = setup({ hasIos: true });
+    const lib = join(t.root, "node_modules", "react-native-worklets");
+    mkdirSync(lib, { recursive: true });
+    writeFileSync(join(lib, "Package.swift"), readFileSync(join(manifests, "react-native-worklets.Package.swift")));
+    const order: string[] = [];
+    let seenByRnSpm = "";
+    await build(t.root, {}, {
+      ...t.deps,
+      applyPatches: async () => {
+        order.push("patch-package");
+      },
+      fixLibraryManifests: async (root, log) => {
+        order.push("manifests");
+        await fixLibraryManifests(root, log);
+      },
+      runRnSpm: async () => {
+        order.push("rn-spm");
+        seenByRnSpm = readFileSync(join(lib, "Package.swift"), "utf8");
+      },
+    });
+    expect(order).toEqual(["patch-package", "manifests", "rn-spm"]);
+    expect(seenByRnSpm).toBe(readFileSync(join(manifests, "react-native-worklets.portable.Package.swift"), "utf8"));
+    const line = "manifest — made react-native-worklets's Package.swift portable to Linux (CFGetTypeID)";
+    const at = (l: string) => t.logs.findIndex((x) => x === l || x.startsWith(`${l} (`));
+    expect(at("▸ patches")).toBeLessThan(at(line));
+    expect(at(line)).toBeLessThan(at("✔ patches"));
+    expect(t.logs.filter((l) => l.startsWith("▸ "))).toEqual(
+      buildSteps({ ...expoFlags, hasIos: true, clean: false }).map((s) => `▸ ${s}`),
+    );
+  });
+
+  it("checks symbols before staging", async () => {
+    const jsi = { name: "ExpoModulesJSI" } as never;
+    const frameworks = [{ name: "A" }, { name: "B" }] as never[];
+    const order: unknown[][] = [];
+    const t = setup({ hasIos: true });
+    await build(t.root, {}, {
+      ...t.deps,
+      buildJsi: async () => jsi,
+      readFrameworks: (...args) => {
+        order.push(["readFrameworks", ...args]);
+        return frameworks;
+      },
+      checkFrameworkSymbols: async (...args) => {
+        order.push(["checkFrameworkSymbols", ...args]);
+      },
+      stageFrameworks: async (...args) => {
+        order.push(["stageFrameworks", ...args]);
+      },
+    });
+    expect(order.map((c) => c[0])).toEqual(["readFrameworks", "checkFrameworkSymbols", "stageFrameworks"]);
+    expect(order[1]).toEqual(["checkFrameworkSymbols", t.root, [...frameworks, jsi]]);
+    expect(order[2][1]).toEqual([...frameworks, jsi]);
+
+    const r = setup({ hasIos: true });
+    const stageFrameworks = vi.fn(async () => {});
+    const devBuild = vi.fn(async () => {});
+    const checkFrameworkSymbols = async () => {
+      throw new Error("ExpoFileSystem.framework needs 2 symbols");
+    };
+    await expect(build(r.root, {}, { ...r.deps, checkFrameworkSymbols, stageFrameworks, devBuild })).rejects.toThrow(
+      "ExpoFileSystem.framework needs 2 symbols",
+    );
+    expect(stageFrameworks).not.toHaveBeenCalled();
+    expect(devBuild).not.toHaveBeenCalled();
+
+    const kinds = [
+      { over: { hasIos: true, project: sdk57 }, flags: { ...expoFlags, expoPlugin: "vendored" as const, rnArtifacts: true, hasIos: true } },
+      { over: { hasIos: true }, flags: { ...expoFlags, hasIos: true } },
+      { over: { project: { kind: "bare" as const, hasExpoModules: false, hasExpoConstants: false } }, flags: { ...bareFlags, hasIos: false } },
+    ];
+    for (const { over, flags } of kinds) {
+      const k = setup(over);
+      const check = vi.fn(async () => {});
+      await build(k.root, {}, { ...k.deps, checkFrameworkSymbols: check });
+      expect(check).toHaveBeenCalledOnce();
+      expect(k.logs.filter((l) => l.startsWith("▸ "))).toEqual(buildSteps({ ...flags, clean: false }).map((s) => `▸ ${s}`));
+    }
   });
   it("records the React Native version in the state", async () => {
     const t = setup({ project: { kind: "bare", rnScripts: "vendored", rnVersion: "0.86.3" } });
@@ -221,7 +373,7 @@ describe("build", () => {
     const t = setup({ hasIos: true });
     const runRnSpm = vi.fn(async () => {});
     await build(t.root, {}, { ...t.deps, runRnSpm });
-    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: undefined, kind: "expo", rnScripts: "installed" });
+    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), { rnArtifactsDir: undefined, kind: "expo", rnScripts: "installed", expoPlugin: "installed" });
   });
   it("builds the JSI framework for a bare project with expo modules, app-config only with expo-constants", async () => {
     const t = setup({ project: { kind: "bare", hasExpoModules: true, hasExpoConstants: false } });

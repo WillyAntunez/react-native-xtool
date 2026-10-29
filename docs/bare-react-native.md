@@ -1,6 +1,6 @@
 # Bare React Native projects
 
-A project made with `npx @react-native-community/cli init` (React Native 0.86.2, 0.86.3, 0.87.1 or 0.88.0, see
+A project made with `npx @react-native-community/cli init` (React Native 0.86.2, 0.86.3, 0.87.1, 0.88.0 or 0.88.1, see
 [Supported React Native versions](#supported-react-native-versions)) builds with the same commands as an Expo app
 (`doctor`, `build`, `install`, `start`, `run`). Nothing in
 `ios/` is modified: rn-xtool reads the Xcode project and generates its own `ios-xtool/` from it. CocoaPods is not
@@ -15,6 +15,7 @@ Exactly these versions, and nothing in between:
 
 | React Native | SwiftPM scripts | Status |
 | --- | --- | --- |
+| 0.88.1 | the installed copy (`node_modules/react-native/scripts`) | verified on a device |
 | 0.88.0 | the installed copy (`node_modules/react-native/scripts`) | verified on a device |
 | 0.87.1 | [vendored](#vendored-swiftpm-scripts-086-087) | verified on a device |
 | 0.86.3 | [vendored](#vendored-swiftpm-scripts-086-087), [older artifacts](#older-artifacts-086) | verified on a device |
@@ -22,23 +23,55 @@ Exactly these versions, and nothing in between:
 
 As of 2026-10-27, on a physical iPhone, 0.86.3 and 0.87.1 pass `doctor`, `build`, install over Wi‑Fi, Metro and Fast
 Refresh, and the library matrix in [libraries.md](libraries.md) (reanimated/worklets only on 0.86.3). 0.86.2 is
-build-verified only: a throwaway template app downloaded and adapted its artifacts and produced `App.app`.
+build-verified only: a throwaway template app downloaded and adapted its artifacts and produced `App.app`. On
+2026-10-28 the 0.88.0 library-matrix app, moved to 0.88.1 as in [Upgrading React Native](#upgrading-react-native),
+launched on a physical iPhone with its libraries (react-native-screens included).
 
 On 0.86.3 the first build downloads about 1.3 GB of artifacts (about 3 minutes in our test; it depends on the
 connection) and adapts them (about 2 s); later builds reuse the adapted slots (`rn-artifacts` 0.0 s). The library
 matrix build took about 4 minutes with four auto-scaffolds.
 
-Any other version (0.85 and older, 0.86.0, 0.86.1, 0.87.0, 0.88 prereleases, 0.88.x other than 0.88.0) stops `build`
-and `doctor` with one error naming this list and asking you to pin `react-native` to one of them. Hybrids (bare +
-Expo modules) work on 0.88.0 only: Expo SDK 58 needs React Native 0.88.0, so 0.86 and 0.87 with Expo modules stop
-with an error saying so. The `react-native` patch of rn-xtool is for 0.88.0 exactly and is not applied to other
-versions (the vendored scripts already contain its fixes).
+Any other version (0.85 and older, 0.86.0, 0.86.1, 0.87.0, 0.88 prereleases, 0.88.x other than 0.88.0 and 0.88.1)
+stops `build` and `doctor` with one error naming this list and asking you to pin `react-native` to one of them.
+Hybrids (bare + Expo modules) work on 0.88.1 only: Expo SDK 58 needs React Native 0.88.1, so 0.86, 0.87 and 0.88.0
+with Expo modules stop with an error saying so (see [Hybrid](#hybrid-bare--expo-modules)). rn-xtool bundles its
+`react-native` patch twice, as `react-native+0.88.0.patch` and `react-native+0.88.1.patch` (the same content), and
+applies the one for the installed version; it is not applied to other versions (the vendored scripts already contain
+its fixes).
 
 Templates differ between versions. A 0.86 template (`@react-native-community/cli init --version 0.86.3`) has only
 `AppDelegate.swift` (no `SceneDelegate.swift`), imports `React_RCTAppDelegate` next to `React` and
 `ReactAppDependencyProvider`, and sets `IPHONEOS_DEPLOYMENT_TARGET = 15.1`. The 0.88 template has an `AppDelegate` and
 a `SceneDelegate` and imports only `React`. rn-xtool reads either as it is; the generated package still targets
 iOS 16.4 (see [Limits](#limits)).
+
+## Upgrading React Native
+
+The template pins `react-native` and every `@react-native/*` package to one exact version, and
+`@react-native/new-app-screen` declares `react-native` as an exact peer. On the 0.88.0 template app, a single
+`npm install react-native@0.88.1`, or editing the pins and running `npm install`, stopped with
+`ERESOLVE could not resolve … Conflicting peer dependency: react-native@0.88.1 (peer from
+@react-native/new-app-screen@0.88.1)`. It does not always stop: in a hybrid app, `npx expo install react-native@0.88.1`
+only printed `npm warn ERESOLVE overriding peer dependency`, installed react-native 0.88.1 and left every
+`@react-native/*` package on 0.88.0, so `npm ls --all` exited 1. Either way, use this sequence, which moved both apps
+to 0.88.1:
+
+1. In `package.json`, set `react-native` and every `@react-native/*` package to the new version, exactly (no `^`).
+   For 0.88.1 these are `react-native` and `@react-native/new-app-screen` in `dependencies`, and
+   `@react-native/babel-preset`, `eslint-config`, `jest-preset`, `metro-config` and `typescript-config` in
+   `devDependencies`, as in `@react-native-community/template@0.88.1`. Its `@react-native-community/cli` pins (20.2.0)
+   are the same as 0.88.0's.
+2. `npm uninstall @react-native/new-app-screen`. This also installs the new `react-native` and the new devDependencies.
+   npm prints an `npm warn ERESOLVE overriding peer dependency … Conflicting peer dependency: react-native@0.88.0`
+   block here and exits 0; that is expected and harmless.
+3. `npm install --save-exact @react-native/new-app-screen@0.88.1`.
+4. `npm ls --all` should exit 0. Then run `rn-xtool doctor`.
+
+After the move, the next `build` prints a warning for each scaffold patch in `patches/` that was made for the old
+version; do what it says ([troubleshooting.md](troubleshooting.md#build-and-patches)). For a hybrid app, remove the
+expo-modules-* pins and move `expo` first, and React Native last, because `npx expo install --fix` can set
+`react-native` back to 0.88.0. The full order, with the commands, is
+[Moving to the 58.0.21 set](troubleshooting.md#moving-to-the-58021-set).
 
 ## Vendored SwiftPM scripts (0.86, 0.87)
 
@@ -79,7 +112,7 @@ Expo modules (`expo` and `expo-modules-core` installed and `use_expo_modules!` i
 gets ExpoModulesJSI. Set `"projectKind": "expo"` or `"bare"` in `rn-xtool.config.json` to skip detection.
 
 `doctor` prints the result in its `project` check, for example
-`bare + expo modules, React Native 0.88.0, target BareDemo (BareDemo.xcodeproj)`; its `project-config` check reports a
+`bare + expo modules, React Native 0.88.1, target BareDemo (BareDemo.xcodeproj)`; its `project-config` check reports a
 missing bundle identifier.
 
 ## Build steps
@@ -150,16 +183,29 @@ build shows the LogBox banner "Open debugger to view warnings" (warnings of the 
 `npx install-expo-modules@latest` raises the deployment target, switches the Babel preset to `babel-preset-expo` and
 the Metro config to `expo/metro-config`, but on an RN 0.88 template it leaves `AppDelegate.swift` not compiling and does
 not touch `SceneDelegate.swift`. Rewrite them by hand as in the Expo 58 template: `AppDelegate` on `ExpoAppDelegate`
-with `ExpoReactNativeFactory`, `SceneDelegate` on `ExpoAppSceneDelegate`. Pin `expo` to 58.0.19,
-`expo-modules-autolinking` to 58.0.15 and `expo-modules-jsi` to 58.0.19, the versions the bundled patches target.
+with `ExpoReactNativeFactory`, `SceneDelegate` on `ExpoAppSceneDelegate`. Run `npx expo install --fix`, so `expo` and
+its modules are at least Expo SDK 58's verified set, and then move React Native to 0.88.1 as in
+[Upgrading React Native](#upgrading-react-native) (`--fix` can leave or put it on 0.88.0). In a bare app `--fix` also
+moves the template's `jest` from ^29.6.3 to ~30.5.2 and `@types/jest` to 30.0.0. Do not pin `expo-modules-jsi` or
+`expo-modules-autolinking` (a jsi pin nests a second copy, which the build refuses). If your app has those pins
+(rn-xtool 0.1.0-alpha.2's docs asked for them), remove them with
+`npm uninstall expo-modules-jsi expo-modules-autolinking` before you move `expo`, in the order of
+[Moving to the 58.0.21 set](troubleshooting.md#moving-to-the-58021-set). npm can keep expo-modules-core's
+expo-modules-jsi nested after that (package-lock.json holds its place; neither a reinstall nor `npm dedupe` moves it),
+and `doctor` then stops on it; `npm update expo-modules-jsi` moves it to the top level without changing other
+packages. The SDK 58 checks of Expo apps apply to
+hybrids too ([how-it-works.md](how-it-works.md#expo-sdk-58), messages in
+[troubleshooting.md](troubleshooting.md#expo-sdk-58)), and an `expo` older than SDK 58 stops the build. Verified on a
+physical iPhone on 2026-10-28: a hybrid app on expo 58.0.21 and React Native 0.88.1 launched, with expo-haptics and an
+Objective-C module calling Swift working.
 `expo-constants` gets its `EXConstants.bundle/app.config` as in Expo apps.
 
 ## Libraries
 
 Libraries with a podspec work as in Expo apps (auto-scaffolded, patches persisted in `patches/`); see
 [libraries.md](libraries.md), whose `Bare` columns record what was checked on a bare app. `react-native-reanimated`
-needs `plugins: ['react-native-worklets/plugin']` in your `babel.config.js` (`babel-preset-expo` adds it for Expo apps)
-and the two patches described there.
+needs `plugins: ['react-native-worklets/plugin']` in your `babel.config.js` (`babel-preset-expo` adds it for Expo apps);
+its `Package.swift` fix for Linux needs no patch, rn-xtool applies it on every build.
 
 ## Limits
 

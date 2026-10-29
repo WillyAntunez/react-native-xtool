@@ -5,6 +5,9 @@
 #
 #   build-expo-modules-jsi.sh <app-root> <out-dir>
 #
+# RN_XTOOL_REACT_HEADERS / RN_XTOOL_DEPS_HEADERS replace the ios-arm64 Headers dirs of ReactNativeHeaders and
+# ReactNativeDependenciesHeaders (default: under ios/build/xcframeworks, which SDK 57 builds after this script).
+#
 # Produces <out-dir>/ExpoModulesJSI.framework (ios-arm64, debug).
 set -euo pipefail
 
@@ -20,8 +23,8 @@ JSI_DIR="$(node_dir expo-modules-jsi "$CORE_DIR")"
 SDK="${XTOOL_DARWIN_SDK:-$HOME/.swiftpm/swift-sdks/darwin.artifactbundle}"
 XCFRAMEWORKS="$APP_ROOT/ios/build/xcframeworks"
 SLICE=ios-arm64
-REACT_HEADERS="$XCFRAMEWORKS/ReactNativeHeaders.xcframework/$SLICE/Headers"
-DEPENDENCIES_HEADERS="$XCFRAMEWORKS/ReactNativeDependenciesHeaders.xcframework/$SLICE/Headers"
+REACT_HEADERS="${RN_XTOOL_REACT_HEADERS:-$XCFRAMEWORKS/ReactNativeHeaders.xcframework/$SLICE/Headers}"
+DEPENDENCIES_HEADERS="${RN_XTOOL_DEPS_HEADERS:-$XCFRAMEWORKS/ReactNativeDependenciesHeaders.xcframework/$SLICE/Headers}"
 
 WORK="$OUT/.jsi-build"
 STAGE="$WORK/pods-stage"

@@ -1,0 +1,2088 @@
+diff --git a/node_modules/react-native/scripts/spm/read-podspec.js b/node_modules/react-native/scripts/spm/read-podspec.js
+index 8fcf04b..6cb0d46 100644
+--- a/node_modules/react-native/scripts/spm/read-podspec.js
++++ b/node_modules/react-native/scripts/spm/read-podspec.js
+@@ -170,58 +170,303 @@ function cleanupPatchedPodspec(patchedPath /*: ?string */) /*: void */ {
+ // Regex fallback
+ // ---------------------------------------------------------------------------
+ 
++// Ruby constants. Podspecs commonly hoist a glob or extension list into a local
++// and reuse it (react-native-screens: `source_files_exts = '{h,m,mm,cpp}'`,
++// `source_files = ["ios/**/*.#{source_files_exts}"]`, `s.source_files =
++// source_files`). The field regexes below only understand literals, so such a
++// field read as missing and the library scaffolded with no sources.
++//
++// This pre-pass resolves the simple cases textually, so the regexes stay
++// untouched: single-line `ident = 'str' | "str" | ["a", "b"]` assignments are
++// collected (first assignment wins; `if`/`ENV[...]` conditions are NOT
++// evaluated), then `#{ident}` inside the text is replaced by a known string
++// constant, and a field assigned a bare known identifier (`s.x = ident`) is
++// rewritten to the literal value (`s.x = ident`, `s.ios.x = ident`, and a
++// subspec's `ss.x = ident`). `#{}` is only interpolated inside double-quoted
++// strings, as in Ruby. Unknown interpolations/identifiers are left as they are.
++function resolveRubyConstants(content /*: string */) /*: string */ {
++  const strings /*: Map<string, string> */ = new Map();
++  const arrays /*: Map<string, Array<{value: string, dq: boolean}>> */ =
++    new Map();
++  const assignRe = /^[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*(.+?)[ \t]*$/gm;
++  for (const m of content.matchAll(assignRe)) {
++    const name = m[1];
++    if (strings.has(name) || arrays.has(name)) continue;
++    const rhs = m[2];
++    const str = rhs.match(/^(?:"([^"]*)"|'([^']*)')$/);
++    if (str != null) {
++      strings.set(name, str[1] ?? str[2]);
++      continue;
++    }
++    const arr = rhs.match(/^\[([^\]]*)\]$/);
++    if (arr != null) {
++      const items = [];
++      for (const it of arr[1].matchAll(/"([^"]*)"|'([^']*)'/g)) {
++        items.push({value: it[1] ?? it[2], dq: it[1] != null});
++      }
++      arrays.set(name, items);
++    }
++  }
++  if (strings.size === 0 && arrays.size === 0) return content;
++  const interpolate = (text /*: string */) =>
++    text.replace(/#\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}/g, (whole, id) =>
++      strings.has(id) ? (strings.get(id) /*: any */) : whole,
++    );
++  // Constants may be built from earlier ones: resolve the arrays' items too
++  // (double-quoted items only).
++  const arrayValues /*: Map<string, Array<string>> */ = new Map();
++  for (const [k, v] of arrays) {
++    arrayValues.set(k, v.map(i => (i.dq ? interpolate(i.value) : i.value)));
++  }
++  // Only double-quoted string literals interpolate; scan literal by literal
++  // (a line never spans a string here) so `'ios/*.#{x}'` stays as written.
++  const interpolated = content.replace(
++    /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g,
++    lit => (lit[0] === '"' ? interpolate(lit) : lit),
++  );
++  const quote = (v /*: string */) => JSON.stringify(v);
++  return interpolated.replace(
++    /^(\s*[A-Za-z_]\w*(?:\.(?:ios|osx|tvos|visionos|watchos))?\.[A-Za-z_]+\s*=\s*)([A-Za-z_][A-Za-z0-9_]*)[ \t]*$/gm,
++    (whole, lhs, id) => {
++      if (strings.has(id)) return lhs + quote((strings.get(id) /*: any */));
++      if (arrayValues.has(id)) {
++        return (
++          lhs + '[' + (arrayValues.get(id) /*: any */).map(quote).join(', ') + ']'
++        );
++      }
++      return whole;
++    },
++  );
++}
++
++// The library's own version. Podspecs load the package.json next to them
++// (`package = JSON.parse(File.read(File.join(__dir__, "package.json")))`, or
++// `File.dirname(__FILE__)`) and interpolate `#{package['version']}` (also
++// `#{package["version"]}`, any variable name) into flags such as
++// `-DWORKLETS_VERSION=...`. Those references are replaced by the version read
++// from that package.json, inside double-quoted strings only (as in Ruby);
++// anything else stays as written, so other interpolations are still dropped.
++function resolvePackageVersion(
++  content /*: string */,
++  podspecDir /*: string */,
++) /*: string */ {
++  const loadRe =
++    /^[ \t]*([A-Za-z_]\w*)[ \t]*=[ \t]*JSON\.parse\(\s*File\.read\(\s*File\.join\(\s*(?:__dir__|File\.dirname\(\s*__FILE__\s*\))\s*,\s*(["'])package\.json\2\s*\)\s*\)\s*\)/gm;
++  const vars = Array.from(content.matchAll(loadRe), m => m[1]);
++  if (vars.length === 0) return content;
++  let version = null;
++  try {
++    version = JSON.parse(
++      fs.readFileSync(path.join(podspecDir, 'package.json'), 'utf8'),
++    ).version;
++  } catch {
++    return content;
++  }
++  if (typeof version !== 'string' || version.length === 0) return content;
++  const ref = new RegExp(
++    `#\\{\\s*(?:${Array.from(new Set(vars)).join('|')})\\s*\\[\\s*(["'])version\\1\\s*\\]\\s*\\}`,
++    'g',
++  );
++  const v /*: string */ = version;
++  // A double-quoted literal may hold `#{package["version"]}` with its own
++  // quotes, so the scan steps over `#{...}` as a unit.
++  return content.replace(
++    /"(?:[^"\\\n#]|\\.|#\{[^}\n]*\}|#(?!\{))*"|'(?:[^'\\\n]|\\.)*'/g,
++    lit => (lit[0] === '"' ? lit.replace(ref, () => v) : lit),
++  );
++}
++
+ // Comment-only lines are dropped so a commented-out `# s.header_dir` cannot win
+ // over the live one. A trailing `#` and a `#` inside a string survive: only the
+ // first non-whitespace character counts.
+ function readPodspecSource(podspecPath /*: string */) /*: string */ {
+-  return fs
+-    .readFileSync(podspecPath, 'utf8')
+-    .split('\n')
+-    .filter(line => !/^\s*#/.test(line))
+-    .join('\n');
++  return resolveRubyConstants(
++    resolvePackageVersion(
++      fs
++        .readFileSync(podspecPath, 'utf8')
++        .split('\n')
++        .filter(line => !/^\s*#/.test(line))
++        .join('\n'),
++      path.dirname(podspecPath),
++    ),
++  );
++}
++
++// The main spec's block variable: `Pod::Spec.new do |podspec|` -> `podspec`.
++// Falls back to the two conventional names when the header is not found.
++function mainReceiverName(content /*: string */) /*: string */ {
++  const m = content.match(/Pod::Spec\.new\s+do\s*\|\s*(\w+)\s*\|/);
++  return m != null ? m[1] : 's|spec';
++}
++
++// The main spec's receiver as a regex source. The lookbehind keeps it from
++// matching INSIDE a longer identifier or a member chain: `ss.source_files` (a
++// subspec's block variable) contains the substring `s.source_files`, which
++// used to be read as the main spec's own field.
++function mainRecvPattern(name /*: string */) /*: string */ {
++  return `(?<![\\w.])(?:${name})`;
+ }
+ 
+ // A subspec that re-binds a receiver the identity regexes trust: inside
+ // `s.subspec "common" do |s|`, `s` is the CHILD, and no regex over flat text
+ // can see that. Any other block variable (`do |ss|`) is unambiguous.
+-const SHADOWING_SUBSPEC_RE =
+-  /\.subspec\s+["'][^"']*["']\s+do\s*\|\s*(?:s|spec)\s*\|/;
++function shadowingSubspecRe(name /*: string */) /*: RegExp */ {
++  return new RegExp(
++    `\\.subspec\\s+["'][^"']*["']\\s+do\\s*\\|\\s*(?:${name})\\s*\\|`,
++  );
++}
++
++function subspecOpenRe(name /*: string */) /*: RegExp */ {
++  return new RegExp(
++    `(?:^|[;\\s])(?:${name})\\.subspec\\s+["']([^"']+)["']\\s+do\\s*\\|\\s*(\\w+)\\s*\\|[^\\n]*`,
++    'g',
++  );
++}
++
++// Ruby block openers/closers, line-based: enough to find the `end` that closes
++// a subspec body. Strings and heredocs containing these words are not
++// understood.
++function blockDelta(line /*: string */) /*: number */ {
++  const t = stripTrailingComment(line).trim();
++  let d = 0;
++  const startsBlock = /^(?:if|unless|case|begin|while|until|for|def)\b/.test(t);
++  if (startsBlock) d++;
++  else if (/\bdo(?:\s*\|[^|]*\|)?\s*$/.test(t)) d++;
++  // `if … end` / `unless … end` opened and closed on the same line: net 0.
++  if (startsBlock && /[\s;]end\s*;?$/.test(t)) d--;
++  if (/^end\b/.test(t)) d--;
++  return d;
++}
++
++// Drops a trailing `# comment`: the first `#` outside a quoted string.
++function stripTrailingComment(line /*: string */) /*: string */ {
++  let quote = '';
++  for (let i = 0; i < line.length; i++) {
++    const c = line[i];
++    if (quote !== '') {
++      if (c === '\\') i++;
++      else if (c === quote) quote = '';
++    } else if (c === '"' || c === "'") quote = c;
++    else if (c === '#') return line.slice(0, i);
++  }
++  return line;
++}
++
++/**
++ * Splits `s.subspec "name" do |ss| ... end` blocks out of the source. Returns
++ * the text without those blocks (the main spec's own statements) and each
++ * block's name, receiver identifier and body. A block that re-binds `s`/`spec`
++ * is left in place: with that receiver it cannot be told from the main spec.
++ */
++function splitSubspecs(
++  content /*: string */,
++  mainName /*: string */,
++) /*: {main: string, subspecs: Array<{name: string, recv: string, body: string}>} */ {
++  const subspecs = [];
++  let main = '';
++  let pos = 0;
++  const mainRe = new RegExp(`^(?:${mainName})$`);
++  for (const m of content.matchAll(subspecOpenRe(mainName))) {
++    const start = m.index ?? 0;
++    if (start < pos || mainRe.test(m[2])) continue;
++    const bodyStart = start + m[0].length;
++    // `s.subspec "a" do |ss| ss.x = 1 end`: the block closes on its own line.
++    const tail = stripTrailingComment(
++      m[0].replace(/^.*?\bdo\s*\|\s*\w+\s*\|/, ''),
++    );
++    if (/(?:^|[\s;])end\s*;?\s*$/.test(tail)) {
++      subspecs.push({name: m[1], recv: m[2], body: tail});
++      main += content.slice(pos, start);
++      pos = bodyStart;
++      continue;
++    }
++    const lines = content.slice(bodyStart).split('\n');
++    let depth = 1;
++    let len = 0;
++    let end = -1;
++    for (let i = 1; i < lines.length; i++) {
++      len += lines[i - 1].length + 1;
++      depth += blockDelta(lines[i]);
++      if (depth <= 0) {
++        end = bodyStart + len + lines[i].length;
++        break;
++      }
++    }
++    if (end < 0) continue; // unbalanced: leave the text to the main spec
++    subspecs.push({name: m[1], recv: m[2], body: content.slice(bodyStart, end)});
++    main += content.slice(pos, start);
++    pos = end;
++  }
++  return {main: main + content.slice(pos), subspecs};
++}
+ 
+ function hasShadowingSubspec(source /*: string */) /*: boolean */ {
+-  return SHADOWING_SUBSPEC_RE.test(source);
++  return shadowingSubspecRe(mainReceiverName(source)).test(source);
+ }
+ 
+ /**
+  * Best-effort Ruby podspec parser. Extracts the literal-string and
+- * literal-array fields most RN libs use. Skips subspec blocks, Ruby helper
+- * calls (install_modules_dependencies, ENV[], $config[:...]), and
+- * interpolation — appends a warning so the caller can surface it to the
+- * user. Always returns a RawSpec; pure-JS, no Ruby dep required.
++ * literal-array fields most RN libs use, merges the `do |ss| … end` subspecs
++ * (all of them, or the declared `default_subspecs`; `:none` merges nothing),
++ * and reads `ios`-scoped fields. Ruby helper calls (install_modules_dependencies,
++ * ENV[], $config[:...]) and most interpolation are not evaluated — a warning
++ * is appended so the caller can surface it. Known limits: nested subspecs,
++ * heredocs, `{ |x| … }` brace blocks and conditionals are not understood.
++ * Always returns a RawSpec; pure-JS, no Ruby dep required.
+  */
+ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+   const content = readPodspecSource(podspecPath);
++  const mainName = mainReceiverName(content);
++  const MAIN_RECV = mainRecvPattern(mainName);
+   const warnings /*: Array<string> */ = [];
++  // The main spec's own statements, and each subspec block apart. The readers
++  // below default to the main text and receiver; a subspec is read with the
++  // same readers anchored on its block variable, then merged like
++  // flattenSubspecs does for `pod ipc spec` output.
++  const {main, subspecs: allSubspecs} = splitSubspecs(content, mainName);
+ 
+-  // Matches:  s.<field> = "value"   or   s.<field> = 'value'  — at ANY scope,
+-  // so a subspec's value counts. Right for the fields flattenSubspecs merges
+-  // (source globs, header mappings); wrong for the fields that identify the
+-  // spec, which use getSpecStringField.
+-  function getStringField(name /*: string */) /*: string | null */ {
+-    const re = new RegExp(`(?:s|spec)\\.${name}\\s*=\\s*["']([^"']+)["']`);
+-    const m = content.match(re);
++  // Matches:  s.<field> = "value"   or   s.<field> = 'value'  — on `recv`
++  // (the main spec unless told otherwise).
++  function getStringFieldOn(
++    name /*: string */,
++    text /*: string */,
++    recv /*: string */,
++  ) /*: string | null */ {
++    // `header_dir = ""` is meaningful (root namespace), so only it may be empty.
++    const quant = name === 'header_dir' ? '*' : '+';
++    const re = new RegExp(`${recv}\\.${name}\\s*=\\s*["']([^"']${quant})["']`);
++    const m = text.match(re);
+     return m ? m[1] : null;
+   }
+ 
++  // `s.ios.<field>` counts as `s.<field>` and wins over it. The other
++  // platforms' scopes (`s.osx.`, `s.tvos.`, `s.visionos.`, `s.watchos.`) are
++  // never read: the receiver pattern only matches `s.` followed by the field
++  // name or `ios.`.
++  function getStringField(
++    name /*: string */,
++    text /*: string */ = main,
++    recv /*: string */ = MAIN_RECV,
++  ) /*: string | null */ {
++    return (
++      getStringFieldOn(name, text, `${recv}\\.ios`) ??
++      getStringFieldOn(name, text, recv)
++    );
++  }
++
+   // The same, but only where the receiver starts the statement — so a subspec's
+   // block variable (`ss.header_dir`, the shape react-native-screens and
+   // react-native-svg ship) cannot answer for the spec itself.
+   function getSpecStringField(name /*: string */) /*: string | null */ {
+-    const re = new RegExp(
+-      `(?:^|[;|])\\s*(?:s|spec)\\.${name}\\s*=\\s*["']([^"']+)["']`,
+-      'm',
+-    );
+-    const m = content.match(re);
+-    return m ? m[1] : null;
++    for (const scope of ['ios\\.', '']) {
++      const re = new RegExp(
++        `(?:^|[;|])\\s*(?:${mainName})\\.${scope}${name}\\s*=\\s*["']([^"']+)["']`,
++        'm',
++      );
++      const m = main.match(re);
++      if (m) return m[1];
++    }
++    return null;
+   }
+ 
+   // The fields that identify the spec, and only when the receiver spelling
+@@ -235,9 +480,27 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+   // Matches:
+   //   s.<field> = ["a", "b"]            (array)
+   //   s.<field> = "single"              (single value treated as 1-element array)
+-  function getArrayField(name /*: string */) /*: Array<string> */ {
+-    const reArr = new RegExp(`(?:s|spec)\\.${name}\\s*=\\s*\\[([^\\]]*)\\]`);
+-    const mArr = content.match(reArr);
++  //   s.<field> = "a", "b"              (Ruby bare list, no brackets)
++  function getArrayField(
++    name /*: string */,
++    text /*: string */ = main,
++    recv /*: string */ = MAIN_RECV,
++  ) /*: Array<string> */ {
++    return Array.from(
++      new Set([
++        ...getArrayFieldOn(name, text, recv),
++        ...getArrayFieldOn(name, text, `${recv}\\.ios`),
++      ]),
++    );
++  }
++
++  function getArrayFieldOn(
++    name /*: string */,
++    text /*: string */,
++    recv /*: string */,
++  ) /*: Array<string> */ {
++    const reArr = new RegExp(`${recv}\\.${name}\\s*=\\s*\\[([^\\]]*)\\]`);
++    const mArr = text.match(reArr);
+     if (mArr != null) {
+       const inner = mArr[1];
+       const out /*: Array<string> */ = [];
+@@ -249,16 +512,34 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+       }
+       return out;
+     }
+-    const single = getStringField(name);
++    // Ruby bare list without brackets: s.<field> = "a", "b"
++    const reList = new RegExp(
++      `${recv}\\.${name}\\s*=\\s*((?:["'][^"']+["']\\s*,\\s*)*["'][^"']+["'])`,
++    );
++    const mList = text.match(reList);
++    if (mList != null) {
++      const out /*: Array<string> */ = [];
++      const itemRe = /["']([^"']+)["']/g;
++      while (true) {
++        const m = itemRe.exec(mList[1]);
++        if (m == null) break;
++        out.push(m[1]);
++      }
++      if (out.length > 0) return out;
++    }
++    const single = getStringFieldOn(name, text, recv);
+     return single != null ? [single] : [];
+   }
+ 
+   // Matches:  s.dependency "Name"  (with optional version constraint)
+-  function getDependencies() /*: Array<string> */ {
++  function getDependencies(
++    text /*: string */ = main,
++    recv /*: string */ = MAIN_RECV,
++  ) /*: Array<string> */ {
+     const out /*: Array<string> */ = [];
+-    const re = /(?:s|spec)\.dependency\s+["']([^"']+)["']/g;
++    const re = new RegExp(`${recv}\\.(?:ios\\.)?dependency\\s+["']([^"']+)["']`, 'g');
+     while (true) {
+-      const m = re.exec(content);
++      const m = re.exec(text);
+       if (m == null) break;
+       out.push(m[1]);
+     }
+@@ -269,21 +550,25 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+   //   s.framework "X"          → ["X"]
+   //   s.framework = "X"        → ["X"]
+   //   s.frameworks = ["X","Y"] → ["X","Y"]
+-  function getFrameworks(weak /*: boolean */) /*: Array<string> */ {
++  function getFrameworks(
++    weak /*: boolean */,
++    text /*: string */ = main,
++    recv /*: string */ = MAIN_RECV,
++  ) /*: Array<string> */ {
+     const prefix = weak ? 'weak_framework' : 'framework';
+     const out /*: Array<string> */ = [];
+     // Plural form: s.frameworks = [...] or s.frameworks = "Foo"
+-    out.push(...getArrayField(`${prefix}s`));
++    out.push(...getArrayField(`${prefix}s`, text, recv));
+     // Singular form: s.framework = "Foo" — single value treated as a 1-elem list
+-    out.push(...getArrayField(prefix));
++    out.push(...getArrayField(prefix, text, recv));
+     // Method-call form: s.framework "Foo", "Bar" — no `=`. `getArrayField`
+     // only matches assignment, so handle this case separately.
+     const callRe = new RegExp(
+-      `(?:s|spec)\\.${prefix}s?\\s+((?:["'][^"']+["']\\s*,?\\s*)+)`,
++      `${recv}\\.(?:ios\\.)?${prefix}s?\\s+((?:["'][^"']+["']\\s*,?\\s*)+)`,
+       'g',
+     );
+     while (true) {
+-      const m = callRe.exec(content);
++      const m = callRe.exec(text);
+       if (m == null) break;
+       const itemRe = /["']([^"']+)["']/g;
+       while (true) {
+@@ -298,12 +583,14 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+   // Matches:  'HEADER_SEARCH_PATHS' => '...'   or  => ["...","..."]
+   // Returns the raw token strings (still containing $(PODS_TARGET_SRCROOT)
+   // etc.); substitution happens at translation time.
+-  function getHeaderSearchPaths() /*: Array<string> */ {
++  function getHeaderSearchPaths(
++    text /*: string */ = main,
++  ) /*: Array<string> */ {
+     const out /*: Array<string> */ = [];
+     // Array form
+     const arrRe = /["']HEADER_SEARCH_PATHS["']\s*=>\s*\[([\s\S]*?)\]/g;
+     while (true) {
+-      const m = arrRe.exec(content);
++      const m = arrRe.exec(text);
+       if (m == null) break;
+       const itemRe = /["']((?:[^"'\\]|\\.)+)["']/g;
+       while (true) {
+@@ -321,7 +608,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+     const strRe =
+       /["']HEADER_SEARCH_PATHS["']\s*=>\s*["']((?:[^"'\\]|\\.)+)["']/g;
+     while (true) {
+-      const m = strRe.exec(content);
++      const m = strRe.exec(text);
+       if (m == null) break;
+       for (const token of m[1].split(/\s+/)) {
+         if (token.length > 0) {
+@@ -332,15 +619,37 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+     return Array.from(new Set(out));
+   }
+ 
++  // Literal `'OTHER_CFLAGS' => '-DFOO=1'` and `'GCC_PREPROCESSOR_DEFINITIONS' =>
++  // '$(inherited) BAR=1'` entries (also `[config=*Debug*]` keys), from any
++  // xcconfig hash. Returned as {rawKey: space-joined values} so
++  // flattenSubspecs lifts them like the `pod ipc` JSON. Only string literals
++  // are read: an array, `.join` or interpolated value is not understood (an
++  // interpolated token is dropped later, with the other unresolved ones).
++  function getDefineXcconfig(
++    text /*: string */,
++  ) /*: {[string]: string} */ {
++    const out /*: {[string]: string} */ = {};
++    const re =
++      /["']((?:OTHER_CFLAGS|GCC_PREPROCESSOR_DEFINITIONS)(?:\[config=\*\w+\*\])?)["']\s*=>\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/g;
++    while (true) {
++      const m = re.exec(text);
++      if (m == null) break;
++      const value =
++        m[2] != null ? m[2].replace(/\\(["\\])/g, '$1') : (m[3] ?? '');
++      out[m[1]] = out[m[1]] != null ? `${out[m[1]]} ${value}` : value;
++    }
++    return out;
++  }
++
+   // Surface known unparseable constructs so the caller can warn the user.
+   if (shadowedIdentity) {
+     warnings.push(
+       "A subspec rebinds the spec variable (`do |s|`), so its `name`, `module_name` and `header_dir` cannot be told from the library's own — those are left unread. Install CocoaPods (`gem install cocoapods`) to enable full `pod ipc spec` parsing.",
+     );
+   }
+-  if (/(?:s|spec)\.subspec\s+["']/.test(content)) {
++  if (new RegExp(`(?:${mainName})\\.subspec\\b`).test(content)) {
+     warnings.push(
+-      'Subspecs detected — regex parser only extracts top-level fields. Install CocoaPods (`gem install cocoapods`) to enable full `pod ipc spec` parsing.',
++      'Subspecs detected — regex parser merges their source/exclude/header, framework, dependency and define fields (default_subspecs honoured); nested subspecs, `{ }` brace blocks and heredocs are not understood. Install CocoaPods (`gem install cocoapods`) to enable full `pod ipc spec` parsing.',
+     );
+   }
+   if (/install_modules_dependencies/.test(content)) {
+@@ -354,24 +663,81 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+     );
+   }
+ 
++  // Which subspecs count: like CocoaPods, all of them unless the spec declares
++  // `default_subspecs` (or `default_subspec`), then only those.
++  const defaults = new Set([
++    ...getArrayField('default_subspecs'),
++    ...getArrayField('default_subspec'),
++  ]);
++  // `default_subspecs = :none` selects no subspec at all.
++  const none = new RegExp(
++    `${MAIN_RECV}\\.default_subspecs?\\s*=\\s*:none\\b`,
++  ).test(main);
++  const subspecs = none
++    ? []
++    : defaults.size > 0
++      ? allSubspecs.filter(sub => defaults.has(sub.name))
++      : allSubspecs;
++  // Layer 0 is the main spec; the rest are the selected subspecs, each read
++  // with the same helpers anchored on its own block variable.
++  const layers = [
++    {text: main, recv: MAIN_RECV},
++    ...subspecs.map(sub => ({
++      text: sub.body,
++      recv: `(?<![\\w.])${sub.recv}`,
++    })),
++  ];
++  const unionOf = (read /*: (string, string) => Array<string> */) =>
++    Array.from(new Set(layers.flatMap(l => read(l.text, l.recv))));
++  const arrayUnion = (name /*: string */) =>
++    unionOf((text, recv) => getArrayField(name, text, recv));
++  // The spec's own value wins; otherwise the first subspec that sets one.
++  const firstString = (name /*: string */) =>
++    layers.reduce(
++      (found, l) => found ?? getStringField(name, l.text, l.recv),
++      (null /*: string | null */),
++    );
++
+   return {
+     name: getIdentityField('name'),
+     module_name: getIdentityField('module_name'),
+     version: getSpecStringField('version'),
+-    source_files: getArrayField('source_files'),
+-    public_header_files: getArrayField('public_header_files'),
+-    private_header_files: getArrayField('private_header_files'),
+-    exclude_files: getArrayField('exclude_files'),
+-    header_mappings_dir: getStringField('header_mappings_dir'),
++    source_files: arrayUnion('source_files'),
++    public_header_files: arrayUnion('public_header_files'),
++    private_header_files: arrayUnion('private_header_files'),
++    exclude_files: arrayUnion('exclude_files'),
++    header_mappings_dir: firstString('header_mappings_dir'),
++    // Main spec only: a subspec's `header_dir` names that subspec's headers.
+     header_dir: getIdentityField('header_dir'),
+-    frameworks: getFrameworks(false),
+-    weak_frameworks: getFrameworks(true),
+-    libraries: getArrayField('libraries'),
+-    dependencies: getDependencies(),
+-    compiler_flags: tokenizeFlags(getStringField('compiler_flags')),
+-    pod_target_xcconfig: {HEADER_SEARCH_PATHS: getHeaderSearchPaths()},
+-    resources: getArrayField('resources'),
+-    requires_arc: /(?:s|spec)\.requires_arc\s*=\s*true/.test(content),
++    frameworks: unionOf((t, r) => getFrameworks(false, t, r)),
++    weak_frameworks: unionOf((t, r) => getFrameworks(true, t, r)),
++    libraries: arrayUnion('libraries'),
++    dependencies: unionOf((t, r) => getDependencies(t, r)),
++    compiler_flags: tokenizeFlags(firstString('compiler_flags')),
++    pod_target_xcconfig: {
++      HEADER_SEARCH_PATHS: unionOf(text => getHeaderSearchPaths(text)),
++      ...layers.reduce((acc, l) => {
++        const found = getDefineXcconfig(l.text);
++        for (const k of Object.keys(found)) {
++          acc[k] = acc[k] != null ? `${acc[k]} ${found[k]}` : found[k];
++        }
++        return acc;
++      }, ({} /*: {[string]: string} */)),
++    },
++    resources: arrayUnion('resources'),
++    requires_arc: layers.some(l =>
++      new RegExp(`${l.recv}\\.requires_arc\\s*=\\s*true`).test(l.text),
++    ),
++    __header_dir_scopes__: headerDirScopes(
++      layers.map((l, i) => ({
++        headerDir:
++          i === 0
++            ? getIdentityField('header_dir')
++            : getStringField('header_dir', l.text, l.recv),
++        headerMappingsDir: getStringField('header_mappings_dir', l.text, l.recv),
++        sourceFiles: getArrayField('source_files', l.text, l.recv),
++      })),
++    ),
+     __regex_partial__: true,
+     __warnings__: warnings,
+   };
+@@ -423,6 +789,58 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
+   return tokens;
+ }
+ 
++/**
++ * CocoaPods `header_dir` puts a spec's headers, flattened, under one namespace
++ * (`<header_dir/Header.h>`). Layer 0 is the main spec: its `header_dir` covers
++ * its own sources plus those of every subspec that sets none; a subspec's own
++ * `header_dir` covers only that subspec's sources. A `header_mappings_dir`
++ * keeps the path below it instead of flattening (`<header_dir/sub/Header.h>`):
++ * each scope lists the mappings dirs of its layers, plus the main spec's, which
++ * subspecs inherit.
++ */
++function headerDirScopes(
++  layers /*: Array<{headerDir: ?string, headerMappingsDir?: ?string, sourceFiles: Array<string>}> */,
++) /*: Array<{headerDir: string, headerMappingsDirs: Array<string>, sourceFiles: Array<string>}> */ {
++  const mainDir = layers.length > 0 ? layers[0].headerDir : null;
++  const mainMappings = layers.length > 0 ? layers[0].headerMappingsDir : null;
++  const mappingsOf = (l /*: {headerMappingsDir?: ?string, ...} */) =>
++    Array.from(
++      new Set(
++        [l.headerMappingsDir, mainMappings].filter(
++          d => typeof d === 'string' && d.length > 0,
++        ),
++      ),
++    );
++  const scopes = [];
++  const inherited = [];
++  const inheritedMappings = [];
++  layers.forEach((l, i) => {
++    if (i > 0 && l.headerDir === '') {
++      // A subspec's `header_dir = ""` is the root namespace: no stubs for its
++      // headers (they are not inherited under the main spec's header_dir).
++      return;
++    }
++    if (i > 0 && l.headerDir != null && l.headerDir.length > 0) {
++      scopes.push({
++        headerDir: l.headerDir,
++        headerMappingsDirs: mappingsOf(l),
++        sourceFiles: l.sourceFiles,
++      });
++    } else {
++      inherited.push(...l.sourceFiles);
++      inheritedMappings.push(...mappingsOf(l));
++    }
++  });
++  if (mainDir != null && mainDir.length > 0) {
++    scopes.unshift({
++      headerDir: mainDir,
++      headerMappingsDirs: Array.from(new Set(inheritedMappings)),
++      sourceFiles: inherited,
++    });
++  }
++  return scopes;
++}
++
+ // ---------------------------------------------------------------------------
+ // Subspec flattening
+ // ---------------------------------------------------------------------------
+@@ -456,7 +874,12 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+   //   - `default_subspecs`: array of names (or undefined → use all subspecs)
+   const subspecs = Array.isArray(rawSpec.subspecs) ? rawSpec.subspecs : [];
+   let selected = subspecs;
+-  if (Array.isArray(rawSpec.default_subspecs)) {
++  if (
++    rawSpec.default_subspecs === 'none' ||
++    rawSpec.default_subspec === 'none'
++  ) {
++    selected = []; // `default_subspecs = :none`
++  } else if (Array.isArray(rawSpec.default_subspecs)) {
+     const wanted = new Set(rawSpec.default_subspecs);
+     selected = subspecs.filter(s => {
+       // $FlowFixMe[prop-missing] dynamic shape
+@@ -482,6 +905,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+     return Array.from(new Set(out));
+   }
+ 
++  function mergeArrayFieldOf(
++    layer /*: mixed */,
++    key /*: string */,
++  ) /*: Array<string> */ {
++    // $FlowFixMe[incompatible-use] dynamic shape
++    const value = layer != null ? layer[key] : null;
++    return (Array.isArray(value) ? value : [value]).filter(
++      v => typeof v === 'string',
++    );
++  }
++
+   // Only the spec's own value: a subspec's `header_dir` names that subspec's
+   // headers, and several subspecs can disagree.
+   function specStringField(key /*: string */) /*: string | null */ {
+@@ -544,6 +978,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+   // `-D`s are safe to forward; arbitrary flags may be machine- or
+   // example-app-specific. $(inherited), unresolved $(...) tokens, and invalid
+   // C identifiers are skipped.
++  //
++  // `FOLLY_*` defines are never lifted: the prebuilt React Native headers ship
++  // `folly/folly-config.h`, and `FOLLY_NO_CONFIG` (the usual
++  // `folly_compiler_flags`) turns that include off without the full CocoaPods
++  // define set, which breaks the build. What was dropped is named in a warning.
++  const droppedFollyDefines /*: Set<string> */ = new Set();
++  const isFollyDefine = (name /*: string */) /*: boolean */ =>
++    name.startsWith('FOLLY_');
++  // `REACT_NATIVE_{MAJOR,MINOR,PATCH}_VERSION=#{...}` is a community
++  // convention computed in Ruby from react-native/package.json, always meaning
++  // the installed React Native. The regex path cannot evaluate it, so those
++  // (and only those) names take the installed version's number instead.
++  const rnVersionMacros /*: {[string]: number} */ = readRnVersionMacros();
++  const substitutedRnVersionDefines /*: Set<string> */ = new Set();
+   function mergePreprocessorDefines() /*: Array<PreprocessorDefine> */ {
+     const out /*: Array<PreprocessorDefine> */ = [];
+     const seen /*: Set<string> */ = new Set();
+@@ -554,7 +1002,23 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+       config /*: ?('debug' | 'release') */,
+     ) => {
+       if (!validName.test(name)) return;
+-      if (/\$[({]/.test(name) || (value != null && /\$[({]/.test(value))) {
++      if (isFollyDefine(name)) {
++        droppedFollyDefines.add(value != null ? `${name}=${value}` : name);
++        return;
++      }
++      if (
++        value != null &&
++        /#\{/.test(value) &&
++        !/\$[({]/.test(value) &&
++        Object.prototype.hasOwnProperty.call(rnVersionMacros, name)
++      ) {
++        value = String(rnVersionMacros[name]);
++        substitutedRnVersionDefines.add(`${name}=${value}`);
++      }
++      if (
++        /\$[({]|#\{/.test(name) ||
++        (value != null && /\$[({]|#\{/.test(value))
++      ) {
+         return; // unresolved Xcode/Ruby token — don't emit a broken define
+       }
+       const key = `${name}|${config ?? ''}`;
+@@ -571,6 +1035,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+       'xcconfig',
+       'user_target_xcconfig',
+     ];
++    // `-DNAME[=VALUE]` in the spec's `compiler_flags` are defines too (the rest
++    // of the flags stay in compilerFlags; see mergeCompilerFlags).
++    for (const layer of layers) {
++      for (const tok of compilerFlagTokens(layer)) {
++        if (!tok.startsWith('-D') || tok.length === 2) continue;
++        const body = tok.slice(2);
++        const eq = body.indexOf('=');
++        add(
++          eq >= 0 ? body.slice(0, eq) : body,
++          eq >= 0 ? body.slice(eq + 1) : null,
++          null,
++        );
++      }
++    }
+     for (const layer of layers) {
+       if (layer == null || typeof layer !== 'object') continue;
+       for (const xcKey of XCCONFIG_KEYS) {
+@@ -648,23 +1126,35 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+     return Array.from(new Set(out));
+   }
+ 
+-  function mergeCompilerFlags() /*: Array<string> */ {
++  function compilerFlagTokens(layer /*: unknown */) /*: Array<string> */ {
++    // $FlowFixMe[incompatible-use] layer narrowed from `mixed`; runtime-validated below
++    const value = layer != null ? layer.compiler_flags : null;
+     const out /*: Array<string> */ = [];
+-    for (const layer of layers) {
+-      // $FlowFixMe[incompatible-use] layer narrowed from `mixed`; runtime-validated below
+-      const value = layer != null ? layer.compiler_flags : null;
+-      if (typeof value === 'string') {
+-        for (const tok of value.split(/\s+/)) {
++    const values = Array.isArray(value) ? value : [value];
++    for (const v of values) {
++      if (typeof v === 'string') {
++        for (const tok of v.split(/\s+/)) {
+           if (tok.length > 0) out.push(tok);
+         }
+-      } else if (Array.isArray(value)) {
+-        for (const v of value) {
+-          if (typeof v === 'string') {
+-            for (const tok of v.split(/\s+/)) {
+-              if (tok.length > 0) out.push(tok);
+-            }
+-          }
+-        }
++      }
++    }
++    return out;
++  }
++
++  function mergeCompilerFlags() /*: Array<string> */ {
++    const liftedDefines = new Set(
++      mergePreprocessorDefines()
++        .filter(d => d.config == null)
++        .map(d => (d.value != null ? `${d.name}=${d.value}` : d.name)),
++    );
++    const out /*: Array<string> */ = [];
++    for (const layer of layers) {
++      for (const tok of compilerFlagTokens(layer)) {
++        // A `-D` already emitted as a `.define(...)` is not repeated as a flag.
++        if (tok.startsWith('-D') && liftedDefines.has(tok.slice(2))) continue;
++        // A dropped `-DFOLLY_*` is not smuggled back in as a raw flag either.
++        if (tok.startsWith('-DFOLLY_')) continue;
++        out.push(tok);
+       }
+     }
+     return out;
+@@ -677,6 +1167,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+       ? false
+       : true; // RN ecosystem default
+ 
++  const preprocessorDefines = mergePreprocessorDefines();
++  const compilerFlags = mergeCompilerFlags();
++  if (droppedFollyDefines.size > 0) {
++    warnings.push(
++      `Dropped Folly define(s) ${Array.from(droppedFollyDefines).join(', ')} — the prebuilt React Native headers ship folly-config.h, and defining them without the full CocoaPods set breaks the build.`,
++    );
++  }
++
++  if (substitutedRnVersionDefines.size > 0) {
++    warnings.push(
++      `Resolved interpolated define(s) ${Array.from(substitutedRnVersionDefines).join(', ')} from the installed React Native version (${rnVersionMacros.REACT_NATIVE_MAJOR_VERSION}.${rnVersionMacros.REACT_NATIVE_MINOR_VERSION}.${rnVersionMacros.REACT_NATIVE_PATCH_VERSION}) — the regex parser cannot evaluate the Ruby expression.`,
++    );
++  }
++
+   return {
+     name: specStringField('name') ?? '',
+     version: specStringField('version') ?? '',
+@@ -693,13 +1197,29 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+     // header_mappings_dir copy step, which SPM has no equivalent for.
+     headerMappingsDirs: mergeArrayField('header_mappings_dir'),
+     headerDir: specStringField('header_dir'),
++    headerDirScopes: Array.isArray(rawSpec.__header_dir_scopes__)
++      ? // $FlowFixMe[incompatible-type] built by headerDirScopes()
++        rawSpec.__header_dir_scopes__
++      : headerDirScopes(
++          layers.map(l => ({
++            // $FlowFixMe[incompatible-use] dynamic shape
++            headerDir:
++              l != null && typeof l.header_dir === 'string' ? l.header_dir : null,
++            // $FlowFixMe[incompatible-use] dynamic shape
++            headerMappingsDir:
++              l != null && typeof l.header_mappings_dir === 'string'
++                ? l.header_mappings_dir
++                : null,
++            sourceFiles: mergeArrayFieldOf(l, 'source_files'),
++          })),
++        ),
+     moduleName: specStringField('module_name'),
+     frameworks: mergeArrayField('frameworks'),
+     weakFrameworks: mergeArrayField('weak_frameworks'),
+     libraries: mergeArrayField('libraries'),
+     dependencies: mergeDependencies(),
+-    preprocessorDefines: mergePreprocessorDefines(),
+-    compilerFlags: mergeCompilerFlags(),
++    preprocessorDefines,
++    compilerFlags,
+     headerSearchPaths: mergeHeaderSearchPaths(),
+     resources: mergeArrayField('resources'),
+     requiresArc,
+@@ -746,6 +1266,26 @@ function readPodspec(podspecPath /*: string */) /*: PodspecModel */ {
+   return model;
+ }
+ 
++// The installed React Native's version as the macros libraries derive from it.
++function readRnVersionMacros() /*: {[string]: number} */ {
++  try {
++    const pkg = JSON.parse(
++      fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8'),
++    );
++    const m = /^(\d+)\.(\d+)\.(\d+)/.exec(String(pkg.version));
++    if (m != null) {
++      return {
++        REACT_NATIVE_MAJOR_VERSION: Number(m[1]),
++        REACT_NATIVE_MINOR_VERSION: Number(m[2]),
++        REACT_NATIVE_PATCH_VERSION: Number(m[3]),
++      };
++    }
++  } catch {
++    // unreadable: the defines stay dropped
++  }
++  return {};
++}
++
+ const podspecModels /*: Map<string, PodspecModel> */ = new Map();
+ 
+ /**
+@@ -794,12 +1334,13 @@ function readPodspecNames(
+   if (hasShadowingSubspec(source)) {
+     return null;
+   }
++  const mainName = mainReceiverName(source);
+   const declaredUnread = (
+     key /*: string */,
+     value /*: ?string */,
+   ) /*: boolean */ =>
+     value == null &&
+-    new RegExp(`(?:^|[;|])\\s*(?:s|spec)\\.${key}\\s*=`, 'm').test(source);
++    new RegExp(`(?:^|[;|])\\s*(?:${mainName})\\.${key}\\s*=`, 'm').test(source);
+ 
+   const name = field('name');
+   const moduleName = field('module_name');
+diff --git a/node_modules/react-native/scripts/spm/scaffold-package-swift.js b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
+index cf7e587..5c78e58 100644
+--- a/node_modules/react-native/scripts/spm/scaffold-package-swift.js
++++ b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
+@@ -54,6 +54,7 @@ const {
+   SCAFFOLDER_MARKER,
+   makeLogger,
+   remotePackageConfig,
++  toC99Name,
+ } = require('./spm-utils');
+ const {readSwiftpmConfig, writeSwiftpmName} = require('./swiftpm-config');
+ const fs = require('node:fs');
+@@ -113,6 +114,53 @@ const {log, warn} = makeLogger('scaffold-package-swift');
+ const SCAFFOLDER_VERSION = 20;
+ const SCAFFOLDER_VERSION_LINE_RE = /^\/\/ AUTO-SCAFFOLDED-VERSION: (\d+)$/m;
+ 
++// rn-xtool's own revision of this patched scaffolder, independent of
++// upstream's SCAFFOLDER_VERSION. A scaffold without the marker (emitted by an
++// older revision) or with a lower number is regenerated. Revision 2: own
++// `-Swift.h` importers out of the Swift umbrella, `#{package['version']}`
++// evaluated, header_mappings_dir under header_dir, and the Swift importer
++// paths marker (IMPORTER_PATHS_MARKER). Revision 3: that marker on clang-only
++// targets too, and their module map without the headers they leave out
++// (CLANG_MODULE_MAP).
++const RN_XTOOL_SCAFFOLD_REVISION = 3;
++const RN_XTOOL_SCAFFOLD_REVISION_RE = /^\/\/ rn-xtool-scaffold-revision: (\d+)$/m;
++
++// An importer (Swift, or a Clang module) builds the target's module from its
++// public headers with only the public headers path on its search path, so a
++// header that includes another by one of the target's own header search paths
++// fails there: a mixed target's bridging header, or screens 4.30's
++// ios/RNSConvert.h with "RNSDefines.h" from ios/utils. The manifest records
++// those paths, as a JSON array of package-relative paths in the manifest's
++// order, on this line right after the revision line; rn-xtool passes them to
++// Swift importers as `-Xcc -I`. Every mixed manifest has the line, and a
++// clang-only one when it searches beyond its public headers path. Paths that
++// leave the package (absolute, or with a `..` segment) are left out.
++const IMPORTER_PATHS_MARKER = '// rn-xtool-swift-importer-paths: ';
++
++// CocoaPods pods (not React Native / Expo modules, not autolinked siblings) whose
++// SwiftPM package is known: a podspec `s.dependency "<pod>"` becomes
++// `.package(url:exact:)` + `.product(name:package:)`. `exact` is the newest tag
++// the podspecs seen here accept (`~> 1.0` → newest 1.x), pinned for reproducible
++// builds: the generated `ios-xtool/` has no committed Package.resolved, so a
++// range would drift between clean builds. The package identity SwiftPM derives is the URL's last path component.
++// react-native-pager-view 9.x: `s.dependency "SwiftUIIntrospect", '~> 1.0'`.
++const KNOWN_POD_SPM_PACKAGES /*: {[pod: string]: {url: string, exact: string, product: string}} */ = {
++  SwiftUIIntrospect: {
++    url: 'https://github.com/siteline/swiftui-introspect',
++    exact: '1.5.0',
++    product: 'SwiftUIIntrospect',
++  },
++};
++
++// Pods that belong to Expo's own SwiftPM graph, never a CocoaPods-only pod.
++function isExpoModuleDep(depName /*: string */) /*: boolean */ {
++  return /^(expo-|Expo[A-Z]|EX[A-Z])/.test(depName);
++}
++
++function spmPackageIdentity(url /*: string */) /*: string */ {
++  return path.basename(url).replace(/\.git$/, '').toLowerCase();
++}
++
+ const AUTOGEN_MARKER =
+   '// AUTO-GENERATED by scripts/generate-spm-autolinking.js';
+ 
+@@ -145,6 +193,297 @@ const SCAFFOLD_PREFIX_HEADER_CONTENTS = `// AUTO-SCAFFOLDED by react-native spm
+ #endif
+ `;
+ 
++// Mixed-language libraries (Swift + C-family sources in one pod). CocoaPods
++// and Xcode compile them as ONE module: Swift sees the pod's ObjC through the
++// umbrella header, and ObjC sees Swift through the generated
++// `<Module>-Swift.h`. SwiftPM >= 6.4 can build such a target behind the
++// `experimentalMultiLang` tools-version feature (only with the swiftbuild
++// backend; SE-0541 makes it standard, with no flag, in tools-version 6.5), but
++// 6.4.x wires neither direction, so the manifest supplies both:
++//   - Swift -> ObjC: `-import-objc-header <rn-spm-swift/umbrella.h>`, a
++//     generated header importing Foundation/UIKit and the module's headers
++//     except the C++ ones (or the podspec's own SWIFT_OBJC_BRIDGING_HEADER).
++//   - ObjC -> Swift: `-I` the directory where Swift Build writes
++//     `<Module>-Swift.h` (`<scratch>/out/Intermediates.noindex/
++//     GeneratedModuleMaps-<platform>`). It depends on the ROOT build's scratch
++//     path, so it is read from RN_SPM_SWIFT_HEADERS_DIR when the manifest is
++//     evaluated: a persisted (patch-package) manifest holds no absolute path.
++//     Unset, it falls back to this package's own `.build`, which is only right
++//     when the package is built on its own.
++// Upstream candidate: replaces the former "mixed Swift/ObjC → skipped" gate.
++const MIXED_TOOLS_VERSION_LINE =
++  '// swift-tools-version: 6.4;(experimentalMultiLang)';
++// SE-0541 makes mixed-language targets standard in tools-version 6.5, where the
++// experimental flag is not read. A mixed target also gets this versioned
++// manifest, otherwise identical: SwiftPM 6.5+ picks it, older ones ignore it.
++const MIXED_MANIFEST_6_5 = 'Package@swift-6.5.swift';
++const MIXED_TOOLS_VERSION_LINE_6_5 = '// swift-tools-version: 6.5';
++const SWIFT_HEADERS_DIR_ENV = 'RN_SPM_SWIFT_HEADERS_DIR';
++const SWIFT_HEADERS_FALLBACK =
++  '.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos';
++// Generated support files for the mixed target (umbrella + -Swift.h shims).
++// Kept out of `include/` so they never become part of the public module.
++const MIXED_SUPPORT_DIR = 'rn-spm-swift';
++const MIXED_UMBRELLA_HEADER = 'umbrella.h';
++const isSwiftSource = (f /*: string */) /*: boolean */ => /\.swift$/i.test(f);
++const isClangSource = (f /*: string */) /*: boolean */ =>
++  /\.(mm?|c|cc|cpp|cxx)$/i.test(f);
++
++// Include roots that hold C++-only code: an unresolved `#include <react/...>`
++// (Fabric), `<folly/...>`, ... still marks the including header as C++.
++const CXX_INCLUDE_PREFIXES = [
++  'react/',
++  'folly/',
++  'jsi/',
++  'jsireact/',
++  'cxxreact/',
++  'ReactCommon/',
++  'yoga/',
++  'glog/',
++  'boost/',
++  'fmt/',
++  'double-conversion/',
++  'hermes/',
++];
++const INCLUDE_RE = /^\s*#\s*(?:import|include)\s*([<"])([^>"]+)[>"]/gm;
++const CXX_MARKER_RE =
++  /\bnamespace\s+[\w:]*\s*\{|\btemplate\s*<|\bstd::|\busing\s+namespace\b|^\s*class\s+\w+\s*[:{]|^\s*#\s*include\s*<[a-z_]+>/m;
++
++// Drops `#if(def) __cplusplus` branches (keeping their `#else`), which a
++// Swift / Objective-C reader never sees.
++function stripCplusplusBlocks(text /*: string */) /*: string */ {
++  const out /*: Array<string> */ = [];
++  // One entry per open #if: 'skip' while inside a __cplusplus branch.
++  const stack /*: Array<'keep' | 'skip' | 'else'> */ = [];
++  const skipping = () => stack.includes('skip');
++  for (const line of text.split('\n')) {
++    const t = line.trim();
++    if (/^#\s*if/.test(t)) {
++      stack.push(
++        /^#\s*if(?:def\s+__cplusplus\b|\s+defined\s*\(?\s*__cplusplus\b|\s+__cplusplus\b)/.test(
++          t,
++        )
++          ? 'skip'
++          : 'keep',
++      );
++      continue;
++    }
++    if (/^#\s*(?:else|elif)\b/.test(t) && stack.length > 0) {
++      if (stack[stack.length - 1] === 'skip') stack[stack.length - 1] = 'else';
++      continue;
++    }
++    if (/^#\s*endif\b/.test(t)) {
++      stack.pop();
++      continue;
++    }
++    if (!skipping()) out.push(line);
++  }
++  return out.join('\n');
++}
++
++// Whether a header (outside `#if __cplusplus` branches) imports the module's
++// own generated `<Module>-Swift.h`, under any of the module's names and with or
++// without a `<Module>/` prefix. Swift writes that header only after it has
++// compiled the module, so the Swift umbrella of the same module cannot hold it
++// (react-native-screens 4.26: `ios/bridging/Swift-Bridging.h` → "RNScreens-Swift.h
++// file not found").
++function importsOwnSwiftHeader(
++  depRoot /*: string */,
++  header /*: string */,
++  moduleNames /*: Array<string> */,
++) /*: boolean */ {
++  let text = '';
++  try {
++    text = stripCplusplusBlocks(fs.readFileSync(path.join(depRoot, header), 'utf8'));
++  } catch {
++    return false;
++  }
++  const names = moduleNames
++    .map(n => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
++    .join('|');
++  return new RegExp(
++    `^\\s*#\\s*(?:import|include)\\s*[<"](?:[^>"\\n]*/)?(?:${names})-Swift\\.h[>"]`,
++    'm',
++  ).test(text);
++}
++
++// The module headers Swift can import: CocoaPods' umbrella holds every public
++// header, but a Swift-side bridging header is parsed as Objective-C, so a
++// header that (transitively) pulls in C++ — typically a Fabric component view
++// including RCTViewComponentView.h → <react/renderer/...> — is left out. Header
++// lookups follow the module's own header dirs and `includeRoots` (the React
++// header trees, when known); an unresolved include counts as C++ only when it
++// names a C++-only root (CXX_INCLUDE_PREFIXES).
++function swiftImportableHeaders(
++  depRoot /*: string */,
++  headers /*: Array<string> */,
++  headerSearchPaths /*: Array<string> */,
++  includeRoots /*: Array<string> */,
++) /*: {safe: Array<string>, cxx: Array<string>} */ {
++  const localRoots = headerSearchPaths.map(p => path.join(depRoot, p));
++  const memo /*: Map<string, boolean> */ = new Map();
++  const isCxx = (abs /*: string */) /*: boolean */ => {
++    const known = memo.get(abs);
++    if (known != null) return known;
++    memo.set(abs, false); // cycle guard
++    let text = '';
++    try {
++      text = stripCplusplusBlocks(fs.readFileSync(abs, 'utf8'));
++    } catch {
++      return false;
++    }
++    let tainted = /\.(hh|hpp|hxx)$/i.test(abs) || CXX_MARKER_RE.test(text);
++    for (const m of tainted ? [] : text.matchAll(INCLUDE_RE)) {
++      const [, delim, inc] = m;
++      const candidates = [
++        ...(delim === '"' ? [path.join(path.dirname(abs), inc)] : []),
++        ...localRoots.map(r => path.join(r, inc)),
++        ...includeRoots.map(r => path.join(r, inc)),
++      ];
++      const found = candidates.find(c => fs.existsSync(c));
++      if (found != null ? isCxx(found) : CXX_INCLUDE_PREFIXES.some(p => inc.startsWith(p))) {
++        tainted = true;
++        break;
++      }
++    }
++    memo.set(abs, tainted);
++    return tainted;
++  };
++  const safe /*: Array<string> */ = [];
++  const cxx /*: Array<string> */ = [];
++  for (const h of headers) {
++    (isCxx(path.join(depRoot, h)) ? cxx : safe).push(h);
++  }
++  return {safe, cxx};
++}
++
++// CocoaPods' header map also resolves a bare `#import "RCTFoo.h"` against the
++// PUBLIC headers of the pod's dependencies — create-react-native-library's
++// Fabric template writes `#import "RCTFabricComponentsPlugins.h"`, a React
++// header. SwiftPM only exposes `<React/RCTFoo.h>`, so bare includes that match
++// no local header but a React one get a forwarding stub here.
++const REACT_BARE_HEADERS_DIR = 'rn-spm-react-headers';
++
++function bareReactHeaders(
++  depRoot /*: string */,
++  files /*: Array<string> */,
++  headerSearchPaths /*: Array<string> */,
++  includeRoots /*: Array<string> */,
++) /*: Array<string> */ {
++  if (includeRoots.length === 0) return [];
++  const localDirs = headerSearchPaths.map(p => path.join(depRoot, p));
++  const found /*: Set<string> */ = new Set();
++  for (const f of files) {
++    let text = '';
++    try {
++      text = fs.readFileSync(path.join(depRoot, f), 'utf8');
++    } catch {
++      continue;
++    }
++    for (const m of text.matchAll(INCLUDE_RE)) {
++      const [, delim, inc] = m;
++      if (delim !== '"' || inc.includes('/') || found.has(inc)) continue;
++      const local = [path.dirname(path.join(depRoot, f)), ...localDirs].some(d =>
++        fs.existsSync(path.join(d, inc)),
++      );
++      if (
++        !local &&
++        includeRoots.some(r => fs.existsSync(path.join(r, 'React', inc)))
++      ) {
++        found.add(inc);
++      }
++    }
++  }
++  return [...found].sort();
++}
++
++// A podspec's own Swift bridging header (pod_target_xcconfig
++// SWIFT_OBJC_BRIDGING_HEADER), dep-root relative. `undefined` when the podspec
++// sets none, null when it sets one we cannot resolve.
++function podspecBridgingHeader(
++  podspecText /*: string */,
++) /*: void | null | string */ {
++  const m = podspecText.match(
++    /SWIFT_OBJC_BRIDGING_HEADER['"]?\s*(?:=>|=|:)\s*['"]([^'"]+)['"]/,
++  );
++  if (m == null) {
++    return undefined;
++  }
++  const rel = m[1]
++    .replace(/\$[({]PODS_TARGET_SRCROOT[)}]\/?/g, '')
++    .replace(/^\.\//, '');
++  return /\$[({]|#\{/.test(rel) || path.posix.isAbsolute(rel) ? null : rel;
++}
++
++// An importer builds a clang-only target's module from the module map SwiftPM
++// generates, `umbrella "<publicHeadersPath>"`: every header under that
++// directory, whatever the target compiles. A header the podspec leaves out of
++// the target (exclude_files, or a source glob that misses it) may not build
++// there: react-native-screens 4.30's ios/gamma, excluded unless
++// RNS_GAMMA_ENABLED, failed with "'RNSViewFrameChangeDelegate.h' file not
++// found". Nor can a header that imports the module's own -Swift.h, which a
++// clang-only target never has (fix 14). For those the scaffold writes the same
++// module map into publicHeadersPath, which SwiftPM then uses as is, with an
++// `exclude header` for each. Header membership stays SwiftPM's: an importer's
++// `#import "X.h"` of a kept header still resolves to the module.
++const CLANG_MODULE_MAP = 'module.modulemap';
++// Every file the scaffolder generates starts with this (include/ stubs too).
++const SCAFFOLDER_BANNER = 'AUTO-SCAFFOLDED by react-native spm scaffold';
++
++// The headers under publicHeadersPath that a clang-only module must leave out,
++// relative to it and sorted, or null when SwiftPM's own module map does not
++// take in the whole directory (an umbrella header named after the module) or
++// the library ships a module map there.
++function clangModuleExcludes(
++  depRoot /*: string */,
++  publicHeadersPath /*: string */,
++  keptHeaders /*: Array<string> */,
++  moduleNames /*: Array<string> */,
++) /*: ?Array<string> */ {
++  const dir = path.join(depRoot, publicHeadersPath);
++  const own = path.join(dir, CLANG_MODULE_MAP);
++  if (
++    fs.existsSync(own) &&
++    !fs.readFileSync(own, 'utf8').includes(SCAFFOLDER_MARKER)
++  ) {
++    return null;
++  }
++  if (
++    moduleNames.some(
++      n =>
++        fs.existsSync(path.join(dir, `${n}.h`)) ||
++        fs.existsSync(path.join(dir, n, `${n}.h`)),
++    )
++  ) {
++    return null;
++  }
++  const kept = new Set(keptHeaders);
++  const excludes /*: Array<string> */ = [];
++  const walk = (rel /*: string */) => {
++    let entries;
++    try {
++      entries = fs.readdirSync(path.join(depRoot, rel), {withFileTypes: true});
++    } catch {
++      return;
++    }
++    for (const e of entries) {
++      const f = path.posix.join(rel, e.name);
++      if (e.isDirectory()) {
++        if (e.name !== 'node_modules') walk(f);
++      } else if (e.isFile() && /\.(h|hh|hpp|hxx)$/i.test(e.name)) {
++        const leftOut = kept.has(f)
++          ? importsOwnSwiftHeader(depRoot, f, moduleNames)
++          : !fs
++              .readFileSync(path.join(depRoot, f), 'utf8')
++              .includes(SCAFFOLDER_BANNER);
++        if (leftOut) excludes.push(path.posix.relative(publicHeadersPath, f));
++      }
++    }
++  };
++  walk(publicHeadersPath.replace(/\/$/, ''));
++  return excludes.sort();
++}
++
+ // Names of deps the scaffolder always refuses to touch — `react-native`
+ // itself is handled by the xcframework subpackage, never as an autolinked
+ // target.
+@@ -167,10 +506,17 @@ const REACT_CORE_DEP_PREFIXES = [
+   'DoubleConversion',
+   'Yoga',
+   'hermes-engine',
++  'ReactAppDependencyProvider',
+ ];
+ 
++// Core pods whose name has no separator to match by prefix (`React-` etc.).
++const REACT_CORE_DEP_EXACT = ['React'];
++
+ function isReactCoreDep(name /*: string */) /*: boolean */ {
+-  return REACT_CORE_DEP_PREFIXES.some(p => name.startsWith(p));
++  return (
++    REACT_CORE_DEP_EXACT.includes(name) ||
++    REACT_CORE_DEP_PREFIXES.some(p => name.startsWith(p))
++  );
+ }
+ 
+ // True when the dep ships a `codegenConfig` in package.json — RN's standard
+@@ -248,6 +594,10 @@ function translatePodspecToSpmTarget(
+   // npm name → resolved Swift name for every autolinked dep, so a sibling
+   // reference honors that sibling's `spm.name` instead of re-deriving it.
+   swiftNameByNpm /*: Map<string, string> */ = new Map(),
++  // Directories that resolve the dependencies' `<React/X.h>`-style includes
++  // (the React header trees), used to keep C++ headers out of the Swift
++  // umbrella of a mixed-language target. Empty: unknown.
++  includeRoots /*: Array<string> */ = [],
+ ) /*: SpmScaffoldSpec */ {
+   const warnings = [...model.warnings];
+ 
+@@ -329,6 +679,8 @@ function translatePodspecToSpmTarget(
+   // existing spm-deps mechanism. Unknown names are dropped with a warning.
+   let coreReactNative = false;
+   const siblingNames /*: Array<string> */ = [];
++  const externalPackages /*: Array<{pod: string, url: string, exact: string, product: string, package: string}> */ = [];
++  const unmappedPods /*: Array<string> */ = [];
+   const selfPodspecName = model.name;
+   for (const depName of model.dependencies) {
+     // Cross-subspec refs like "react-native-safe-area-context/common" are a
+@@ -355,13 +707,27 @@ function translatePodspecToSpmTarget(
+       if (!siblingNames.includes(podSibling)) {
+         siblingNames.push(podSibling);
+       }
+-    } else {
+-      // Could be a non-RN dep ("MMKV", "AFNetworking"). The scaffolder
+-      // doesn't know how to wire those — surface a warning so user can
+-      // edit the generated Package.swift.
++    } else if (isExpoModuleDep(depName)) {
+       warnings.push(
+         `Unknown dependency "${depName}" — not wired into the scaffolded Package.swift. Edit manually if needed.`,
+       );
++    } else {
++      // A CocoaPods pod ("SwiftUIIntrospect", "MMKV"): wire it to its SwiftPM
++      // package when the map knows one, else say loudly that the build may fail.
++      const pod = depName.split('/')[0];
++      const known = Object.hasOwn(KNOWN_POD_SPM_PACKAGES, pod)
++        ? KNOWN_POD_SPM_PACKAGES[pod]
++        : null;
++      if (known != null) {
++        if (!externalPackages.some(e => e.pod === pod)) {
++          externalPackages.push({pod, ...known, package: spmPackageIdentity(known.url)});
++        }
++      } else if (!unmappedPods.includes(pod)) {
++        unmappedPods.push(pod);
++        warnings.push(
++          `Dependency "${pod}" is a CocoaPods pod with no known SwiftPM equivalent; the scaffolded package may fail to build — add it to the pod→SwiftPM map in scaffold-package-swift.js`,
++        );
++      }
+     }
+   }
+ 
+@@ -427,15 +793,55 @@ function translatePodspecToSpmTarget(
+     f =>
+       f !== SCAFFOLD_PREFIX_HEADER &&
+       f !== 'Package.swift' &&
+-      !f.startsWith('include/'),
++      !/^Package@swift-[\d.]+\.swift$/.test(f) &&
++      !f.startsWith('include/') &&
++      !f.startsWith(`${MIXED_SUPPORT_DIR}/`) &&
++      !f.startsWith(`${REACT_BARE_HEADERS_DIR}/`),
+   );
+ 
++  // Metal shaders: SwiftPM compiles every `.metal` file under the target path
++  // (listed in `sources:` or not: it processes them as resources) in a
++  // `CompileMetalFile` step that needs the `metal` compiler, which only ships
++  // with Xcode (macOS). On any other host the build dies with `unable to spawn
++  // process 'metal'`, so drop them from sources/resources and `exclude:` them
++  // from the target there (or with RN_SPM_SKIP_METAL=1).
++  let resources = model.resources;
++  const excludePaths /*: Array<string> */ = [];
++  if (process.platform !== 'darwin' || process.env.RN_SPM_SKIP_METAL === '1') {
++    const isMetal = (f /*: string */) => /\.metal$/i.test(f);
++    let onDisk /*: Array<string> */ = [];
++    try {
++      onDisk = expandSpmSourceGlobs(dep.root, ['**/*.metal']);
++    } catch {
++      // best-effort: sources/resources below are still filtered
++    }
++    const skipped = Array.from(
++      new Set([
++        ...onDisk,
++        ...expandedSources.filter(isMetal),
++        ...resources.filter(isMetal),
++      ]),
++    ).sort();
++    if (skipped.length > 0) {
++      expandedSources = expandedSources.filter(f => !isMetal(f));
++      resources = resources.filter(f => !isMetal(f));
++      excludePaths.push(...skipped);
++      const names = Array.from(
++        new Set(skipped.map(f => path.posix.basename(f))),
++      );
++      warnings.push(
++        `Skipped ${names.length} Metal shader(s) (${names.join(', ')}) — the Metal compiler is only available on macOS; features relying on them are unavailable in this build.`,
++      );
++    }
++  }
++
+   // Header-map emulation: CocoaPods builds a header map (USE_HEADERMAP=YES by
+   // default) so a source can `#import "Foo.h"` by bare name regardless of which
+   // subdirectory Foo.h lives in. SPM has no header map, so add every directory
+   // that contains a header to the search path. Covers libs (e.g. svg) that
+   // spread flat-named headers across many subdirs.
+-  const headerFiles = expandedSources.filter(f => /\.(h|hh|hpp)$/i.test(f));
++  const isHeader = (f /*: string */) => /\.(h|hh|hpp)$/i.test(f);
++  const headerFiles = expandedSources.filter(isHeader);
+   try {
+     for (const f of expandSpmSourceGlobs(dep.root, model.publicHeaderFiles)) {
+       if (/\.(h|hh|hpp)$/i.test(f)) headerFiles.push(f);
+@@ -497,6 +903,40 @@ function translatePodspecToSpmTarget(
+     }
+   }
+   let namespacedShimHeaders /*: Array<string> */ = [];
++  // SwiftPM rejects a publicHeadersPath that holds the umbrella header
++  // `<SwiftName>.h` next to subdirectories ("invalid header layout: umbrella
++  // header found ... but directories exist next to it"). Fall back to the
++  // generated include/<SwiftName>/ shim, fed with every header among the
++  // sources; the header search paths above keep bare `#import "X.h"` working.
++  if (publicHeadersPath != null) {
++    const phDir = path.join(dep.root, publicHeadersPath);
++    const umbrellaNextToSubdirs =
++      fs.existsSync(path.join(phDir, `${swiftName}.h`)) &&
++      fs.readdirSync(phDir, {withFileTypes: true}).some(e => e.isDirectory());
++    if (umbrellaNextToSubdirs) {
++      // On a basename collision keep the shallowest path (fewest '/'), then
++      // the lexicographically first, so the choice is deterministic.
++      const byDepth = [...headerFiles].sort(
++        (a, b) =>
++          a.split('/').length - b.split('/').length || (a < b ? -1 : a > b ? 1 : 0),
++      );
++      const seen /*: Map<string, string> */ = new Map();
++      for (const h of byDepth) {
++        const base = path.posix.basename(h);
++        if (seen.has(base)) {
++          if (seen.get(base) !== h) {
++            warnings.push(
++              `Header basename collision in include/${swiftName}/: keeping '${seen.get(base) ?? ''}', skipping '${h}'.`,
++            );
++          }
++          continue;
++        }
++        seen.set(base, h);
++      }
++      namespacedShimHeaders = [...seen.values()];
++      publicHeadersPath = 'include';
++    }
++  }
+   if (publicHeadersPath == null) {
+     // Root-level podspecs (`s.source_files = "*.{h,m,mm}"`) keep their
+     // headers in the package root. CocoaPods exposes them to dependents as
+@@ -518,6 +958,101 @@ function translatePodspecToSpmTarget(
+     );
+   }
+ 
++  // CocoaPods `header_dir` exposes a spec's headers, flattened, as
++  // `<header_dir/X.h>` whatever their subdirectory. Mirror each as a stub in
++  // include/<header_dir>/ and put include/ on the header search path.
++  const headerDirShims /*: Array<{dir: string, headers: Array<string>, names: Array<string>}> */ = [];
++  const headerDirsSeen /*: Set<string> */ = new Set();
++  for (const scope of model.headerDirScopes ?? []) {
++    // The directory name is written under include/: refuse anything that could
++    // leave it (`..`, an absolute path).
++    if (
++      path.posix.isAbsolute(scope.headerDir) ||
++      path.win32.isAbsolute(scope.headerDir) ||
++      scope.headerDir.split(/[\\/]/).includes('..')
++    ) {
++      warnings.push(
++        `Ignoring header_dir '${scope.headerDir}': it must be a relative path without '..'; no <header_dir/...> stubs emitted for it.`,
++      );
++      continue;
++    }
++    if (headerDirsSeen.has(scope.headerDir)) {
++      warnings.push(
++        `Two header_dir scopes share include/${scope.headerDir}/: their stubs land in the same directory and a header with the same name from the later scope overwrites the earlier one.`,
++      );
++    }
++    headerDirsSeen.add(scope.headerDir);
++    if (scope.headerDir === swiftName) {
++      warnings.push(
++        `header_dir '${scope.headerDir}' equals the target name: its stubs share include/${swiftName}/ with the umbrella-header shims.`,
++      );
++    }
++    let files /*: Array<string> */ = [];
++    try {
++      files = expandSpmSourceGlobs(dep.root, scope.sourceFiles);
++      if (model.excludeFiles.length > 0) {
++        // $FlowFixMe[untyped-import] micromatch has no types
++        const isExcluded = require('micromatch').matcher(model.excludeFiles);
++        files = files.filter(f => !isExcluded(f));
++      }
++    } catch (e) {
++      warnings.push(
++        `header_dir '${scope.headerDir}': glob expansion failed (${e.message}); no <${scope.headerDir}/...> headers emitted.`,
++      );
++      continue;
++    }
++    // A header under the scope's `header_mappings_dir` keeps its path below
++    // that dir (`<header_dir>/<path>`), as CocoaPods maps it; any other is
++    // flattened to its basename. The deepest mappings dir that holds it wins (a
++    // subspec's own over the inherited one). One that is absolute or contains
++    // '..' is ignored.
++    const mappingsDirs = (scope.headerMappingsDirs ?? [])
++      .map(d => d.replace(/^\.\//, '').replace(/\/+$/, ''))
++      .filter(
++        d =>
++          d.length > 0 &&
++          d !== '.' &&
++          !path.posix.isAbsolute(d) &&
++          !d.split('/').includes('..'),
++      )
++      .sort((a, b) => b.length - a.length);
++    const stubName = (h /*: string */) /*: string */ => {
++      const mapped = mappingsDirs.find(d => h.startsWith(`${d}/`));
++      return mapped != null ? h.slice(mapped.length + 1) : path.posix.basename(h);
++    };
++    const byDepth = files
++      .filter(f => isHeader(f) && !f.startsWith('include/'))
++      .sort(
++        (a, b) =>
++          a.split('/').length - b.split('/').length || (a < b ? -1 : a > b ? 1 : 0),
++      );
++    const seen /*: Map<string, string> */ = new Map();
++    for (const h of byDepth) {
++      const name = stubName(h);
++      if (seen.has(name)) {
++        warnings.push(
++          `Header name collision in include/${scope.headerDir}/: keeping '${seen.get(name) ?? ''}', skipping '${h}'.`,
++        );
++        continue;
++      }
++      seen.set(name, h);
++    }
++    if (seen.size > 0) {
++      headerDirShims.push({
++        dir: scope.headerDir,
++        headers: [...seen.values()],
++        names: [...seen.keys()],
++      });
++    }
++  }
++  if (
++    headerDirShims.length > 0 &&
++    publicHeadersPath !== 'include' &&
++    !headerSearchPaths.includes('include')
++  ) {
++    headerSearchPaths.push('include');
++  }
++
+   const siblingSwiftNames /*: {[npmName: string]: string} */ = {};
+   for (const npmName of siblingNames) {
+     const resolved = swiftNameByNpm.get(npmName);
+@@ -526,21 +1061,181 @@ function translatePodspecToSpmTarget(
+     }
+   }
+ 
++  // New Architecture macro. CocoaPods defines it for every pod that calls
++  // `install_modules_dependencies` (scripts/cocoapods/new_architecture.rb,
++  // `computeFlags`: `-DRCT_NEW_ARCH_ENABLED=1`), and expo's autolinking emits
++  // the same `.define("RCT_NEW_ARCH_ENABLED", to: "1")` for its own targets;
++  // nothing under scripts/spm does, so a scaffolded RN library would compile
++  // its Paper code paths (and Fabric views would be missing at runtime). Added
++  // only for React Native libraries (`coreReactNative`: React-* dependency,
++  // `codegenConfig` or `install_modules_dependencies`) and only when the
++  // podspec did not set it already (globally; a config-scoped define does
++  // not count). The Folly macros are NOT added, and the podspec's own
++  // `-DFOLLY_*` are dropped by read-podspec: folly/portability/Config.h
++  // includes the prebuilt headers' folly-config.h, which already defines
++  // FOLLY_MOBILE/FOLLY_USE_LIBCPP/... (defining FOLLY_NO_CONFIG would turn
++  // that include off).
++  const preprocessorDefines = [...model.preprocessorDefines];
++  if (
++    coreReactNative &&
++    // A Debug-only define must not suppress the global one.
++    !preprocessorDefines.some(
++      d => d.name === 'RCT_NEW_ARCH_ENABLED' && d.config == null,
++    )
++  ) {
++    preprocessorDefines.push({
++      name: 'RCT_NEW_ARCH_ENABLED',
++      value: '1',
++      config: null,
++    });
++  }
++
++  const reactBareHeaders = coreReactNative
++    ? bareReactHeaders(
++        dep.root,
++        expandedSources.filter(f => isClangSource(f) || isHeader(f)),
++        headerSearchPaths,
++        includeRoots,
++      )
++    : [];
++  if (
++    reactBareHeaders.length > 0 &&
++    !headerSearchPaths.includes(REACT_BARE_HEADERS_DIR)
++  ) {
++    headerSearchPaths.push(REACT_BARE_HEADERS_DIR);
++  }
++
++  // Mixed Swift + C-family sources → one mixed-language target (see
++  // MIXED_TOOLS_VERSION_LINE). Swift Build names the generated header after
++  // the TARGET (`react-native-foo-Swift.h`), not after the c99 module name;
++  // sources written for CocoaPods spell it after the pod's module
++  // (module_name, else header_dir, else the pod name, c99), with or without a
++  // `<Module>/` prefix, so forwarding shims cover those.
++  let mixedLanguage = null;
++  if (
++    expandedSources.some(isSwiftSource) &&
++    expandedSources.some(isClangSource)
++  ) {
++    const swiftHeader = `${swiftName}-Swift.h`;
++    const podModule = toC99Name(
++      model.moduleName ?? model.headerDir ?? model.name ?? swiftName,
++    );
++    let podspecText = '';
++    try {
++      const podspecPath =
++        dep.platforms.ios?.podspecPath ?? findPodspecs(dep.root)[0];
++      if (podspecPath != null) {
++        podspecText = fs.readFileSync(podspecPath, 'utf8');
++      }
++    } catch {
++      // No podspec text: no declared bridging header.
++    }
++    const declared = podspecBridgingHeader(podspecText);
++    if (declared === null) {
++      warnings.push(
++        `The podspec sets SWIFT_OBJC_BRIDGING_HEADER to a value that cannot be resolved; the generated ${MIXED_SUPPORT_DIR}/${MIXED_UMBRELLA_HEADER} is used instead.`,
++      );
++    }
++    let umbrellaHeaders /*: Array<string> */ = [];
++    if (typeof declared !== 'string') {
++      const {safe, cxx} = swiftImportableHeaders(
++        dep.root,
++        Array.from(new Set(headerFiles))
++          .filter(
++            h =>
++              /\.h$/i.test(h) &&
++              !h.startsWith('include/') &&
++              !h.startsWith(`${MIXED_SUPPORT_DIR}/`),
++          )
++          .sort(),
++        headerSearchPaths,
++        includeRoots,
++      );
++      const moduleNames = Array.from(new Set([swiftName, podModule]));
++      const importsSwift = safe.filter(h =>
++        importsOwnSwiftHeader(dep.root, h, moduleNames),
++      );
++      umbrellaHeaders = safe.filter(h => !importsSwift.includes(h));
++      if (importsSwift.length > 0) {
++        warnings.push(
++          `Left ${importsSwift.length} header(s) that import the module's own ${swiftHeader} out of the Swift umbrella (${MIXED_SUPPORT_DIR}/${MIXED_UMBRELLA_HEADER}): ${importsSwift.join(', ')}. Swift writes that header after compiling the module.`,
++        );
++      }
++      if (cxx.length > 0) {
++        warnings.push(
++          `Left ${cxx.length} C++ header(s) out of the Swift umbrella (${MIXED_SUPPORT_DIR}/${MIXED_UMBRELLA_HEADER}): ${cxx.join(', ')}. Swift cannot import C++; Objective-C(++) sources still see them.`,
++        );
++      }
++    }
++    if (process.env[SWIFT_HEADERS_DIR_ENV] == null) {
++      warnings.push(
++        `Mixed Swift + Objective-C target: set ${SWIFT_HEADERS_DIR_ENV} to the build's GeneratedModuleMaps-<platform> directory when building, so Objective-C finds ${swiftHeader}. Unset, the manifest falls back to this package's own ${SWIFT_HEADERS_FALLBACK}.`,
++      );
++    }
++    mixedLanguage = {
++      swiftHeader,
++      podModule,
++      bridgingHeader:
++        typeof declared === 'string'
++          ? declared
++          : `${MIXED_SUPPORT_DIR}/${MIXED_UMBRELLA_HEADER}`,
++      umbrellaHeaders: typeof declared === 'string' ? null : umbrellaHeaders,
++    };
++    if (!headerSearchPaths.includes(MIXED_SUPPORT_DIR)) {
++      headerSearchPaths.push(MIXED_SUPPORT_DIR);
++    }
++  }
++
++  // A clang-only target's module (see CLANG_MODULE_MAP).
++  let clangModuleMap = null;
++  if (
++    mixedLanguage == null &&
++    publicHeadersPath != null &&
++    expandedSources.some(isClangSource)
++  ) {
++    const moduleName = toC99Name(swiftName);
++    const podModule = toC99Name(
++      model.moduleName ?? model.headerDir ?? model.name ?? swiftName,
++    );
++    const excludes = clangModuleExcludes(
++      dep.root,
++      publicHeadersPath,
++      Array.from(new Set(headerFiles)),
++      Array.from(new Set([swiftName, moduleName, podModule])),
++    );
++    if (excludes != null && excludes.length > 0) {
++      clangModuleMap = {moduleName, excludes};
++      const shown = excludes
++        .slice(0, 5)
++        .map(h => `${publicHeadersPath}/${h}`);
++      const more = excludes.length - shown.length;
++      warnings.push(
++        `Left ${excludes.length} header(s) under ${publicHeadersPath}/ that the target does not compile out of its module (${publicHeadersPath}/${CLANG_MODULE_MAP}): ${shown.join(', ')}${more > 0 ? `, and ${more} more` : ''}.`,
++      );
++    }
++  }
++
+   return {
+     swiftName,
++    mixedLanguage,
++    clangModuleMap,
++    reactBareHeaders,
+     sources: expandedSources,
+     headerSearchPaths,
+-    preprocessorDefines: model.preprocessorDefines,
++    preprocessorDefines,
+     needsObjCPrefix,
+     coreReactNative,
+     siblingNames,
+     siblingSwiftNames,
++    externalPackages,
+     extraFrameworks: model.frameworks,
+     weakFrameworks: model.weakFrameworks,
+     compilerFlags: model.compilerFlags,
+     publicHeadersPath,
+     namespacedShimHeaders,
+-    resources: model.resources,
++    headerDirShims,
++    resources,
++    excludePaths,
+     warnings,
+   };
+ }
+@@ -629,10 +1324,25 @@ function emitScaffoldedPackageSwift(
+   const prefixFlag = spec.needsObjCPrefix
+     ? `.unsafeFlags(["-include", "${SCAFFOLD_PREFIX_HEADER}"])`
+     : '';
+-  const cSettings = settingsEntries([prefixFlag].filter(e => e.length > 0));
++  // Mixed-language target: ObjC(++) finds `<Module>-Swift.h` in the Swift
++  // Build headers dir (see MIXED_TOOLS_VERSION_LINE).
++  const mixed = spec.mixedLanguage ?? null;
++  const swiftHeadersFlag =
++    mixed != null ? '.unsafeFlags(["-I", rnSpmSwiftHeadersDir])' : '';
++  // SwiftPM 6.4's swiftbuild backend does not apply the package's
++  // `cxxLanguageStandard` to a mixed-language target (its ObjC++/C++ files
++  // compile with the clang default and fail on React's C++20 headers), so the
++  // standard is passed explicitly.
++  const mixedCxxStdFlag =
++    mixed != null ? '.unsafeFlags(["-std=c++20"])' : '';
++  const cSettings = settingsEntries(
++    [prefixFlag, swiftHeadersFlag].filter(e => e.length > 0),
++  );
+   const cxxSettings = settingsEntries(
+     [
+       prefixFlag,
++      swiftHeadersFlag,
++      mixedCxxStdFlag,
+       ...(customFlagsCxx.length > 0
+         ? [`.unsafeFlags([${customFlagsCxx.join(', ')}])`]
+         : []),
+@@ -723,6 +1433,11 @@ function emitScaffoldedPackageSwift(
+       `.product(name: "${swiftSibling}", package: "${swiftSibling}")`,
+     );
+   }
++  // CocoaPods pods with a known SwiftPM package (KNOWN_POD_SPM_PACKAGES).
++  for (const ext of spec.externalPackages ?? []) {
++    packageDeps.push(`.package(url: "${ext.url}", exact: "${ext.exact}")`);
++    targetDeps.push(`.product(name: "${ext.product}", package: "${ext.package}")`);
++  }
+ 
+   // sources: emit only when the podspec declared them. If empty (regex-fallback
+   // podspec), no `sources:`/`exclude:` is emitted and SPM auto-scans the target
+@@ -740,6 +1455,11 @@ function emitScaffoldedPackageSwift(
+       ? `\n            publicHeadersPath: "${spec.publicHeadersPath}",`
+       : '';
+ 
++  const excludeLine =
++    (spec.excludePaths ?? []).length > 0
++      ? `\n            exclude: [${(spec.excludePaths ?? []).map(e => `"${e}"`).join(', ')}],`
++      : '';
++
+   const resourcesLine =
+     spec.resources.length > 0
+       ? `\n            resources: [${spec.resources.map(r => `.copy("${r}")`).join(', ')}],`
+@@ -755,9 +1475,42 @@ function emitScaffoldedPackageSwift(
+       ? `\n            dependencies: [${targetDeps.join(', ')}],`
+       : '';
+ 
+-  return `// swift-tools-version: 6.0
++  const toolsVersionLine =
++    mixed != null ? MIXED_TOOLS_VERSION_LINE : '// swift-tools-version: 6.0';
++  const mixedLets =
++    mixed != null
++      ? `
++// Mixed Swift + Objective-C target (one SwiftPM mixed-language target). Objective-C
++// finds ${mixed.swiftHeader} in the directory Swift Build writes it to,
++// which belongs to the root build: the build passes it in
++// ${SWIFT_HEADERS_DIR_ENV}. Swift sees the module's Objective-C through
++// ${mixed.bridgingHeader}.
++let rnSpmSwiftHeadersDir = Context.environment["${SWIFT_HEADERS_DIR_ENV}"]
++    ?? (Context.packageDirectory + "/${SWIFT_HEADERS_FALLBACK}")
++let rnSpmBridgingHeader = Context.packageDirectory + "/${mixed.bridgingHeader}"
++`
++      : '';
++  const swiftSettingsLine =
++    mixed != null
++      ? `\n            swiftSettings: [.unsafeFlags(["-import-objc-header", rnSpmBridgingHeader])],`
++      : '';
++  const importerPaths = spec.headerSearchPaths.filter(
++    p => !path.posix.isAbsolute(p) && !p.split('/').includes('..'),
++  );
++  // SwiftPM's default publicHeadersPath is `include`.
++  const publicHeaders = spec.publicHeadersPath ?? 'include';
++  const pureSwift =
++    spec.sources.length > 0 && spec.sources.every(isSwiftSource);
++  const importerPathsLine =
++    mixed != null ||
++    (!pureSwift && importerPaths.some(p => p !== publicHeaders))
++      ? `\n${IMPORTER_PATHS_MARKER}${JSON.stringify(importerPaths)}`
++      : '';
++
++  return `${toolsVersionLine}
+ ${SCAFFOLDER_MARKER}
+-// AUTO-SCAFFOLDED-VERSION: ${SCAFFOLDER_VERSION}${slotComment}
++// AUTO-SCAFFOLDED-VERSION: ${SCAFFOLDER_VERSION}
++// rn-xtool-scaffold-revision: ${RN_XTOOL_SCAFFOLD_REVISION}${importerPathsLine}${slotComment}
+ // Edit the contents below if needed and re-run \`npx patch-package <dep-name>\`
+ // to persist across \`npm install\`. To regenerate from the podspec, remove
+ // this file (or just this marker) and re-run \`npx react-native spm scaffold\`.
+@@ -768,7 +1521,7 @@ ${SCAFFOLDER_MARKER}
+ // (dropping the file) anyway.
+ 
+ import PackageDescription
+-
++${mixedLets}
+ let package = Package(
+     name: "${spec.swiftName}",
+     platforms: [.iOS("${iosDeploymentTarget}")],
+@@ -778,9 +1531,9 @@ let package = Package(
+ ${packageDepsBlock}    targets: [
+         .target(
+             name: "${spec.swiftName}",${targetDepsLine}
+-            path: ".",${sourcesLine}${publicHeadersLine}${resourcesLine}
++            path: ".",${excludeLine}${sourcesLine}${resourcesLine}${publicHeadersLine}
+             cSettings: ${cSettings},
+-            cxxSettings: ${cxxSettings},
++            cxxSettings: ${cxxSettings},${swiftSettingsLine}
+             linkerSettings: [${linkerEntries.join(', ')}]
+         ),
+     ],
+@@ -844,6 +1597,65 @@ function reportSwiftName(
+   }
+ }
+ 
++// The local React header trees (build/xcframeworks): the React module's
++// headers and the device slice of each headers xcframework.
++function reactIncludeRoots(appRoot /*: string */) /*: Array<string> */ {
++  const xcfw = path.join(appRoot, 'build', 'xcframeworks');
++  const roots = [path.join(xcfw, 'ReactHeadersTarget', 'include')];
++  try {
++    for (const name of fs.readdirSync(xcfw)) {
++      if (name.endsWith('.xcframework')) {
++        roots.push(path.join(xcfw, name, 'ios-arm64', 'Headers'));
++      }
++    }
++  } catch {
++    // No local xcframeworks (remote mode or not set up yet).
++  }
++  return roots.filter(r => fs.existsSync(r));
++}
++
++/**
++ * Writes the mixed-language target's support files under MIXED_SUPPORT_DIR:
++ * the Swift umbrella (unless the podspec brings its own bridging header) and
++ * the `<Module>-Swift.h` spellings CocoaPods sources use. The shims import the
++ * real header with angle brackets so the lookup skips their own directory.
++ */
++function writeMixedLanguageSupport(
++  depRoot /*: string */,
++  mixed /*: {swiftHeader: string, podModule: string, bridgingHeader: string, umbrellaHeaders: ?Array<string>} */,
++) /*: void */ {
++  const dir = path.join(depRoot, MIXED_SUPPORT_DIR);
++  fs.rmSync(dir, {recursive: true, force: true});
++  fs.mkdirSync(path.join(dir, mixed.podModule), {recursive: true});
++  const banner =
++    '// AUTO-SCAFFOLDED by react-native spm scaffold (mixed Swift + Objective-C target).\n';
++  if (mixed.umbrellaHeaders != null) {
++    fs.writeFileSync(
++      path.join(dir, MIXED_UMBRELLA_HEADER),
++      banner +
++        '// Swift bridging header: what the CocoaPods umbrella gives Swift — Foundation,\n' +
++        '// UIKit and the module headers (minus the C++ ones Swift cannot import).\n' +
++        '#import <Foundation/Foundation.h>\n' +
++        '#if __has_include(<UIKit/UIKit.h>)\n#import <UIKit/UIKit.h>\n#endif\n' +
++        mixed.umbrellaHeaders.map(h => `#import "../${h}"\n`).join(''),
++      'utf8',
++    );
++  }
++  const forward = `#import <${mixed.swiftHeader}>\n`;
++  fs.writeFileSync(
++    path.join(dir, mixed.podModule, `${mixed.podModule}-Swift.h`),
++    banner + forward,
++    'utf8',
++  );
++  if (`${mixed.podModule}-Swift.h` !== mixed.swiftHeader) {
++    fs.writeFileSync(
++      path.join(dir, `${mixed.podModule}-Swift.h`),
++      banner + forward,
++      'utf8',
++    );
++  }
++}
++
+ // ---------------------------------------------------------------------------
+ // Per-dep orchestrator
+ // ---------------------------------------------------------------------------
+@@ -953,7 +1765,11 @@ function scaffoldPackageSwiftForDep(
+       // regenerating existing files; --force is not needed here.
+       const vMatch = existing.match(SCAFFOLDER_VERSION_LINE_RE);
+       const existingVersion = vMatch != null ? parseInt(vMatch[1], 10) : 1;
+-      const versionStale = existingVersion < SCAFFOLDER_VERSION;
++      const rMatch = existing.match(RN_XTOOL_SCAFFOLD_REVISION_RE);
++      const existingRevision = rMatch != null ? parseInt(rMatch[1], 10) : 0;
++      const revisionStale = existingRevision < RN_XTOOL_SCAFFOLD_REVISION;
++      const versionStale =
++        existingVersion < SCAFFOLDER_VERSION || revisionStale;
+       if (!ctx.force && !versionStale) {
+         // Slot label change is the other auto-regen trigger — bumps SPM's
+         // manifest hash so the cache-slot path gets re-resolved.
+@@ -970,7 +1786,7 @@ function scaffoldPackageSwiftForDep(
+       }
+       if (versionStale) {
+         log(
+-          `Re-scaffolding ${depName} (format v${existingVersion} → v${SCAFFOLDER_VERSION})`,
++          `Re-scaffolding ${depName} (format v${existingVersion}/r${existingRevision} → v${SCAFFOLDER_VERSION}/r${RN_XTOOL_SCAFFOLD_REVISION})`,
+         );
+       }
+       // Fall through: regenerate (force, slot changed, or version bumped).
+@@ -1014,33 +1830,13 @@ function scaffoldPackageSwiftForDep(
+     dep,
+     ctx.podToNpm ?? new Map(),
+     ctx.swiftNameByNpm ?? new Map(),
++    reactIncludeRoots(ctx.appRoot),
+   );
+ 
+-  // Mixed-language fail-closed: SPM can't compile Swift + C-family in one
+-  // target. Don't emit a manifest that would fail with a cryptic "mixed
+-  // language source files" resolve error — skip with a clear reason (and remove
+-  // any stale scaffolded manifest so the autolinker reports it distinctly and
+-  // points the user at opting it out / a binary distribution).
+-  const hasSwift = spec.sources.some(f => /\.swift$/i.test(f));
+-  const hasClang = spec.sources.some(f => /\.(mm?|c|cc|cpp|cxx)$/i.test(f));
+-  if (hasSwift && hasClang) {
+-    if (!ctx.dryRun && fs.existsSync(pkgSwiftPath)) {
+-      const existing = fs.readFileSync(pkgSwiftPath, 'utf8');
+-      if (existing.includes(SCAFFOLDER_MARKER)) {
+-        fs.rmSync(pkgSwiftPath, {force: true});
+-      }
+-    }
+-    return {
+-      depName,
+-      status: 'skipped-mixed-language',
+-      reason:
+-        'has mixed Swift + Objective-C/C++ sources, which SPM cannot compile ' +
+-        'in one target (and the bidirectional ObjC↔Swift interop typical of ' +
+-        'such libs cannot be split without a circular dependency). Opt it out ' +
+-        'via react-native.config.js (platforms.ios = null) or use a prebuilt ' +
+-        'xcframework.',
+-    };
+-  }
++  // Mixed Swift + C-family sources used to be skipped here ("SPM cannot
++  // compile them in one target"). SwiftPM >= 6.4 can, so translate emits a
++  // mixed-language target instead (spec.mixedLanguage, see
++  // MIXED_TOOLS_VERSION_LINE) and the writer below adds its support files.
+ 
+   // Relative paths into the app, embedded in the scaffolded Package.swift.
+   //
+@@ -1083,6 +1879,19 @@ function scaffoldPackageSwiftForDep(
+ 
+   if (!ctx.dryRun) {
+     fs.writeFileSync(pkgSwiftPath, content, 'utf8');
++    const manifest65Path = path.join(dep.root, MIXED_MANIFEST_6_5);
++    if (spec.mixedLanguage != null) {
++      fs.writeFileSync(
++        manifest65Path,
++        content.replace(MIXED_TOOLS_VERSION_LINE, MIXED_TOOLS_VERSION_LINE_6_5),
++        'utf8',
++      );
++    } else if (
++      fs.existsSync(manifest65Path) &&
++      fs.readFileSync(manifest65Path, 'utf8').includes(SCAFFOLDER_MARKER)
++    ) {
++      fs.rmSync(manifest65Path, {force: true});
++    }
+     // Emit the ambient-import prefix header next to the manifest when the
+     // target has ObjC(++) sources (the manifest `-include`s it by bare name).
+     if (spec.needsObjCPrefix) {
+@@ -1099,16 +1908,82 @@ function scaffoldPackageSwiftForDep(
+       const shimDir = path.join(dep.root, 'include', spec.swiftName);
+       fs.mkdirSync(shimDir, {recursive: true});
+       for (const header of spec.namespacedShimHeaders) {
++        // Entries may be nested relative paths (e.g. apple/Handlers/X.h): the
++        // stub is named by basename and #imports the real header by path.
++        const name = path.posix.basename(header);
+         fs.writeFileSync(
+-          path.join(shimDir, header),
++          path.join(shimDir, name),
+           `// AUTO-SCAFFOLDED by react-native spm scaffold — the namespaced\n` +
+-            `// spelling (<${spec.swiftName}/${header}>) of the package-root header,\n` +
++            `// spelling (<${spec.swiftName}/${name}>) of the header,\n` +
+             `// matching how CocoaPods header maps expose it.\n` +
+             `#import "../../${header}"\n`,
+           'utf8',
+         );
+       }
+     }
++    // `header_dir` namespaces: one stub per header in include/<header_dir>/.
++    for (const {dir, headers, names} of spec.headerDirShims) {
++      const nsDir = path.join(dep.root, 'include', dir);
++      headers.forEach((header, i) => {
++        const name = names?.[i] ?? path.posix.basename(header);
++        const stub = path.join(nsDir, name);
++        fs.mkdirSync(path.dirname(stub), {recursive: true});
++        fs.writeFileSync(
++          stub,
++          `// AUTO-SCAFFOLDED by react-native spm scaffold — the <${dir}/${name}>\n` +
++            `// spelling CocoaPods' header_dir gives the header.\n` +
++            `#import "${'../'.repeat(dir.split('/').length + name.split('/').length)}${header}"\n`,
++          'utf8',
++        );
++      });
++    }
++  }
++
++  if (!ctx.dryRun && spec.mixedLanguage != null) {
++    writeMixedLanguageSupport(dep.root, spec.mixedLanguage);
++  }
++  if (!ctx.dryRun && spec.publicHeadersPath != null) {
++    const mapPath = path.join(
++      dep.root,
++      spec.publicHeadersPath,
++      CLANG_MODULE_MAP,
++    );
++    const map = spec.clangModuleMap;
++    if (map != null) {
++      fs.writeFileSync(
++        mapPath,
++        `${SCAFFOLDER_MARKER}\n` +
++          '// The module SwiftPM would make of publicHeadersPath, minus the headers the podspec leaves\n' +
++          '// out of the target, which an importer could not build.\n' +
++          `module ${map.moduleName} {\n` +
++          '    umbrella "."\n' +
++          map.excludes.map(h => `    exclude header "${h}"\n`).join('') +
++          '    export *\n' +
++          '}\n',
++        'utf8',
++      );
++    } else if (
++      fs.existsSync(mapPath) &&
++      fs.readFileSync(mapPath, 'utf8').includes(SCAFFOLDER_MARKER)
++    ) {
++      fs.rmSync(mapPath, {force: true});
++    }
++  }
++  if (!ctx.dryRun) {
++    const bareDir = path.join(dep.root, REACT_BARE_HEADERS_DIR);
++    fs.rmSync(bareDir, {recursive: true, force: true});
++    if (spec.reactBareHeaders.length > 0) {
++      fs.mkdirSync(bareDir, {recursive: true});
++      for (const name of spec.reactBareHeaders) {
++        fs.writeFileSync(
++          path.join(bareDir, name),
++          `// AUTO-SCAFFOLDED by react-native spm scaffold — the bare "${name}"\n` +
++            `// spelling CocoaPods' header map resolves to React's public header.\n` +
++            `#import <React/${name}>\n`,
++          'utf8',
++        );
++      }
++    }
+   }
+ 
+   reportSwiftName(dep, spec.swiftName, model);
+diff --git a/node_modules/react-native/scripts/spm/spm-utils.js b/node_modules/react-native/scripts/spm/spm-utils.js
+index fc53136..dbeb2af 100644
+--- a/node_modules/react-native/scripts/spm/spm-utils.js
++++ b/node_modules/react-native/scripts/spm/spm-utils.js
+@@ -595,6 +595,16 @@ function buildPerAppHeaderTree(
+       '// satisfies SPM, which requires at least one source file per target.\n' +
+       'static int ReactAppHeadersStub __attribute__((unused)) = 0;\n',
+   );
++  // rn-xtool: an explicit, header-less module map. Without one SwiftPM makes the whole farm
++  // an umbrella-directory module, so an Objective-C (.m) file importing one Objective-C header
++  // from it (`<ReactAppDependencyProvider/RCTAppDependencyProvider.h>`) builds every C++
++  // codegen header in Objective-C mode and fails ("'utility' file not found"). With it, the
++  // farm's headers are included textually, as CocoaPods' header search paths include them.
++  fs.writeFileSync(
++    path.join(tmpDir, 'module.modulemap'),
++    '// ReactAppHeaders vends its headers textually (see spm-utils.js#buildPerAppHeaderTree).\n' +
++      'module ReactAppHeaders {\n  export *\n}\n',
++  );
+   fs.mkdirSync(path.dirname(outDir), {recursive: true});
+   fs.renameSync(tmpDir, outDir);
+ 

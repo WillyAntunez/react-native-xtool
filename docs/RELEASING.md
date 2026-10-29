@@ -7,8 +7,9 @@ work as Linux but is untested so far. arm64 Linux is untested (the xtool checksu
 
 1. `npm ci && npm test && npm run lint` are green.
 1. `CHANGELOG.md` has the release under a new version heading (move the `Unreleased` entries there, with the date).
-2. `npm pack --dry-run` lists only `bin/`, `dist/`, `patches/`, `scripts/`, `shims/`, `README.md`, `LICENSE` and
-   `package.json`. No `tests/`, `docs/`, `src/` or `.superpowers/`.
+2. `npm pack --dry-run` lists only `bin/`, `dist/`, `patches/`, `scripts/`, `shims/`, `vendor/` (the vendored
+   SwiftPM scripts and Expo plugin, needed at runtime), `README.md`, `CHANGELOG.md`, `LICENSE` and `package.json`. No
+   `tests/`, `docs/`, `src/` or `.superpowers/`.
 3. On a clean machine (or a fresh WSL2 distro) install the packed tarball and run `rn-xtool doctor`:
    `npm pack && npm i -g ./react-native-xtool-<version>.tgz && rn-xtool doctor`.
 4. Repo-public checklist:

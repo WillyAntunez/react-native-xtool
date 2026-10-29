@@ -7,6 +7,8 @@ export interface ProjectPaths {
   iosBuild: string;
   /** Pre-headers-spec React Native artifact slots adapted for the vendored scripts: `<v>/<flavor>`. */
   rnArtifacts: string;
+  /** `EXPO_PRECOMPILED_MODULES_PATH` for the vendored Expo plugin (SDK 57): `<pkg>/output/<flavor>/xcframeworks`. */
+  expoPrecompiled: string;
   xcframeworks: string;
   autolinking: string;
   expoDir: string;
@@ -31,6 +33,7 @@ export function projectPaths(root: string): ProjectPaths {
     ios,
     iosBuild,
     rnArtifacts: join(iosBuild, "rn-artifacts"),
+    expoPrecompiled: join(iosBuild, "expo-precompiled"),
     xcframeworks: join(iosBuild, "xcframeworks"),
     autolinking,
     expoDir: join(autolinking, "expo"),
@@ -54,7 +57,7 @@ export function swiftHeadersDir(iosXtool: string): string {
   return join(iosXtool, ".build", "out", "Intermediates.noindex", "GeneratedModuleMaps-iphoneos");
 }
 
-/** Read by the RN scaffolder's mixed Swift + Objective-C manifests (patches/react-native+0.88.0.patch). */
+/** Read by the RN scaffolder's mixed Swift + Objective-C manifests (patches/react-native+0.88.{0,1}.patch). */
 export const SWIFT_HEADERS_DIR_ENV = "RN_SPM_SWIFT_HEADERS_DIR";
 
 /** Env that lets scaffolded mixed-language manifests find `<Module>-Swift.h`; needed wherever SwiftPM evaluates them. */

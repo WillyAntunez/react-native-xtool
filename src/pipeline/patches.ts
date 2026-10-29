@@ -1,11 +1,12 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { mkdir, rm, symlink } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, symlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { execa } from "execa";
 import { projectPaths } from "../paths.js";
-import type { RnScripts } from "../versions.js";
+import { compareVersions, expoPinPolicyFor, expoPinsFor, type ExpoPlugin, type RnScripts } from "../versions.js";
 import { packageRoot, toolEnv } from "../tools/exec.js";
+import { outside, packagesWithManifest } from "./manifests.js";
 
 /** The patch-package pinned in this CLI's own dependencies, not whatever npx would fetch. */
 export function patchPackageScript(): string {
@@ -41,8 +42,40 @@ export interface PatchFailureDetails {
   output: string;
 }
 
-export function patchFailureMessage(d: PatchFailureDetails): string {
+/**
+ * `floor`: the project is on a floor SDK (58), where Expo published a newer 58.x than this release patches. Its
+ * expo-modules-* copies follow expo's own ranges, so a direct pin nests the copy expo uses (G2); npm `overrides`
+ * hold every copy on the verified set instead (`overrides`: name → version), or the user waits for a release.
+ * `direct`: the failing package is a direct dependency, whose own entry must equal its override (EOVERRIDE).
+ */
+export function patchFailureMessage(
+  d: PatchFailureDetails,
+  opts: { floor?: { overrides: Record<string, string>; direct: boolean } } = {},
+): string {
   const tail = d.output.trimEnd().split("\n").slice(-40).join("\n");
+  if (opts.floor !== undefined) {
+    const block = `"overrides": { ${Object.entries(opts.floor.overrides)
+      .map(([name, version]) => `"${name}": "${version}"`)
+      .join(", ")} }`;
+    const own = opts.floor.overrides[d.pkg];
+    const direct =
+      opts.floor.direct && own !== undefined
+        ? ` (${d.pkg} is a direct dependency: set it to "${own}" in dependencies too)`
+        : "";
+    return [
+      `rn-xtool could not patch ${d.pkg}@${d.installed} (patch file: ${d.patchFile}): the installed version differs from the one this release of rn-xtool patches (${d.patched}).`,
+      "This is a known limitation of rn-xtool, not of your project.",
+      `Options: add an "overrides" block with the set this release was verified with to package.json, ${block}, and run ` +
+        `\`npm install\`${direct}; or wait for an rn-xtool release that supports the new version, and report it at ` +
+        "https://github.com/WillyAntunez/react-native-xtool/issues.",
+      "Do not pin expo-modules-* packages as direct dependencies: npm would nest the copy expo uses. Remove any that " +
+        "package.json lists before you add the block (`npm uninstall <package>`): npm refuses an override that differs " +
+        "from a direct dependency (EOVERRIDE). If `rn-xtool doctor` then says expo-modules-jsi resolves from a nested " +
+        "copy, run `npm update expo-modules-jsi`.",
+      "--- patch-package output ---",
+      tail,
+    ].join("\n");
+  }
   return [
     `rn-xtool could not patch ${d.pkg}@${d.installed} (patch file: ${d.patchFile}): the installed version differs from the one this release of rn-xtool patches (${d.patched}).`,
     "This is a known limitation of rn-xtool, not of your project.",
@@ -71,46 +104,89 @@ export function installedVersion(projectRoot: string, pkg: string): string | und
  * Bundled patch files whose package is installed in the project (bare RN has no expo packages).
  * The react-native patch is only for the exact version it was made against: other versions are
  * not patched, and the caller decides whether that is fine (vendored scripts) or a stop (see rnPatchMismatch).
+ * Other packages get the patch for their installed version when one is bundled, else the highest version
+ * (which then fails to apply with the "pin" message). With `exactOnly` every package needs an exact match.
  */
-export function selectBundledPatches(projectRoot: string, bundledDir: string): string[] {
-  return readdirSync(bundledDir)
-    .filter((name) => {
-      const info = parsePatchFileName(name);
-      if (info === undefined) return false;
-      const installed = installedVersion(projectRoot, info.pkg);
-      if (installed === undefined) return false;
-      return info.pkg !== "react-native" || installed === info.version;
-    })
-    .sort();
+export function selectBundledPatches(projectRoot: string, bundledDir: string, opts: { exactOnly?: boolean } = {}): string[] {
+  const byPkg = new Map<string, { name: string; version: string }[]>();
+  for (const name of readdirSync(bundledDir)) {
+    const info = parsePatchFileName(name);
+    if (info === undefined) continue;
+    byPkg.set(info.pkg, [...(byPkg.get(info.pkg) ?? []), { name, version: info.version }]);
+  }
+  const selected: string[] = [];
+  for (const [pkg, patches] of byPkg) {
+    const installed = installedVersion(projectRoot, pkg);
+    if (installed === undefined) continue;
+    const exact = patches.find((p) => p.version === installed);
+    if (exact !== undefined) selected.push(exact.name);
+    else if (!opts.exactOnly && pkg !== "react-native") {
+      selected.push(patches.reduce((hi, p) => (compareVersions(p.version, hi.version) > 0 ? p : hi)).name);
+    }
+  }
+  return selected.sort();
 }
 
 /** Empties `dest` and symlinks the selected bundled patches into it; returns their names. */
-export async function stageBundledPatches(projectRoot: string, dest: string): Promise<string[]> {
+export async function stageBundledPatches(
+  projectRoot: string,
+  dest: string,
+  opts: { exactOnly?: boolean } = {},
+): Promise<string[]> {
   const bundledDir = path.join(packageRoot(), "patches");
-  const names = selectBundledPatches(projectRoot, bundledDir);
+  const names = selectBundledPatches(projectRoot, bundledDir, opts);
   await rm(dest, { recursive: true, force: true });
   await mkdir(dest, { recursive: true });
   for (const name of names) await symlink(path.join(bundledDir, name), path.join(dest, name));
   return names;
 }
 
-/** The bundled react-native patch when react-native is installed at another version. */
+/**
+ * The mismatch when react-native is installed at a version no bundled react-native patch was made for, naming the
+ * highest bundled one (what the "pin" text suggests); undefined when react-native is not installed or a patch matches.
+ */
 export function rnPatchMismatch(
   projectRoot: string,
   bundledDir: string,
 ): Omit<PatchFailureDetails, "output"> | undefined {
-  for (const patchFile of readdirSync(bundledDir).sort()) {
+  const installed = installedVersion(projectRoot, "react-native");
+  if (installed === undefined) return undefined;
+  let highest: { patchFile: string; version: string } | undefined;
+  for (const patchFile of readdirSync(bundledDir)) {
     const info = parsePatchFileName(patchFile);
     if (info?.pkg !== "react-native") continue;
-    const installed = installedVersion(projectRoot, info.pkg);
-    if (installed !== undefined && installed !== info.version) {
-      return { pkg: info.pkg, installed, patchFile, patched: info.version };
+    if (info.version === installed) return undefined;
+    if (highest === undefined || compareVersions(info.version, highest.version) > 0) {
+      highest = { patchFile, version: info.version };
     }
   }
-  return undefined;
+  return highest && { pkg: "react-native", installed, patchFile: highest.patchFile, patched: highest.version };
 }
 
-/** Finds a bundled patch whose package is installed at a different version. */
+/** "0.88.0 and 0.88.1": the versions `pkg` has a bundled patch for, ascending. */
+function bundledVersionList(bundledDir: string, pkg: string): string {
+  const versions = readdirSync(bundledDir)
+    .map(parsePatchFileName)
+    .filter((info) => info?.pkg === pkg)
+    .map((info) => info!.version)
+    .sort(compareVersions);
+  return versions.length < 2 ? versions.join("") : `${versions.slice(0, -1).join(", ")} and ${versions[versions.length - 1]}`;
+}
+
+/**
+ * The part of patch-package's output that reports failures: from its first error on. patch-package prints every
+ * warning before the first error, and a version-mismatch warning names a package whose patch applied.
+ */
+function patchFailureOutput(output: string): string {
+  const plain = output.replace(/\u001b\[[0-9;]*m/g, "");
+  const first = /\*\*ERROR\*\*|^Error:/m.exec(plain);
+  return first === null ? plain : plain.slice(first.index);
+}
+
+/**
+ * Finds a bundled patch whose package is installed at a different version, preferring the one patch-package's
+ * failure output names.
+ */
 export function findPatchMismatch(
   projectRoot: string,
   patchDir: string,
@@ -126,7 +202,8 @@ export function findPatchMismatch(
       mismatches.push({ pkg: info.pkg, installed, patchFile, patched: info.version });
     }
   }
-  const named = mismatches.find((m) => outputNamesPackage(output, m.pkg));
+  const failures = patchFailureOutput(output);
+  const named = mismatches.find((m) => outputNamesPackage(failures, m.pkg));
   return named ?? mismatches[0];
 }
 
@@ -140,6 +217,41 @@ export function outputNamesPackage(output: string, pkg: string): boolean {
   const prefix = new RegExp(`(?<![\\w@./-])${esc(pkg.replace("/", "+"))}\\+`);
   const modulePath = new RegExp(`node_modules/${esc(pkg)}(?![\\w.-])`);
   return prefix.test(output) || modulePath.test(output);
+}
+
+/**
+ * The staged bundled patch that failed although its package is installed at the patch's version: patch-package then
+ * applied it neither forward nor in reverse, so the package's files are neither the original nor the patched ones.
+ */
+export function findStalePatchedPackage(
+  projectRoot: string,
+  patchDir: string,
+  output: string,
+): Omit<PatchFailureDetails, "output"> | undefined {
+  if (!existsSync(patchDir)) return undefined;
+  const failures = patchFailureOutput(output);
+  for (const patchFile of readdirSync(patchDir).sort()) {
+    const info = parsePatchFileName(patchFile);
+    if (!info || !outputNamesPackage(failures, info.pkg)) continue;
+    if (installedVersion(projectRoot, info.pkg) === info.version) {
+      return { pkg: info.pkg, installed: info.version, patchFile, patched: info.version };
+    }
+  }
+  return undefined;
+}
+
+/** Message for a bundled patch over a package that is already patched differently (an upgrade from alpha.2). */
+export function stalePatchedMessage(d: PatchFailureDetails): string {
+  const tail = d.output.trimEnd().split("\n").slice(-40).join("\n");
+  return [
+    `rn-xtool could not apply its patch to ${d.pkg}@${d.installed} (patch file: ${d.patchFile}): node_modules/${d.pkg} is ` +
+      "the version the patch is for, but its files match neither the original package nor the patched one.",
+    "This usually means an earlier rn-xtool release (such as 0.1.0-alpha.2) patched it differently, or its files were " +
+      "edited by hand.",
+    `Reinstall the package, then build again: rm -rf node_modules/${d.pkg} && npm install`,
+    "--- patch-package output ---",
+    tail,
+  ].join("\n");
 }
 
 /** Message for a patch-package failure that matches no known version mismatch. */
@@ -171,17 +283,22 @@ export function hasProjectPatches(projectRoot: string): boolean {
   }
 }
 
-const SCAFFOLD_MARKER = "rn-xtool-scaffold-revision";
+/** rn-xtool's scaffold marker; `expo-xtool-scaffold-revision` is its name before the rename (pre-release apps). */
+const SCAFFOLD_MARKER_RE = /(?:rn|expo)-xtool-scaffold-revision/;
 const SLOT_LABEL_RE = /^\+\/\/ Cache slot: (\S+)\/dual-flavor\s*$/m;
+const REVISION_RE = /^\+\/\/ (?:rn|expo)-xtool-scaffold-revision: (\d+)\s*$/m;
+
+/** The scaffolder's RN_XTOOL_SCAFFOLD_REVISION (patches/react-native+0.88.{0,1}.patch and vendor/rn-spm). */
+export const SCAFFOLD_REVISION = 3;
 
 /**
- * Warnings for the project's persisted scaffold patches (`patches/*.patch` with rn-xtool's scaffold marker) whose
- * cache-slot label names another React Native version than the installed one: their Package.swift was written for
- * that version, and the scaffolder only regenerates it when the manifest is missing.
+ * Warnings for the project's persisted scaffold patches (`patches/*.patch` with rn-xtool's scaffold marker): their
+ * Package.swift is only regenerated when the manifest is missing, so one is stale when its cache-slot label names
+ * another React Native version than the installed one, or when an older scaffolder revision wrote it. One line per
+ * patch; the slot warning wins when both apply.
  */
 export function scaffoldPatchWarnings(projectRoot: string): string[] {
   const installed = installedVersion(projectRoot, "react-native");
-  if (installed === undefined) return [];
   const dir = path.join(projectRoot, "patches");
   let names: string[];
   try {
@@ -197,17 +314,168 @@ export function scaffoldPatchWarnings(projectRoot: string): string[] {
     } catch {
       continue;
     }
-    if (!text.includes(SCAFFOLD_MARKER)) continue;
-    const slot = SLOT_LABEL_RE.exec(text)?.[1];
-    if (slot === undefined || slot === installed) continue;
+    if (!SCAFFOLD_MARKER_RE.test(text)) continue;
     const pkg = parsePatchFileName(name)?.pkg;
     const reinstall = pkg === undefined ? "the library" : `node_modules/${pkg}`;
-    warnings.push(
-      `⚠ patches/${name} was scaffolded for React Native ${slot}; delete it so rn-xtool regenerates it for ${installed} ` +
-        `(also remove ${reinstall} and reinstall: that copy still has the old Package.swift)`,
-    );
+    const tail = `(also remove ${reinstall} and reinstall: that copy still has the old Package.swift)`;
+    const slot = SLOT_LABEL_RE.exec(text)?.[1];
+    if (installed !== undefined && slot !== undefined && slot !== installed) {
+      warnings.push(
+        `⚠ patches/${name} was scaffolded for React Native ${slot}; delete it so rn-xtool regenerates it for ${installed} ${tail}`,
+      );
+      continue;
+    }
+    const revision = REVISION_RE.exec(text)?.[1];
+    if (revision !== undefined && Number(revision) < SCAFFOLD_REVISION) {
+      warnings.push(
+        `⚠ patches/${name} was written by an older rn-xtool scaffolder (revision ${revision}, now ${SCAFFOLD_REVISION}); ` +
+          `delete it so rn-xtool regenerates it ${tail}`,
+      );
+    }
   }
   return warnings;
+}
+
+/**
+ * The "overrides" remedy when `pkg` is an Expo package of a project on a floor SDK (58): the SDK's verified
+ * expo-modules-* versions, plus `pkg` at its floor (else at the patch's version) when it is not one of them, and
+ * whether the project lists `pkg` directly. Undefined for react-native and for other SDKs.
+ */
+function floorRemedy(projectRoot: string, pkg: string, patched: string): { overrides: Record<string, string>; direct: boolean } | undefined {
+  if (pkg === "react-native") return undefined;
+  const sdk = Number(/^(\d+)\./.exec(installedVersion(projectRoot, "expo") ?? "")?.[1]);
+  const pins = expoPinsFor(sdk);
+  if (expoPinPolicyFor(sdk) !== "floor" || pins === undefined) return undefined;
+  const overrides: Record<string, string> = Object.fromEntries(
+    Object.entries(pins).filter(([name]) => name.startsWith("expo-modules-")),
+  );
+  overrides[pkg] ??= (pins as Record<string, string | undefined>)[pkg] ?? patched;
+  let declared: Record<string, unknown> = {};
+  try {
+    const app = JSON.parse(readFileSync(path.join(projectRoot, "package.json"), "utf8"));
+    declared = { ...app?.dependencies, ...app?.devDependencies };
+  } catch {
+    // no readable package.json: the note about a direct dependency is left out
+  }
+  return { overrides, direct: Object.hasOwn(declared, pkg) };
+}
+
+/** Every file the scaffolder generates carries this (SCAFFOLDER_BANNER in vendor/rn-spm/spm/scaffold-package-swift.js). */
+const SCAFFOLDER_BANNER = "AUTO-SCAFFOLDED by react-native spm scaffold";
+const MANIFEST_REVISION_RE = /^\/\/ (?:rn|expo)-xtool-scaffold-revision: (\d+)\s*$/m;
+const MANIFEST_SLOT_RE = /^\/\/ Cache slot: (\S+)\/dual-flavor\s*$/m;
+
+/** A patch's file entries: the path it writes (`b/…`), whether it creates the file, and whether the file is generated. */
+function patchEntries(text: string): { rel: string; created: boolean; scaffolded: boolean }[] {
+  return text
+    .split(/^(?=diff --git )/m)
+    .filter((entry) => entry.startsWith("diff --git "))
+    .map((entry) => ({
+      rel: /^diff --git a\/\S+ b\/(\S+)/.exec(entry)?.[1] ?? "",
+      created: /\nnew file mode /.test(entry),
+      scaffolded: entry.includes(SCAFFOLDER_BANNER),
+    }));
+}
+
+/** `revision 1 for React Native 0.88.0` */
+const marks = (revision: number, slot: string | undefined) =>
+  `revision ${revision}${slot === undefined ? "" : ` for React Native ${slot}`}`;
+
+/**
+ * Before the project's patches apply: rn-xtool owns the scaffolded `node_modules/<pkg>/Package.swift`, and RN only
+ * scaffolds a missing one, so an older copy would build as is. With a current persisted patch (no warning for it) and
+ * an older copy (lower revision, the pre-rename marker, or another cache slot), the patch's new files are removed so
+ * patch-package writes them again (it passes a new-file patch over an existing file). That happens only when every
+ * entry of the patch is a new scaffolded file: a patch that also changes the library's own files (`patch-package
+ * <name>` folds the user's fix in) would then apply neither way, so the copy is kept and a `⚠` line names the
+ * reinstall. Without any persisted patch, a copy rn-xtool's scaffolder wrote at an older revision or for another
+ * React Native is removed, so the rn-spm step scaffolds and persists it again. Copies without rn-xtool's marker,
+ * packages linked from outside the project, and packages whose persisted patch is stale (warned about) are left alone.
+ * Returns the `ℹ` lines for the replaced copies, which the caller logs once patch-package has written them.
+ */
+export async function refreshStaleScaffolds(projectRoot: string, log: (line: string) => void): Promise<string[]> {
+  const installedRn = installedVersion(projectRoot, "react-native");
+  const patchesDir = path.join(projectRoot, "patches");
+  let patchNames: string[] = [];
+  try {
+    patchNames = readdirSync(patchesDir).filter((n) => n.endsWith(".patch")).sort();
+  } catch {
+    // no patches/
+  }
+  const persisted = new Map<string, { name: string; text: string }[]>();
+  for (const name of patchNames) {
+    const pkg = parsePatchFileName(name)?.pkg;
+    if (pkg === undefined) continue;
+    let text = "";
+    try {
+      text = readFileSync(path.join(patchesDir, name), "utf8");
+    } catch {
+      // unreadable: patch-package reports it
+    }
+    persisted.set(pkg, [...(persisted.get(pkg) ?? []), { name, text }]);
+  }
+  const replaced: string[] = [];
+  const found = await packagesWithManifest(projectRoot);
+  if (found.length === 0) return replaced;
+  const realModules = await realpath(path.join(projectRoot, "node_modules"));
+  for (const { pkg, dir } of found) {
+    if (outside(realModules, await realpath(dir))) continue;
+    const manifest = await readFile(path.join(dir, "Package.swift"), "utf8").catch(() => "");
+    if (!manifest.includes(SCAFFOLDER_BANNER)) continue;
+    const revisionLine = MANIFEST_REVISION_RE.exec(manifest)?.[1];
+    const revision = Number(revisionLine ?? 0);
+    const slot = MANIFEST_SLOT_RE.exec(manifest)?.[1];
+    const patches = persisted.get(pkg);
+    const shown = `node_modules/${pkg}/Package.swift`;
+    if (patches === undefined) {
+      // Only what rn-xtool's scaffolder provably wrote: a library may ship the upstream scaffolder's output itself.
+      if (revisionLine === undefined) continue;
+      let why: string | undefined;
+      if (installedRn !== undefined && slot !== undefined && slot !== installedRn) {
+        why = `was scaffolded for React Native ${slot}, not ${installedRn}`;
+      } else if (revision < SCAFFOLD_REVISION) {
+        why = `was scaffolded by an older rn-xtool scaffolder (revision ${revision}, now ${SCAFFOLD_REVISION})`;
+      }
+      if (why === undefined) continue;
+      await rm(path.join(dir, "Package.swift"), { force: true });
+      log(`ℹ ${shown} ${why}: rn-xtool removed it so the rn-spm step scaffolds it again`);
+      continue;
+    }
+    // The patch that writes this Package.swift, when it is current (a stale one gets scaffoldPatchWarnings' line).
+    const patch = patches.find((p) => p.text.includes(`+++ b/node_modules/${pkg}/Package.swift`));
+    if (patch === undefined || !SCAFFOLD_MARKER_RE.test(patch.text)) continue;
+    const patchRevision = Number(REVISION_RE.exec(patch.text)?.[1] ?? 0);
+    const patchSlot = SLOT_LABEL_RE.exec(patch.text)?.[1];
+    if (patchRevision < SCAFFOLD_REVISION || (installedRn !== undefined && patchSlot !== undefined && patchSlot !== installedRn)) {
+      continue;
+    }
+    if (revision >= patchRevision && (patchSlot === undefined || slot === patchSlot)) continue;
+    const older =
+      `${shown} was scaffolded with ${marks(revision, slot)}, older than patches/${patch.name} ` +
+      `(revision ${patchRevision}${patchSlot === undefined ? "" : `, React Native ${patchSlot}`})`;
+    const prefix = `node_modules/${pkg}/`;
+    const entries = patchEntries(patch.text);
+    const onlyScaffold = entries.every(
+      (e) => e.created && e.scaffolded && e.rel.startsWith(prefix) && !e.rel.split("/").includes(".."),
+    );
+    if (!onlyScaffold) {
+      log(
+        `⚠ ${older}, and that patch also changes the library's own files, so rn-xtool does not replace it: ` +
+          `run rm -rf node_modules/${pkg} && npm install, then build again`,
+      );
+      continue;
+    }
+    let removed = 0;
+    for (const { rel } of entries) {
+      const file = path.join(projectRoot, rel);
+      const text = await readFile(file, "utf8").catch(() => undefined);
+      if (!text?.includes(SCAFFOLDER_BANNER)) continue;
+      await rm(file, { force: true });
+      removed++;
+    }
+    if (removed > 0) replaced.push(`ℹ ${older}: rn-xtool replaced it with the persisted one`);
+  }
+  return replaced;
 }
 
 type PatchExec = (cmd: string, args: string[], cwd: string) => Promise<ExecaResultLike>;
@@ -227,38 +495,52 @@ const execPatchPackage: PatchExec = (cmd, args, cwd) =>
 /**
  * patch-package is idempotent for already-applied patches and exits non-zero on failure.
  * Applies rn-xtool's bundled patches first, then the project's own `patches/` when present.
+ * With the vendored Expo plugin (SDK 57) only exact-version bundled patches are staged.
  * The order does not matter: the project's patches only hold library Package.swift files.
  */
 export async function applyPatches(
   projectRoot: string,
   exec: PatchExec = execPatchPackage,
-  opts: { rnScripts: RnScripts; log?: (line: string) => void } = { rnScripts: "installed" },
+  opts: { rnScripts: RnScripts; expoPlugin?: ExpoPlugin; log?: (line: string) => void } = { rnScripts: "installed" },
 ): Promise<void> {
   if (opts.rnScripts === "installed") {
-    const m = rnPatchMismatch(projectRoot, path.join(packageRoot(), "patches"));
+    const bundledDir = path.join(packageRoot(), "patches");
+    const m = rnPatchMismatch(projectRoot, bundledDir);
     if (m) {
-      const output = `patch-package was not run: react-native ${m.installed} is installed and the bundled patch is for ${m.patched}.`;
+      const output =
+        `patch-package was not run: react-native ${m.installed} is installed and the bundled react-native patches are ` +
+        `for ${bundledVersionList(bundledDir, "react-native")}.`;
       throw new Error(patchFailureMessage({ ...m, output }));
     }
   }
   const patchesDir = projectPaths(projectRoot).patchesDir;
-  const staged = await stageBundledPatches(projectRoot, patchesDir);
+  const staged = await stageBundledPatches(projectRoot, patchesDir, { exactOnly: opts.expoPlugin === "vendored" });
   if (staged.length > 0) {
     const [cmd, args] = applyPatchesArgv(projectRoot, patchesDir);
     const r = await exec(cmd, args, projectRoot);
     const output = r.all ?? `${r.stdout}\n${r.stderr}`;
     if (r.exitCode !== 0 || r.failed || patchPackageOutputFailed(output)) {
-      const mismatch = findPatchMismatch(projectRoot, path.join(packageRoot(), "patches"), output);
-      if (mismatch) throw new Error(patchFailureMessage({ ...mismatch, output }));
+      // Only what was staged: a bundled patch that was left out is not the one that failed. A failed package at the
+      // patch's own version comes first: another package at a newer version may have taken its patch fine.
+      const stale = findStalePatchedPackage(projectRoot, patchesDir, output);
+      if (stale) throw new Error(stalePatchedMessage({ ...stale, output }));
+      const mismatch = findPatchMismatch(projectRoot, patchesDir, output);
+      if (mismatch) {
+        throw new Error(patchFailureMessage({ ...mismatch, output }, { floor: floorRemedy(projectRoot, mismatch.pkg, mismatch.patched) }));
+      }
       throw new Error(genericPatchFailureMessage(r, output));
     }
   }
-  if (!hasProjectPatches(projectRoot)) return;
   const log = opts.log ?? ((line: string) => console.log(line));
+  const replaced = await refreshStaleScaffolds(projectRoot, log);
+  if (!hasProjectPatches(projectRoot)) return;
   for (const warning of scaffoldPatchWarnings(projectRoot)) log(warning);
   const [pcmd, pargs] = projectPatchesArgv();
   const pr = await exec(pcmd, pargs, projectRoot);
   const poutput = pr.all ?? `${pr.stdout}\n${pr.stderr}`;
-  if (pr.exitCode === 0 && !pr.failed && !patchPackageOutputFailed(poutput)) return;
+  if (pr.exitCode === 0 && !pr.failed && !patchPackageOutputFailed(poutput)) {
+    for (const line of replaced) log(line);
+    return;
+  }
   throw new Error(`Applying the project's patches/ failed.\n${genericPatchFailureMessage(pr, poutput)}`);
 }

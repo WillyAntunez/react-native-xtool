@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { readProject } from "../../src/project/index.js";
 import { readBareProject } from "../../src/project/bare.js";
 import { isInstalled } from "../../src/project/expo.js";
+import { fakeExpo58Modules } from "../support/expo58.js";
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures");
 const tempDirs: string[] = [];
@@ -54,7 +55,12 @@ describe("readBareProject", () => {
     const dir = await tempBare();
     await rm(path.join(dir, "node_modules", "react-native"), { recursive: true });
     const err = await readBareProject(dir).catch((e: unknown) => e);
-    expect(String(err)).toMatch(/react-native is not installed.*npm install/);
+    expect(String(err)).toContain(
+      "react-native is not installed in " + dir + ": run `npm install` (a fresh clone has no node_modules yet). To add it, " +
+        "or to move to another React Native version, follow " +
+        "https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/bare-react-native.md#upgrading-react-native " +
+        "(a single `npm install react-native@<version>` can fail with ERESOLVE on the template's exact @react-native/* peers).",
+    );
     expect(String(err)).not.toContain("unknown");
   });
 
@@ -66,10 +72,16 @@ describe("readBareProject", () => {
     }
   });
 
+  it("accepts bare React Native 0.88.1", async () => {
+    const p = await readBareProject(await tempBare({ rn: "0.88.1" }));
+    expect(p.rnVersion).toBe("0.88.1");
+    expect(p.rnScripts).toBe("installed");
+  });
+
   it("rejects unsupported versions with the supported list", async () => {
-    for (const rn of ["0.86.0", "0.86.1", "0.87.0", "0.85.0", "0.89.0", "0.88.1", "0.88.0-rc.1"]) {
+    for (const rn of ["0.86.0", "0.86.1", "0.87.0", "0.85.0", "0.89.0", "0.88.2", "0.88.0-rc.1", "0.88.1-rc.1"]) {
       await expect(readBareProject(await tempBare({ rn }))).rejects.toThrow(
-        `React Native ${rn} is not supported; rn-xtool supports 0.86.2, 0.86.3, 0.87.1 and 0.88.0 (bare). Pin react-native to one of them.`,
+        `React Native ${rn} is not supported; rn-xtool supports 0.86.2, 0.86.3, 0.87.1, 0.88.0 and 0.88.1 (bare). Pin react-native to one of them.`,
       );
     }
   });
@@ -78,7 +90,7 @@ describe("readBareProject", () => {
     const dir = await tempBare({ rn: "0.87.0", modulesCore: true, expo: true });
     await expect(readBareProject(dir)).rejects.toThrow(
       (
-        "React Native 0.87.0 is not supported; rn-xtool supports 0.86.2, 0.86.3, 0.87.1 and 0.88.0 (bare). Pin react-native to one of them. Expo SDK 58 needs React Native 0.88.0."
+        "React Native 0.87.0 is not supported; rn-xtool supports 0.86.2, 0.86.3, 0.87.1, 0.88.0 and 0.88.1 (bare). Pin react-native to one of them. Expo SDK 58 needs React Native 0.88.1."
       ),
     );
   });
@@ -86,7 +98,7 @@ describe("readBareProject", () => {
   it("rejects Expo modules on a vendored version", async () => {
     const dir = await tempBare({ rn: "0.86.3", modulesCore: true, expo: true, useExpoModules: true });
     await expect(readBareProject(dir)).rejects.toThrow(
-      "React Native 0.86.3 with Expo modules is not supported. Expo SDK 58 needs React Native 0.88.0.",
+      "React Native 0.86.3 with Expo modules is not supported. Expo SDK 58 needs React Native 0.88.1.",
     );
     const noPodfileLine = await tempBare({ rn: "0.86.3", modulesCore: true, expo: true });
     await expect(readBareProject(noPodfileLine)).rejects.toThrow(/with Expo modules is not supported/);
@@ -103,8 +115,77 @@ describe("readBareProject", () => {
   });
 
   it("detects the hybrid shape", async () => {
-    const dir = await tempBare({ modulesCore: true, expo: true, useExpoModules: true });
+    const dir = await tempBare({ rn: "0.88.1", useExpoModules: true });
+    await fakeExpo58Modules(dir);
     expect((await readBareProject(dir)).hasExpoModules).toBe(true);
+  });
+
+  it("gates a hybrid app on the SDK 58 set", async () => {
+    // A hybrid's react-native moves with the template's @react-native/* packages: the docs' sequence, not one command.
+    const UPGRADE =
+      "move react-native to 0.88.1 as " +
+      "https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/bare-react-native.md#upgrading-react-native " +
+      "describes (`npx expo install react-native@0.88.1` alone leaves the template's @react-native/* packages on the old " +
+      "version).";
+    const G1 = (list: string) =>
+      "Expo SDK 58 needs react-native 0.88.1 and at least expo 58.0.21, expo-modules-core 58.0.28, expo-modules-jsi 58.0.21, " +
+      `expo-modules-autolinking 58.0.16, expo-file-system 58.0.13 and expo-font 58.0.11; installed: ${list}. ` +
+      (list.startsWith("react-native ") && !list.includes(",")
+        ? `M${UPGRADE.slice(1)}`
+        : "Remove any pin or override on these packages from package.json, then run `npx expo install --fix`; then " +
+          UPGRADE);
+    const oldCore = await tempBare({ rn: "0.88.1", useExpoModules: true });
+    await fakeExpo58Modules(oldCore, { "expo-modules-core": "58.0.26" });
+    await expect(readBareProject(oldCore)).rejects.toThrow(new Error(G1("expo-modules-core 58.0.26")));
+
+    const floor = await tempBare({ rn: "0.88.1", useExpoModules: true });
+    await fakeExpo58Modules(floor);
+    const log = vi.fn();
+    await expect(readBareProject(floor, { log })).resolves.toMatchObject({ rnVersion: "0.88.1", hasExpoModules: true });
+    expect(log).not.toHaveBeenCalled();
+
+    const rn0880 = await tempBare({ rn: "0.88.0", useExpoModules: true });
+    await fakeExpo58Modules(rn0880, { "react-native": "0.88.0" });
+    const err = (await readBareProject(rn0880).catch((e: unknown) => e)) as Error;
+    expect(err).toEqual(new Error(G1("react-native 0.88.0")));
+    expect(err.message).not.toContain("Run `npx expo install react-native@0.88.1`");
+
+    const rnAndCore = await tempBare({ rn: "0.88.0", useExpoModules: true });
+    await fakeExpo58Modules(rnAndCore, { "react-native": "0.88.0", "expo-modules-core": "58.0.26" });
+    await expect(readBareProject(rnAndCore)).rejects.toThrow(new Error(G1("react-native 0.88.0, expo-modules-core 58.0.26")));
+
+    const vendored = await tempBare({ rn: "0.86.3", useExpoModules: true });
+    await fakeExpo58Modules(vendored, { "react-native": "0.86.3" });
+    await expect(readBareProject(vendored)).rejects.toThrow(
+      "React Native 0.86.3 with Expo modules is not supported. Expo SDK 58 needs React Native 0.88.1.",
+    );
+  });
+
+  it.each([
+    ["57", "57.0.31"],
+    ["56", "56.0.4"],
+  ])("refuses a hybrid app on Expo SDK %s", async (sdk, expo) => {
+    const dir = await tempBare({ rn: "0.88.1", useExpoModules: true });
+    await fakeExpo58Modules(dir, { expo });
+    await expect(readBareProject(dir)).rejects.toThrow(
+      `Expo SDK ${sdk} (expo ${expo}) with Expo modules is not supported in a bare app. Expo modules in a bare app need ` +
+        "Expo SDK 58 or newer: install expo ~58.0.21 and run `npx expo install --fix`, then move react-native to 0.88.1 as " +
+        "https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/bare-react-native.md#upgrading-react-native describes.",
+    );
+  });
+
+  it("still gates a hybrid app on Expo SDK 58", async () => {
+    const dir = await tempBare({ rn: "0.88.1", useExpoModules: true });
+    await fakeExpo58Modules(dir, { expo: "58.0.20" });
+    await expect(readBareProject(dir)).rejects.toThrow(/^Expo SDK 58 needs react-native 0\.88\.1 .*; installed: expo 58\.0\.20\. /);
+  });
+
+  it.each(["0.88.0", "0.88.1"])("does not gate React Native %s without Expo modules", async (rn) => {
+    await expect(readBareProject(await tempBare({ rn }))).resolves.toMatchObject({ rnVersion: rn, hasExpoModules: false });
+    // Installed but inactive (no use_expo_modules! in the Podfile): still no gate, below-floor packages included.
+    const inactive = await tempBare({ rn });
+    await fakeExpo58Modules(inactive, { "react-native": rn, "expo-modules-core": "58.0.26" });
+    await expect(readBareProject(inactive, { log: vi.fn() })).resolves.toMatchObject({ rnVersion: rn, hasExpoModules: false });
   });
 
   it("warns when expo modules are installed but not set up in the Podfile", async () => {
@@ -154,7 +235,11 @@ describe("readBareProject", () => {
 
 describe("readProject", () => {
   it("dispatches on kind", async () => {
-    expect((await readProject(path.join(fixtures, "project"), { writeDefaults: false })).kind).toBe("expo");
+    const expo = await mkdtemp(path.join(tmpdir(), "rn-xtool-expo58-"));
+    tempDirs.push(expo);
+    await cp(path.join(fixtures, "project"), expo, { recursive: true });
+    await fakeExpo58Modules(expo);
+    expect((await readProject(expo, { writeDefaults: false })).kind).toBe("expo");
     const dir = await tempBare();
     expect((await readProject(dir)).kind).toBe("bare");
   });

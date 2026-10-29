@@ -9,6 +9,11 @@ describe("firstRunChecklist", () => {
     expect(text).toContain("Developer Mode");
     expect(text).toContain("Local Network");
   });
+  it("explains the red screen behind the first Local Network prompt", () => {
+    expect(firstRunChecklist(undefined)).toContain(
+      '  - On the first launch iOS asks for Local Network access and "No script URL provided" shows behind it: tap Allow, then Reload.',
+    );
+  });
 });
 
 describe("install", () => {

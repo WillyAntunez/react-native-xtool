@@ -1,4 +1,4 @@
-import type { RnScripts } from "../versions.js";
+import type { ExpoPlugin, RnScripts } from "../versions.js";
 import type { BareTargetContent } from "./pbxproj.js";
 
 export type ProjectKind = "expo" | "bare";
@@ -20,6 +20,8 @@ export interface ProjectInfo {
   rnVersion: string;
   /** Where the SwiftPM scripts come from: the installed react-native, or the copy vendored in rn-xtool. */
   rnScripts: RnScripts;
+  /** Which Expo SwiftPM plugin builds the Expo modules: the installed expo's (SDK 58+, bare) or rn-xtool's vendored copy (SDK 57). */
+  expoPlugin: ExpoPlugin;
   sdkVersion?: number;
   hasExpoModules: boolean;
   hasExpoConstants: boolean;

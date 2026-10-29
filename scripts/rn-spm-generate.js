@@ -10,6 +10,10 @@
  * library that ships a podspec but no manifest. RN's own `setup-apple-spm.js scaffold` cannot be
  * used: after scaffolding it falls through into the whole `add` pipeline, injection included.
  *
+ * `--expo-plugin <abs>` (Expo SDK 57, whose `expo` ships no SwiftPM plugin) hands the vendored scripts
+ * that plugin through RN_SPM_EXPO_PLUGIN (edit E5), and `--scaffold` then leaves `expo` alone: the
+ * plugin provides it, and refuses an `expo` that carries a scaffolded Package.swift.
+ *
  * Exit codes: 0 ok, 2 the autolinker reported libraries without a Package.swift (its `error:`
  * lines are already printed), 1 anything else.
  */
@@ -18,7 +22,7 @@ const path = require('node:path');
 const {parseArgs} = require('node:util');
 
 const USAGE =
-  'Usage: node scripts/rn-spm-generate.js --rn-dir <abs> --app-root <abs> --scripts-root <abs> [--artifacts <root>] [--config-command <json>] [--scaffold]';
+  'Usage: node scripts/rn-spm-generate.js --rn-dir <abs> --app-root <abs> --scripts-root <abs> [--artifacts <root>] [--config-command <json>] [--expo-plugin <abs>] [--scaffold]';
 
 function parseCli(argv) {
   let values;
@@ -31,6 +35,7 @@ function parseCli(argv) {
         'scripts-root': {type: 'string'},
         artifacts: {type: 'string'},
         'config-command': {type: 'string'},
+        'expo-plugin': {type: 'string'},
         scaffold: {type: 'boolean'},
       },
       strict: true,
@@ -42,11 +47,13 @@ function parseCli(argv) {
   const rnDir = values['rn-dir'];
   const appRoot = values['app-root'];
   const scriptsRoot = values['scripts-root'];
+  const expoPlugin = values['expo-plugin'] ?? null;
   if (rnDir == null || appRoot == null || scriptsRoot == null) return null;
   if (
     !path.isAbsolute(rnDir) ||
     !path.isAbsolute(appRoot) ||
-    !path.isAbsolute(scriptsRoot)
+    !path.isAbsolute(scriptsRoot) ||
+    (expoPlugin != null && !path.isAbsolute(expoPlugin))
   ) {
     return null;
   }
@@ -56,6 +63,7 @@ function parseCli(argv) {
     projectRoot: appRoot,
     artifacts: values.artifacts ?? null,
     configCommand: values['config-command'] ?? null,
+    expoPlugin,
     scaffold: values.scaffold === true,
   };
 }
@@ -64,6 +72,16 @@ async function generate(cli) {
   // The scripts read the installed RN root from here (vendored copies cannot derive it from their
   // own location). Set before the first require. No __dirname fallback: --scripts-root is required.
   process.env.RN_SPM_RN_ROOT = cli.rnDir;
+  if (cli.expoPlugin != null) {
+    // E5 loads this as `expo`'s autolinking plugin; the plugin resolves the app's packages from the
+    // project root, never from its own location.
+    process.env.RN_SPM_EXPO_PLUGIN = cli.expoPlugin;
+    process.env.RN_XTOOL_PROJECT_ROOT = cli.projectRoot;
+  } else {
+    // A value left in the user's shell must never reach Expo 58 or bare runs.
+    delete process.env.RN_SPM_EXPO_PLUGIN;
+    delete process.env.RN_XTOOL_PROJECT_ROOT;
+  }
   const rn = rel => require(path.join(cli.scriptsRoot, rel));
   const setup = rn('setup-apple-spm.js');
   const {generateAutolinkingConfig, parseConfigCommandJson} = rn(
@@ -107,6 +125,7 @@ async function generate(cli) {
       autolinkingJsonPath: config.outputPath,
       iosDeploymentTarget,
       version,
+      ...(cli.expoPlugin != null ? {skipDeps: ['expo']} : {}),
     });
     return 0;
   }

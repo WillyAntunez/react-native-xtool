@@ -1,17 +1,37 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { homedir, tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { execa } from "execa";
-import { afterAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import {
+  type Classify,
+  type Diagnostics,
+  DEV_CLIENT_DEPS,
+  EXPO58_GOLDEN,
+  LAUNCHER_FILES,
+  type LocalDep,
+  MIXMOD_FILES,
+  type Manifests,
+  type Plugin,
+  type Podspec,
+  emit,
+  expo58GoldenEmissions,
+  layoutOf,
+  loadSpm,
+  mkTmp,
+  moduleFixture,
+  shared58Spm,
+  vendoredSpm,
+} from "./support/expoSpm.js";
+import { PODSPEC_FIXTURES, VENDORED_RN_SPM, scaffoldLibraries } from "./support/rnScaffold.js";
 
-// Exercises the PATCHED Expo SwiftPM plugin (patches/expo+58.0.19.patch) as installed in the
+// Exercises the PATCHED Expo SwiftPM plugin (patches/expo+58.0.21.patch) as installed in the
 // reference app (override with RN_XTOOL_REF_APP). Skipped when that app is not on this machine.
 const APP = process.env["RN_XTOOL_REF_APP"] ?? path.resolve(import.meta.dirname, "../../app");
 const SPM = path.join(APP, "node_modules/expo/scripts/spm");
 const MANIFESTS = path.join(SPM, "manifests.js");
-const COMMITTED_PATCH = path.resolve(import.meta.dirname, "../patches/expo+58.0.19.patch");
+const COMMITTED_PATCH = path.resolve(import.meta.dirname, "../patches/expo+58.0.21.patch");
 // The functional test re-runs `setup-apple-spm.js update` and rewrites the app's ios/build, so it
 // is opt-in: RN_XTOOL_E2E=1.
 const e2e = process.env["RN_XTOOL_E2E"] === "1";
@@ -82,118 +102,18 @@ describe.skipIf(!available)("patched Expo SwiftPM plugin", () => {
 
 // --- Generated source packages for modules without a Package.swift (mixed, ObjC-only, ...) ---
 
-type Sources = {
-  hasSources: boolean;
-  pureSwift: boolean;
-  hasSwift: boolean;
-  hasClang: boolean;
-  hasCxx: boolean;
-  ignoredDirs: string[];
-  placeholderFiles: string[];
-  vendorSources: string[];
-  appleOnlyResources?: string[];
-};
-type PodspecFacts = {
-  linkage: object | null;
-  declaresSourceFiles: boolean;
-  referencesVendor: boolean;
-  headerDir?: string | null;
-  moduleName?: string | null;
-  dependencies?: string[];
-};
-type Classify = { scanAppleSources(root: string): Sources };
-type Podspec = {
-  readPodspecFacts(o: { podName: string; podspecDir: string; moduleRoot: string }): PodspecFacts;
-};
-type Refusal = { reason: string; [k: string]: unknown };
-type Plugin = {
-  sourceLayout(i: { sources: Sources; podspec: PodspecFacts }): string | null;
-  uncoveredPod(identity: object, ...refusals: Refusal[]): { refusals: Refusal[] };
-};
-type EmitContext = { frameworkSearchPath: string; outDir: string; macroFlags: string[] };
-type LocalDep = { podName: string; name: string; pkgDir: string; hasSwift: boolean };
-type Emit = (
-  o: {
-    moduleRoot: string;
-    product: string;
-    language?: string;
-    sources: Sources;
-    headerDir?: string | null;
-    localDeps?: LocalDep[];
-  },
-  ctx: EmitContext,
-) => { ok: { packageDep: { path: string } } };
-type Manifests = {
-  emitPureSwiftSourcePackage: Emit;
-  emitGeneratedSourcePackage: Emit;
-  isCxxHeader(text: string): boolean;
-};
-type Diagnostics = {
-  classifyUnsupported(o: { pending: object[]; coreAvailable: boolean }): Refusal[];
-  renderUnsupportedReport(entries: object[]): string;
-  renderDroppedResourceWarning(entries: object[]): string;
-};
-
 const spmAvailable = existsSync(path.join(SPM, "classify.js"));
-const tmp: string[] = [];
-afterAll(() => {
-  for (const d of tmp) rmSync(d, { recursive: true, force: true });
-});
-
-/** A module dir with the given files (relative path → contents); `ios/<pod>.podspec` included. */
-function moduleFixture(pod: string, files: Record<string, string>, podspecBody = `s.source_files = "**/*.{h,m,mm,swift}"`): string {
-  const root = mkdtempSync(path.join(tmpdir(), "xtool-expo-spm-"));
-  tmp.push(root);
-  writeFileSync(path.join(root, "package.json"), `{"name":"${pod.toLowerCase()}"}`);
-  const all = { [`ios/${pod}.podspec`]: `Pod::Spec.new do |s|\n  s.name = '${pod}'\n  ${podspecBody}\nend\n`, ...files };
-  for (const [rel, text] of Object.entries(all)) {
-    mkdirSync(path.dirname(path.join(root, rel)), { recursive: true });
-    writeFileSync(path.join(root, rel), text);
-  }
-  return root;
-}
 
 describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source packages", () => {
-  const req = createRequire(import.meta.url);
-  const load = <T>(f: string) => req(path.join(SPM, f)) as T;
+  const load = <T>(f: string) => loadSpm<T>(SPM, f);
   const classify = load<Classify>("classify.js");
   const podspec = load<Podspec>("podspec.js");
   const plugin = load<Plugin>("plugin.js");
   const manifests = load<Manifests>("manifests.js");
 
-  function layoutOf(pod: string, root: string) {
-    const sources = classify.scanAppleSources(root);
-    const facts = podspec.readPodspecFacts({ podName: pod, podspecDir: path.join(root, "ios"), moduleRoot: root });
-    return { sources, facts, layout: plugin.sourceLayout({ sources, podspec: facts }) };
-  }
-
-  function emit(
-    pod: string,
-    root: string,
-    language: string,
-    sources: Sources,
-    extra: { headerDir?: string | null; localDeps?: LocalDep[] } = {},
-  ) {
-    const outDir = mkdtempSync(path.join(tmpdir(), "xtool-expo-out-"));
-    tmp.push(outDir);
-    const ctx = { frameworkSearchPath: "/fw", outDir, macroFlags: [] };
-    const fn = language === "pure-swift" ? manifests.emitPureSwiftSourcePackage : manifests.emitGeneratedSourcePackage;
-    const dir = fn({ moduleRoot: root, product: pod, language, sources, ...extra }, ctx).ok.packageDep.path;
-    const read = (f: string) => readFileSync(path.join(dir, f), "utf8");
-    return { dir, read, manifest: read("Package.swift") };
-  }
-
   describe("mixed Swift + Objective-C (expo-application's shape)", () => {
-    const root = moduleFixture("MixMod", {
-      "ios/MixModule.swift": "import Foundation\nlet x = MXProfile.self\n",
-      "ios/MixMod/MXProfile.h": "#import <Foundation/Foundation.h>\n@interface MXProfile : NSObject\n@end\n",
-      "ios/MixMod/MXProfile.m": '#import "MXProfile.h"\n#import <MixMod/MixMod-Swift.h>\n@implementation MXProfile\n@end\n',
-      "ios/MixMod/Cxx.h": "#pragma once\n#include <string>\nnamespace mx { int f(); }\n",
-      "ios/MixMod/Cxx.mm": '#import "Cxx.h"\nint mx::f() { return 1; }\n',
-      "ios/MixMod/Guarded.h": "#import <Foundation/Foundation.h>\n#ifdef __cplusplus\nnamespace g {}\n#endif\n@interface MXGuarded : NSObject\n@end\n",
-      "ios/Tests/MixTests.swift": "",
-    });
-    const { sources, layout } = layoutOf("MixMod", root);
+    const root = moduleFixture("MixMod", MIXMOD_FILES);
+    const { sources, layout } = layoutOf(SPM, "MixMod", root);
 
     it("classifies as mixed with C++", () => {
       expect(layout).toBe("mixed");
@@ -201,7 +121,7 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
     });
 
     it("emits one experimental multi-language target with the bridging and Swift-header flags", () => {
-      const { dir, manifest, read } = emit("MixMod", root, "mixed", sources);
+      const { dir, manifest, read } = emit(SPM, "MixMod", root, "mixed", sources);
       expect(manifest.split("\n")[0]).toBe("// swift-tools-version: 6.4;(experimentalMultiLang)");
       expect(manifest).toContain('Context.environment["RN_SPM_SWIFT_HEADERS_DIR"]');
       expect(manifest).toContain('path: "root/ios"');
@@ -216,7 +136,7 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
     });
 
     it("also writes the Swift 6.5 manifest: identical, tools-version 6.5, no experimental flag", () => {
-      const { manifest, read } = emit("MixMod", root, "mixed", sources);
+      const { manifest, read } = emit(SPM, "MixMod", root, "mixed", sources);
       const v65 = read("Package@swift-6.5.swift");
       expect(v65.split("\n")[0]).toBe("// swift-tools-version: 6.5");
       expect(v65).not.toContain("experimentalMultiLang");
@@ -224,8 +144,7 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
     });
 
     it("removes a stale Swift 6.5 manifest when the package is no longer mixed", () => {
-      const outDir = mkdtempSync(path.join(tmpdir(), "xtool-expo-out-"));
-      tmp.push(outDir);
+      const outDir = mkTmp("xtool-expo-out-");
       const ctx = { frameworkSearchPath: "/fw", outDir, macroFlags: [] };
       const dir = manifests.emitGeneratedSourcePackage({ moduleRoot: root, product: "MixMod", language: "mixed", sources }, ctx).ok
         .packageDep.path;
@@ -235,7 +154,7 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
     });
 
     it("lists the module's Objective-C headers in the umbrella, minus the C++ ones", () => {
-      const umbrella = emit("MixMod", root, "mixed", sources).read("umbrella.h");
+      const umbrella = emit(SPM, "MixMod", root, "mixed", sources).read("umbrella.h");
       expect(umbrella).toContain("#import <Foundation/Foundation.h>\n#import <UIKit/UIKit.h>\n");
       expect(umbrella).toContain(`#import "${path.join(root, "ios/MixMod/MXProfile.h")}"`);
       expect(umbrella).toContain(`#import "${path.join(root, "ios/MixMod/Guarded.h")}"`);
@@ -249,7 +168,7 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
         "ios/Plain/P.m": "@implementation P\n@end\n",
       });
       const scan = classify.scanAppleSources(plain);
-      expect(emit("Plain", plain, "mixed", scan).manifest).not.toContain("-std=c++20");
+      expect(emit(SPM, "Plain", plain, "mixed", scan).manifest).not.toContain("-std=c++20");
     });
   });
 
@@ -267,10 +186,10 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
       "ios/EXJSONUtils/NSDictionary+EXJSONUtils.m": '#import <EXJSONUtils/NSDictionary+EXJSONUtils.h>\n',
       "ios/Tests/dummy.swift": "",
     });
-    const { sources, layout } = layoutOf("EXJSONUtils", root);
+    const { sources, layout } = layoutOf(SPM, "EXJSONUtils", root);
     expect(layout).toBe("clang");
     expect(sources.hasSwift).toBe(false);
-    const { dir, manifest } = emit("EXJSONUtils", root, "clang", sources);
+    const { dir, manifest } = emit(SPM, "EXJSONUtils", root, "clang", sources);
     expect(manifest.split("\n")[0]).toBe("// swift-tools-version: 6.0");
     expect(manifest).toContain('// Objective-C source consumption package for "EXJSONUtils".');
     expect(manifest).toContain('publicHeadersPath: "."');
@@ -291,9 +210,9 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
 
   it("keeps a pure-Swift module on the unchanged pure-Swift path", () => {
     const root = moduleFixture("Swifty", { "ios/A.swift": "" });
-    const { layout, sources } = layoutOf("Swifty", root);
+    const { layout, sources } = layoutOf(SPM, "Swifty", root);
     expect(layout).toBe("pure-swift");
-    const { manifest } = emit("Swifty", root, "pure-swift", sources);
+    const { manifest } = emit(SPM, "Swifty", root, "pure-swift", sources);
     expect(manifest.split("\n")[0]).toBe("// swift-tools-version: 6.0");
     expect(manifest).toContain('// Pure-Swift source consumption package for "Swifty".');
     expect(manifest).not.toContain("publicHeadersPath");
@@ -306,29 +225,29 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
       "ios/EXUpdatesInterface/noop-file.m": "// noop file for cocoapods to generate modulemap file\n",
       "ios/EXUpdatesInterface/blank.c": "/* nothing */\n\n",
     });
-    const { layout, sources } = layoutOf("EXUpdatesInterface", root);
+    const { layout, sources } = layoutOf(SPM, "EXUpdatesInterface", root);
     expect(layout).toBe("pure-swift");
     expect(sources.placeholderFiles).toEqual(["EXUpdatesInterface/blank.c", "EXUpdatesInterface/noop-file.m"]);
-    const { manifest } = emit("EXUpdatesInterface", root, "pure-swift", sources);
+    const { manifest } = emit(SPM, "EXUpdatesInterface", root, "pure-swift", sources);
     expect(manifest).toContain('exclude: ["EXUpdatesInterface/blank.c", "EXUpdatesInterface/noop-file.m"]');
     expect(manifest.split("\n")[0]).toBe("// swift-tools-version: 6.0");
   });
 
   it("still counts an Objective-C file with code as a source", () => {
     const root = moduleFixture("Real", { "ios/A.swift": "", "ios/Real/R.m": "// c\nint r(void) { return 1; }\n" });
-    expect(layoutOf("Real", root).layout).toBe("mixed");
+    expect(layoutOf(SPM, "Real", root).layout).toBe("mixed");
   });
 
   it("treats a meta pod (no sources, no source_files) as nothing to build", () => {
     const root = moduleFixture("expo-dev-client", {}, "s.dependency 'expo-dev-launcher'");
-    const { layout, facts } = layoutOf("expo-dev-client", root);
+    const { layout, facts } = layoutOf(SPM, "expo-dev-client", root);
     expect(facts.declaresSourceFiles).toBe(false);
     expect(layout).toBe("meta");
   });
 
   it("does not take a module whose podspec declares source_files but ships none for a meta pod", () => {
     const root = moduleFixture("Partial", {});
-    expect(layoutOf("Partial", root).layout).toBe("pure-swift");
+    expect(layoutOf(SPM, "Partial", root).layout).toBe("pure-swift");
   });
 
   it("the committed patch carries the placeholder and meta-pod rules", () => {
@@ -344,7 +263,7 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
       { "ios/SQLiteModule.swift": "", "vendor/sqlite3/sqlite3.c": "int x;\n", "vendor/sqlite3/sqlite3.h": "" },
       sqlitePodspec,
     );
-    const { layout, sources, facts } = layoutOf("ExpoSQLite", root);
+    const { layout, sources, facts } = layoutOf(SPM, "ExpoSQLite", root);
     expect(facts.referencesVendor).toBe(true);
     expect(sources.vendorSources).toEqual(["vendor/sqlite3/sqlite3.c"]);
     expect(layout).toBe("vendored");
@@ -365,7 +284,7 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
       },
       sqlitePodspec,
     );
-    const { layout, sources, facts } = layoutOf("ExpoSQLite", root);
+    const { layout, sources, facts } = layoutOf(SPM, "ExpoSQLite", root);
     expect(layout).toBe("vendored");
     const { products } = JSON.parse(readFileSync(path.join(root, "spm.config.json"), "utf8")) as {
       products: { name: string }[];
@@ -389,7 +308,7 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
 
   it("ignores vendor/ when the podspec does not reference it", () => {
     const root = moduleFixture("Swifty2", { "ios/A.swift": "", "vendor/x/x.c": "int x;\n" });
-    expect(layoutOf("Swifty2", root).layout).toBe("pure-swift");
+    expect(layoutOf(SPM, "Swifty2", root).layout).toBe("pure-swift");
   });
 
   it("the committed patch carries the vendored-sources refusal", () => {
@@ -414,7 +333,7 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
 
     it("excludes them from a generated mixed target", () => {
       const sources = classify.scanAppleSources(root);
-      expect(emit("EXDevLauncher", root, "mixed", sources).manifest).toContain(
+      expect(emit(SPM, "EXDevLauncher", root, "mixed", sources).manifest).toContain(
         'exclude: ["Tests", "Assets.xcassets", "Views/Main.storyboard"]',
       );
     });
@@ -422,7 +341,7 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
     it("excludes them from a pure-Swift target too", () => {
       const swifty = moduleFixture("SwiftAssets", { "ios/A.swift": "", "ios/Media.xcassets/Contents.json": "{}" });
       const sources = classify.scanAppleSources(swifty);
-      expect(emit("SwiftAssets", swifty, "pure-swift", sources).manifest).toContain('exclude: ["Media.xcassets"]');
+      expect(emit(SPM, "SwiftAssets", swifty, "pure-swift", sources).manifest).toContain('exclude: ["Media.xcassets"]');
     });
 
     it("warns about what is left out", () => {
@@ -459,20 +378,12 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
       expect(facts.dependencies).toEqual(expect.arrayContaining(["EXManifests", "expo-dev-menu-interface"]));
     });
 
-    const launcher = moduleFixture("expo-dev-launcher", {
-      "ios/Launcher.swift": "",
-      "ios/EXDevLauncherController.h": "#import <Foundation/Foundation.h>\n",
-      "ios/EXDevLauncherController.m": '#import <EXDevLauncher/EXDevLauncherController.h>\n',
-      "ios/Manifest/EXDevLauncherManifestParser.h": "@import EXManifests;\n",
-    });
-    const deps: LocalDep[] = [
-      { podName: "EXManifests", name: "EXManifests", pkgDir: "/out/expo-source/EXManifests", hasSwift: true },
-      { podName: "EXJSONUtils", name: "EXJSONUtils", pkgDir: "/out/expo-source/EXJSONUtils", hasSwift: false },
-    ];
+    const launcher = moduleFixture("expo-dev-launcher", LAUNCHER_FILES);
+    const deps = DEV_CLIENT_DEPS;
 
     it("depends on sibling generated packages and searches their pod-headers and Swift module maps", () => {
       const sources = classify.scanAppleSources(launcher);
-      const { manifest } = emit("EXDevLauncher", launcher, "mixed", sources, { headerDir: "EXDevLauncher", localDeps: deps });
+      const { manifest } = emit(SPM, "EXDevLauncher", launcher, "mixed", sources, { headerDir: "EXDevLauncher", localDeps: deps });
       expect(manifest).toContain('.package(name: "EXManifests", path: "/out/expo-source/EXManifests")');
       expect(manifest).toContain('.product(name: "EXManifests", package: "EXManifests")');
       expect(manifest).toContain('.unsafeFlags(["-I", "/out/expo-source/EXManifests/pod-headers"])');
@@ -484,7 +395,7 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
 
     it("writes CocoaPods-style forwarders: Swift header, umbrella and flattened header_dir", () => {
       const sources = classify.scanAppleSources(launcher);
-      const { dir, read } = emit("EXDevLauncher", launcher, "mixed", sources, { headerDir: "EXDevLauncher" });
+      const { dir, read } = emit(SPM, "EXDevLauncher", launcher, "mixed", sources, { headerDir: "EXDevLauncher" });
       expect(read("pod-headers/EXDevLauncher/EXDevLauncher-Swift.h")).toBe("#import <EXDevLauncher-Swift.h>\n");
       expect(read("pod-headers/EXDevLauncher/EXDevLauncher-umbrella.h")).toBe(`#import "${path.join(dir, "umbrella.h")}"\n`);
       expect(read("pod-headers/EXDevLauncher/EXDevLauncherManifestParser.h")).toBe(
@@ -494,7 +405,7 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
 
     it("gives a pure-Swift package a Swift-header forwarder and its sibling dependencies", () => {
       const root = moduleFixture("EXUpdatesInterface", { "ios/A.swift": "" });
-      const { manifest, read } = emit("EXUpdatesInterface", root, "pure-swift", classify.scanAppleSources(root), { localDeps: [deps[0]!] });
+      const { manifest, read } = emit(SPM, "EXUpdatesInterface", root, "pure-swift", classify.scanAppleSources(root), { localDeps: [deps[0]!] });
       expect(read("pod-headers/EXUpdatesInterface/EXUpdatesInterface-Swift.h")).toBe("#import <EXUpdatesInterface-Swift.h>\n");
       expect(manifest).toContain('.product(name: "EXManifests", package: "EXManifests")');
     });
@@ -505,5 +416,243 @@ describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source pa
       expect(patch).toContain("+function writePodHeaders(");
       expect(patch).toContain("+function c99Identifier(");
     });
+  });
+});
+
+// --- X3, X6b, X6c: shared-patch fixes found by the SDK 57 spike, on the 58 copy and the vendored one ---
+
+type LibraryIndex = Map<string, LocalDep>;
+type Identity = { podName: string; packageName?: string; podspec: { dependencies?: string[] } };
+type PluginDeps = {
+  libraryPackageIndex(autolinking: object, outputDir: string): LibraryIndex;
+  localDependencies(identity: Identity, packages: LibraryIndex): LocalDep[];
+  dependencyPackageIndex(generated: LibraryIndex, libraries: LibraryIndex): LibraryIndex;
+  unmappedDependencies(
+    records: { identity: Identity; emission?: { spmProductNames: string[] } }[],
+    satisfied: Set<string>,
+    libraries: LibraryIndex,
+  ): { podName: string; pods: string[] }[];
+};
+
+const shared58 = shared58Spm();
+const IMPORTER_MARKER = "// rn-xtool-swift-importer-paths: ";
+
+/** A scaffolded react-native-screens: its root, with `Package.swift` (marker or not) and its podspec. */
+function screensRoot(importerPaths: string[] | string | null): string {
+  const root = mkTmp("xtool-rnscreens-");
+  const json = typeof importerPaths === "string" ? importerPaths : JSON.stringify(importerPaths);
+  const marker = importerPaths ? `${IMPORTER_MARKER}${json}\n` : "";
+  writeFileSync(
+    path.join(root, "Package.swift"),
+    `// swift-tools-version: 6.0\n// rn-xtool-scaffold-revision: 2\n${marker}import PackageDescription\nlet package = Package(name: "RNScreens")\n`,
+  );
+  writeFileSync(path.join(root, "RNScreens.podspec"), "Pod::Spec.new do |s|\n  s.name = 'RNScreens'\nend\n");
+  return root;
+}
+
+/** React Native's autolinking output for that library: `libs/RNScreens` → root, as RN aliases it. */
+function autolinkedScreens(root: string) {
+  const outputDir = mkTmp("xtool-autolinking-");
+  mkdirSync(path.join(outputDir, "libs"));
+  symlinkSync(root, path.join(outputDir, "libs", "RNScreens"), "dir");
+  const autolinking = {
+    dependencies: {
+      "react-native-screens": { root, platforms: { ios: { podspecPath: path.join(root, "RNScreens.podspec") } } },
+    },
+  };
+  return { outputDir, autolinking };
+}
+
+const ROUTER_PODSPEC = `s.source_files = "**/*.{h,m,swift}"\n  s.dependency 'ExpoModulesCore'\n\n  add_dependency(s, "RNScreens")`;
+
+describe.skipIf(shared58 === undefined).each([
+  ["shared 58", shared58!],
+  ["vendored", vendoredSpm()],
+])("Expo SwiftPM plugin fixes (%s copy)", (_label, spm) => {
+  const plugin = () => loadSpm<PluginDeps>(spm, "plugin.js");
+
+  it("X3 keeps own -Swift.h importers out of the umbrella", () => {
+    const root = moduleFixture("Expo", {
+      "ios/Expo.swift": "",
+      "ios/Swift.h":
+        "#import <React/RCTHTTPRequestHandler.h>\n#if __has_include(<Expo/Expo-Swift.h>)\n#import <Expo/Expo-Swift.h>\n#else\n#import \"Expo-Swift.h\"\n#endif\n",
+      "ios/Quoted.h": '#  import "Expo-Swift.h"\n',
+      "ios/Expo.h": "#import <Foundation/Foundation.h>\n@interface EXThing : NSObject\n@end\n",
+      "ios/Other.h": "#import <Other/Other-Swift.h>\n",
+      "ios/Expo.m": "int e(void) { return 1; }\n",
+    });
+    const { sources, layout } = layoutOf(spm, "Expo", root);
+    expect(layout).toBe("mixed");
+    const umbrella = emit(spm, "Expo", root, "mixed", sources).read("umbrella.h");
+    expect(umbrella).not.toContain("Swift.h\"");
+    expect(umbrella).not.toContain("Quoted.h");
+    expect(umbrella).toContain(`#import "${path.join(root, "ios/Expo.h")}"`);
+    expect(umbrella).toContain(`#import "${path.join(root, "ios/Other.h")}"`);
+  });
+
+  it("X6b reads Expo's add_dependency helper", () => {
+    const router = moduleFixture("ExpoRouter", { "ios/Router.swift": "import RNScreens\n" }, ROUTER_PODSPEC);
+    const { facts, sources, layout } = layoutOf(spm, "ExpoRouter", router);
+    expect(facts.dependencies).toEqual(expect.arrayContaining(["ExpoModulesCore", "RNScreens"]));
+    const single = moduleFixture("Single", { "ios/A.swift": "" }, `add_dependency(spec, 'RNScreens', :framework_name => 'X')`);
+    const singleFacts = loadSpm<Podspec>(spm, "podspec.js").readPodspecFacts({
+      podName: "Single",
+      podspecDir: path.join(single, "ios"),
+      moduleRoot: single,
+    });
+    expect(singleFacts.dependencies).toEqual(["RNScreens"]);
+
+    const screens = screensRoot(null);
+    const { outputDir, autolinking } = autolinkedScreens(screens);
+    const libs = plugin().libraryPackageIndex(autolinking, outputDir);
+    const localDeps = plugin().localDependencies({ podName: "ExpoRouter", podspec: facts }, libs);
+    expect(localDeps.map((d) => d.name)).toEqual(["RNScreens"]);
+    expect(layout).toBe("pure-swift");
+    const { manifest } = emit(spm, "ExpoRouter", router, "pure-swift", sources, { localDeps });
+    // The path React Native declares the library at, so SwiftPM sees one package.
+    expect(manifest).toContain(`.package(name: "RNScreens", path: "${path.join(outputDir, "libs", "RNScreens")}")`);
+    expect(manifest).toContain('.product(name: "RNScreens", package: "RNScreens")');
+    expect(manifest).not.toContain("RNScreens/pod-headers");
+    expect(manifest).not.toContain("RNScreens.modulemap");
+  });
+
+  it("X6c passes a scaffolded mixed dependency's importer paths to Swift", () => {
+    const router = moduleFixture("ExpoRouter", { "ios/Router.swift": "import RNScreens\n" }, ROUTER_PODSPEC);
+    const { facts, sources } = layoutOf(spm, "ExpoRouter", router);
+    const manifestWith = (importerPaths: string[] | null, language: string) => {
+      const screens = screensRoot(importerPaths);
+      const { outputDir, autolinking } = autolinkedScreens(screens);
+      const localDeps = plugin().localDependencies(
+        { podName: "ExpoRouter", podspec: facts },
+        plugin().libraryPackageIndex(autolinking, outputDir),
+      );
+      return { real: realpathSync(screens), manifest: emit(spm, "ExpoRouter", router, language, sources, { localDeps }).manifest };
+    };
+    const swiftSettings = (manifest: string) => /swiftSettings: \[(.*)\],\n/.exec(manifest)?.[1] ?? "";
+
+    const { real, manifest } = manifestWith([".", "ios/bridging"], "pure-swift");
+    expect(swiftSettings(manifest)).toContain(`.unsafeFlags(["-Xcc", "-I${real}/.", "-Xcc", "-I${real}/ios/bridging"])`);
+
+    const mixed = manifestWith([".", "ios/bridging"], "mixed");
+    expect(swiftSettings(mixed.manifest)).toContain(`"-Xcc", "-I${mixed.real}/.", "-Xcc", "-I${mixed.real}/ios/bridging"`);
+    expect(mixed.manifest).not.toMatch(/[cC]x*Settings: \[[^\n]*ios\/bridging/);
+
+    const unmarked = manifestWith(null, "pure-swift");
+    expect(unmarked.manifest).not.toContain(unmarked.real);
+    expect(unmarked.manifest).not.toContain('"-Xcc"');
+  });
+
+  it("X6c passes a scaffolded clang-only dependency's importer paths to Swift (screens 4.30.1)", () => {
+    // React Native's scaffolder (vendor/rn-spm) on screens 4.30.1, which has no Swift: ios/RNSConvert.h, in the
+    // module's umbrella, imports "RNSDefines.h" from ios/utils.
+    const { roots } = scaffoldLibraries(VENDORED_RN_SPM, { "react-native-screens": path.join(PODSPEC_FIXTURES, "RNScreens-4.30.1") });
+    const screens = roots["react-native-screens"]!;
+    const router = moduleFixture("ExpoRouter", { "ios/Router.swift": "import RNScreens\n" }, ROUTER_PODSPEC);
+    const { facts, sources } = layoutOf(spm, "ExpoRouter", router);
+    const { outputDir, autolinking } = autolinkedScreens(screens);
+    const localDeps = plugin().localDependencies({ podName: "ExpoRouter", podspec: facts }, plugin().libraryPackageIndex(autolinking, outputDir));
+    const { manifest } = emit(spm, "ExpoRouter", router, "pure-swift", sources, { localDeps });
+    const swiftSettings = /swiftSettings: \[(.*)\],\n/.exec(manifest)?.[1] ?? "";
+    const real = realpathSync(screens);
+    expect(swiftSettings).toContain(`"-Xcc", "-I${real}/ios/utils"`);
+    expect(swiftSettings).toContain(`"-Xcc", "-I${real}/ios"`);
+  });
+
+  it("X6c refuses a marker that is not a JSON array of paths inside the package", () => {
+    const router = moduleFixture("ExpoRouter", { "ios/Router.swift": "import RNScreens\n" }, ROUTER_PODSPEC);
+    const { facts, sources } = layoutOf(spm, "ExpoRouter", router);
+    for (const bad of ["not json", '{"a":1}', '["../outside"]', '["ios/../../x"]', '["/abs/path"]', "[1]"]) {
+      const screens = screensRoot(bad);
+      const { outputDir, autolinking } = autolinkedScreens(screens);
+      // Indexing reads no marker; only a package that depends on the library does.
+      const libs = plugin().libraryPackageIndex(autolinking, outputDir);
+      const localDeps = plugin().localDependencies({ podName: "ExpoRouter", podspec: facts }, libs);
+      expect(() => emit(spm, "ExpoRouter", router, "pure-swift", sources, { localDeps }), bad).toThrow(
+        `${path.join(realpathSync(screens), "Package.swift")} records its Swift importer paths as ${bad}`,
+      );
+    }
+  });
+
+  it("X6b ignores a pod dependency that is not autolinked", () => {
+    const root = moduleFixture("Lonely", { "ios/A.swift": "" }, `add_dependency(s, "NotInstalled")\n  s.dependency 'AlsoMissing'`);
+    const { facts, sources } = layoutOf(spm, "Lonely", root);
+    expect(facts.dependencies).toEqual(expect.arrayContaining(["NotInstalled", "AlsoMissing"]));
+    const { outputDir, autolinking } = autolinkedScreens(screensRoot(null));
+    const localDeps = plugin().localDependencies({ podName: "Lonely", podspec: facts }, plugin().libraryPackageIndex(autolinking, outputDir));
+    expect(localDeps).toEqual([]);
+    expect(emit(spm, "Lonely", root, "pure-swift", sources, { localDeps }).manifest).not.toContain("NotInstalled");
+  });
+
+  it("X6b: a generated package wins over a library of the same pod name", () => {
+    const { outputDir, autolinking } = autolinkedScreens(screensRoot(null));
+    const libs = plugin().libraryPackageIndex(autolinking, outputDir);
+    const generated: LibraryIndex = new Map([
+      ["RNScreens", { podName: "RNScreens", name: "RNScreens", pkgDir: "/out/expo-source/RNScreens", hasSwift: true }],
+    ]);
+    const packages = plugin().dependencyPackageIndex(generated, libs);
+    const [dep] = plugin().localDependencies({ podName: "ExpoRouter", podspec: { dependencies: ["RNScreens"] } }, packages);
+    expect(dep).toMatchObject({ pkgDir: "/out/expo-source/RNScreens", hasSwift: true });
+    expect(dep!.library).toBeUndefined();
+  });
+
+  it("X6b: a precompiled module's library dependency is not reported unmapped", () => {
+    const router = moduleFixture("ExpoRouter", { "ios/Router.swift": "" }, ROUTER_PODSPEC);
+    const { facts } = layoutOf(spm, "ExpoRouter", router);
+    // A precompiled record: no emission, so no spmProductNames of its own.
+    const records = [{ identity: { podName: "ExpoRouter", packageName: "expo-router", podspec: facts } }];
+    const { outputDir, autolinking } = autolinkedScreens(screensRoot(null));
+    const libs = plugin().libraryPackageIndex(autolinking, outputDir);
+    expect(plugin().unmappedDependencies(records, new Set(), libs)).toEqual([]);
+    expect(plugin().unmappedDependencies(records, new Set(), new Map())).toEqual([
+      { packageName: "expo-router", podName: "ExpoRouter", pods: ["RNScreens"] },
+    ]);
+  });
+
+  // expo-dev-menu 57 ships XCTest helpers in ios/UITests (its podspec excludes 'ios/*Tests/**/*');
+  // compiled into the app, they make it load libXCTestSwiftSupport.dylib, which aborts at launch.
+  it("skips every *Tests folder, as CocoaPods' ios/*Tests/**/* does", () => {
+    const tested = moduleFixture("EXDevMenu", {
+      "ios/DevMenu.swift": "",
+      "ios/UITests/DevMenuLooper.swift": "import XCTest\n",
+      "ios/UITests/MockedBridges.m": "int mocked(void) { return 1; }\n",
+      "ios/WorkletsTests/Worklets.mm": "int worklets() { return 1; }\n",
+      "ios/Views/SnapshotTests/Snapshot.swift": "import XCTest\n",
+      "ios/Tests/T.swift": "import XCTest\n",
+      "ios/Test/T.swift": "import XCTest\n",
+    });
+    const { sources, layout } = layoutOf(spm, "EXDevMenu", tested);
+    expect(sources.ignoredDirs).toEqual(["Test", "Tests", "UITests", "Views/SnapshotTests", "WorkletsTests"]);
+    expect(sources).toMatchObject({ hasClang: false, hasCxx: false });
+    expect(layout).toBe("pure-swift");
+    const exclude = 'exclude: ["Test", "Tests", "UITests", "Views/SnapshotTests", "WorkletsTests"]';
+    expect(emit(spm, "EXDevMenu", tested, "pure-swift", sources).manifest).toContain(exclude);
+    expect(emit(spm, "EXDevMenu", tested, "mixed", sources).manifest).toContain(exclude);
+
+    // Anchored, case-sensitive and plural: these are sources.
+    const plain = moduleFixture("Contest", {
+      "ios/Contest.swift": "",
+      "ios/Latest/Latest.m": "int latest(void) { return 1; }\n",
+      "ios/Contests/Contests.mm": "int contests() { return 1; }\n",
+      "ios/TestsSupport/Support.swift": "",
+      "ios/UITest/Helper.swift": "",
+    });
+    const scanned = layoutOf(spm, "Contest", plain);
+    expect(scanned.sources.ignoredDirs).toEqual([]);
+    expect(scanned.sources).toMatchObject({ hasClang: true, hasCxx: true });
+    expect(scanned.layout).toBe("mixed");
+    expect(emit(spm, "Contest", plain, "mixed", scanned.sources).manifest).not.toContain("exclude:");
+  });
+});
+
+describe.skipIf(shared58 === undefined)("Expo 58 golden", () => {
+  it("Expo 58's generated packages are unchanged", () => {
+    const emitted = expo58GoldenEmissions(shared58!);
+    const golden = Object.fromEntries(
+      readdirSync(EXPO58_GOLDEN).flatMap((c) =>
+        readdirSync(path.join(EXPO58_GOLDEN, c)).map((f) => [`${c}/${f}`, readFileSync(path.join(EXPO58_GOLDEN, c, f), "utf8")]),
+      ),
+    );
+    expect(Object.keys(emitted).sort()).toEqual(Object.keys(golden).sort());
+    for (const [rel, text] of Object.entries(golden)) expect(emitted[rel], rel).toBe(text);
   });
 });

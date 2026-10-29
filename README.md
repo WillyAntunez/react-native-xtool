@@ -7,8 +7,8 @@ SwiftPM pipeline.
 [![npm](https://img.shields.io/npm/v/react-native-xtool/alpha?label=npm%20%40alpha)](https://www.npmjs.com/package/react-native-xtool)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-**Status:** alpha, [`react-native-xtool@0.1.0-alpha.1` on npm](https://www.npmjs.com/package/react-native-xtool) under the
-`alpha` tag. Verified end to end on a physical iPhone on 2026-10-26.
+**Status:** alpha, [`react-native-xtool@0.1.0-alpha.3` on npm](https://www.npmjs.com/package/react-native-xtool) under the
+`alpha` tag. Verified end to end on a physical iPhone on 2026-10-28.
 
 <!-- demo GIF: rn-xtool run → app opens on the iPhone → Fast Refresh -->
 Demo video coming soon.
@@ -17,17 +17,18 @@ Demo video coming soon.
 
 | Project or target | Status |
 | --- | --- |
-| Expo SDK 58 | ✅ |
-| Bare React Native 0.88.0 (`@react-native-community/cli init`) | ✅ [details](docs/bare-react-native.md) |
+| Expo SDK 58 (expo 58.0.21 or newer 58.x, react-native 0.88.1) | ✅ [details](docs/how-it-works.md#expo-sdk-58) |
+| Expo SDK 57 (expo 57.0.31 exact) | ✅ [details](docs/how-it-works.md#expo-sdk-57) |
+| Bare React Native 0.88.0 and 0.88.1 (`@react-native-community/cli init`) | ✅ [details](docs/bare-react-native.md) |
 | Bare React Native 0.86.3 and 0.87.1 (0.86.2 build-verified only) | ✅ [details](docs/bare-react-native.md#supported-react-native-versions) |
-| Bare React Native + Expo modules (hybrid), React Native 0.88.0 | ✅ [details](docs/bare-react-native.md#hybrid-bare--expo-modules) |
-| Expo SDK 57 and older, React Native 0.85 and older, 0.86.0, 0.87.0 | ⏳ not yet |
+| Bare React Native + Expo modules (hybrid), React Native 0.88.1 | ✅ [details](docs/bare-react-native.md#hybrid-bare--expo-modules) |
+| Expo SDK 54–56, React Native 0.85 and older, 0.86.0, 0.87.0 | ⏳ not yet (Expo SDK 53 and older are refused as well) |
 | iOS simulator | ❌ macOS only |
 | Production / App Store builds | ❌ use EAS |
 | macOS or Windows as the host | ❌ (WSL2 on x86_64 should work as Linux; not tested yet, reports welcome) |
 
-Bare React Native versions: exactly 0.86.2, 0.86.3, 0.87.1 and 0.88.0 (0.88.0, 0.87.1 and 0.86.3 are verified on a
-device; 0.86.2 only builds, it has not been run on a device), see
+Bare React Native versions: exactly 0.86.2, 0.86.3, 0.87.1, 0.88.0 and 0.88.1 (0.88.1, 0.88.0, 0.87.1 and 0.86.3 are
+verified on a device; 0.86.2 only builds, it has not been run on a device), see
 [Supported React Native versions](docs/bare-react-native.md#supported-react-native-versions). Any other version stops
 with one error naming this list.
 
@@ -75,7 +76,7 @@ rn-xtool run   # with the iPhone plugged in
 ### Bare React Native
 
 ```sh
-npx @react-native-community/cli init MyApp --version 0.88.0 && cd MyApp
+npx @react-native-community/cli init MyApp --version 0.88.1 && cd MyApp
 rn-xtool run   # with the iPhone plugged in
 ```
 
@@ -120,7 +121,7 @@ CommonJS (`module.exports = {...}`) unless your project is ESM. Both are merged,
 
 ```json
 { "xcodeXipPath": "/home/me/Downloads/Xcode_27.1.xip", "metroPort": 8082, "lanIp": "192.168.1.20",
-  "rnArtifactsDir": "/home/me/rn-artifacts/0.88.0/debug", "xtoolPath": "/opt/xtool/xtool" }
+  "rnArtifactsDir": "/home/me/rn-artifacts/0.88.1/debug", "xtoolPath": "/opt/xtool/xtool" }
 ```
 
 | Key | Default | Meaning |

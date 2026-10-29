@@ -5,12 +5,13 @@ import { detectLanRoute, isPortFree, suspiciousLanRoute, tunnelWarning, type Lan
 import { projectPaths } from "../paths.js";
 import { MissingBundleIdentifierError, readProject, RN_CLI_MISSING, type ProjectKind } from "../project/index.js";
 import { openPbxproj } from "../project/pbxproj.js";
+import { makeNmRunner } from "../pipeline/symbols.js";
 import { readState } from "../state.js";
 import { NO_FINGERPRINT_WARNING } from "./start.js";
 import { sha256File } from "../tools/download.js";
 import { toolEnv } from "../tools/exec.js";
 import { authStatus, listDevices, defaultXtoolPath, xtoolBin, xtoolUnrunnableError, type AuthStatus, type Device } from "../tools/xtool.js";
-import { XTOOL_VERSION, XTOOL_SHA256, SWIFT_VERSION, type RnScripts } from "../versions.js";
+import { XTOOL_VERSION, XTOOL_SHA256, SWIFT_VERSION, type ExpoPlugin, type RnScripts } from "../versions.js";
 import { isExecutable, sdkBundle, swiftAtLeast, swiftMeetsMin, swiftVersionText } from "./setup.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -34,6 +35,8 @@ export interface DoctorReport {
 export interface DoctorProbes {
   nodeVersion: () => string;
   swiftVersion: () => Promise<string | undefined>;
+  /** The LLVM version of the Swift toolchain's llvm-nm (G4 needs it); rejects with LLVM_NM_MISSING when it is missing. */
+  llvmNmVersion: () => Promise<string>;
   /** Full path of the xtool binary, used in hints. */
   xtoolPath: () => string;
   xtoolInstalled: () => boolean;
@@ -61,6 +64,7 @@ export interface ProjectProbe {
   kind: ProjectKind;
   rnVersion: string;
   rnScripts: RnScripts;
+  expoPlugin: ExpoPlugin;
   sdkVersion?: number;
   bundleIdentifier: string;
   hasExpoModules: boolean;
@@ -79,6 +83,7 @@ export async function readProjectProbe(root: string): Promise<ProjectProbe> {
     kind: info.kind,
     rnVersion: info.rnVersion,
     rnScripts: info.rnScripts,
+    expoPlugin: info.expoPlugin,
     ...(info.sdkVersion !== undefined && { sdkVersion: info.sdkVersion }),
     bundleIdentifier: info.bundleIdentifier,
     hasExpoModules: info.hasExpoModules,
@@ -90,7 +95,10 @@ export async function readProjectProbe(root: string): Promise<ProjectProbe> {
 }
 
 function projectSummary(p: ProjectProbe): string {
-  if (p.kind === "expo") return `expo SDK ${p.sdkVersion ?? "unknown"}, React Native ${p.rnVersion}`;
+  if (p.kind === "expo") {
+    const vendored = p.expoPlugin === "vendored" ? " (vendored Expo SwiftPM plugin and SwiftPM scripts)" : "";
+    return `expo SDK ${p.sdkVersion ?? "unknown"}, React Native ${p.rnVersion}${vendored}`;
+  }
   const kind = p.hasExpoModules ? "bare + expo modules, React Native" : "bare React Native";
   const scripts = p.rnScripts === "vendored" ? " (vendored SwiftPM scripts)" : "";
   return `${kind} ${p.rnVersion}${scripts}${p.target ? `, target ${p.target.name} (${p.target.xcodeproj})` : ""}`;
@@ -130,6 +138,8 @@ export function realProbes(config: ExpoXtoolConfig): DoctorProbes {
   return {
     nodeVersion: () => process.versions.node,
     swiftVersion: () => swiftVersionText(PROBE_TIMEOUT_MS),
+    llvmNmVersion: async () =>
+      /LLVM version (\S+)/.exec(await makeNmRunner("llvm-nm", PROBE_TIMEOUT_MS)(["--version"]))?.[1] ?? "unknown",
     xtoolPath: () => config.xtoolPath ?? defaultXtoolPath(),
     xtoolInstalled: () => isExecutable(config.xtoolPath ?? defaultXtoolPath()),
     xtoolSha256: async () => {
@@ -256,6 +266,8 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
         "Swift 6.5+: mixed Swift + Objective-C packages use the 6.5 manifest form (untested): Package@swift-6.5.swift, SE-0541, no experimentalMultiLang flag",
     });
   }
+  // Every build's frameworks step (G4) runs it, with no bypass: a missing one fails here instead of minutes into a build.
+  await add("llvm-nm", async () => ({ status: "ok", detail: `LLVM ${await p.llvmNmVersion()}` }));
   await add("xtool", async () => {
     if (!p.xtoolInstalled()) return { status: "fail", detail: "not found — run rn-xtool setup" };
     const v = await p.xtoolVersion();

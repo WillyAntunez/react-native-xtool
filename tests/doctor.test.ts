@@ -12,12 +12,16 @@ import {
   type ProjectProbe,
 } from "../src/commands/doctor.js";
 import { MissingBundleIdentifierError } from "../src/project/index.js";
+import { LLVM_NM_MISSING } from "../src/pipeline/symbols.js";
 import { XTOOL_SHA256, XTOOL_VERSION } from "../src/versions.js";
+import { fakeExpo57Modules } from "./support/expo57.js";
+import { fakeExpo58Modules } from "./support/expo58.js";
 
 const expoProbe: ProjectProbe = {
   kind: "expo",
   rnVersion: "0.88.0",
   rnScripts: "installed",
+  expoPlugin: "installed",
   sdkVersion: 58,
   bundleIdentifier: "com.example.app",
   hasExpoModules: true,
@@ -27,6 +31,7 @@ const bareProbe: ProjectProbe = {
   kind: "bare",
   rnVersion: "0.88.0",
   rnScripts: "installed",
+  expoPlugin: "installed",
   bundleIdentifier: "org.reactjs.native.example.HelloWorld",
   hasExpoModules: false,
   target: { name: "HelloWorld", xcodeproj: "HelloWorld.xcodeproj" },
@@ -36,6 +41,7 @@ const bareProbe: ProjectProbe = {
 const good: DoctorProbes = {
   nodeVersion: () => "20.11.0",
   swiftVersion: async () => "6.4",
+  llvmNmVersion: async () => "21.0.0",
   xtoolPath: () => "/cache/xtool.AppImage",
   xtoolInstalled: () => true,
   xtoolVersion: async () => `xtool ${XTOOL_VERSION}`,
@@ -87,7 +93,7 @@ describe("doctorWithProbes", () => {
     const r = await doctorWithProbes(good);
     expect(r.ok).toBe(true);
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "swift", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
+      "node", "swift", "llvm-nm", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
     ]);
     expect(r.checks.every((c) => c.status === "ok")).toBe(true);
   });
@@ -126,6 +132,19 @@ describe("doctorWithProbes", () => {
     expect(r.checks.find((c) => c.name === "apple-login")?.detail).toContain(
       "run rn-xtool auth login",
     );
+  });
+
+  it("checks llvm-nm, which every build's frameworks step needs, with the build's remedy", async () => {
+    expect(statusOf(await doctorWithProbes(good), "llvm-nm")).toBe("ok");
+    expect((await doctorWithProbes(good)).checks.find((c) => c.name === "llvm-nm")?.detail).toBe("LLVM 21.0.0");
+    const r = await doctorWithProbes({
+      ...good,
+      llvmNmVersion: async () => {
+        throw new Error(LLVM_NM_MISSING);
+      },
+    });
+    expect(r.ok).toBe(false);
+    expect(r.checks.find((c) => c.name === "llvm-nm")).toEqual({ name: "llvm-nm", status: "fail", detail: LLVM_NM_MISSING });
   });
 
   it("fails on swift older than required", async () => {
@@ -290,7 +309,7 @@ describe("doctorWithProbes", () => {
     const r = await doctorWithProbes({ ...good, ufwActive: async () => true, buildState: async () => ({ metroPort: 8099, lanIp: "1.2.3.4" }) }, "/p");
     expect(r.checks.find((c) => c.name === "firewall")?.detail).toContain("ufw allow 8099/tcp");
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "swift", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip", "project", "project-config", "build-state", "deps", "metro-port",
+      "node", "swift", "llvm-nm", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip", "project", "project-config", "build-state", "deps", "metro-port",
     ]);
   });
 
@@ -299,6 +318,14 @@ describe("doctorWithProbes", () => {
       (await doctorWithProbes({ ...good, project: async () => probe }, "/p")).checks.find((c) => c.name === "project");
     it("describes an expo project", async () => {
       expect(await detailOf(expoProbe)).toMatchObject({ status: "ok", detail: "expo SDK 58, React Native 0.88.0" });
+    });
+    it("describes an Expo SDK 57 project", async () => {
+      expect(
+        await detailOf({ ...expoProbe, sdkVersion: 57, rnVersion: "0.86.3", rnScripts: "vendored", expoPlugin: "vendored" }),
+      ).toMatchObject({
+        status: "ok",
+        detail: "expo SDK 57, React Native 0.86.3 (vendored Expo SwiftPM plugin and SwiftPM scripts)",
+      });
     });
     it("describes a bare project with its target and xcodeproj", async () => {
       expect(await detailOf(bareProbe)).toMatchObject({
@@ -435,6 +462,37 @@ describe("wifi check", () => {
 
 describe("readProjectProbe", () => {
   const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
+  it("reads an Expo SDK 57 project with the vendored plugin", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "doctor-expo57-"));
+    try {
+      await cp(path.join(fixtures, "expo-57"), dir, { recursive: true });
+      await fakeExpo57Modules(dir);
+      expect(await readProjectProbe(dir)).toMatchObject({
+        kind: "expo", sdkVersion: 57, rnVersion: "0.86.3", rnScripts: "vendored", expoPlugin: "vendored", warnings: [],
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+  it("shows the newer-than-floor warning", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "doctor-expo58-"));
+    try {
+      await cp(path.join(fixtures, "project"), dir, { recursive: true });
+      await fakeExpo58Modules(dir, { expo: "58.0.22" });
+      const probe = await readProjectProbe(dir);
+      expect(probe).toMatchObject({ kind: "expo", sdkVersion: 58, rnVersion: "0.88.1", expoPlugin: "installed" });
+      expect(probe.warnings).toEqual([
+        "Newer than the Expo SDK 58 set this rn-xtool release was verified with: expo 58.0.22. Verified: expo 58.0.21, " +
+          "react-native 0.88.1, expo-modules-core 58.0.28, expo-modules-jsi 58.0.21, expo-modules-autolinking 58.0.16, " +
+          "expo-file-system 58.0.13 and expo-font 58.0.11. The build continues; if it fails or the app crashes at launch, " +
+          "report it at https://github.com/WillyAntunez/react-native-xtool/issues.",
+      ]);
+      const project = (await doctorWithProbes({ ...good, project: async () => probe }, "/p")).checks.find((c) => c.name === "project");
+      expect(project?.status).toBe("warn");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
   it("warns that @react-native-community/cli is missing from a bare project", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "doctor-bare-"));
     try {
@@ -464,6 +522,7 @@ describe("readProjectProbe", () => {
       expect(probe).toMatchObject({
         kind: "bare",
         rnVersion: "0.88.0",
+        expoPlugin: "installed",
         bundleIdentifier: "org.reactjs.native.example.HelloWorld",
         hasExpoModules: false,
         target: { name: "HelloWorld", xcodeproj: "HelloWorld.xcodeproj" },

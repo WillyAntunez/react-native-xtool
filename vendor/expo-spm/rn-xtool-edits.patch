@@ -1,0 +1,438 @@
+--- a/spm/app-target.js
++++ b/spm/app-target.js
+@@ -8,15 +8,34 @@
+ 
+ 'use strict';
+ 
+-const { IOSConfig } = require('@expo/config-plugins');
+ const fs = require('fs');
++const { createRequire } = require('module');
+ const path = require('path');
+ 
+-// Not a dependency of this package; resolving it through config-plugins also
+-// yields the exact parser IOSConfig's helpers expect.
+-const xcode = require(
+-  require.resolve('xcode', { paths: [path.dirname(require.resolve('@expo/config-plugins'))] })
+-);
++/**
++ * rn-xtool P2: this copy runs from rn-xtool's install, so the app's @expo/config-plugins is
++ * resolved through the app's expo (where the installed copy runs from), found from the app root
++ * rn-xtool passes in RN_XTOOL_PROJECT_ROOT, never from here.
++ */
++function appPackages() {
++  if (!process.env.RN_XTOOL_PROJECT_ROOT) {
++    throw new Error(
++      "RN_XTOOL_PROJECT_ROOT is not set: rn-xtool's vendored Expo SwiftPM plugin resolves the app's packages from it"
++    );
++  }
++  const appRoot = path.resolve(process.env.RN_XTOOL_PROJECT_ROOT);
++  const expoDir = path.dirname(
++    createRequire(path.join(appRoot, 'package.json')).resolve('expo/package.json')
++  );
++  const configPlugins = createRequire(path.join(expoDir, 'package.json')).resolve(
++    '@expo/config-plugins'
++  );
++  const { IOSConfig } = require(configPlugins);
++  // Not a dependency of this package; resolving it through config-plugins also
++  // yields the exact parser IOSConfig's helpers expect.
++  const xcode = require(require.resolve('xcode', { paths: [path.dirname(configPlugins)] }));
++  return { IOSConfig, xcode };
++}
+ 
+ const { spmUpdateCommand } = require('./commands');
+ const { pluginError } = require('./diagnostics');
+@@ -96,6 +115,7 @@
+ 
+ /** The native target the registry is generated for, with its project, or null. */
+ function findTarget(appRoot, projectPath, targetName) {
++  const { IOSConfig, xcode } = appPackages();
+   let project;
+   try {
+     if (projectPath == null) throw new Error('no .xcodeproj with a project.pbxproj was found');
+@@ -139,6 +159,7 @@
+   const found = findTarget(appRoot, projectPath, targetName);
+   if (found == null) return null;
+   const { project, target } = found;
++  const { IOSConfig } = appPackages();
+   const name = IOSConfig.XcodeUtils.unquote(String(target.name));
+ 
+   let configurations;
+@@ -249,4 +270,4 @@
+   );
+ }
+ 
+-module.exports = { readPodfileProperties, resolveAppTarget };
++module.exports = { appPackages, readPodfileProperties, resolveAppTarget };
+--- a/spm/flavored-frameworks.js
++++ b/spm/flavored-frameworks.js
+@@ -62,9 +62,16 @@
+ 
+ function precompiledBases(buildPath, moduleRoot, bundledPath) {
+   const envPath = process.env.EXPO_PRECOMPILED_MODULES_PATH;
++  // rn-xtool P2: where the installed copy's `__dirname/../../..` lands (the app's node_modules),
++  // never relative to this vendored copy.
++  const appRoot = process.env.RN_XTOOL_PROJECT_ROOT
++    ? path.resolve(process.env.RN_XTOOL_PROJECT_ROOT)
++    : null;
+   const dirs = {
+     env: envPath ? path.resolve(envPath, ...buildPath) : null,
+-    monorepo: path.resolve(__dirname, '..', '..', '..', 'precompile', '.build', ...buildPath),
++    monorepo: appRoot
++      ? path.resolve(appRoot, 'node_modules', 'precompile', '.build', ...buildPath)
++      : null,
+     bundled: moduleRoot != null ? path.join(moduleRoot, 'prebuilds', ...bundledPath) : null,
+   };
+   const bases = PRECOMPILED_SOURCE_KINDS.filter((kind) => dirs[kind] != null).map((kind) => ({
+@@ -94,10 +101,12 @@
+     encoding: 'utf8',
+     maxBuffer: 64 * 1024 * 1024,
+   });
++  // rn-xtool P5: macOS AppleDouble entries (`._*`) are metadata, not part of any product.
+   const entries = listing
+     .split('\n')
+     .map((entry) => entry.replace(/^\.\//, '').replace(/\/$/, ''))
+-    .filter(Boolean);
++    .filter(Boolean)
++    .filter((entry) => !path.basename(entry).startsWith('._'));
+   if (entries.length === 0) {
+     throw pluginError({ what: `${tarballPath} is empty` });
+   }
+@@ -159,7 +168,21 @@
+ 
+   validateTarEntries(sourcePath, frameworkName);
+   replaceDirectory(destination, (temp) => {
+-    execFileSync('tar', ['-xzf', sourcePath, '-C', temp], { stdio: 'pipe' });
++    // rn-xtool P5: without macOS AppleDouble files or the pax xattr headers GNU tar warns about.
++    execFileSync(
++      'tar',
++      [
++        '-xzf',
++        sourcePath,
++        '-C',
++        temp,
++        '--exclude=._*',
++        '--exclude=*/._*',
++        '--no-xattrs',
++        '--warning=no-unknown-keyword',
++      ],
++      { stdio: 'pipe' }
++    );
+     const extracted = path.join(temp, `${frameworkName}.xcframework`);
+     if (!fs.existsSync(path.join(extracted, 'Info.plist'))) {
+       throw incompleteXCFrameworkError(
+@@ -629,6 +652,7 @@
+   assertDistinctFlavoredFrameworks,
+   assertHeadersMatchSources,
+   byteOrder,
++  extractTarball,
+   frameworkSource,
+   hasPrecompiledArtifact,
+   headersXCFrameworkDirs,
+--- a/spm/manifests.js
++++ b/spm/manifests.js
+@@ -12,6 +12,7 @@
+ const { appleSourceDir, scanAppleSources, walkSourceTree } = require('./classify');
+ const { reactProductDependencies, reactPackageDeclarations } = require('./react-descriptor');
+ const { pluginError } = require('./diagnostics');
++const { c99Identifier } = require('./podspec');
+ 
+ // ---------------------------------------------------------------------------
+ // Pure: parse `swift package dump-package` JSON → { name, products, targets }
+@@ -1231,6 +1232,7 @@
+   headerDir = null,
+   headerDirHeaders = [],
+   pkgDir,
++  subspecTargets = [],
+   ...options
+ }) {
+   const base = pureSwiftManifest(options);
+@@ -1254,6 +1256,12 @@
+     clang.push(`.unsafeFlags(["-I", "${escapeSwiftString(dir)}"])`);
+   }
+   for (const flag of swiftDepModuleMaps) clang.push(`.unsafeFlags([${flag}])`);
++  // rn-xtool P4: CocoaPods' generated prefix header (`<Pod>-prefix.pch`) imports UIKit into every
++  // Objective-C file; SDK 57 headers rely on it (expo's EXLegacyAppDelegateWrapper.h).
++  const prefixHeader = path.join(pkgDir, 'prefix.pch');
++  fs.mkdirSync(pkgDir, { recursive: true });
++  writeIfChanged(prefixHeader, '#ifdef __OBJC__\n#import <UIKit/UIKit.h>\n#endif\n');
++  clang.push(`.unsafeFlags(["-include", "${escapeSwiftString(prefixHeader)}"])`);
+   // SwiftPM 6.4 does not apply `cxxLanguageStandard` to a mixed target's Objective-C++.
+   const cxx = language === 'mixed' && hasCxx ? [...clang, '.unsafeFlags(["-std=c++20"])'] : clang;
+   // Swift reads the module's headers through the umbrella, so its Clang importer needs the
+@@ -1267,6 +1275,24 @@
+           ...swiftImporterFlags(options.localDeps ?? []),
+         ]
+       : [];
++  // rn-xtool P6: each flagged subspec is a Clang target over its directory, which the module's
++  // target excludes. It has the module's Clang settings, then the subspec's flags last, and
++  // depends on the module's target; its headers keep their `<header_dir/…>` forwarders.
++  const subspecs = subspecTargets.map(({ name, rel, flags, exclude }) => {
++    const own = `.unsafeFlags([${flags.map((f) => `"${escapeSwiftString(f)}"`).join(', ')}])`;
++    return {
++      name,
++      path: path.join(options.srcRel, rel),
++      // SwiftPM 6.4 rejects the default `include` here ("invalid or not contained in the target").
++      publicHeadersPath: '.',
++      exclude,
++      sources: [],
++      resources: [],
++      settings: [],
++      dependencies: [{ name: options.product, platforms: [] }],
++      rawSettings: { c: [...clang, own], cxx: [...cxx, own], swift: [] },
++    };
++  });
+   return {
+     ...base,
+     pureSwift: false,
+@@ -1275,12 +1301,74 @@
+     umbrellaHeaders: language === 'mixed' ? umbrellaHeaders : [],
+     headerDir,
+     headerDirHeaders: headerDir != null ? headerDirHeaders : [],
+-    targets: base.targets.map((t) => ({
+-      ...t,
+-      publicHeadersPath: '.',
+-      rawSettings: { c: clang, cxx, swift },
++    products: base.products.map((p) => ({
++      ...p,
++      targets: [...p.targets, ...subspecs.map((sub) => sub.name)],
+     })),
++    targets: [
++      ...base.targets.map((t) => ({
++        ...t,
++        exclude: [...t.exclude, ...subspecTargets.map((sub) => sub.rel)],
++        publicHeadersPath: '.',
++        rawSettings: { c: clang, cxx, swift },
++      })),
++      ...subspecs,
++    ],
++  };
++}
++
++const C_FAMILY_SOURCE_RX = /\.(m|mm|c|cpp|cc)$/;
++const CXX_LANGUAGE_RX = /^(?:objective-c|c)\+\+$/;
++
++/**
++ * rn-xtool P6: the podspec's flagged subspecs (`podspec.js#flaggedSubspecs`) that become targets
++ * of their own: those whose directory lies strictly inside the source directory and outside an
++ * ignored one, does not overlap an earlier subspec's (a nested one is then compiled with the outer
++ * one's flags), has C-family sources and no Swift (a Swift file would make SwiftPM build the
++ * target as Swift), and whose target name is not taken yet. The others stay where they were.
++ * Each takes over the module's `excludes` under its directory, rebased to it.
++ * `-x objective-c++` or `-x c++` gets `-fno-cxx-modules`, as SwiftPM passes it to its own C++:
++ * with C++ modules on, React's C++ headers are redefined through the React module.
++ */
++function subspecTargetsOf(flaggedSubspecs, srcDir, ignoredDirs, excludes, product) {
++  const real = (p) => {
++    try {
++      return fs.realpathSync(p);
++    } catch {
++      return null;
++    }
+   };
++  const realSrcDir = real(srcDir);
++  const taken = [];
++  const within = (a, b) => a === b || a.startsWith(`${b}/`);
++  const targets = [];
++  for (const { name: subspec, dir, compilerFlags } of flaggedSubspecs) {
++    const realDir = real(dir);
++    if (realSrcDir == null || realDir == null) continue;
++    const rel = path.relative(realSrcDir, realDir).split(path.sep).join('/');
++    if (rel === '' || rel === '..' || rel.startsWith('../') || path.isAbsolute(rel)) continue;
++    if (ignoredDirs.some((d) => within(rel, d))) continue;
++    if (taken.some((d) => within(rel, d) || within(d, rel))) continue;
++    const name = `${product}_${c99Identifier(subspec)}`;
++    if (targets.some((t) => t.name === name)) continue;
++    const { files } = walkSourceTree(realDir);
++    if (files.some((f) => f.endsWith('.swift')) || !files.some((f) => C_FAMILY_SOURCE_RX.test(f))) {
++      continue;
++    }
++    taken.push(rel);
++    const cxx = compilerFlags.some(
++      (f, i) =>
++        (f === '-x' && CXX_LANGUAGE_RX.test(compilerFlags[i + 1] ?? '')) ||
++        (f.startsWith('-x') && CXX_LANGUAGE_RX.test(f.slice(2)))
++    );
++    targets.push({
++      name,
++      rel,
++      flags: [...compilerFlags, ...(cxx ? ['-fno-cxx-modules'] : [])],
++      exclude: excludes.filter((e) => e.startsWith(`${rel}/`)).map((e) => e.slice(rel.length + 1)),
++    });
++  }
++  return targets;
+ }
+ 
+ /**
+@@ -1299,6 +1387,7 @@
+     sources = scanAppleSources(moduleRoot),
+     headerDir = null,
+     localDeps = [],
++    flaggedSubspecs = [],
+   },
+   emitContext
+ ) {
+@@ -1316,17 +1405,22 @@
+     const text = fs.readFileSync(file, 'utf8');
+     return !isCxxHeader(text) && !ownSwiftHeader.test(text);
+   });
++  const excludes = [...sources.ignoredDirs, ...(sources.appleOnlyResources ?? [])];
+   const manifest = generatedSourceManifest({
+     language,
+     hasCxx: sources.hasCxx,
+     umbrellaHeaders,
+-    headerDir,
++    // rn-xtool P3: CocoaPods' default header_dir is the pod name (SDK 57's expo-constants keeps its
++    // headers flat in ios/ and imports <EXConstants/EXConstantsService.h>).
++    headerDir: headerDir ?? product,
+     headerDirHeaders: headers,
+     localDeps,
+     pkgDir: path.join(emitContext.outDir, 'expo-source', product),
++    // rn-xtool P6.
++    subspecTargets: subspecTargetsOf(flaggedSubspecs, srcDir, sources.ignoredDirs, excludes, product),
+     product,
+     srcRel: path.relative(moduleRoot, srcDir),
+-    excludes: [...sources.ignoredDirs, ...(sources.appleOnlyResources ?? [])],
++    excludes,
+     iosDeploymentTarget,
+     hasPrivacyManifest: fs.existsSync(path.join(srcDir, PRIVACY_MANIFEST)),
+     packages: spmPackages.map(documentedPackage),
+--- a/spm/plugin.js
++++ b/spm/plugin.js
+@@ -769,6 +769,8 @@
+       language: layout,
+       headerDir: podspec.headerDir,
+       localDeps,
++      // rn-xtool P6.
++      flaggedSubspecs: podspec.flaggedSubspecs,
+     },
+     emitContext
+   );
+@@ -1188,8 +1190,10 @@
+   });
+   let pkgJsonPath;
+   try {
++    // rn-xtool P1: SDK 57's core depends on @expo/expo-modules-macros-plugin, which has no Linux
++    // binary; fall back to the expo-modules-macros rn-xtool installs next to this copy.
+     pkgJsonPath = require.resolve('expo-modules-macros/package.json', {
+-      paths: [coreModuleRoot],
++      paths: [coreModuleRoot, __dirname],
+     });
+   } catch (error) {
+     throw pluginError(
+@@ -1494,3 +1498,4 @@
+ module.exports.dependencyPackageIndex = dependencyPackageIndex;
+ module.exports.unmappedDependencies = unmappedDependencies;
+ module.exports.localDependencies = localDependencies;
++module.exports.emitSourceModule = emitSourceModule;
+--- a/spm/podspec.js
++++ b/spm/podspec.js
+@@ -176,6 +176,88 @@
+ }
+ 
+ // ---------------------------------------------------------------------------
++// rn-xtool P6: subspecs with compiler flags of their own
++// ---------------------------------------------------------------------------
++
++const SUBSPEC_RX = /^\s*\w+\.subspec\s+['"]([^'"]+)['"]\s*do\s*\|\s*(\w+)\s*\|/;
++const STRING_LITERAL_RX = /'([^'\\]*)'|"([^"\\]*)"/g;
++const LITERAL = `(?:'[^'\\\\]*'|"[^"\\\\]*")`;
++const LITERAL_LIST = `${LITERAL}(?:\\s*,\\s*${LITERAL})*`;
++// `'a'`, `'a', "b"` or `['a', "b"]`, and nothing else: no condition, operator, variable or call.
++const LITERAL_VALUE_RX = new RegExp(`^(?:${LITERAL_LIST}|\\[\\s*${LITERAL_LIST}\\s*,?\\s*\\])$`);
++const GLOB_CHAR_RX = /[*?[{]/;
++
++/**
++ * What `line` sets `<name>.(ios.)<attribute>` to: undefined when it does not mention it; the
++ * strings when it assigns a literal value (comments are already stripped); else null, the value
++ * then being Ruby to evaluate (`'-w' if ENV['X']`, `'-w', flags`, `+=`, `<<`, interpolation).
++ */
++function attributeValue(line, name, attribute) {
++  const attr = `^\\s*${name}\\.(?:ios\\.)?${attribute}\\b`;
++  if (!new RegExp(attr).test(line)) return undefined;
++  const rhs = new RegExp(`${attr}\\s*=(?!=)(.*)$`).exec(line)?.[1].trim();
++  if (rhs == null || !LITERAL_VALUE_RX.test(rhs)) return null;
++  const values = [...rhs.matchAll(STRING_LITERAL_RX)].map((m) => m[1] ?? m[2]);
++  return values.some((v) => v.includes('#{') || v.includes('$(')) ? null : values;
++}
++
++/**
++ * The directory a `<dir>/**\/<pattern>` or `<dir>/<pattern>` glob takes its files from, or ''
++ * for any other shape. The whole directory is then the subspec's: an approximation, as the
++ * pattern's file types are not checked against the directory.
++ */
++function globDirectory(glob) {
++  const parts = glob.split('/');
++  const first = parts.findIndex((p) => GLOB_CHAR_RX.test(p));
++  const rest = parts.slice(first);
++  const shaped = rest.length === 1 || (rest.length === 2 && rest[0] === '**');
++  return first > 0 && shaped ? parts.slice(0, first).join('/') : '';
++}
++
++/**
++ * CocoaPods compiles a subspec's files with its `compiler_flags` (expo-dev-launcher 57's `Unsafe`
++ * subspec: `-x objective-c++ -std=c++20 -fno-objc-arc`), which one SwiftPM target cannot do per
++ * file. Each subspec whose flags and `source_files` are literal values (see `attributeValue`),
++ * its globs under one directory, as
++ * `{ name, dir, compilerFlags }` with `dir` absolute; `manifests.js` gives it a target of its own.
++ * Text-only like the rest: nested subspecs and test specs are not read.
++ */
++function flaggedSubspecs(text, podspecDir) {
++  const found = [];
++  let current = null;
++  for (const { text: line } of podspecBodyLines(text)) {
++    if (current == null) {
++      const open = SUBSPEC_RX.exec(line);
++      if (open != null) {
++        const depth = blockDelta(line);
++        // A one-line block is not read.
++        if (depth > 0) current = { name: open[1], variable: open[2], depth };
++      }
++      continue;
++    }
++    // The last mention wins, as the last assignment does in Ruby; null marks a value not read.
++    const sourceFiles = attributeValue(line, current.variable, 'source_files');
++    if (sourceFiles !== undefined) current.globs = sourceFiles;
++    const compilerFlags = attributeValue(line, current.variable, 'compiler_flags');
++    if (compilerFlags !== undefined) current.flags = compilerFlags;
++    current.depth += blockDelta(line);
++    if (current.depth > 0) continue;
++    const { name, globs, flags } = current;
++    current = null;
++    if (!Array.isArray(globs) || !Array.isArray(flags)) continue;
++    const dirs = new Set(globs.map(globDirectory));
++    const [dir] = dirs;
++    if (dirs.size !== 1 || dir === '') continue;
++    found.push({
++      name,
++      dir: path.join(podspecDir, dir),
++      compilerFlags: flags.join(' ').split(/\s+/).filter(Boolean),
++    });
++  }
++  return found;
++}
++
++// ---------------------------------------------------------------------------
+ // I/O
+ // ---------------------------------------------------------------------------
+ 
+@@ -260,10 +342,13 @@
+     podspecsIn(podspecDir).flatMap((file) => podspecDependencies(readText(file) ?? ''))
+   );
+   // rn-xtool: no podspec found counts as declaring sources, so nothing is taken for a meta pod.
+-  const texts = podspecFiles(podName, dirs).map((file) => readText(file) ?? '');
++  const files = podspecFiles(podName, dirs);
++  const texts = files.map((file) => readText(file) ?? '');
+   const facts = texts.map(sourceFacts);
+   return {
+     ...readPodspecs(podName, dirs),
++    // rn-xtool P6: source globs are relative to the podspec that declares them.
++    flaggedSubspecs: texts.flatMap((text, i) => flaggedSubspecs(text, path.dirname(files[i]))),
+     dependencies: [...dependencies],
+     declaresSourceFiles: !texts.length || facts.some((f) => f.declaresSourceFiles),
+     referencesVendor: facts.some((f) => f.referencesVendor),
+@@ -286,4 +371,5 @@
+   readPodspecFacts,
+   sourceFacts,
+   c99Identifier,
++  flaggedSubspecs,
+ };

@@ -1,0 +1,7 @@
+                 (undefined) external _$s15ExpoModulesCore5FieldCMn (from ExpoModulesCore)
+                 (undefined) external _$s15ExpoModulesCore6RecordMp (from ExpoModulesCore)
+                 (undefined) external _$s15ExpoModulesCore7PromiseVMa (from ExpoModulesCore)
+                 (undefined) external _$s15ExpoModulesCore9AnyModuleP11_classTypesSayAA12SharedObjectCmGvgZTq (from ExpoModulesCore)
+                 (undefined) external _$s15ExpoModulesCore9AnyModulePAAE11_classTypesSayAA12SharedObjectCmGvgZ (from ExpoModulesCore)
+                 (undefined) external _NSFileSize (from Foundation)
+                 (undefined) weak external __swift_FORCE_LOAD_$_swiftAVFoundation (from libswiftAVFoundation)

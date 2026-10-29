@@ -1,5 +1,6 @@
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
+import * as plist from "plist";
 import type { RuntimeFramework } from "../frameworks.js";
 import { swiftHeadersDir, type ProjectPaths } from "../paths.js";
 import { transformInfoPlist } from "../plist.js";
@@ -8,6 +9,7 @@ import { IOS_MIN } from "../versions.js";
 import { copyBareTarget } from "./bareSources.js";
 import { expoClangImporterInputs } from "./expoImporter.js";
 import { renderPackageSwift, type AppTargetInputs } from "./packageSwift.js";
+import { scaffoldedImporterPaths } from "./scaffoldImporter.js";
 import { BASE_RESOURCES, DEFAULT_RESOURCES, renderXtoolYml } from "./xtoolYml.js";
 
 export interface GenerateContext {
@@ -21,15 +23,43 @@ export interface GenerateContext {
 
 const MANIFEST_6_5 = "Package@swift-6.5.swift";
 
-async function readRequired(path: string, label: string): Promise<string> {
+/** The file's text, or undefined when it does not exist. */
+async function readOptional(path: string): Promise<string | undefined> {
   try {
     return await readFile(path, "utf8");
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") {
-      throw new Error(`Missing ${label}: ${path}`);
-    }
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw e;
   }
+}
+
+async function readRequired(path: string, label: string): Promise<string> {
+  const text = await readOptional(path);
+  if (text === undefined) throw new Error(`Missing ${label}: ${path}`);
+  return text;
+}
+
+type PlistDict = { [key: string]: plist.PlistValue };
+
+function isDict(value: unknown): value is PlistDict {
+  return value !== null && typeof value === "object" && !Array.isArray(value) && !(value instanceof Date) && !ArrayBuffer.isView(value);
+}
+
+/** Every `UISceneDelegateClassName` under `UIApplicationSceneManifest.UISceneConfigurations`, in order. */
+export function sceneDelegateClassNames(infoPlistText: string): string[] {
+  const info = plist.parse(infoPlistText);
+  const manifest = isDict(info) ? info.UIApplicationSceneManifest : undefined;
+  const configurations = isDict(manifest) ? manifest.UISceneConfigurations : undefined;
+  if (!isDict(configurations)) return [];
+  const names: string[] = [];
+  for (const role of Object.values(configurations)) {
+    if (!Array.isArray(role)) continue;
+    for (const scene of role) {
+      const name = isDict(scene) ? scene.UISceneDelegateClassName : undefined;
+      if (typeof name === "string") names.push(name);
+    }
+  }
+  return names;
 }
 
 interface AppSources {
@@ -56,9 +86,20 @@ async function writeAppSources(ctx: GenerateContext, headersDir: string, resourc
     };
     return { app, resources: copied.resources };
   }
-  for (const file of ["AppDelegate.swift", "SceneDelegate.swift"]) {
-    const text = await readRequired(join(project.iosTargetDir, file), file);
-    await writeFile(join(paths.sources, file), text);
+  const appDelegate = await readRequired(join(project.iosTargetDir, "AppDelegate.swift"), "AppDelegate.swift");
+  await writeFile(join(paths.sources, "AppDelegate.swift"), appDelegate);
+  // SDK 58's template adds a SceneDelegate; SDK 57's is AppDelegate-only. It is required only when Info.plist names one.
+  const sceneDelegatePath = join(project.iosTargetDir, "SceneDelegate.swift");
+  const sceneDelegate = await readOptional(sceneDelegatePath);
+  if (sceneDelegate !== undefined) {
+    await writeFile(join(paths.sources, "SceneDelegate.swift"), sceneDelegate);
+  } else {
+    const names = sceneDelegateClassNames(await readRequired(project.infoPlistPath, "Info.plist"));
+    if (names.length > 0) {
+      throw new Error(
+        `Missing SceneDelegate.swift: ${sceneDelegatePath} (Info.plist's UIApplicationSceneManifest names ${names[0]})`,
+      );
+    }
   }
   return { app: { mixed: false, defines: [], headerSearchPaths: [], swiftHeadersDir: headersDir }, resources: [] };
 }
@@ -114,7 +155,7 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
           jsiHeaders: true,
         }
       : undefined,
-    app,
+    app: { ...app, importerPaths: await scaffoldedImporterPaths(paths.autolinking) },
   });
   await writeFile(join(paths.iosXtool, "Package.swift"), manifest);
   if (manifest65 !== undefined) await writeFile(join(paths.iosXtool, MANIFEST_6_5), manifest65);
