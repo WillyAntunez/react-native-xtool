@@ -53,6 +53,9 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 
 ### Fixed
 - A malformed `rn-xtool.config.json` is named in the error, in every command: "rn-xtool.config.json: <JSON error>".
+- rn-xtool needs Node 22.12 or newer, the floor its own dependencies declare (commander 15, execa 10); it said Node 20
+  before, which was never tested and is end of life. package.json `engines`, the README and `doctor`'s node check
+  ("<version> (need 22.12.0 or newer)") now say so.
 
 ## [0.1.0-alpha.3] - 2026-10-28
 

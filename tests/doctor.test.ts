@@ -17,7 +17,7 @@ import type { Capabilities, PodspecFeature } from "../src/project/capabilities.j
 import { DetectError, VersionGateError } from "../src/project/detect.js";
 import { MissingBundleIdentifierError } from "../src/project/index.js";
 import { LLVM_NM_MISSING } from "../src/pipeline/symbols.js";
-import { XTOOL_SHA256, XTOOL_VERSION } from "../src/versions.js";
+import { NODE_MIN, XTOOL_SHA256, XTOOL_VERSION } from "../src/versions.js";
 import { fakeExpo57Modules } from "./support/expo57.js";
 import { fakeExpo58Modules } from "./support/expo58.js";
 import { fakeRnScripts } from "./support/rnScripts.js";
@@ -66,7 +66,7 @@ const expo58Caps: Capabilities = {
 };
 
 const good: DoctorProbes = {
-  nodeVersion: () => "20.11.0",
+  nodeVersion: () => "24.15.0",
   swiftVersion: async () => "6.4",
   llvmNmVersion: async () => "21.0.0",
   xtoolPath: () => "/cache/xtool.AppImage",
@@ -137,6 +137,15 @@ describe("doctorWithProbes", () => {
     expect(r.ok).toBe(false);
     for (const n of ["node", "swift", "darwin-sdk", "apple-login"]) expect(statusOf(r, n)).toBe("fail");
     expect(r.checks.find((c) => c.name === "swift")?.detail).toContain("rn-xtool setup");
+  });
+
+  it("needs the Node rn-xtool's own dependencies declare (commander 15: 22.12 or newer)", async () => {
+    const node = async (v: string) => (await doctorWithProbes({ ...good, nodeVersion: () => v })).checks[0];
+    expect(NODE_MIN).toBe("22.12.0");
+    expect(await node("22.12.0")).toEqual({ name: "node", status: "ok", detail: "22.12.0" });
+    expect(await node("24.15.0")).toEqual({ name: "node", status: "ok", detail: "24.15.0" });
+    expect(await node("22.11.0")).toEqual({ name: "node", status: "fail", detail: "22.11.0 (need 22.12.0 or newer)" });
+    expect(await node("20.19.5")).toEqual({ name: "node", status: "fail", detail: "20.19.5 (need 22.12.0 or newer)" });
   });
 
   it("fails the xtool check when the binary cannot run", async () => {

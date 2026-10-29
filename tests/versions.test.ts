@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   bareLineFor,
@@ -7,6 +8,7 @@ import {
   expoPinsFor,
   expoPluginFor,
   lineId,
+  NODE_MIN,
   releaseLine,
   rnLineStatus,
   SUPPORTED_LINES,
@@ -198,5 +200,23 @@ describe("checkPins across release lines", () => {
   it("a package of another major is off on SDK 58", () => {
     const checks = checkPins(58, { ...EXPO58_PINS, "expo-modules-core": "59.0.0", expo: "57.0.31" })!;
     expect(checks.map((c) => c.status)).toEqual(["off", "ok", "off", "ok", "ok", "ok", "ok"]);
+  });
+});
+
+describe("NODE_MIN", () => {
+  it("is package.json's engines floor and covers every runtime dependency's own floor", () => {
+    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+      engines: { node: string };
+      dependencies: Record<string, string>;
+    };
+    expect(pkg.engines.node).toBe(`>=${NODE_MIN}`);
+    for (const dep of Object.keys(pkg.dependencies)) {
+      const own = JSON.parse(readFileSync(new URL(`../node_modules/${dep}/package.json`, import.meta.url), "utf8")) as {
+        engines?: { node?: string };
+      };
+      const floor = /^>=\s*(\d+(?:\.\d+){0,2})$/.exec(own.engines?.node ?? ">=0")?.[1];
+      expect(floor, `${dep} engines.node ${own.engines?.node}`).toBeDefined();
+      expect(compareVersions(NODE_MIN, floor!), dep).toBeGreaterThanOrEqual(0);
+    }
   });
 });

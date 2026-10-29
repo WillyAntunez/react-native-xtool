@@ -45,7 +45,7 @@ what does not work yet (library resource bundles, vendored binaries, Xcode-only 
 
 ## Before you start
 
-- Linux x86_64 (arm64 should work, untested). Node 20+. About 15 GB of free disk.
+- Linux x86_64 (arm64 should work, untested). Node 22.12+. About 15 GB of free disk.
 - `Xcode.xip` (Xcode 27.x, about 12 GB), downloaded yourself from developer.apple.com with an Apple ID.
 - An Apple ID. Free accounts: signatures last 7 days, 3 apps at a time, no push notifications or special entitlements
   (a paid developer account lifts these).

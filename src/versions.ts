@@ -9,6 +9,8 @@ export const XTOOL_SHA256: Record<string, string | undefined> = {
   aarch64: "649e8bdc799c9273ca54be1a84e7093e4be970d4780b4b22409517935dc2053b",
 };
 export const SWIFT_VERSION = "6.4";
+/** The oldest Node rn-xtool runs on: package.json's engines floor, the highest of its dependencies' (commander 15). */
+export const NODE_MIN = "22.12.0";
 export const IOS_MIN = "16.4";
 
 export type ExpoPlugin = "installed" | "vendored";

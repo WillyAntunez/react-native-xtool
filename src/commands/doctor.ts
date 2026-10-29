@@ -24,6 +24,8 @@ import {
   XTOOL_VERSION,
   XTOOL_SHA256,
   SWIFT_VERSION,
+  NODE_MIN,
+  compareVersions,
   expoLineFor,
   expoPluginFor,
   rnLineStatus,
@@ -443,7 +445,9 @@ export async function doctorWithProbes(
 
   await add("node", async () => {
     const v = p.nodeVersion();
-    return { status: Number(v.split(".")[0]) >= 20 ? "ok" : "fail", detail: v };
+    return compareVersions(v, NODE_MIN) >= 0
+      ? { status: "ok", detail: v }
+      : { status: "fail", detail: `${v} (need ${NODE_MIN} or newer)` };
   });
   if (opts.projectOnly) {
     const dir = root ?? process.cwd();

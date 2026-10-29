@@ -4,7 +4,7 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# README requirements: Node 20+, libfuse2 (AppImage), python3 (shims), iproute2 (`ip`), plus git/curl/sudo
+# README requirements: Node 22.12+, libfuse2 (AppImage), python3 (shims), iproute2 (`ip`), plus git/curl/sudo
 # that any desktop install has. `fuse3` provides the fusermount binary the AppImage runtime calls.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
