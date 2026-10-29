@@ -244,6 +244,8 @@ export interface Capabilities {
   expoPlugin?: "ships" | "none";
   /** Whether expo-modules-core ships ExpoModulesCore prebuilds for both flavors; undefined without expo-modules-core. */
   expoModules?: "precompiled" | "source";
+  /** The version of that expo-modules-core; undefined without it. */
+  expoModulesCoreVersion?: string;
   podspecs: Record<PodspecFeature, string[]>;
 }
 
@@ -278,13 +280,14 @@ function expoPluginOf(root: string): "ships" | "none" | undefined {
   return /autolinkingPlugin\s*:/.test(text) ? "ships" : "none";
 }
 
-function expoModulesOf(root: string): "precompiled" | "source" | undefined {
+function expoModulesOf(root: string): { expoModules: "precompiled" | "source"; version?: string } | undefined {
   const coreDir = expoPackageDir(root, "expo-modules-core");
   if (coreDir === undefined) return undefined;
   const prebuilt = FLAVORS.every((flavor) =>
     existsSync(path.join(coreDir, "prebuilds", "output", flavor, "xcframeworks", "ExpoModulesCore.tar.gz")),
   );
-  return prebuilt ? "precompiled" : "source";
+  const version = readJson(path.join(coreDir, "package.json"))?.version;
+  return { expoModules: prebuilt ? "precompiled" : "source", ...(typeof version === "string" && { version }) };
 }
 
 /** The project kind as `readProject` sees it (the config's `projectKind` first); undefined when detection fails. */
@@ -329,8 +332,11 @@ export async function detectCapabilities(
     if (sdk !== undefined) caps.sdk = sdk;
     caps.expoPlugin = expoPluginOf(root);
   }
-  const expoModules = expoModulesOf(root);
-  if (expoModules !== undefined) caps.expoModules = expoModules;
+  const core = expoModulesOf(root);
+  if (core !== undefined) {
+    caps.expoModules = core.expoModules;
+    if (core.version !== undefined) caps.expoModulesCoreVersion = core.version;
+  }
   if (rn !== undefined) {
     caps.rnVersion = rn.version;
     caps.scripts = scriptsCapability(rn.rnDir, rn.version);

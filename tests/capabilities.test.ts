@@ -404,6 +404,7 @@ describe("detectCapabilities", () => {
       rnVersion: "0.88.1",
       expoPlugin: "ships",
       expoModules: "precompiled",
+      expoModulesCoreVersion: "58.0.28",
       scripts: { shape: "0.88", recognised: true, mode: "installed" },
       artifacts: { status: "published", version: "0.88.1" },
     });
@@ -419,6 +420,7 @@ describe("detectCapabilities", () => {
       rnVersion: "0.86.3",
       expoPlugin: "none",
       expoModules: "source",
+      expoModulesCoreVersion: "57.0.24",
       scripts: { shape: "none", mode: "vendored" },
     });
   });
@@ -452,6 +454,7 @@ describe("detectCapabilities", () => {
     expect(c.sdk).toBeUndefined();
     expect(c.expoPlugin).toBeUndefined();
     expect(c.expoModules).toBeUndefined();
+    expect(c.expoModulesCoreVersion).toBeUndefined();
   });
 
   it("takes the project kind from rn-xtool.config.json", async () => {
