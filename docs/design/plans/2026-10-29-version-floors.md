@@ -374,7 +374,7 @@ A refactor with no change in behaviour.
   export function watchTargets(rnVersions: readonly string[]): WatchTarget[];   // one per expo template, one per bare row
   export function createCommand(t: WatchTarget, dir: string): [string, string[]];
   //   expo: ["npx", ["--yes", "create-expo-app@latest", dir, "--template", `${template}@sdk-${sdk}`]]
-  //   bare: ["npx", ["--yes", "@react-native-community/cli@latest", "init", "DriftApp", "--directory", dir, "--version", version,
+  //   bare: ["npx", ["--yes", `@react-native-community/cli@${cli}`, "init", "DriftApp", "--directory", dir, "--version", version,
   //          "--install-pods", "false", "--skip-git-init"]]
   // src/drift/check.ts
   export type Run = (cmd: string, args: string[], cwd: string) => Promise<{ exitCode: number; output: string }>;
@@ -564,7 +564,7 @@ CLI: `npm run build` in the worktree, then `node ../expo-xtool-floors/bin/rn-xto
 - [ ] **Step 4:** Fixes go through the owning task's files with a red/green test, one `fix:` commit each. A gap that needs a new rn-xtool step goes to Willy as a decision.
 - [ ] **Step 5 (on GitHub, after Willy merges the PR):** `gh workflow run drift-watch.yml -f mode=daily` is green and opens no issue. `-f drill=bare-0.88` opens `Drift: React Native 0.88 (bare)` labelled `drift`. A rerun without `drill` closes it with the "Green again" comment. `-f mode=explore` writes the eight-row table. Record the run links.
 
-## Open questions for the user
+## Resolved questions (Willy, 2026-10-29)
 
-1. **Workflow proof before merge.** GitHub runs `workflow_dispatch` and `schedule` only for workflows on the default branch, so the spec's hand-run and forced-red run can happen only after the merge (Task 11 Step 5). Before the merge, the plan proves the same logic locally (Task 11 Step 1). Do you accept merging on the local proof alone? The alternative is a temporary `pull_request` trigger, which your rules would make a commit to revert.
-2. **Bare 0.86/0.87 drift projects.** The watch creates them with `@react-native-community/cli@latest init --version <newest 0.86.x|0.87.x>`, as the e2e harness does for 0.88. If the latest CLI stops creating an older minor, that line goes red although rn-xtool did not drift. Should the watch pin the CLI version per line instead (one more field in the table)?
+1. **Workflow proof before merge.** Merge on the local proof (Task 11 Step 1). The real GitHub runs, the hand-run and the forced-red `drill`, happen right after the merge (Task 11 Step 5). A failure there is fixed in a small follow-up PR. No temporary `pull_request` trigger.
+2. **Bare drift projects pin their CLI per line.** Each bare row gets a `cli` field: the `@react-native-community/cli` version that the matching `@react-native-community/template` declares in its `devDependencies` for that minor's verified version (`npm view @react-native-community/template@<verified> devDependencies`). Task 7 resolves and writes the values. A test pins them. `createCommand` uses `@react-native-community/cli@${cli}` instead of `@latest`. Dropping `@latest` keeps a CLI release that drops an old minor from turning a line red when rn-xtool has not drifted.
