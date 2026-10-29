@@ -7,6 +7,7 @@ import {
   expoPinsFor,
   expoPluginFor,
   lineId,
+  releaseLine,
   rnScriptsFor,
   SUPPORTED_LINES,
   supportedRnList,
@@ -22,7 +23,7 @@ describe("supported lines", () => {
         kind: "expo",
         sdk: 57,
         plugin: "vendored",
-        policy: "exact",
+        policy: "floor",
         scripts: "vendored",
         artifacts: "adapted",
         pins: EXPO57_PINS,
@@ -70,7 +71,7 @@ describe("supported lines", () => {
 
   it("reads today's answers from the table", () => {
     expect([56, 57, 58, 59].map(expoPluginFor)).toEqual([undefined, "vendored", "installed", "installed"]);
-    expect([56, 57, 58, 59].map(expoPinPolicyFor)).toEqual([undefined, "exact", "floor", undefined]);
+    expect([56, 57, 58, 59].map(expoPinPolicyFor)).toEqual([undefined, "floor", "floor", undefined]);
     expect(expoPinsFor(59)).toBeUndefined();
     expect(["0.86.2", "0.86.3", "0.87.1", "0.88.0", "0.88.1"].map(rnScriptsFor)).toEqual([
       "vendored",
@@ -89,6 +90,12 @@ describe("supported lines", () => {
     expect(bareLineFor("0.88.2")).toBe(line088);
     expect(bareLineFor("0.88.0-rc.1")).toBe(line088);
     expect(["0.89.0", "0.8.1", "58.0.21"].map(bareLineFor)).toEqual([undefined, undefined, undefined]);
+  });
+});
+
+describe("releaseLine", () => {
+  it("is 0.y for a 0.x version and the major otherwise", () => {
+    expect(["0.88.2", "57.1.4", "58.0.21-rc.1"].map(releaseLine)).toEqual(["0.88", "57", "58"]);
   });
 });
 
@@ -142,5 +149,30 @@ describe("checkPins on a floor", () => {
 
   it("react-native stays exact: its prerelease is off", () => {
     expect(checkPins(58, { ...FLOOR, "react-native": "0.88.1-rc.1" })![1]!.status).toBe("off");
+  });
+});
+
+describe("checkPins on the SDK 57 floor", () => {
+  const statusOf = (sdk: number, name: string, installed: Record<string, string>) =>
+    checkPins(sdk, installed)!.find((c) => c.name === name)!.status;
+
+  it("a newer 57.x is newer than the floor", () => {
+    expect(statusOf(57, "expo-modules-jsi", { ...EXPO57_PINS, "expo-modules-jsi": "57.1.4" })).toBe("newer");
+  });
+
+  it("react-native stays exact", () => {
+    expect(statusOf(57, "react-native", { ...EXPO57_PINS, "react-native": "0.86.4" })).toBe("off");
+  });
+});
+
+describe("checkPins across release lines", () => {
+  it("a package of another major is off on SDK 57", () => {
+    const checks = checkPins(57, { ...EXPO57_PINS, "expo-modules-jsi": "58.0.19" })!;
+    expect(checks.map((c) => c.status)).toEqual(["ok", "ok", "ok", "ok", "off"]);
+  });
+
+  it("a package of another major is off on SDK 58", () => {
+    const checks = checkPins(58, { ...EXPO58_PINS, "expo-modules-core": "59.0.0", expo: "57.0.31" })!;
+    expect(checks.map((c) => c.status)).toEqual(["off", "ok", "off", "ok", "ok", "ok", "ok"]);
   });
 });

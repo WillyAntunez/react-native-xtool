@@ -20,7 +20,7 @@ export type ExpoPinName =
   | "expo-modules-autolinking"
   | "expo-file-system"
   | "expo-font";
-export type ExpoPinPolicy = "exact" | "floor";
+export type ExpoPinPolicy = "floor";
 export type RnScripts = "installed" | "vendored";
 /** Where a line's React Native artifacts come from. adapted: pre-headers-spec slots rn-xtool rebuilds (0.86). */
 export type RnArtifacts = "adapted" | "published";
@@ -52,8 +52,8 @@ export interface BareLine {
 export type SupportedLine = ExpoLine | BareLine;
 
 /**
- * Every line rn-xtool supports. SDK 57 builds only with its exact pins, through the Expo 58 plugin vendored in
- * rn-xtool. SDK 58 uses the installed plugin and its pins are a floor: older is refused, newer is let through with a
+ * Every line rn-xtool supports. SDK 57 builds through the Expo 58 plugin vendored in rn-xtool, SDK 58 through the
+ * installed one. On both the pins are a floor: older is refused, newer of the same release line is let through with a
  * warning (react-native stays exact). SDKs newer than the last Expo row use its plugin and pin nothing.
  */
 export const SUPPORTED_LINES: readonly SupportedLine[] = [
@@ -61,7 +61,7 @@ export const SUPPORTED_LINES: readonly SupportedLine[] = [
     kind: "expo",
     sdk: 57,
     plugin: "vendored",
-    policy: "exact",
+    policy: "floor",
     scripts: "vendored",
     artifacts: "adapted",
     pins: {
@@ -149,7 +149,7 @@ export function expoPinsFor(sdk: number): Readonly<Partial<Record<ExpoPinName, s
   return expoLineFor(sdk)?.pins;
 }
 
-/** How an SDK's pins are read: "exact" (57) or "floor" (58); undefined when the SDK pins nothing. */
+/** How an SDK's pins are read: "floor" (57 and 58); undefined when the SDK pins nothing. */
 export function expoPinPolicyFor(sdk: number): ExpoPinPolicy | undefined {
   return expoLineFor(sdk)?.policy;
 }
@@ -164,8 +164,8 @@ export interface PinCheck {
 
 /**
  * Each of the SDK's pins against the installed versions, in table order; undefined when the SDK pins nothing.
- * Not installed is "missing". Under "exact", and for react-native under either policy, anything else than the pin is
- * "off". Under "floor" the other packages are "below" or "newer" than the pin.
+ * Not installed is "missing". react-native is exact: anything else than the pin is "off". The other packages are
+ * "off" on another release line than the pin (expo-modules-jsi 58.x on SDK 57), else "below" or "newer" than it.
  */
 export function checkPins(
   sdk: number,
@@ -178,13 +178,20 @@ export function checkPins(
     const version = installed[name];
     let status: PinStatus;
     if (version === undefined) status = "missing";
-    else if (policy === "exact" || name === "react-native") status = version === wanted ? "ok" : "off";
+    else if (name === "react-native") status = version === wanted ? "ok" : "off";
+    else if (releaseLine(version) !== releaseLine(wanted)) status = "off";
     else {
       const order = compareVersions(version, wanted);
       status = order < 0 ? "below" : order > 0 ? "newer" : "ok";
     }
     return { name, wanted, installed: version, status };
   });
+}
+
+/** A version's release line: "0.y" for "0.y.z", else the major ("57.1.4" → "57"; "58.0.21-rc.1" → "58"). */
+export function releaseLine(version: string): string {
+  const [major = "", minor = ""] = version.split(/[.+-]/, 2);
+  return major === "0" ? `0.${minor}` : major;
 }
 
 /** Where a verified bare React Native version's SwiftPM scripts come from; undefined for any other version. */

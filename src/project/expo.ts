@@ -9,7 +9,6 @@ import { vendoredExpoPlugin } from "../pipeline/rnSpm.js";
 import {
   checkPins,
   compareVersions,
-  expoPinPolicyFor,
   expoPinsFor,
   expoPluginFor,
   type ExpoPinName,
@@ -207,16 +206,10 @@ function floorRemedy(root: string, kind: ProjectKind, checks: PinCheck[], failed
   return `${unpin}, then run ${fix}; then ${rnStep}${why}.`;
 }
 
-/** G1: every pin installed, and none off (exact) or below the floor; react-native exact under both policies. */
+/** G1: every pin installed, none below the floor or on another release line, and react-native exact. */
 function checkExpoPinVersions(root: string, sdk: number, checks: PinCheck[], kind: ProjectKind): void {
   const failed = checks.filter((c) => c.status === "missing" || c.status === "off" || c.status === "below");
   if (failed.length === 0) return;
-  if (expoPinPolicyFor(sdk) === "exact") {
-    const wanted = andList(checks.map((c) => `${c.name} ${c.wanted}`));
-    throw new Error(
-      `Expo SDK ${sdk} needs exactly ${wanted}; installed: ${listOf(failed)}. Pin those versions in package.json and reinstall.`,
-    );
-  }
   const rn = checks.find((c) => c.name === "react-native")!;
   const floors = andList(checks.filter((c) => c !== rn).map((c) => `${c.name} ${c.wanted}`));
   const newerRn =
@@ -230,7 +223,7 @@ function checkExpoPinVersions(root: string, sdk: number, checks: PinCheck[], kin
 }
 
 /** G2: patch-package patches only node_modules/expo-modules-jsi; a nested copy would be built unpatched. */
-function checkTopLevelJsi(root: string, sdk: number, checks: PinCheck[]): void {
+function checkTopLevelJsi(root: string, checks: PinCheck[]): void {
   const jsiDir = expoPackageDir(root, "expo-modules-jsi")!;
   const topLevel = path.join(root, "node_modules", "expo-modules-jsi");
   if (existsSync(topLevel) && realpathSync(topLevel) === realpathSync(jsiDir)) return;
@@ -238,12 +231,6 @@ function checkTopLevelJsi(root: string, sdk: number, checks: PinCheck[]): void {
   const where =
     `expo-modules-jsi ${jsi.installed} resolves from ${path.relative(realpathSync(root), realpathSync(jsiDir))}, ` +
     "not from the project's top-level node_modules: rn-xtool patches and builds only the top-level copy.";
-  if (expoPinPolicyFor(sdk) === "exact") {
-    throw new Error(
-      `${where} Pin expo-modules-jsi to ${jsi.wanted} in package.json and reinstall; if the copy stays nested, run ` +
-        "`npm update expo-modules-jsi` (npm dedupe may also fix it).",
-    );
-  }
   // On the floor the user's own jsi pin is what nests the copy: core's range is what npm would install.
   const coreDir = expoPackageDir(root, "expo-modules-core");
   const range = packageJsonAt(coreDir)?.dependencies?.["expo-modules-jsi"];
@@ -260,8 +247,8 @@ function checkTopLevelJsi(root: string, sdk: number, checks: PinCheck[]): void {
 /**
  * The gate on an SDK's pinned packages (no-op when the SDK pins nothing), each step throwing: G1 the pins, G2 one
  * expo-modules-jsi (the top-level copy), G3 the macros Linux binary (of the copy the Expo plugin uses: core's, else,
- * for the vendored plugin, rn-xtool's). Then, on a floor SDK only, the packages newer than the verified set are
- * reported through `log`. `kind` "bare" (a hybrid app) changes only G1's react-native remedy.
+ * for the vendored plugin, rn-xtool's). Then the packages newer than the verified set are reported through `log`.
+ * `kind` "bare" (a hybrid app) changes only G1's react-native remedy.
  */
 export function checkExpoPackages(
   root: string,
@@ -272,7 +259,7 @@ export function checkExpoPackages(
   const checks = checkPins(sdk, readExpoPins(root, sdk));
   if (checks === undefined) return;
   checkExpoPinVersions(root, sdk, checks, opts.kind ?? "expo");
-  checkTopLevelJsi(root, sdk, checks);
+  checkTopLevelJsi(root, checks);
   const pluginDir = expoPluginFor(sdk) === "vendored" ? path.dirname(vendoredExpoPlugin()) : undefined;
   const macros = expoMacrosBinaryError({ root, pluginDir });
   if (macros) throw new Error(macros);
@@ -375,7 +362,8 @@ export async function readExpoProject(root: string, opts: ReadProjectOptions = {
   const expoPlugin = expoPluginFor(sdkVersion);
   if (expoPlugin === undefined) {
     throw new Error(
-      `Expo SDK ${sdkVersion} is not supported; rn-xtool supports SDK 57 (expo ${expoPinsFor(57)!.expo}) and SDK 58 or newer.`,
+      `Expo SDK ${sdkVersion} is not supported; rn-xtool supports SDK 57 (expo ${expoPinsFor(57)!.expo} or newer 57.x) ` +
+        "and SDK 58 or newer.",
     );
   }
   checkExpoPackages(root, sdkVersion, opts.log);
