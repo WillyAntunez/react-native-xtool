@@ -5,6 +5,27 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 
 ## [Unreleased]
 
+### Upgrading from 0.1.0-alpha.2
+- Expo SDK 58 apps move to the 58.0.21 set, in the order `doctor` gives and
+  [troubleshooting.md](docs/troubleshooting.md#moving-to-the-58021-set) lists: remove the expo-modules-* pins
+  0.1.0-alpha.2 asked for (`npm uninstall expo-modules-jsi expo-modules-autolinking`), then
+  `npx expo install expo@~58.0.21`, `npx expo install --fix` and `npx expo install react-native@0.88.1`. Do not pin
+  expo-modules-* packages again.
+- Hybrid apps (bare + Expo modules) do the same, but move React Native to 0.88.1 as
+  [Upgrading React Native](docs/bare-react-native.md#upgrading-react-native) describes. If `doctor` then says
+  expo-modules-jsi resolves from `node_modules/expo-modules-core/node_modules/`, run `npm update expo-modules-jsi`.
+- Bare React Native 0.88.0 apps keep working; 0.88.1 is also supported.
+- The first build can stop at `patches` with "rn-xtool could not apply its patch to <package>". This release changed
+  the bundled `react-native+0.88.0.patch` and the Expo patch, and `node_modules/<package>` still holds the
+  0.1.0-alpha.2 version. Run `rm -rf node_modules/<package> && npm install`, then build again.
+- After a move to React Native 0.88.1, the build warns about each scaffold patch in `patches/` made for 0.88.0: delete
+  the patch it names (and reinstall the library, as it says), then build again, so rn-xtool regenerates and persists
+  it. Teammates who pull the new patches need to do nothing: their older copy in `node_modules` is replaced. When a
+  patch also holds your own fix to that library, the build says to reinstall it (`rm -rf node_modules/<package> &&
+  npm install`) instead.
+- On a team with Macs, if `doctor` says `@expo/modules-macros-linux-<arch>` is not installed, run
+  `npm install --include=optional` and commit `package-lock.json`.
+
 ### Added
 - Expo SDK 57 projects, on exact versions only: expo 57.0.31, react-native 0.86.3, expo-modules-core 57.0.24,
   expo-modules-autolinking 57.0.16 and expo-modules-jsi 57.1.3. They build through a vendored copy of Expo SDK 58's
