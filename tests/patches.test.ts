@@ -231,9 +231,49 @@ describe("react-native patch scope", () => {
       exitCode: 1,
       all: "**ERROR** Failed to apply patch for package expo-modules-jsi\n  patch file: expo-modules-jsi+58.0.21.patch",
     });
-    await expect(applyPatches(root, exec, { rnScripts: "installed", expoPlugin: "installed" })).rejects.toThrow(
-      /pin "expo-modules-jsi" to 58\.0\.21/,
-    );
+    const err = (await applyPatches(root, exec, { rnScripts: "installed", expoPlugin: "installed" }).catch(
+      (e: unknown) => e,
+    )) as Error;
+    // On the floor: npm overrides hold Expo's modules on the verified set (one copy each, checked with npm 11 on
+    // 2026-10-28), or the user waits for a release. A direct expo-modules-* pin would nest the copy expo uses.
+    const OVERRIDES =
+      '"overrides": { "expo-modules-core": "58.0.28", "expo-modules-jsi": "58.0.21", "expo-modules-autolinking": "58.0.16" }';
+    const notDirect =
+      "Do not pin expo-modules-* packages as direct dependencies: npm would nest the copy expo uses. Remove any that " +
+      "package.json lists before you add the block (`npm uninstall <package>`): npm refuses an override that differs " +
+      "from a direct dependency (EOVERRIDE). If `rn-xtool doctor` then says expo-modules-jsi resolves from a nested " +
+      "copy, run `npm update expo-modules-jsi`.";
+    const options = (overrides: string, extra = "") =>
+      `Options: add an "overrides" block with the set this release was verified with to package.json, ${overrides}, ` +
+      `and run \`npm install\`${extra}; or wait for an rn-xtool release that supports the new version, and report it ` +
+      "at https://github.com/WillyAntunez/react-native-xtool/issues.";
+    expect(err.message.split("\n").slice(0, 5)).toEqual([
+      "rn-xtool could not patch expo-modules-jsi@58.0.23 (patch file: expo-modules-jsi+58.0.21.patch): the installed " +
+        "version differs from the one this release of rn-xtool patches (58.0.21).",
+      "This is a known limitation of rn-xtool, not of your project.",
+      options(OVERRIDES),
+      notDirect,
+      "--- patch-package output ---",
+    ]);
+    expect(err.message).not.toContain('pin "expo-modules-jsi"');
+
+    // The failing package outside that trio (expo) joins the block at its floor; as a direct dependency its own entry
+    // must say the same version, or npm stops with EOVERRIDE.
+    await writeFile(path.join(root, "package.json"), JSON.stringify({ dependencies: { expo: "~58.0.22" } }));
+    const expoFails = async () => ({
+      exitCode: 1,
+      all: "**ERROR** Failed to apply patch for package expo at path\n    node_modules/expo",
+    });
+    const expoErr = (await applyPatches(root, expoFails, { rnScripts: "installed", expoPlugin: "installed" }).catch(
+      (e: unknown) => e,
+    )) as Error;
+    expect(expoErr.message.split("\n").slice(2, 4)).toEqual([
+      options(
+        `${OVERRIDES.slice(0, -2)}, "expo": "58.0.21" }`,
+        ' (expo is a direct dependency: set it to "58.0.21" in dependencies too)',
+      ),
+      notDirect,
+    ]);
   });
 
   it("stages only the jsi patch on an SDK 57 project", async () => {

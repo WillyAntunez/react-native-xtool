@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { execa } from "execa";
 import { projectPaths } from "../paths.js";
-import { compareVersions, type ExpoPlugin, type RnScripts } from "../versions.js";
+import { compareVersions, expoPinPolicyFor, expoPinsFor, type ExpoPlugin, type RnScripts } from "../versions.js";
 import { packageRoot, toolEnv } from "../tools/exec.js";
 
 /** The patch-package pinned in this CLI's own dependencies, not whatever npx would fetch. */
@@ -41,8 +41,40 @@ export interface PatchFailureDetails {
   output: string;
 }
 
-export function patchFailureMessage(d: PatchFailureDetails): string {
+/**
+ * `floor`: the project is on a floor SDK (58), where Expo published a newer 58.x than this release patches. Its
+ * expo-modules-* copies follow expo's own ranges, so a direct pin nests the copy expo uses (G2); npm `overrides`
+ * hold every copy on the verified set instead (`overrides`: name → version), or the user waits for a release.
+ * `direct`: the failing package is a direct dependency, whose own entry must equal its override (EOVERRIDE).
+ */
+export function patchFailureMessage(
+  d: PatchFailureDetails,
+  opts: { floor?: { overrides: Record<string, string>; direct: boolean } } = {},
+): string {
   const tail = d.output.trimEnd().split("\n").slice(-40).join("\n");
+  if (opts.floor !== undefined) {
+    const block = `"overrides": { ${Object.entries(opts.floor.overrides)
+      .map(([name, version]) => `"${name}": "${version}"`)
+      .join(", ")} }`;
+    const own = opts.floor.overrides[d.pkg];
+    const direct =
+      opts.floor.direct && own !== undefined
+        ? ` (${d.pkg} is a direct dependency: set it to "${own}" in dependencies too)`
+        : "";
+    return [
+      `rn-xtool could not patch ${d.pkg}@${d.installed} (patch file: ${d.patchFile}): the installed version differs from the one this release of rn-xtool patches (${d.patched}).`,
+      "This is a known limitation of rn-xtool, not of your project.",
+      `Options: add an "overrides" block with the set this release was verified with to package.json, ${block}, and run ` +
+        `\`npm install\`${direct}; or wait for an rn-xtool release that supports the new version, and report it at ` +
+        "https://github.com/WillyAntunez/react-native-xtool/issues.",
+      "Do not pin expo-modules-* packages as direct dependencies: npm would nest the copy expo uses. Remove any that " +
+        "package.json lists before you add the block (`npm uninstall <package>`): npm refuses an override that differs " +
+        "from a direct dependency (EOVERRIDE). If `rn-xtool doctor` then says expo-modules-jsi resolves from a nested " +
+        "copy, run `npm update expo-modules-jsi`.",
+      "--- patch-package output ---",
+      tail,
+    ].join("\n");
+  }
   return [
     `rn-xtool could not patch ${d.pkg}@${d.installed} (patch file: ${d.patchFile}): the installed version differs from the one this release of rn-xtool patches (${d.patched}).`,
     "This is a known limitation of rn-xtool, not of your project.",
@@ -288,6 +320,30 @@ export function scaffoldPatchWarnings(projectRoot: string): string[] {
   return warnings;
 }
 
+/**
+ * The "overrides" remedy when `pkg` is an Expo package of a project on a floor SDK (58): the SDK's verified
+ * expo-modules-* versions, plus `pkg` at its floor (else at the patch's version) when it is not one of them, and
+ * whether the project lists `pkg` directly. Undefined for react-native and for other SDKs.
+ */
+function floorRemedy(projectRoot: string, pkg: string, patched: string): { overrides: Record<string, string>; direct: boolean } | undefined {
+  if (pkg === "react-native") return undefined;
+  const sdk = Number(/^(\d+)\./.exec(installedVersion(projectRoot, "expo") ?? "")?.[1]);
+  const pins = expoPinsFor(sdk);
+  if (expoPinPolicyFor(sdk) !== "floor" || pins === undefined) return undefined;
+  const overrides: Record<string, string> = Object.fromEntries(
+    Object.entries(pins).filter(([name]) => name.startsWith("expo-modules-")),
+  );
+  overrides[pkg] ??= (pins as Record<string, string | undefined>)[pkg] ?? patched;
+  let declared: Record<string, unknown> = {};
+  try {
+    const app = JSON.parse(readFileSync(path.join(projectRoot, "package.json"), "utf8"));
+    declared = { ...app?.dependencies, ...app?.devDependencies };
+  } catch {
+    // no readable package.json: the note about a direct dependency is left out
+  }
+  return { overrides, direct: Object.hasOwn(declared, pkg) };
+}
+
 type PatchExec = (cmd: string, args: string[], cwd: string) => Promise<ExecaResultLike>;
 interface ExecaResultLike {
   exitCode?: number | undefined;
@@ -332,7 +388,9 @@ export async function applyPatches(
     if (r.exitCode !== 0 || r.failed || patchPackageOutputFailed(output)) {
       // Only what was staged: a bundled patch that was left out is not the one that failed.
       const mismatch = findPatchMismatch(projectRoot, patchesDir, output);
-      if (mismatch) throw new Error(patchFailureMessage({ ...mismatch, output }));
+      if (mismatch) {
+        throw new Error(patchFailureMessage({ ...mismatch, output }, { floor: floorRemedy(projectRoot, mismatch.pkg, mismatch.patched) }));
+      }
       const stale = findStalePatchedPackage(projectRoot, patchesDir, output);
       if (stale) throw new Error(stalePatchedMessage({ ...stale, output }));
       throw new Error(genericPatchFailureMessage(r, output));

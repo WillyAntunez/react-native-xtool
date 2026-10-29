@@ -68,9 +68,10 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 - `SceneDelegate.swift` is optional on every SDK; it is required only when Info.plist's `UIApplicationSceneManifest`
   names a scene delegate.
 - When several bundled patches name one package, the one for the installed version is staged, else the highest
-  version (on a newer 58.x, the floor's patch). When the floor's patch does not apply, the message says to pin `expo`
-  to 58.0.21 and run `npx expo install --fix`, and not to pin expo-modules-* packages (a pin there nests the copy expo
-  uses, or patches a copy expo does not use); SDK 57 and react-native keep the "pin <package>" message.
+  version (on a newer 58.x, the floor's patch). When the floor's patch does not apply, the message offers an npm
+  `"overrides"` block with the verified expo-modules-core, expo-modules-jsi and expo-modules-autolinking versions (and
+  the failing package), or waiting for an rn-xtool release, and says not to pin expo-modules-* packages as direct
+  dependencies (a pin there nests the copy expo uses); SDK 57 and react-native keep the "pin <package>" message.
 - The scaffolder revision is now 3: scaffolded mixed manifests, and clang-only ones whose header search paths go beyond
   their public headers path, carry a `// rn-xtool-swift-importer-paths:` line, and the `patches` step warns about
   persisted scaffold patches written by an older revision and says which file to delete.

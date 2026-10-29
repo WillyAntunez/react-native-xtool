@@ -79,12 +79,22 @@ far with their fixes. Wi‑Fi install problems have their own list in [wifi-inst
   `ios/` is incomplete. `rn-xtool build --clean` regenerates it with `expo prebuild --clean`.
 - **"rn-xtool could not patch <package>":** your project has a different version of an Expo package than the one this
   release of rn-xtool patches, and the patch does not apply to it (on SDK 58, a newer 58.x that changed a patched
-  file). The message names the versions. On SDK 58 it says: pin `expo` to 58.0.21 in package.json
-  (`npm install --save-exact expo@58.0.21`) and run `npx expo install --fix`, or report the new version in the issue
-  tracker so the patch can be refreshed. Do not pin an expo-modules-* package yourself: npm then nests the copy expo
-  uses (expo-modules-jsi, which G2 refuses), or rn-xtool patches a top-level copy expo does not use
-  (expo-modules-autolinking). Elsewhere it says to pin the package to the patched version. For react-native the build
-  stops before patch-package runs, with
+  file). The message names the versions. On SDK 58 (Expo published a newer 58.x than this release patches) it gives
+  two options. One is an `"overrides"` block in package.json with the verified set,
+  `"overrides": { "expo-modules-core": "58.0.28", "expo-modules-jsi": "58.0.21", "expo-modules-autolinking":
+  "58.0.16" }` plus the failing package at its floor when it is another one (`"expo": "58.0.21"`; `expo` is a direct
+  dependency, so set it to `"58.0.21"` in `dependencies` too), then `npm install`. The other is to wait for an
+  rn-xtool release and report the new version. Do not pin expo-modules-* packages as direct dependencies: npm then
+  nests the copy expo uses (expo-modules-jsi, which G2 refuses). Overrides hold every copy, nested ones included, on
+  one version. Remove any direct pin first (`npm uninstall <package>`); while an override differs from a direct
+  dependency, npm stops every install and uninstall with `EOVERRIDE … conflicts with direct dependency`. When
+  package-lock.json kept expo-modules-jsi nested under expo-modules-core, `npm install` leaves it there; run
+  `npm update expo-modules-jsi` as G2 says. On 2026-10-28, on the default SDK 58 template with npm 11, the block gave
+  one copy of each package at those versions (`npm ls` exit 0, shown as `overridden`), and `doctor` passed. npm also
+  accepts an override outside expo's own range without an error (expo-modules-core 58.0.27 under expo 58.0.21's
+  `~58.0.28`), so a newer `expo` whose modules really need newer versions could still fail at G4 or at launch.
+  Elsewhere the message says to pin the package to the patched version. For react-native the build stops before
+  patch-package runs, with
   "patch-package was not run: react-native <version> is installed and the bundled react-native patches are for 0.88.0
   and 0.88.1." Patches that applied before a failure stay in `node_modules`; see
   [Expo SDK 58](#expo-sdk-58).

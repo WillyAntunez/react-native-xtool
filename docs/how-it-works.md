@@ -122,9 +122,10 @@ is their only check.
 **Patches on a newer 58.x.** react-native gets only the patch for its exact version. Every other package gets the
 patch for its installed version, else the highest bundled one, so a newer 58.x gets the floor's patch and
 patch-package's own version warning is let through. If that patch does not apply, the build stops with
-"rn-xtool could not patch <package>". Its remedy pins `expo` to the floor's version (58.0.21) and runs
-`npx expo install --fix`, and says not to pin an expo-modules-* package: such a pin nests the copy expo uses (which
-G2 refuses) or leaves expo on a copy rn-xtool did not patch (see
+"rn-xtool could not patch <package>". Its remedy is an npm `"overrides"` block that holds expo-modules-core,
+expo-modules-jsi and expo-modules-autolinking (and the failing package) on the verified set, built from the same table
+as G1, or waiting for an rn-xtool release. It says not to pin expo-modules-* packages as direct dependencies: such a
+pin nests the copy expo uses, which G2 refuses, while an override applies to every copy (see
 [troubleshooting.md](troubleshooting.md#build-and-patches)).
 
 ## Precompiled frameworks (G4)
