@@ -108,10 +108,12 @@ export function buildProgram(): Command {
   program
     .command("doctor")
     .description("Check the toolchain, login, device and project")
+    .option("--project", "check only the project (version gates and capabilities): no toolchain, login or device checks")
     .action(
-      action(async () => {
+      action(async (opts: { project?: boolean }) => {
         const cwd = process.cwd();
-        const report = await doctor(existsSync(path.join(cwd, "app.json")) ? cwd : undefined);
+        const root = opts.project || existsSync(path.join(cwd, "app.json")) ? cwd : undefined;
+        const report = await doctor(root, undefined, { projectOnly: opts.project === true });
         console.log(renderReport(report.checks));
         if (!report.ok) throw new Error("doctor found problems");
       }),

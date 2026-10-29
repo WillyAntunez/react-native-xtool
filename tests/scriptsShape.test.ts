@@ -164,7 +164,7 @@ describe("scriptsCapability", () => {
 
   it("an older shape on a line with a bundled patch is not recognised", async () => {
     // The bundled react-native patch edits the installed 0.88-shaped scripts: none or 0.87 there is a damaged install.
-    const expected = ["scripts of the 0.88 shape expected, as rn-xtool bundles a react-native patch for 0.88"];
+    const expected = ["react-native 0.88's own SwiftPM scripts, which rn-xtool's 0.88 patch expects"];
     expect(scriptsCapability(await rnDirWith("none"), "0.88.1")).toEqual({
       shape: "none",
       missing: expected,
@@ -190,7 +190,7 @@ describe("scriptsCapability", () => {
     await writeFile(path.join(rn087Patch, "react-native+0.87.1.patch"), "");
     expect(scriptsCapability(await rnDirWith("0.87"), "0.87.2", rn087Patch)).toEqual({
       shape: "0.87",
-      missing: ["scripts of the 0.88 shape expected, as rn-xtool bundles a react-native patch for 0.87"],
+      missing: ["react-native 0.87's own SwiftPM scripts, which rn-xtool's 0.87 patch expects"],
       recognised: false,
       mode: "vendored",
     });

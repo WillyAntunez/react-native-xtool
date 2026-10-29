@@ -14,6 +14,7 @@ import {
   type ExpoPinName,
   type PinCheck,
 } from "../versions.js";
+import { VersionGateError } from "./detect.js";
 import type { ProjectInfo, ProjectKind, ReadProjectOptions } from "./types.js";
 
 /** The working sequence for moving a template app's React Native (one `npm install react-native@…` hits ERESOLVE). */
@@ -217,7 +218,7 @@ function checkExpoPinVersions(root: string, sdk: number, checks: PinCheck[], kin
       ? ` React Native ${rn.installed} is newer than this rn-xtool release supports: pin react-native to ${rn.wanted}, or update rn-xtool.`
       : "";
   const remedy = floorRemedy(root, kind, checks, failed);
-  throw new Error(
+  throw new VersionGateError(
     `Expo SDK ${sdk} needs react-native ${rn.wanted} and at least ${floors}; installed: ${listOf(failed)}. ${remedy}${newerRn}`,
   );
 }

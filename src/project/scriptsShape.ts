@@ -140,6 +140,6 @@ export function scriptsCapability(
     if (!patched) return fallback([`no bundled react-native patch for ${line}`]);
     return { shape, missing, recognised: true, mode: "installed" };
   }
-  if (patched) return fallback([`scripts of the 0.88 shape expected, as rn-xtool bundles a react-native patch for ${line}`]);
+  if (patched) return fallback([`react-native ${line}'s own SwiftPM scripts, which rn-xtool's ${line} patch expects`]);
   return { shape, missing, recognised: true, mode: "vendored" };
 }

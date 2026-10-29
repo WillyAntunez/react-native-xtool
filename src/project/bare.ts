@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { DetectError } from "./detect.js";
+import { DetectError, VersionGateError } from "./detect.js";
 import {
   andList,
   checkExpoPackages,
@@ -36,7 +36,7 @@ const EXPO_NEEDS_088 = "Expo SDK 58 needs React Native 0.88.1.";
 function checkRnVersion(version: string, hasExpoModulesCore: boolean): BareLine {
   const { status, line } = rnLineStatus(version);
   if (line === undefined || (status !== "verified" && status !== "newer")) {
-    throw new DetectError(
+    throw new VersionGateError(
       `React Native ${version} is not supported; rn-xtool supports ${supportedRnList()} (bare). Pin react-native to one of them.` +
         (hasExpoModulesCore ? ` ${EXPO_NEEDS_088}` : ""),
     );
@@ -78,7 +78,7 @@ export async function readBareProject(root: string, opts: ReadProjectOptions = {
   // The installed scripts' shape picks the mode; a shape that is not recognised takes the line's row.
   const rnScripts = scriptsCapability(resolveRnDir(projectPaths(root)), rnVersion).mode ?? rnLine.scripts;
   if (rnScripts === "vendored" && hasExpoModulesCore) {
-    throw new DetectError(`React Native ${rnVersion} with Expo modules is not supported. ${EXPO_NEEDS_088}`);
+    throw new VersionGateError(`React Native ${rnVersion} with Expo modules is not supported. ${EXPO_NEEDS_088}`);
   }
 
   const pbx = openPbxproj(iosDir);
@@ -109,7 +109,7 @@ export async function readBareProject(root: string, opts: ReadProjectOptions = {
     const sdk = installedExpoMajor(root);
     if (sdk !== undefined && sdk < 58) {
       const { expo, "react-native": rn } = expoPinsFor(58)!;
-      throw new DetectError(
+      throw new VersionGateError(
         `Expo SDK ${sdk} (expo ${installedExpoVersion(root)}) with Expo modules is not supported in a bare app. Expo modules ` +
           `in a bare app need Expo SDK 58 or newer: install expo ~${expo} and run \`npx expo install --fix\`, then move ` +
           `react-native to ${rn} as ${RN_UPGRADE_DOCS} describes.`,

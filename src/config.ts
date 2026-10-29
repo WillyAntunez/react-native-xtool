@@ -12,8 +12,11 @@ export interface ExpoXtoolConfig {
   projectKind?: "expo" | "bare";
 }
 
+/** The config of a project without rn-xtool.config.json or rn-xtool.config.js. */
+export const DEFAULT_CONFIG: Readonly<ExpoXtoolConfig> = { metroPort: 8081 };
+
 export async function loadConfig(projectRoot: string): Promise<ExpoXtoolConfig> {
-  let config: ExpoXtoolConfig = { metroPort: 8081 };
+  let config: ExpoXtoolConfig = { ...DEFAULT_CONFIG };
 
   const jsonPath = join(projectRoot, "rn-xtool.config.json");
   if (existsSync(jsonPath)) {

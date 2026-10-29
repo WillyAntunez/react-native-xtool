@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildVars, defaultBundleIdentifier, MissingBundleIdentifierError, readExpoProject } from "../../src/project/index.js";
+import { VersionGateError } from "../../src/project/detect.js";
 import { expoMacrosBinaryError, expoPackageDir, readExpoPins } from "../../src/project/expo.js";
 import { checkPins, expoPinPolicyFor, expoPinsFor, expoPluginFor } from "../../src/versions.js";
 import { EXPO57_PINS, fakeExpo57Modules } from "../support/expo57.js";
@@ -111,6 +112,7 @@ describe("readExpoProject", () => {
         pkg.dependencies.expo = range;
       }, false);
       await expect(readExpoProject(dir)).rejects.toThrow(/^Expo SDK 58 needs react-native 0\.88\.1 .*; installed: expo not installed, /);
+      await expect(readExpoProject(dir)).rejects.toBeInstanceOf(VersionGateError);
     },
   );
 
@@ -202,7 +204,7 @@ describe("Expo SDK 57", () => {
     "Remove any pin or override on these packages from package.json, then run `npx expo install expo@~57.0.31` and " +
     "`npx expo install --fix`; then run `npx expo install react-native@0.86.3`, since `--fix` alone can leave " +
     "react-native on another version.";
-  const PIN_ERROR = (list: string, remedy = FIX_REMEDY) => new Error(`${PREFIX}${list}. ${remedy}`);
+  const PIN_ERROR = (list: string, remedy = FIX_REMEDY) => new VersionGateError(`${PREFIX}${list}. ${remedy}`);
 
   async function expo57(
     overrides?: Parameters<typeof fakeExpo57Modules>[1],
@@ -252,7 +254,7 @@ describe("Expo SDK 57", () => {
   it("gives the full G1 text for expo below the floor", async () => {
     const dir = await expo57({ expo: "57.0.30" });
     await expect(readExpoProject(dir)).rejects.toThrow(
-      new Error(
+      new VersionGateError(
         "Expo SDK 57 needs react-native 0.86.3 and at least expo 57.0.31, expo-modules-core 57.0.24, " +
           "expo-modules-autolinking 57.0.16 and expo-modules-jsi 57.1.3; installed: expo 57.0.30. Remove any pin or " +
           "override on these packages from package.json, then run `npx expo install expo@~57.0.31` and `npx expo " +
@@ -265,7 +267,7 @@ describe("Expo SDK 57", () => {
   it("refuses react-native other than 0.86.3", async () => {
     const dir = await expo57({ "react-native": "0.86.4" });
     await expect(readExpoProject(dir)).rejects.toThrow(
-      new Error(
+      new VersionGateError(
         `${PREFIX}react-native 0.86.4. Run \`npx expo install react-native@0.86.3\`. React Native 0.86.4 is newer than ` +
           "this rn-xtool release supports: pin react-native to 0.86.3, or update rn-xtool.",
       ),
@@ -445,7 +447,7 @@ describe("Expo SDK 58 gate", () => {
   /** Only react-native is off. */
   const RN_REMEDY = "Run `npx expo install react-native@0.88.1`.";
   const PIN_ERROR = (list: string, remedy = FIX_REMEDY, tail = "") =>
-    new Error(
+    new VersionGateError(
       "Expo SDK 58 needs react-native 0.88.1 and at least expo 58.0.21, expo-modules-core 58.0.28, expo-modules-jsi 58.0.21, " +
         `expo-modules-autolinking 58.0.16, expo-file-system 58.0.13 and expo-font 58.0.11; installed: ${list}. ${remedy}` +
         tail,

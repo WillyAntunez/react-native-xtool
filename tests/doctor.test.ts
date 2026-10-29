@@ -4,6 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  capabilityChecks,
+  doctor,
   doctorWithProbes,
   readProjectProbe,
   renderReport,
@@ -11,6 +13,8 @@ import {
   type DoctorProbes,
   type ProjectProbe,
 } from "../src/commands/doctor.js";
+import type { Capabilities, PodspecFeature } from "../src/project/capabilities.js";
+import { DetectError, VersionGateError } from "../src/project/detect.js";
 import { MissingBundleIdentifierError } from "../src/project/index.js";
 import { LLVM_NM_MISSING } from "../src/pipeline/symbols.js";
 import { XTOOL_SHA256, XTOOL_VERSION } from "../src/versions.js";
@@ -39,6 +43,28 @@ const bareProbe: ProjectProbe = {
   warnings: [],
 };
 
+const noPodspecs: Record<PodspecFeature, string[]> = {
+  subspecs: [],
+  compiler_flags: [],
+  header_dir: [],
+  header_mappings_dir: [],
+  vendored_frameworks: [],
+  resource_bundles: [],
+};
+/** What detectCapabilities reads in a healthy Expo SDK 58 app (expoProbe's project). */
+const expo58Caps: Capabilities = {
+  kind: "expo",
+  rnVersion: "0.88.1",
+  expoVersion: "58.0.21",
+  sdk: 58,
+  scripts: { shape: "0.88", missing: [], recognised: true, mode: "installed" },
+  artifacts: { status: "cached", version: "0.88.1", missing: [] },
+  expoPlugin: "ships",
+  expoModules: "precompiled",
+  expoModulesCoreVersion: "58.0.28",
+  podspecs: { ...noPodspecs, compiler_flags: ["expo"] },
+};
+
 const good: DoctorProbes = {
   nodeVersion: () => "20.11.0",
   swiftVersion: async () => "6.4",
@@ -58,6 +84,7 @@ const good: DoctorProbes = {
   depsFingerprint: async () => "fp",
   portFree: async () => true,
   wifi: async () => ({ usb: { udid: "u1", enabled: true } }),
+  capabilities: async () => expo58Caps,
 };
 
 const statusOf = (r: { checks: { name: string; status: string }[] }, name: string) =>
@@ -458,6 +485,215 @@ describe("wifi check", () => {
     const r = await doctorWithProbes({ ...good, wifi: async () => { throw new Error("boom"); } });
     expect(statusOf(r, "wifi")).toBe("warn");
     expect(r.ok).toBe(true);
+  });
+});
+
+describe("doctor --project", () => {
+  /** The only probes --project may call. */
+  const PROJECT_PROBES = new Set(["nodeVersion", "project", "capabilities"]);
+  /** Every other probe, recording its name and throwing: --project must never call them. */
+  function forbidden(called: string[]): Partial<DoctorProbes> {
+    return Object.fromEntries(
+      Object.keys(good)
+        .filter((name) => !PROJECT_PROBES.has(name))
+        .map((name) => [
+          name,
+          () => {
+            called.push(name);
+            throw new Error(`${name} called`);
+          },
+        ]),
+    );
+  }
+
+  it("makes every probe but node, project and capabilities throw", () => {
+    expect(Object.keys(forbidden([])).sort()).toEqual([
+      "authStatus", "buildState", "configLanIp", "depsFingerprint", "devices", "llvmNmVersion", "lanRoute", "portFree",
+      "sdkInstalled", "swiftVersion", "ufwActive", "wifi", "xtoolInstalled", "xtoolPath", "xtoolSha256", "xtoolVersion",
+    ].sort());
+  });
+
+  it("skips the toolchain, login and device checks", async () => {
+    const called: string[] = [];
+    const r = await doctorWithProbes({ ...good, ...forbidden(called) }, "/proj", { projectOnly: true });
+    expect(called).toEqual([]);
+    expect(r.checks.map((c) => c.name)).toEqual([
+      "node", "project", "project-config", "versions", "rn-scripts", "rn-artifacts", "expo-plugin", "expo-modules", "podspecs",
+    ]);
+    expect(r.ok).toBe(true);
+  });
+
+  it("plain doctor prints no capability lines", async () => {
+    const called: string[] = [];
+    const r = await doctorWithProbes(
+      {
+        ...good,
+        capabilities: async () => {
+          called.push("capabilities");
+          throw new Error("capabilities called");
+        },
+      },
+      "/proj",
+    );
+    expect(called).toEqual([]);
+    expect(r.checks.map((c) => c.name)).toEqual([
+      "node", "swift", "llvm-nm", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
+      "project", "project-config", "build-state", "deps", "metro-port",
+    ]);
+  });
+
+  it("an unsupported version gets a reason", async () => {
+    const r = await doctorWithProbes(
+      {
+        ...good,
+        project: async () => {
+          throw new DetectError(
+            "React Native 0.81.5 is not supported; rn-xtool supports 0.86.x from 0.86.2, 0.87.x from 0.87.1 and 0.88.x " +
+              "from 0.88.0 (bare). Pin react-native to one of them.",
+          );
+        },
+        capabilities: async () => ({ kind: "bare", rnVersion: "0.81.5", podspecs: noPodspecs }),
+      },
+      "/proj",
+      { projectOnly: true },
+    );
+    expect(r.checks.find((c) => c.name === "versions")).toMatchObject({
+      status: "fail",
+      detail: "React Native 0.81: no SwiftPM scripts; support comes with the translator",
+    });
+    expect(r.ok).toBe(false);
+  });
+
+  it("fails the project line, without crashing, when the capability probe throws", async () => {
+    const r = await doctorWithProbes(
+      {
+        ...good,
+        capabilities: async () => {
+          throw new SyntaxError("Unexpected token } in JSON at position 20");
+        },
+      },
+      "/proj",
+      { projectOnly: true },
+    );
+    expect(r.checks.find((c) => c.name === "project")).toMatchObject({
+      status: "fail",
+      detail: "Unexpected token } in JSON at position 20",
+    });
+    expect(r.checks.map((c) => c.name)).toEqual(["node", "project", "project-config"]);
+    expect(r.ok).toBe(false);
+  });
+
+  it("reports a malformed rn-xtool.config.json as a failed project line", async () => {
+    const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
+    const dir = await mkdtemp(path.join(tmpdir(), "doctor-badconfig-"));
+    try {
+      await cp(path.join(fixtures, "project"), dir, { recursive: true });
+      await fakeExpo58Modules(dir);
+      await writeFile(path.join(dir, "rn-xtool.config.json"), '{ "projectKind": "expo", }\n');
+      const r = await doctor(dir, undefined, { projectOnly: true });
+      const project = r.checks.find((c) => c.name === "project");
+      expect(project?.status).toBe("fail");
+      expect(project?.detail).toMatch(/JSON/);
+      expect(r.checks.map((c) => c.name)).toEqual(["node", "project", "project-config"]);
+      expect(r.ok).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("marks versions failed when the version gate refuses the project", async () => {
+    const g1 = new VersionGateError("Expo SDK 58 needs react-native 0.88.1 and at least expo 58.0.21; installed: expo 58.0.20.");
+    const r = await doctorWithProbes(
+      {
+        ...good,
+        project: async () => {
+          throw g1;
+        },
+        capabilities: async () => ({ ...expo58Caps, expoVersion: "58.0.20" }),
+      },
+      "/proj",
+      { projectOnly: true },
+    );
+    expect(r.checks.find((c) => c.name === "project")).toMatchObject({ status: "fail", detail: g1.message });
+    expect(r.checks.find((c) => c.name === "versions")).toEqual({
+      name: "versions",
+      status: "fail",
+      detail:
+        "Expo SDK 58: expo 58.0.20 (verified 58.0.21), react-native 0.88.1 (verified 0.88.1); refused by the version gate (see project)",
+    });
+  });
+
+  it("marks a hybrid's versions failed when the hybrid gate refuses it", () => {
+    const hybrid: Capabilities = { kind: "bare", rnVersion: "0.86.3", sdk: 58, expoVersion: "58.0.21", podspecs: noPodspecs };
+    const gate = new VersionGateError("React Native 0.86.3 with Expo modules is not supported. Expo SDK 58 needs React Native 0.88.1.");
+    expect(capabilityChecks(hybrid, gate).find((c) => c.name === "versions")).toEqual({
+      name: "versions",
+      status: "fail",
+      detail: "React Native 0.86.3: the 0.86 line (0.86.2 or newer), verified 0.86.2 and 0.86.3; refused by the version gate (see project)",
+    });
+  });
+
+  it("keeps versions ok when the project fails for another reason", () => {
+    const other = new DetectError("target HelloWorld has no INFOPLIST_FILE");
+    expect(capabilityChecks({ kind: "bare", rnVersion: "0.88.1", podspecs: noPodspecs }, other)[0]).toMatchObject({ status: "ok" });
+  });
+
+  it("leaves out the lines whose field is undefined", () => {
+    expect(capabilityChecks({ podspecs: noPodspecs }).map((c) => c.name)).toEqual(["versions", "podspecs"]);
+  });
+
+  const MISSING_087 = [
+    "setup-apple-spm.js export resolveAppIosDeploymentTarget",
+    "spm/scaffold-package-swift.js export refreshScaffoldedPlatformFloors",
+    "spm/sync-spm-autolinking.js option --ios-deployment-target",
+  ];
+  const bare = (rnVersion: string): Capabilities => ({ kind: "bare", rnVersion, podspecs: noPodspecs });
+  const expo = (sdk: number, expoVersion: string, rnVersion?: string): Capabilities => ({
+    kind: "expo",
+    sdk,
+    expoVersion,
+    ...(rnVersion !== undefined && { rnVersion }),
+    podspecs: noPodspecs,
+  });
+  const rn = { ...bare("0.88.1") };
+  it.each<[string, string, Capabilities, string, string]>([
+    ["versions", "Expo 58", expo(58, "58.0.21", "0.88.1"), "ok", "Expo SDK 58: expo 58.0.21 (verified 58.0.21), react-native 0.88.1 (verified 0.88.1)"],
+    ["versions", "Expo 57", expo(57, "57.0.31", "0.86.3"), "ok", "Expo SDK 57: expo 57.0.31 (verified 57.0.31), react-native 0.86.3 (verified 0.86.3)"],
+    ["versions", "Expo 59", expo(59, "59.0.0", "0.89.0"), "info", "Expo SDK 59: no verified set in this release; the installed plugin builds it, gated by G4 only"],
+    ["versions", "Expo without react-native", expo(58, "58.0.21"), "fail", "react-native is not installed: run npm install"],
+    ["versions", "Expo 56", { ...expo(56, "56.0.0", "0.85.2"), expoPlugin: "none" }, "fail", "Expo SDK 56: expo ships no SwiftPM plugin; React Native 0.85: no SwiftPM scripts; support comes with the translator"],
+    ["versions", "bare 0.88.1", bare("0.88.1"), "ok", "React Native 0.88.1: the 0.88 line (0.88.0 or newer), verified 0.88.0 and 0.88.1"],
+    ["versions", "bare 0.87.1", bare("0.87.1"), "ok", "React Native 0.87.1: the 0.87 line (0.87.1 or newer), verified 0.87.1"],
+    ["versions", "bare 0.86.4 (newer)", bare("0.86.4"), "ok", "React Native 0.86.4: the 0.86 line (0.86.2 or newer), verified 0.86.2 and 0.86.3"],
+    ["versions", "bare 0.86.1 (below)", bare("0.86.1"), "fail", "React Native 0.86.1: below the 0.86 floor (0.86.2); move react-native to 0.86.2 or newer"],
+    ["rn-scripts", "0.88", { ...rn, scripts: { shape: "0.88", missing: [], recognised: true, mode: "installed" } }, "ok", "react-native's own SwiftPM scripts (0.88 layout)"],
+    ["rn-scripts", "none", { ...rn, scripts: { shape: "none", missing: [], recognised: true, mode: "vendored" } }, "ok", "react-native ships no SwiftPM scripts: rn-xtool's vendored copy (React Native 0.88.0)"],
+    ["rn-scripts", "0.87", { ...rn, scripts: { shape: "0.87", missing: MISSING_087, recognised: true, mode: "vendored" } }, "ok", `react-native's SwiftPM scripts lack ${MISSING_087.join("; ")} (0.87 layout): rn-xtool's vendored copy (React Native 0.88.0)`],
+    ["rn-scripts", "unknown with a line", { ...rn, scripts: { shape: "unknown", missing: ["spm/generate-spm-package.js file", "spm/sync-spm-autolinking.js export main"], recognised: false, mode: "installed" } }, "warn", "not recognised (missing: spm/generate-spm-package.js file; spm/sync-spm-autolinking.js export main); the version table picks the installed scripts — run npm install to reinstall react-native; if this line stays, reinstall rn-xtool"],
+    ["rn-scripts", "unknown without a line", { ...rn, scripts: { shape: "unknown", missing: ["spm/generate-spm-package.js file"], recognised: false, mode: undefined } }, "warn", "not recognised (missing: spm/generate-spm-package.js file); no supported line (see versions)"],
+    ["rn-scripts", "0.88 without rn-xtool's patch (F5)", { ...rn, scripts: { shape: "0.88", missing: ["no bundled react-native patch for 0.88"], recognised: false, mode: "installed" } }, "warn", "not recognised (missing: no bundled react-native patch for 0.88); the version table picks the installed scripts — run npm install to reinstall react-native; if this line stays, reinstall rn-xtool"],
+    ["rn-scripts", "none where rn-xtool's patch expects 0.88 scripts", { ...rn, scripts: { shape: "none", missing: ["react-native 0.88's own SwiftPM scripts, which rn-xtool's 0.88 patch expects"], recognised: false, mode: "installed" } }, "fail", "not recognised (missing: react-native 0.88's own SwiftPM scripts, which rn-xtool's 0.88 patch expects); the version table picks the installed scripts — run npm install to reinstall react-native; if this line stays, reinstall rn-xtool"],
+    ["rn-scripts", "0.87 where rn-xtool's patch expects 0.88 scripts", { ...rn, scripts: { shape: "0.87", missing: ["react-native 0.88's own SwiftPM scripts, which rn-xtool's 0.88 patch expects"], recognised: false, mode: "installed" } }, "fail", "not recognised (missing: react-native 0.88's own SwiftPM scripts, which rn-xtool's 0.88 patch expects); the version table picks the installed scripts — run npm install to reinstall react-native; if this line stays, reinstall rn-xtool"],
+    ["rn-scripts", "none on an unsupported version", { ...bare("0.81.5"), scripts: { shape: "none", missing: [], recognised: true, mode: "vendored" } }, "info", "react-native ships no SwiftPM scripts"],
+    ["rn-scripts", "0.87 on an unsupported version", { ...bare("0.84.0"), scripts: { shape: "0.87", missing: MISSING_087, recognised: true, mode: "vendored" } }, "info", `react-native's SwiftPM scripts lack ${MISSING_087.join("; ")} (0.87 layout)`],
+    ["rn-scripts", "0.88 on an unsupported version", { ...bare("0.89.0"), scripts: { shape: "0.88", missing: ["no bundled react-native patch for 0.89"], recognised: false, mode: undefined } }, "info", "not recognised (missing: no bundled react-native patch for 0.89); no supported line (see versions)"],
+    ["rn-artifacts", "missing on an unsupported version", { ...bare("0.81.5"), artifacts: { status: "missing", version: "0.81.5", missing: ["React (debug)"] } }, "info", "not published for React Native 0.81.5: React (debug)"],
+    ["rn-artifacts", "cached on an unsupported version", { ...bare("0.84.0"), artifacts: { status: "cached", version: "0.84.0", missing: [] } }, "info", "React Native 0.84.0 artifacts are in the cache"],
+    ["rn-artifacts", "local", { ...rn, artifacts: { status: "local", version: "0.88.1", missing: [], detail: "../rn-artifacts" } }, "ok", "React Native 0.88.1 artifacts come from rnArtifactsDir ../rn-artifacts (not probed)"],
+    ["rn-artifacts", "cached", { ...rn, artifacts: { status: "cached", version: "0.88.1", missing: [] } }, "ok", "React Native 0.88.1 artifacts are in the cache"],
+    ["rn-artifacts", "published", { ...rn, artifacts: { status: "published", version: "0.88.1", missing: [] } }, "ok", "published for React Native 0.88.1"],
+    ["rn-artifacts", "published with a note", { ...rn, artifacts: { status: "published", version: "0.88.1", missing: [], detail: "Hermes not checked: hermes-compiler is not installed" } }, "ok", "published for React Native 0.88.1 (Hermes not checked: hermes-compiler is not installed)"],
+    ["rn-artifacts", "missing on a supported line", { ...bare("0.88.2"), artifacts: { status: "missing", version: "0.88.2", missing: ["React (debug)", "ReactNativeDependencies (release)"] } }, "fail", "not published for React Native 0.88.2: React (debug), ReactNativeDependencies (release)"],
+    ["rn-artifacts", "unknown", { ...rn, artifacts: { status: "unknown", version: "0.88.1", missing: [], detail: "timed out after 10 s" } }, "warn", "not checked: timed out after 10 s"],
+    ["expo-plugin", "ships", { ...expo(58, "58.0.21", "0.88.1"), expoPlugin: "ships" }, "ok", "expo ships its SwiftPM plugin"],
+    ["expo-plugin", "none on SDK 57", { ...expo(57, "57.0.31", "0.86.3"), expoPlugin: "none" }, "ok", "expo ships no SwiftPM plugin: rn-xtool's vendored copy (Expo 58.0.19)"],
+    ["expo-plugin", "none on SDK 59", { ...expo(59, "59.0.0", "0.89.0"), expoPlugin: "none" }, "info", "expo ships no SwiftPM plugin"],
+    ["expo-modules", "precompiled", { ...expo(58, "58.0.21", "0.88.1"), expoModules: "precompiled", expoModulesCoreVersion: "58.0.28" }, "ok", "precompiled (expo-modules-core 58.0.28)"],
+    ["expo-modules", "source", { ...expo(59, "59.0.0", "0.89.0"), expoModules: "source", expoModulesCoreVersion: "59.0.1" }, "info", "built from source (expo-modules-core 59.0.1 ships no prebuilds)"],
+    ["podspecs", "features", { ...rn, podspecs: { ...noPodspecs, compiler_flags: ["expo"], vendored_frameworks: ["expo-router", "react-native-x"] } }, "info", "compiler_flags: expo; vendored_frameworks: expo-router, react-native-x"],
+    ["podspecs", "none", rn, "info", "no tracked podspec features in the dependencies"],
+  ])("prints each capability line: %s, %s", (name, _case, caps, status, detail) => {
+    expect(capabilityChecks(caps).find((c) => c.name === name)).toEqual({ name, status, detail });
   });
 });
 

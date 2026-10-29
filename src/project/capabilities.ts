@@ -21,8 +21,11 @@ import type { ProjectKind } from "./types.js";
 export type HeadProbe = (url: string, signal: AbortSignal) => Promise<number>;
 
 export interface ArtifactsCapability {
-  /** cached: both raw slots are complete; published/missing: what the release repositories answered; unknown: not checked. */
-  status: "cached" | "published" | "missing" | "unknown";
+  /**
+   * cached: both raw slots are complete; local: the config's rnArtifactsDir supplies them (detail: that folder), not
+   * probed; published/missing: what the release repositories answered; unknown: not checked.
+   */
+  status: "cached" | "local" | "published" | "missing" | "unknown";
   version: string;
   /** "ReactNativeDependencies (release)": artifacts no release repository has. */
   missing: string[];
@@ -291,9 +294,9 @@ function expoModulesOf(root: string): { expoModules: "precompiled" | "source"; v
 }
 
 /** The project kind as `readProject` sees it (the config's `projectKind` first); undefined when detection fails. */
-async function kindOf(root: string): Promise<ProjectKind | undefined> {
+function kindOf(root: string, projectKind: ProjectKind | undefined): ProjectKind | undefined {
   try {
-    return detectProjectKind(root, (await loadConfig(root)).projectKind);
+    return detectProjectKind(root, projectKind);
   } catch (e) {
     if (e instanceof DetectError) return undefined;
     throw e;
@@ -321,7 +324,8 @@ export async function detectCapabilities(
   opts: { cacheRoot?: string; head?: HeadProbe; timeoutMs?: number } = {},
 ): Promise<Capabilities> {
   const root = path.resolve(projectRoot);
-  const kind = await kindOf(root);
+  const config = await loadConfig(root);
+  const kind = kindOf(root, config.projectKind);
   const rn = installedRn(root);
   const expoVersion = installedExpoVersion(root);
   const caps: Capabilities = { podspecs: podspecFeatures(root) };
@@ -340,7 +344,10 @@ export async function detectCapabilities(
   if (rn !== undefined) {
     caps.rnVersion = rn.version;
     caps.scripts = scriptsCapability(rn.rnDir, rn.version);
-    caps.artifacts = await probeArtifacts(rn.rnDir, rn.version, opts);
+    // The build takes a configured rnArtifactsDir as it is (`--download skip`): nothing is downloaded to probe for.
+    caps.artifacts = config.rnArtifactsDir
+      ? { status: "local", version: rn.version, missing: [], detail: config.rnArtifactsDir }
+      : await probeArtifacts(rn.rnDir, rn.version, opts);
   }
   return caps;
 }

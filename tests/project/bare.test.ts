@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readProject } from "../../src/project/index.js";
 import { readBareProject } from "../../src/project/bare.js";
-import { DetectError } from "../../src/project/detect.js";
+import { DetectError, VersionGateError } from "../../src/project/detect.js";
 import { isInstalled } from "../../src/project/expo.js";
 import { fakeExpo58Modules } from "../support/expo58.js";
 import { fakeRnScripts, shapeForVersion } from "../support/rnScripts.js";
@@ -88,20 +88,20 @@ describe("readBareProject", () => {
 
   it("rejects unsupported versions with the supported list", async () => {
     for (const rn of ["0.86.0", "0.86.1", "0.87.0", "0.85.0", "0.89.0", "0.88.0-rc.1", "0.88.1-rc.1"]) {
-      await expect(readBareProject(await tempBare({ rn })), rn).rejects.toThrow(new DetectError(refusal(rn)));
+      await expect(readBareProject(await tempBare({ rn })), rn).rejects.toThrow(new VersionGateError(refusal(rn)));
     }
   });
 
   it("refuses prereleases of a supported line", async () => {
     for (const rn of ["0.88.2-rc.1", "0.86.4-rc.0"]) {
-      await expect(readBareProject(await tempBare({ rn })), rn).rejects.toThrow(new DetectError(refusal(rn)));
+      await expect(readBareProject(await tempBare({ rn })), rn).rejects.toThrow(new VersionGateError(refusal(rn)));
     }
   });
 
   it("adds the Expo SDK sentence for an unsupported version with Expo modules", async () => {
     const dir = await tempBare({ rn: "0.87.0", modulesCore: true, expo: true });
     await expect(readBareProject(dir)).rejects.toThrow(
-      new DetectError(`${refusal("0.87.0")} Expo SDK 58 needs React Native 0.88.1.`),
+      new VersionGateError(`${refusal("0.87.0")} Expo SDK 58 needs React Native 0.88.1.`),
     );
   });
 
@@ -139,7 +139,7 @@ describe("readBareProject", () => {
     const log = vi.fn();
     const err = (await readBareProject(dir, { log }).catch((e: unknown) => e)) as Error;
     expect(err).toEqual(
-      new Error(
+      new VersionGateError(
         "Expo SDK 58 needs react-native 0.88.1 and at least expo 58.0.21, expo-modules-core 58.0.28, expo-modules-jsi " +
           "58.0.21, expo-modules-autolinking 58.0.16, expo-file-system 58.0.13 and expo-font 58.0.11; installed: " +
           "react-native 0.88.2. Move react-native to 0.88.1 as " +
@@ -164,7 +164,7 @@ describe("readBareProject", () => {
       const rn087 = await tempBare({ rn: "0.87.1", modulesCore: true, expo: true, useExpoModules: true });
       await fakeRnScripts(path.join(rn087, "node_modules", "react-native"), shape);
       await expect(readBareProject(rn087), shape).rejects.toThrow(
-        new DetectError("React Native 0.87.1 with Expo modules is not supported. Expo SDK 58 needs React Native 0.88.1."),
+        new VersionGateError("React Native 0.87.1 with Expo modules is not supported. Expo SDK 58 needs React Native 0.88.1."),
       );
     }
   });
@@ -209,7 +209,7 @@ describe("readBareProject", () => {
           UPGRADE);
     const oldCore = await tempBare({ rn: "0.88.1", useExpoModules: true });
     await fakeExpo58Modules(oldCore, { "expo-modules-core": "58.0.26" });
-    await expect(readBareProject(oldCore)).rejects.toThrow(new Error(G1("expo-modules-core 58.0.26")));
+    await expect(readBareProject(oldCore)).rejects.toThrow(new VersionGateError(G1("expo-modules-core 58.0.26")));
 
     const floor = await tempBare({ rn: "0.88.1", useExpoModules: true });
     await fakeExpo58Modules(floor);
@@ -220,12 +220,12 @@ describe("readBareProject", () => {
     const rn0880 = await tempBare({ rn: "0.88.0", useExpoModules: true });
     await fakeExpo58Modules(rn0880, { "react-native": "0.88.0" });
     const err = (await readBareProject(rn0880).catch((e: unknown) => e)) as Error;
-    expect(err).toEqual(new Error(G1("react-native 0.88.0")));
+    expect(err).toEqual(new VersionGateError(G1("react-native 0.88.0")));
     expect(err.message).not.toContain("Run `npx expo install react-native@0.88.1`");
 
     const rnAndCore = await tempBare({ rn: "0.88.0", useExpoModules: true });
     await fakeExpo58Modules(rnAndCore, { "react-native": "0.88.0", "expo-modules-core": "58.0.26" });
-    await expect(readBareProject(rnAndCore)).rejects.toThrow(new Error(G1("react-native 0.88.0, expo-modules-core 58.0.26")));
+    await expect(readBareProject(rnAndCore)).rejects.toThrow(new VersionGateError(G1("react-native 0.88.0, expo-modules-core 58.0.26")));
 
     const vendored = await tempBare({ rn: "0.86.3", useExpoModules: true });
     await fakeExpo58Modules(vendored, { "react-native": "0.86.3" });
@@ -245,6 +245,17 @@ describe("readBareProject", () => {
         "Expo SDK 58 or newer: install expo ~58.0.21 and run `npx expo install --fix`, then move react-native to 0.88.1 as " +
         "https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/bare-react-native.md#upgrading-react-native describes.",
     );
+  });
+
+  it("refuses through the version gate: below the floor, the hybrid gates and G1", async () => {
+    const below = await tempBare({ rn: "0.86.1" });
+    const vendored = await tempBare({ rn: "0.86.3", useExpoModules: true });
+    await fakeExpo58Modules(vendored, { "react-native": "0.86.3" });
+    const sdk57 = await tempBare({ rn: "0.88.1", useExpoModules: true });
+    await fakeExpo58Modules(sdk57, { expo: "57.0.31" });
+    const g1 = await tempBare({ rn: "0.88.1", useExpoModules: true });
+    await fakeExpo58Modules(g1, { expo: "58.0.20" });
+    for (const dir of [below, vendored, sdk57, g1]) await expect(readBareProject(dir)).rejects.toBeInstanceOf(VersionGateError);
   });
 
   it("still gates a hybrid app on Expo SDK 58", async () => {

@@ -467,6 +467,17 @@ describe("detectCapabilities", () => {
     expect((await detect(dir)).kind).toBe("expo");
   });
 
+  it("reports rnArtifactsDir from rn-xtool.config.json instead of probing", async () => {
+    const dir = await bare("0.88.1", "0.88");
+    await writeFile(path.join(dir, "rn-xtool.config.json"), JSON.stringify({ rnArtifactsDir: "../rn-artifacts" }));
+    expect((await detect(dir, noNetwork)).artifacts).toEqual({
+      status: "local",
+      version: "0.88.1",
+      missing: [],
+      detail: "../rn-artifacts",
+    });
+  });
+
   it("leaves the React Native fields out without react-native", async () => {
     const c = await detect(await bare(null), noNetwork);
     expect(c.rnVersion).toBeUndefined();
