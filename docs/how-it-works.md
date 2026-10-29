@@ -43,7 +43,7 @@ step with file locations.
      such as expo-sqlite ([upstream/expo-spm-plugin-mixed-modules.md](upstream/expo-spm-plugin-mixed-modules.md)).
    - **React Native** (`patches/react-native+0.88.1.patch`, and its identical copy `react-native+0.88.0.patch` for bare
      0.88.0; about 1.95k lines across 3 files under
-     `react-native/scripts/spm/`: `read-podspec.js`, `scaffold-package-swift.js`, `spm-utils.js`): 16 generic fixes to
+     `react-native/scripts/spm/`: `read-podspec.js`, `scaffold-package-swift.js`, `spm-utils.js`): 17 generic fixes to
      the `spm scaffold` podspec reader and `Package.swift` generator, including mixed Swift + Objective-C/C++ targets,
      known CocoaPods dependencies mapped to SwiftPM packages and the Swift importer paths of mixed targets, plus one to
      the per-app header farm ([upstream/react-native-scaffolder.md](upstream/react-native-scaffolder.md)).
