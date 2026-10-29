@@ -8,7 +8,7 @@ import {
   expoPluginFor,
   lineId,
   releaseLine,
-  rnScriptsFor,
+  rnLineStatus,
   SUPPORTED_LINES,
   supportedRnList,
 } from "../src/versions.js";
@@ -73,15 +73,7 @@ describe("supported lines", () => {
     expect([56, 57, 58, 59].map(expoPluginFor)).toEqual([undefined, "vendored", "installed", "installed"]);
     expect([56, 57, 58, 59].map(expoPinPolicyFor)).toEqual([undefined, "floor", "floor", undefined]);
     expect(expoPinsFor(59)).toBeUndefined();
-    expect(["0.86.2", "0.86.3", "0.87.1", "0.88.0", "0.88.1"].map(rnScriptsFor)).toEqual([
-      "vendored",
-      "vendored",
-      "vendored",
-      "installed",
-      "installed",
-    ]);
-    expect(rnScriptsFor("0.88.2")).toBeUndefined();
-    expect(supportedRnList()).toBe("0.86.2, 0.86.3, 0.87.1, 0.88.0 and 0.88.1");
+    expect(supportedRnList()).toBe("0.86.x from 0.86.2, 0.87.x from 0.87.1 and 0.88.x from 0.88.0");
   });
 
   it("bareLineFor reads the minor", () => {
@@ -90,6 +82,20 @@ describe("supported lines", () => {
     expect(bareLineFor("0.88.2")).toBe(line088);
     expect(bareLineFor("0.88.0-rc.1")).toBe(line088);
     expect(["0.89.0", "0.8.1", "58.0.21"].map(bareLineFor)).toEqual([undefined, undefined, undefined]);
+  });
+
+  it("classifies bare versions by line", () => {
+    const status = (v: string) => rnLineStatus(v).status;
+    const lineOf = (v: string) => rnLineStatus(v).line;
+    for (const v of ["0.86.2", "0.86.3", "0.87.1", "0.88.0", "0.88.1"]) expect(status(v), v).toBe("verified");
+    for (const v of ["0.86.4", "0.87.2", "0.88.12"]) expect(status(v), v).toBe("newer");
+    for (const v of ["0.86.1", "0.87.0"]) expect(status(v), v).toBe("below");
+    expect(status("0.88.2-rc.1")).toBe("prerelease");
+    for (const v of ["0.86.3", "0.86.4", "0.87.0", "0.88.2-rc.1"]) {
+      expect(lineOf(v), v).toBeDefined();
+      expect(lineOf(v), v).toBe(bareLineFor(v));
+    }
+    for (const v of ["0.85.3", "0.89.0"]) expect(rnLineStatus(v), v).toEqual({ status: "unsupported" });
   });
 });
 

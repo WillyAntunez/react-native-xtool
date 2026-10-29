@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readProject } from "../../src/project/index.js";
 import { readBareProject } from "../../src/project/bare.js";
+import { DetectError } from "../../src/project/detect.js";
 import { isInstalled } from "../../src/project/expo.js";
 import { fakeExpo58Modules } from "../support/expo58.js";
 
@@ -78,21 +79,74 @@ describe("readBareProject", () => {
     expect(p.rnScripts).toBe("installed");
   });
 
+  const refusal = (rn: string) =>
+    `React Native ${rn} is not supported; rn-xtool supports 0.86.x from 0.86.2, 0.87.x from 0.87.1 and 0.88.x from ` +
+    "0.88.0 (bare). Pin react-native to one of them.";
+
   it("rejects unsupported versions with the supported list", async () => {
-    for (const rn of ["0.86.0", "0.86.1", "0.87.0", "0.85.0", "0.89.0", "0.88.2", "0.88.0-rc.1", "0.88.1-rc.1"]) {
-      await expect(readBareProject(await tempBare({ rn }))).rejects.toThrow(
-        `React Native ${rn} is not supported; rn-xtool supports 0.86.2, 0.86.3, 0.87.1, 0.88.0 and 0.88.1 (bare). Pin react-native to one of them.`,
-      );
+    for (const rn of ["0.86.0", "0.86.1", "0.87.0", "0.85.0", "0.89.0", "0.88.0-rc.1", "0.88.1-rc.1"]) {
+      await expect(readBareProject(await tempBare({ rn })), rn).rejects.toThrow(new DetectError(refusal(rn)));
+    }
+  });
+
+  it("refuses prereleases of a supported line", async () => {
+    for (const rn of ["0.88.2-rc.1", "0.86.4-rc.0"]) {
+      await expect(readBareProject(await tempBare({ rn })), rn).rejects.toThrow(new DetectError(refusal(rn)));
     }
   });
 
   it("adds the Expo SDK sentence for an unsupported version with Expo modules", async () => {
     const dir = await tempBare({ rn: "0.87.0", modulesCore: true, expo: true });
     await expect(readBareProject(dir)).rejects.toThrow(
-      (
-        "React Native 0.87.0 is not supported; rn-xtool supports 0.86.2, 0.86.3, 0.87.1, 0.88.0 and 0.88.1 (bare). Pin react-native to one of them. Expo SDK 58 needs React Native 0.88.1."
+      new DetectError(`${refusal("0.87.0")} Expo SDK 58 needs React Native 0.88.1.`),
+    );
+  });
+
+  const newerWarning = (rn: string, minor: string, verified: string, last: string) =>
+    `⚠ Newer than the React Native ${minor} line this rn-xtool release was verified with: react-native ${rn}. ` +
+    `Verified: ${verified}. The build continues; if it fails or the app crashes at launch, move react-native back to ` +
+    `${last} as https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/bare-react-native.md#upgrading-react-native ` +
+    "describes, and report it at https://github.com/WillyAntunez/react-native-xtool/issues.";
+
+  it("accepts a newer patch of each line with a warning", async () => {
+    for (const [rn, fixture, scripts, warning] of [
+      ["0.86.4", "bare-086", "vendored", newerWarning("0.86.4", "0.86", "0.86.2 and 0.86.3", "0.86.3")],
+      ["0.87.3", "bare-087", "vendored", newerWarning("0.87.3", "0.87", "0.87.1", "0.87.1")],
+      ["0.88.2", "bare", "installed", newerWarning("0.88.2", "0.88", "0.88.0 and 0.88.1", "0.88.1")],
+    ] as const) {
+      const log = vi.fn();
+      const p = await readBareProject(await tempBare({ fixture, rn }), { log });
+      expect(p.rnVersion, rn).toBe(rn);
+      expect(p.rnScripts, rn).toBe(scripts);
+      expect(log.mock.calls, rn).toEqual([[warning]]);
+    }
+  });
+
+  it("stays silent on verified versions", async () => {
+    for (const rn of ["0.86.2", "0.86.3", "0.87.1", "0.88.0", "0.88.1"]) {
+      const log = vi.fn();
+      await readBareProject(await tempBare({ rn }), { log });
+      expect(log, rn).not.toHaveBeenCalled();
+    }
+  });
+
+  it("a hybrid on a newer 0.88.x stops at G1", async () => {
+    const dir = await tempBare({ rn: "0.88.2", useExpoModules: true });
+    await fakeExpo58Modules(dir, { "react-native": "0.88.2" });
+    const log = vi.fn();
+    const err = (await readBareProject(dir, { log }).catch((e: unknown) => e)) as Error;
+    expect(err).toEqual(
+      new Error(
+        "Expo SDK 58 needs react-native 0.88.1 and at least expo 58.0.21, expo-modules-core 58.0.28, expo-modules-jsi " +
+          "58.0.21, expo-modules-autolinking 58.0.16, expo-file-system 58.0.13 and expo-font 58.0.11; installed: " +
+          "react-native 0.88.2. Move react-native to 0.88.1 as " +
+          "https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/bare-react-native.md#upgrading-react-native " +
+          "describes (`npx expo install react-native@0.88.1` alone leaves the template's @react-native/* packages on the " +
+          "old version). React Native 0.88.2 is newer than this rn-xtool release supports: pin react-native to 0.88.1, or " +
+          "update rn-xtool.",
       ),
     );
+    expect(log).not.toHaveBeenCalled();
   });
 
   it("rejects Expo modules on a vendored version", async () => {

@@ -109,11 +109,11 @@ export function installedVersion(projectRoot: string, pkg: string): string | und
 
 /**
  * Bundled patch files whose package is installed in the project (bare RN has no expo packages), sorted.
- * The react-native patch is only for the exact version it was made against: other versions are
- * not patched, and the caller decides whether that is fine (vendored scripts) or a stop (see rnPatchMismatch).
- * Other packages get the patch for their installed version when one is bundled, else the highest one of the installed
- * version's release line, else the highest version (which then fails to apply with the "pin" message). With
- * `lineOnly` (the vendored SDK 57 plugin) that last fallback is left out, so another SDK's patch is never staged.
+ * Each package gets the patch for its installed version when one is bundled, else the highest one of the installed
+ * version's release line (react-native 0.88.2 gets the 0.88.1 patch). Packages other than react-native then fall back
+ * to the highest version (which then fails to apply with the "pin" message); with `lineOnly` (the vendored SDK 57
+ * plugin) that fallback is left out, so another SDK's patch is never staged. A react-native without a patch of its line
+ * is not patched, and the caller decides whether that is fine (vendored scripts) or a stop (see rnPatchMismatch).
  */
 export function selectBundledPatches(projectRoot: string, bundledDir: string, opts: { lineOnly?: boolean } = {}): string[] {
   const byPkg = new Map<string, { name: string; version: string }[]>();
@@ -133,10 +133,9 @@ export function selectBundledPatches(projectRoot: string, bundledDir: string, op
       selected.push(exact.name);
       continue;
     }
-    if (pkg === "react-native") continue;
     const sameLine = patches.filter((p) => releaseLine(p.version) === releaseLine(installed));
     if (sameLine.length > 0) selected.push(highest(sameLine).name);
-    else if (!opts.lineOnly) selected.push(highest(patches).name);
+    else if (!opts.lineOnly && pkg !== "react-native") selected.push(highest(patches).name);
   }
   return selected.sort();
 }
@@ -156,8 +155,9 @@ export async function stageBundledPatches(
 }
 
 /**
- * The mismatch when react-native is installed at a version no bundled react-native patch was made for, naming the
- * highest bundled one (what the "pin" text suggests); undefined when react-native is not installed or a patch matches.
+ * The mismatch when react-native is installed on a release line no bundled react-native patch was made for, naming the
+ * highest bundled one (what the "pin" text suggests); undefined when react-native is not installed or a bundled patch
+ * of its line exists (selectBundledPatches stages it).
  */
 export function rnPatchMismatch(
   projectRoot: string,
@@ -169,7 +169,7 @@ export function rnPatchMismatch(
   for (const patchFile of readdirSync(bundledDir)) {
     const info = parsePatchFileName(patchFile);
     if (info?.pkg !== "react-native") continue;
-    if (info.version === installed) return undefined;
+    if (releaseLine(info.version) === releaseLine(installed)) return undefined;
     if (highest === undefined || compareVersions(info.version, highest.version) > 0) {
       highest = { patchFile, version: info.version };
     }

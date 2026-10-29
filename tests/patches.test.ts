@@ -171,8 +171,19 @@ describe("react-native patch scope", () => {
     }
   });
 
-  it("flags react-native only when no bundled patch matches", async () => {
-    for (const rn of ["0.88.0", "0.88.1"]) {
+  it("bare 0.88.x gets the highest react-native patch of its line", async () => {
+    for (const [rn, expected] of [
+      ["0.88.2", ["react-native+0.88.1.patch"]],
+      ["0.86.4", []],
+    ] as const) {
+      const { root } = await tempProject();
+      await installPkg(root, "react-native", rn);
+      expect(selectBundledPatches(root, bundled), rn).toEqual(expected);
+    }
+  });
+
+  it("flags react-native only when no bundled patch matches its line", async () => {
+    for (const rn of ["0.88.0", "0.88.1", "0.88.2"]) {
       const { root } = await tempProject();
       await installPkg(root, "react-native", rn);
       expect(rnPatchMismatch(root, bundled), rn).toBeUndefined();
@@ -181,10 +192,10 @@ describe("react-native patch scope", () => {
     expect(rnPatchMismatch(none.root, bundled)).toBeUndefined();
 
     const { root } = await tempProject();
-    await installPkg(root, "react-native", "0.88.2");
+    await installPkg(root, "react-native", "0.89.0");
     expect(rnPatchMismatch(root, bundled)).toEqual({
       pkg: "react-native",
-      installed: "0.88.2",
+      installed: "0.89.0",
       patchFile: "react-native+0.88.1.patch",
       patched: "0.88.1",
     });
@@ -193,9 +204,20 @@ describe("react-native patch scope", () => {
     const err = (await applyPatches(root, exec, { rnScripts: "installed" }).catch((e: unknown) => e)) as Error;
     expect(err.message).toMatch(/pin "react-native" to 0\.88\.1/);
     expect(err.message).toContain(
-      "patch-package was not run: react-native 0.88.2 is installed and the bundled react-native patches are for 0.88.0 and 0.88.1.",
+      "patch-package was not run: react-native 0.89.0 is installed and the bundled react-native patches are for 0.88.0 and 0.88.1.",
     );
     expect(calls).toHaveLength(0);
+  });
+
+  it("a newer react-native patch that does not apply names the pin", async () => {
+    const { root, patchesDir } = await tempProject();
+    await installPkg(root, "react-native", "0.88.2");
+    const output = "**ERROR** Failed to apply patch for package react-native at path\n    node_modules/react-native";
+    const exec = async () => ({ exitCode: 1, all: output });
+    const err = (await applyPatches(root, exec, { rnScripts: "installed" }).catch((e: unknown) => e)) as Error;
+    expect(readdirSync(patchesDir)).toEqual(["react-native+0.88.1.patch"]);
+    expect(err.message).toMatch(/^rn-xtool could not patch react-native@0\.88\.2 \(patch file: react-native\+0\.88\.1\.patch\)/);
+    expect(err.message).toContain('pin "react-native" to 0.88.1');
   });
 
   it("keeps staging the expo patches whatever their installed version", async () => {

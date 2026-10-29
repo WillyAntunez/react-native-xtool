@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { DetectError } from "./detect.js";
 import {
+  andList,
   checkExpoPackages,
   defaultBundleIdentifier,
   installedExpoMajor,
@@ -14,7 +15,7 @@ import {
   RN_UPGRADE_DOCS,
 } from "./expo.js";
 import { buildSetting, openPbxproj, readTargetContent, resolveSetting } from "./pbxproj.js";
-import { expoPinsFor, rnScriptsFor, supportedRnList, type RnScripts } from "../versions.js";
+import { expoPinsFor, rnLineStatus, supportedRnList, type BareLine } from "../versions.js";
 import type { ProjectInfo, ReadProjectOptions } from "./types.js";
 
 /** Shown by doctor (warn) and build (error) when a bare project lacks the React Native CLI. */
@@ -25,18 +26,32 @@ export const RN_CLI_MISSING =
 
 const EXPO_NEEDS_088 = "Expo SDK 58 needs React Native 0.88.1.";
 
-function checkRnVersion(version: string, hasExpoModulesCore: boolean): RnScripts {
-  const scripts = rnScriptsFor(version);
-  if (scripts === undefined) {
+/**
+ * The row of a bare React Native version rn-xtool builds: a verified one, or a newer release of its minor (warned about
+ * by readBareProject). Below the floor, a prerelease or a minor without a row is refused.
+ */
+function checkRnVersion(version: string, hasExpoModulesCore: boolean): BareLine {
+  const { status, line } = rnLineStatus(version);
+  if (line === undefined || (status !== "verified" && status !== "newer")) {
     throw new DetectError(
       `React Native ${version} is not supported; rn-xtool supports ${supportedRnList()} (bare). Pin react-native to one of them.` +
         (hasExpoModulesCore ? ` ${EXPO_NEEDS_088}` : ""),
     );
   }
-  if (scripts === "vendored" && hasExpoModulesCore) {
+  if (line.scripts === "vendored" && hasExpoModulesCore) {
     throw new DetectError(`React Native ${version} with Expo modules is not supported. ${EXPO_NEEDS_088}`);
   }
-  return scripts;
+  return line;
+}
+
+/** A release of a bare line newer than the versions this rn-xtool release was verified with: the build goes on. */
+function rnNewerWarning(version: string, line: BareLine): string {
+  return (
+    `⚠ Newer than the React Native ${line.minor} line this rn-xtool release was verified with: react-native ${version}. ` +
+    `Verified: ${andList(line.verified)}. The build continues; if it fails or the app crashes at launch, move ` +
+    `react-native back to ${line.verified.at(-1)} as ${RN_UPGRADE_DOCS} describes, and report it at ` +
+    "https://github.com/WillyAntunez/react-native-xtool/issues."
+  );
 }
 
 async function appJsonName(root: string): Promise<string | undefined> {
@@ -58,7 +73,7 @@ export async function readBareProject(root: string, opts: ReadProjectOptions = {
     );
   }
   const rnVersion = await installedRnVersion(root);
-  const rnScripts = checkRnVersion(rnVersion, isInstalled(root, "expo-modules-core"));
+  const rnLine = checkRnVersion(rnVersion, isInstalled(root, "expo-modules-core"));
 
   const pbx = openPbxproj(iosDir);
   const name = resolveSetting(pbx, "PRODUCT_NAME") || pbx.appTarget.name;
@@ -96,6 +111,8 @@ export async function readBareProject(root: string, opts: ReadProjectOptions = {
     }
     if (sdk !== undefined) checkExpoPackages(root, sdk, opts.log, { kind: "bare" });
   }
+  // checkRnVersion let through only verified versions and newer releases of the line.
+  if (!rnLine.verified.includes(rnVersion)) opts.log?.(rnNewerWarning(rnVersion, rnLine));
 
   return {
     kind: "bare",
@@ -110,7 +127,7 @@ export async function readBareProject(root: string, opts: ReadProjectOptions = {
     iosTargetDir: path.dirname(infoPlistPath),
     infoPlistPath,
     rnVersion,
-    rnScripts,
+    rnScripts: rnLine.scripts,
     expoPlugin: "installed",
     hasExpoModules,
     hasExpoConstants: isInstalled(root, "expo-constants"),

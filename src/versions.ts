@@ -194,14 +194,24 @@ export function releaseLine(version: string): string {
   return major === "0" ? `0.${minor}` : major;
 }
 
-/** Where a verified bare React Native version's SwiftPM scripts come from; undefined for any other version. */
-export function rnScriptsFor(version: string): RnScripts | undefined {
-  return bareLines().find((l) => l.verified.includes(version))?.scripts;
+export type RnLineStatus = "verified" | "newer" | "below" | "prerelease" | "unsupported";
+
+/**
+ * A bare React Native version against its minor's row: "verified" (in the row's list), "newer" (a release at or above
+ * the floor that was not verified: built with a warning), "below" the floor, "prerelease" (anything but a plain x.y.z
+ * release, refused), or "unsupported" (no row for the minor, and then no `line`).
+ */
+export function rnLineStatus(version: string): { status: RnLineStatus; line?: BareLine } {
+  const line = bareLineFor(version);
+  if (line === undefined) return { status: "unsupported" };
+  if (line.verified.includes(version)) return { status: "verified", line };
+  if (!/^\d+\.\d+\.\d+$/.test(version)) return { status: "prerelease", line };
+  return { status: compareVersions(version, line.floor) < 0 ? "below" : "newer", line };
 }
 
-/** "0.86.2, 0.86.3, 0.87.1, 0.88.0 and 0.88.1" */
+/** "0.86.x from 0.86.2, 0.87.x from 0.87.1 and 0.88.x from 0.88.0" */
 export function supportedRnList(): string {
-  const all = bareLines().flatMap((l) => l.verified);
+  const all = bareLines().map((l) => `${l.minor}.x from ${l.floor}`);
   return `${all.slice(0, -1).join(", ")} and ${all[all.length - 1]}`;
 }
 
