@@ -109,8 +109,9 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   patch-package's output and "Report this". rn-xtool does not reinstall it itself.
 - A scaffolded `Package.swift` in `node_modules` older than its persisted patch (a teammate committed the regenerated
   patch) is now replaced with the persisted one, and an out-of-date one without a persisted patch is removed so the
-  `rn-spm` step scaffolds it again; before, both were built as they were. The scaffold warnings and this check also
-  read the pre-rename `expo-xtool-scaffold-revision` marker.
+  `rn-spm` step scaffolds it again; before, both were built as they were. A persisted patch that also changes the
+  library's own files is not replaced: the build warns and names `rm -rf node_modules/<package> && npm install`. The
+  scaffold warnings and this check also read the pre-rename `expo-xtool-scaffold-revision` marker.
 
 ## [0.1.0-alpha.2] - 2026-10-27
 
