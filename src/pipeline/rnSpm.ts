@@ -240,6 +240,12 @@ export async function runRnSpm(
       `runRnSpm: Expo projects on vendored SwiftPM scripts need the vendored Expo plugin, got expoPlugin "${opts.expoPlugin}"`,
     );
   }
+  // Only the vendored scripts read RN_SPM_EXPO_PLUGIN (edit E5): React Native's own would leave Expo modules unlinked.
+  if (opts.expoPlugin === "vendored" && opts.rnScripts !== "vendored") {
+    throw new Error(
+      `runRnSpm: the vendored Expo plugin needs the vendored SwiftPM scripts, got rnScripts "${opts.rnScripts}"`,
+    );
+  }
   const runner = deps.runner ?? streamingRunner;
   const log = deps.log ?? ((s: string) => console.log(s));
   const rnDir = deps.rnDir ?? resolveRnDir(paths);

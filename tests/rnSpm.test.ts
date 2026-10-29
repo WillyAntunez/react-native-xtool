@@ -153,6 +153,15 @@ describe("scripts root", () => {
     );
     expect(h.calls).toEqual([]);
   });
+
+  it.each(["expo", "bare"] as const)("refuses the vendored plugin with the installed scripts (%s)", async (kind) => {
+    // Only the vendored scripts read RN_SPM_EXPO_PLUGIN: React Native's own would leave every Expo module unlinked.
+    const h = harness([{ exitCode: 0, output: "" }]);
+    await expect(runRnSpm(paths, { kind, rnScripts: "installed", expoPlugin: "vendored" }, h.deps)).rejects.toThrow(
+      'runRnSpm: the vendored Expo plugin needs the vendored SwiftPM scripts, got rnScripts "installed"',
+    );
+    expect(h.calls).toEqual([]);
+  });
 });
 
 describe("Expo on the driver", () => {
