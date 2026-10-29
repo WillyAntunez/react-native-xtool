@@ -287,7 +287,9 @@ rn-xtool builds Expo SDK 57 only with exact versions (see [how-it-works.md](how-
 - **"expo-modules-macros 0.22.0 has no Linux binary for <arch> (@expo/modules-macros-linux-<arch>); reinstall
   react-native-xtool without --omit=optional."** SDK 57's own macro plugin is macOS-only, so rn-xtool brings
   expo-modules-macros 0.22.0, whose Linux binary is an optional npm dependency: an install with `--omit=optional`, or
-  a host architecture without a binary, leaves it out.
+  a host architecture without a binary, leaves it out. When another package or a parent folder installs an
+  expo-modules-macros that expo-modules-core resolves, the plugin uses that copy instead, and the check names it with
+  the `(from expo-modules-core <version>)` texts of the [Expo SDK 58](#expo-sdk-58) section.
 - **"ExpoModulesJSI needs React Native's headers at <dir>, which does not exist. rnArtifactsDir must hold adapted
   0.86.3 slots, as rn-xtool's rn-artifacts step writes them."** At the `jsi` step: `rnArtifactsDir` points at raw
   0.86.3 artifacts. Build once without `rnArtifactsDir` and point it at that project's `ios/build/rn-artifacts/0.86.3`

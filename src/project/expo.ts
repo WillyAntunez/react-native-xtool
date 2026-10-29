@@ -5,6 +5,7 @@ import { getConfig, modifyConfigAsync } from "@expo/config";
 import { IOSConfig } from "@expo/config-plugins";
 import { createRequire } from "node:module";
 import type { BuildVars } from "../plist.js";
+import { vendoredExpoPlugin } from "../pipeline/rnSpm.js";
 import {
   checkPins,
   compareVersions,
@@ -114,29 +115,34 @@ export function installedExpoMajor(root: string): number | undefined {
 
 /**
  * The error when expo-modules-macros has no Linux binary for the host (an `--omit=optional` install or another arch).
- * Without `root`: rn-xtool's own expo-modules-macros (SDK 57's vendored plugin). With `root`: the one the project's
- * expo-modules-core resolves (SDK 58), which must be installed. `resolve` replaces only the binary lookup.
+ * The copy is the one the Expo plugin uses (macroPluginTool in its plugin.js): the one the project's expo-modules-core
+ * resolves (`root`), which must be installed on SDK 58; with `pluginDir` (SDK 57's vendored plugin, whose core depends
+ * on @expo/expo-modules-macros-plugin instead) the plugin falls back to the copy its own directory resolves,
+ * rn-xtool's. Without `root`: rn-xtool's own copy. `resolve` replaces only the binary lookup.
  */
 export function expoMacrosBinaryError(
-  opts: { arch?: string; resolve?: (spec: string) => string; root?: string } = {},
+  opts: { arch?: string; resolve?: (spec: string) => string; root?: string; pluginDir?: string } = {},
 ): string | undefined {
   const arch = opts.arch ?? process.arch;
   const binaryPackage = `@expo/modules-macros-linux-${arch}`;
   const binary = `${binaryPackage}/ExpoModulesMacros`;
   const resolvesFrom = (macrosDir: string) => (spec: string) => createRequire(path.join(macrosDir, "package.json")).resolve(spec);
-  if (opts.root === undefined) {
-    const resolve =
-      opts.resolve ?? resolvesFrom(path.dirname(createRequire(import.meta.url).resolve("expo-modules-macros/package.json")));
+  const coreDir = opts.root === undefined ? undefined : expoPackageDir(opts.root, "expo-modules-core");
+  const macrosDir = coreDir === undefined ? undefined : packageDirFrom(coreDir, "expo-modules-macros");
+  if (opts.root === undefined || (macrosDir === undefined && opts.pluginDir !== undefined)) {
     try {
-      resolve(binary);
+      const ownDir =
+        opts.pluginDir === undefined
+          ? path.dirname(createRequire(import.meta.url).resolve("expo-modules-macros/package.json"))
+          : packageDirFrom(opts.pluginDir, "expo-modules-macros");
+      if (opts.resolve === undefined && ownDir === undefined) throw new Error("expo-modules-macros is not installed");
+      (opts.resolve ?? resolvesFrom(ownDir!))(binary);
       return undefined;
     } catch {
       return `expo-modules-macros 0.22.0 has no Linux binary for ${arch} (${binaryPackage}); reinstall react-native-xtool without --omit=optional.`;
     }
   }
-  const coreDir = expoPackageDir(opts.root, "expo-modules-core");
   const coreVersion = versionAt(coreDir) ?? "(not installed)";
-  const macrosDir = coreDir === undefined ? undefined : packageDirFrom(coreDir, "expo-modules-macros");
   if (macrosDir === undefined) {
     return `expo-modules-macros is not installed next to expo-modules-core ${coreVersion}, which depends on it; run \`npx expo install --fix\` and reinstall.`;
   }
@@ -254,9 +260,9 @@ function checkTopLevelJsi(root: string, sdk: number, checks: PinCheck[]): void {
 
 /**
  * The gate on an SDK's pinned packages (no-op when the SDK pins nothing), each step throwing: G1 the pins, G2 one
- * expo-modules-jsi (the top-level copy), G3 the macros Linux binary (rn-xtool's for the vendored plugin, core's
- * otherwise). Then, on a floor SDK only, the packages newer than the verified set are reported through `log`.
- * `kind` "bare" (a hybrid app) changes only G1's react-native remedy.
+ * expo-modules-jsi (the top-level copy), G3 the macros Linux binary (of the copy the Expo plugin uses: core's, else,
+ * for the vendored plugin, rn-xtool's). Then, on a floor SDK only, the packages newer than the verified set are
+ * reported through `log`. `kind` "bare" (a hybrid app) changes only G1's react-native remedy.
  */
 export function checkExpoPackages(
   root: string,
@@ -268,7 +274,8 @@ export function checkExpoPackages(
   if (checks === undefined) return;
   checkExpoPinVersions(root, sdk, checks, opts.kind ?? "expo");
   checkTopLevelJsi(root, sdk, checks);
-  const macros = expoPluginFor(sdk) === "vendored" ? expoMacrosBinaryError() : expoMacrosBinaryError({ root });
+  const pluginDir = expoPluginFor(sdk) === "vendored" ? path.dirname(vendoredExpoPlugin()) : undefined;
+  const macros = expoMacrosBinaryError({ root, pluginDir });
   if (macros) throw new Error(macros);
   const newer = checks.filter((c) => c.status === "newer");
   if (newer.length > 0) {

@@ -89,7 +89,8 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   `expo-modules-autolinking+58.0.16.patch`); their content is unchanged.
 - An Expo SDK older than 57 now gets `Expo SDK <n> is not supported; rn-xtool supports SDK 57 (expo 57.0.31) and SDK 58
   or newer.` An SDK 57 project stops in `doctor` and `build` when a pinned version differs, when the expo-modules-jsi
-  the build uses is not the top-level copy, or when rn-xtool's expo-modules-macros has no Linux binary for the host.
+  the build uses is not the top-level copy, or when the expo-modules-macros the vendored plugin uses (a copy
+  expo-modules-core resolves, else rn-xtool's) has no Linux binary for the host.
 - `SceneDelegate.swift` is optional on every SDK; it is required only when Info.plist's `UIApplicationSceneManifest`
   names a scene delegate.
 - When several bundled patches name one package, the one for the installed version is staged, else the highest

@@ -185,8 +185,9 @@ differences:
   57.1.3, each read where the build resolves it (`expoPackageDir`: expo and react-native from the root,
   expo-modules-core from `expo`, expo-modules-jsi from expo-modules-core, expo-modules-autolinking from the root, else
   from `expo`). That expo-modules-jsi must be `node_modules/expo-modules-jsi`, the copy patch-package patches.
-  rn-xtool's `@expo/modules-macros-linux-<arch>` must resolve (`expoMacrosBinaryError`). SDK 58 and newer use the
-  installed plugin, and older SDKs are refused. The texts are in [troubleshooting.md](troubleshooting.md#expo-sdk-57).
+  The `@expo/modules-macros-linux-<arch>` of the expo-modules-macros the vendored plugin uses must resolve
+  (`expoMacrosBinaryError`): a copy expo-modules-core resolves, else rn-xtool's (the plugin's own order). SDK 58 and
+  newer use the installed plugin, and older SDKs are refused. The texts are in [troubleshooting.md](troubleshooting.md#expo-sdk-57).
   `doctor` reports `expo SDK 57, React Native 0.86.3 (vendored Expo SwiftPM plugin and SwiftPM scripts)`.
 - **Steps** (`buildSteps` in `src/commands/build.ts`): `prebuild` (when `ios/` is missing, or `--clean`), `patches`,
   `rn-artifacts` (unless `rnArtifactsDir` is set), `jsi`, `rn-spm`, `app-config`, `frameworks`, `generate`,

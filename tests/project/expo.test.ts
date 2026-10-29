@@ -8,6 +8,7 @@ import { expoMacrosBinaryError, expoPackageDir, readExpoPins } from "../../src/p
 import { checkPins, expoPinPolicyFor, expoPinsFor, expoPluginFor, type ExpoPinName } from "../../src/versions.js";
 import { EXPO57_PINS, fakeExpo57Modules } from "../support/expo57.js";
 import { EXPO58_PINS, fakeExpo58Modules } from "../support/expo58.js";
+import { loadSpm, shared58Spm, vendoredSpm, type Plugin } from "../support/expoSpm.js";
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures");
 const fixture = path.join(fixtures, "project");
@@ -271,6 +272,42 @@ describe("Expo SDK 57", () => {
     );
   });
 
+  it("checks the expo-modules-macros copy the vendored plugin finds first: from core, then its own", async () => {
+    // expo-modules-core 57.0.24 depends on @expo/expo-modules-macros-plugin, so a stock app has no expo-modules-macros
+    // and the plugin falls back to rn-xtool's. A copy reachable from core (another package's, a parent's) wins.
+    const plugin = loadSpm<Plugin>(vendoredSpm(), "plugin.js");
+    const stock = await expo57();
+    expect(plugin.macroPluginFlags(expoPackageDir(stock, "expo-modules-core")!).join(" ")).not.toContain(stock);
+    await expect(readExpoProject(stock)).resolves.toMatchObject({ expoPlugin: "vendored" });
+
+    // Another project: Node caches a resolution per request and paths, so the plugin would keep its first answer.
+    const dir = await expo57();
+    const coreDir = expoPackageDir(dir, "expo-modules-core")!;
+    const macrosDir = path.join(dir, "node_modules", "expo-modules-macros");
+    await mkdir(macrosDir, { recursive: true });
+    const optionalDependencies = Object.fromEntries(
+      ["linux-arm64", "linux-x64"].map((p) => [`@expo/modules-macros-${p}`, "0.27.1"]),
+    );
+    await writeFile(
+      path.join(macrosDir, "package.json"),
+      JSON.stringify({ name: "expo-modules-macros", version: "0.27.1", optionalDependencies }),
+    );
+    const binaryError =
+      `expo-modules-macros 0.27.1 (from expo-modules-core 57.0.24) has no Linux binary for ${process.arch}: ` +
+      `@expo/modules-macros-linux-${process.arch} 0.27.1 is not installed. Run \`npm install --include=optional\` and ` +
+      "commit package-lock.json: `npm ci` installs only what the lockfile lists, and a lockfile written on macOS can " +
+      "leave this package out (so does --omit=optional).";
+    expect(() => plugin.macroPluginFlags(coreDir)).toThrow();
+    await expect(readExpoProject(dir)).rejects.toThrow(new Error(binaryError));
+
+    const binaryDir = path.join(dir, "node_modules", "@expo", `modules-macros-linux-${process.arch}`);
+    await mkdir(binaryDir, { recursive: true });
+    await writeFile(path.join(binaryDir, "package.json"), JSON.stringify({ version: "0.27.1" }));
+    await writeFile(path.join(binaryDir, "ExpoModulesMacros"), "");
+    expect(plugin.macroPluginFlags(coreDir)).toContain(`${path.join(binaryDir, "ExpoModulesMacros")}#ExpoModulesMacros`);
+    await expect(readExpoProject(dir)).resolves.toMatchObject({ expoPlugin: "vendored" });
+  });
+
   it("reports a missing macros binary", () => {
     expect(
       expoMacrosBinaryError({
@@ -484,6 +521,20 @@ describe("Expo SDK 58 gate", () => {
     const core = path.join(dir, "node_modules", "expo-modules-core", "package.json");
     await writeFile(core, JSON.stringify({ name: "expo-modules-core", version: "58.0.28" }));
     await expect(readExpoProject(dir)).rejects.toThrow(new Error(`${where}${hoist}`));
+  });
+
+  it.skipIf(shared58Spm() === undefined)("checks the expo-modules-macros copy expo 58's plugin uses", async () => {
+    // The installed plugin resolves the macros from core only (paths: [coreModuleRoot]); G3 must agree with it.
+    const plugin = loadSpm<Plugin>(shared58Spm()!, "plugin.js");
+    const ok = await expo58();
+    expect(plugin.macroPluginFlags(expoPackageDir(ok, "expo-modules-core")!)).toContain(
+      `${path.join(ok, "node_modules", "@expo", `modules-macros-linux-${process.arch}`, "ExpoModulesMacros")}#ExpoModulesMacros`,
+    );
+    expect(expoMacrosBinaryError({ root: ok })).toBeUndefined();
+    for (const broken of [await expo58({}, {}, {}, { macrosBinary: false }), await expo58({ "expo-modules-macros": null })]) {
+      expect(() => plugin.macroPluginFlags(expoPackageDir(broken, "expo-modules-core")!)).toThrow();
+      expect(expoMacrosBinaryError({ root: broken })).toBeDefined();
+    }
   });
 
   it("checks the macros binary through core on SDK 58", async () => {
