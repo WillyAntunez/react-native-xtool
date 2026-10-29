@@ -15,6 +15,9 @@ import {
   RN_UPGRADE_DOCS,
 } from "./expo.js";
 import { buildSetting, openPbxproj, readTargetContent, resolveSetting } from "./pbxproj.js";
+import { scriptsCapability } from "./scriptsShape.js";
+import { projectPaths } from "../paths.js";
+import { resolveRnDir } from "../pipeline/rnSpm.js";
 import { expoPinsFor, rnLineStatus, supportedRnList, type BareLine } from "../versions.js";
 import type { ProjectInfo, ReadProjectOptions } from "./types.js";
 
@@ -37,9 +40,6 @@ function checkRnVersion(version: string, hasExpoModulesCore: boolean): BareLine 
       `React Native ${version} is not supported; rn-xtool supports ${supportedRnList()} (bare). Pin react-native to one of them.` +
         (hasExpoModulesCore ? ` ${EXPO_NEEDS_088}` : ""),
     );
-  }
-  if (line.scripts === "vendored" && hasExpoModulesCore) {
-    throw new DetectError(`React Native ${version} with Expo modules is not supported. ${EXPO_NEEDS_088}`);
   }
   return line;
 }
@@ -73,7 +73,13 @@ export async function readBareProject(root: string, opts: ReadProjectOptions = {
     );
   }
   const rnVersion = await installedRnVersion(root);
-  const rnLine = checkRnVersion(rnVersion, isInstalled(root, "expo-modules-core"));
+  const hasExpoModulesCore = isInstalled(root, "expo-modules-core");
+  const rnLine = checkRnVersion(rnVersion, hasExpoModulesCore);
+  // The installed scripts' shape picks the mode; a shape that is not recognised takes the line's row.
+  const rnScripts = scriptsCapability(resolveRnDir(projectPaths(root)), rnVersion).mode ?? rnLine.scripts;
+  if (rnScripts === "vendored" && hasExpoModulesCore) {
+    throw new DetectError(`React Native ${rnVersion} with Expo modules is not supported. ${EXPO_NEEDS_088}`);
+  }
 
   const pbx = openPbxproj(iosDir);
   const name = resolveSetting(pbx, "PRODUCT_NAME") || pbx.appTarget.name;
@@ -84,7 +90,7 @@ export async function readBareProject(root: string, opts: ReadProjectOptions = {
   if (!infoPlist) throw new DetectError(`target ${pbx.appTarget.name} has no INFOPLIST_FILE`);
   const infoPlistPath = path.resolve(iosDir, infoPlist);
 
-  let hasExpoModules = isInstalled(root, "expo-modules-core");
+  let hasExpoModules = hasExpoModulesCore;
   if (hasExpoModules) {
     if (!isInstalled(root, "expo")) {
       throw new DetectError("expo-modules-core is installed without expo; run npx install-expo-modules (it installs both)");
@@ -127,7 +133,7 @@ export async function readBareProject(root: string, opts: ReadProjectOptions = {
     iosTargetDir: path.dirname(infoPlistPath),
     infoPlistPath,
     rnVersion,
-    rnScripts: rnLine.scripts,
+    rnScripts,
     expoPlugin: "installed",
     hasExpoModules,
     hasExpoConstants: isInstalled(root, "expo-constants"),

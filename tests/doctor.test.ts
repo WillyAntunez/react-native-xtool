@@ -16,6 +16,7 @@ import { LLVM_NM_MISSING } from "../src/pipeline/symbols.js";
 import { XTOOL_SHA256, XTOOL_VERSION } from "../src/versions.js";
 import { fakeExpo57Modules } from "./support/expo57.js";
 import { fakeExpo58Modules } from "./support/expo58.js";
+import { fakeRnScripts } from "./support/rnScripts.js";
 
 const expoProbe: ProjectProbe = {
   kind: "expo",
@@ -499,6 +500,7 @@ describe("readProjectProbe", () => {
       await cp(path.join(fixtures, "bare"), dir, { recursive: true });
       await mkdir(path.join(dir, "node_modules", "react-native"), { recursive: true });
       await writeFile(path.join(dir, "node_modules", "react-native", "package.json"), JSON.stringify({ version: "0.88.0" }));
+      await fakeRnScripts(path.join(dir, "node_modules", "react-native"), "0.88");
       const probe = await readProjectProbe(dir);
       expect(probe.warnings).toEqual([expect.stringMatching(/^@react-native-community\/cli is not installed.*npm install --save-dev/)]);
       const project = (await doctorWithProbes({ ...good, project: async () => probe }, "/p")).checks.find((c) => c.name === "project");
@@ -518,6 +520,7 @@ describe("readProjectProbe", () => {
         await mkdir(path.join(dir, "node_modules", name!), { recursive: true });
         await writeFile(path.join(dir, "node_modules", name!, "package.json"), JSON.stringify({ name, version }));
       }
+      await fakeRnScripts(path.join(dir, "node_modules", "react-native"), "0.88");
       const probe = await readProjectProbe(dir);
       expect(probe).toMatchObject({
         kind: "bare",

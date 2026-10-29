@@ -8,6 +8,7 @@ import { readBareProject } from "../../src/project/bare.js";
 import { DetectError } from "../../src/project/detect.js";
 import { isInstalled } from "../../src/project/expo.js";
 import { fakeExpo58Modules } from "../support/expo58.js";
+import { fakeRnScripts, shapeForVersion } from "../support/rnScripts.js";
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures");
 const tempDirs: string[] = [];
@@ -26,7 +27,9 @@ async function tempBare(opts: { fixture?: string; rn?: string; expo?: boolean; m
   const dir = await mkdtemp(path.join(tmpdir(), "rn-xtool-bare-"));
   tempDirs.push(dir);
   await cp(path.join(fixtures, opts.fixture ?? "bare"), dir, { recursive: true });
-  await addPackage(dir, "react-native", opts.rn ?? "0.88.0");
+  const rn = opts.rn ?? "0.88.0";
+  await addPackage(dir, "react-native", rn);
+  await fakeRnScripts(path.join(dir, "node_modules", "react-native"), shapeForVersion(rn));
   if (opts.modulesCore) await addPackage(dir, "expo-modules-core");
   if (opts.expo) await addPackage(dir, "expo");
   if (opts.useExpoModules) {
@@ -156,6 +159,22 @@ describe("readBareProject", () => {
     );
     const noPodfileLine = await tempBare({ rn: "0.86.3", modulesCore: true, expo: true });
     await expect(readBareProject(noPodfileLine)).rejects.toThrow(/with Expo modules is not supported/);
+    // 0.87.x is vendored whatever its scripts look like: rn-xtool bundles no react-native patch of 0.87.
+    for (const shape of ["0.87", "0.88"] as const) {
+      const rn087 = await tempBare({ rn: "0.87.1", modulesCore: true, expo: true, useExpoModules: true });
+      await fakeRnScripts(path.join(rn087, "node_modules", "react-native"), shape);
+      await expect(readBareProject(rn087), shape).rejects.toThrow(
+        new DetectError("React Native 0.87.1 with Expo modules is not supported. Expo SDK 58 needs React Native 0.88.1."),
+      );
+    }
+  });
+
+  it.each(["none", "0.87"] as const)("does not refuse a hybrid 0.88.1 whose scripts have the %s shape", async (shape) => {
+    // A damaged install is not recognised and takes the 0.88 row; it is not refused as a vendored version.
+    const dir = await tempBare({ rn: "0.88.1", useExpoModules: true });
+    await fakeExpo58Modules(dir);
+    await fakeRnScripts(path.join(dir, "node_modules", "react-native"), shape);
+    await expect(readBareProject(dir)).resolves.toMatchObject({ rnScripts: "installed", hasExpoModules: true });
   });
 
   it.each([
