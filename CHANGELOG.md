@@ -38,7 +38,9 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   edits a package linked from outside the project (it logs a `manifest — skipped` line instead), and stops with a named
   error when `node_modules` is read-only.
 - Bare React Native 0.88.1, with its own bundled `patches/react-native+0.88.1.patch` (the same content as the 0.88.0
-  one; a test keeps the two identical). `doctor` and `build` accept 0.86.2, 0.86.3, 0.87.1, 0.88.0 and 0.88.1.
+  one; a test keeps the two identical). `doctor` and `build` accept 0.86.2, 0.86.3, 0.87.1, 0.88.0 and 0.88.1. Another
+  react-native version gets one message naming both patches (`the bundled react-native patches are for 0.88.0 and
+  0.88.1`).
 - G4, in the `frameworks` step: before staging, `llvm-nm` (from the Swift toolchain) checks that every symbol an
   embedded framework imports from another embedded framework is exported by it. A gap stops the build naming both
   frameworks, their packages and a missing symbol, instead of an app that closes at launch with `dyld: Symbol not
@@ -88,8 +90,6 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   patch) is now replaced with the persisted one, and an out-of-date one without a persisted patch is removed so the
   `rn-spm` step scaffolds it again; before, both were built as they were. The scaffold warnings and this check also
   read the pre-rename `expo-xtool-scaffold-revision` marker.
-- With two bundled react-native patches, a react-native version is refused only when neither matches it, and the
-  message names both (`the bundled react-native patches are for 0.88.0 and 0.88.1`).
 
 ## [0.1.0-alpha.2] - 2026-10-27
 
