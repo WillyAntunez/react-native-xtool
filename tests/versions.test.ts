@@ -1,5 +1,96 @@
 import { describe, expect, it } from "vitest";
-import { checkPins, compareVersions } from "../src/versions.js";
+import {
+  bareLineFor,
+  checkPins,
+  compareVersions,
+  expoPinPolicyFor,
+  expoPinsFor,
+  expoPluginFor,
+  lineId,
+  rnScriptsFor,
+  SUPPORTED_LINES,
+  supportedRnList,
+} from "../src/versions.js";
+import { EXPO57_PINS } from "./support/expo57.js";
+import { EXPO58_PINS } from "./support/expo58.js";
+
+describe("supported lines", () => {
+  it("holds every supported line in one table", () => {
+    expect(SUPPORTED_LINES.map(lineId)).toEqual(["expo-57", "expo-58", "bare-0.86", "bare-0.87", "bare-0.88"]);
+    expect(SUPPORTED_LINES).toEqual([
+      {
+        kind: "expo",
+        sdk: 57,
+        plugin: "vendored",
+        policy: "exact",
+        scripts: "vendored",
+        artifacts: "adapted",
+        pins: EXPO57_PINS,
+        templates: ["blank-typescript"],
+      },
+      {
+        kind: "expo",
+        sdk: 58,
+        plugin: "installed",
+        policy: "floor",
+        scripts: "installed",
+        artifacts: "published",
+        pins: EXPO58_PINS,
+        templates: ["blank-typescript", "default"],
+      },
+      {
+        kind: "bare",
+        minor: "0.86",
+        floor: "0.86.2",
+        verified: ["0.86.2", "0.86.3"],
+        scripts: "vendored",
+        artifacts: "adapted",
+      },
+      {
+        kind: "bare",
+        minor: "0.87",
+        floor: "0.87.1",
+        verified: ["0.87.1"],
+        scripts: "vendored",
+        artifacts: "published",
+      },
+      {
+        kind: "bare",
+        minor: "0.88",
+        floor: "0.88.0",
+        verified: ["0.88.0", "0.88.1"],
+        scripts: "installed",
+        artifacts: "published",
+      },
+    ]);
+    const pinsOf = (sdk: number) => SUPPORTED_LINES.find((l) => l.kind === "expo" && l.sdk === sdk);
+    expect(Object.keys((pinsOf(57) as { pins: object }).pins)).toEqual(Object.keys(EXPO57_PINS));
+    expect(Object.keys((pinsOf(58) as { pins: object }).pins)).toEqual(Object.keys(EXPO58_PINS));
+  });
+
+  it("reads today's answers from the table", () => {
+    expect([56, 57, 58, 59].map(expoPluginFor)).toEqual([undefined, "vendored", "installed", "installed"]);
+    expect([56, 57, 58, 59].map(expoPinPolicyFor)).toEqual([undefined, "exact", "floor", undefined]);
+    expect(expoPinsFor(59)).toBeUndefined();
+    expect(["0.86.2", "0.86.3", "0.87.1", "0.88.0", "0.88.1"].map(rnScriptsFor)).toEqual([
+      "vendored",
+      "vendored",
+      "vendored",
+      "installed",
+      "installed",
+    ]);
+    expect(rnScriptsFor("0.88.2")).toBeUndefined();
+    expect(supportedRnList()).toBe("0.86.2, 0.86.3, 0.87.1, 0.88.0 and 0.88.1");
+  });
+
+  it("bareLineFor reads the minor", () => {
+    const line088 = SUPPORTED_LINES.find((l) => lineId(l) === "bare-0.88");
+    expect(line088).toBeDefined();
+    expect(bareLineFor("0.88.2")).toBe(line088);
+    expect(bareLineFor("0.88.0-rc.1")).toBe(line088);
+    expect(["0.89.0", "0.8.1", "58.0.21"].map(bareLineFor)).toEqual([undefined, undefined, undefined]);
+  });
+});
 
 describe("compareVersions", () => {
   it("compares x.y.z numerically", () => {

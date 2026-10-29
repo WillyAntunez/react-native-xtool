@@ -12,7 +12,6 @@ import {
   expoPinPolicyFor,
   expoPinsFor,
   expoPluginFor,
-  SUPPORTED_EXPO,
   type ExpoPinName,
   type PinCheck,
 } from "../versions.js";
@@ -376,7 +375,7 @@ export async function readExpoProject(root: string, opts: ReadProjectOptions = {
   const expoPlugin = expoPluginFor(sdkVersion);
   if (expoPlugin === undefined) {
     throw new Error(
-      `Expo SDK ${sdkVersion} is not supported; rn-xtool supports SDK 57 (expo ${SUPPORTED_EXPO[57].pins.expo}) and SDK 58 or newer.`,
+      `Expo SDK ${sdkVersion} is not supported; rn-xtool supports SDK 57 (expo ${expoPinsFor(57)!.expo}) and SDK 58 or newer.`,
     );
   }
   checkExpoPackages(root, sdkVersion, opts.log);

@@ -14,7 +14,7 @@ import {
   RN_UPGRADE_DOCS,
 } from "./expo.js";
 import { buildSetting, openPbxproj, readTargetContent, resolveSetting } from "./pbxproj.js";
-import { rnScriptsFor, supportedRnList, SUPPORTED_EXPO, type RnScripts } from "../versions.js";
+import { expoPinsFor, rnScriptsFor, supportedRnList, type RnScripts } from "../versions.js";
 import type { ProjectInfo, ReadProjectOptions } from "./types.js";
 
 /** Shown by doctor (warn) and build (error) when a bare project lacks the React Native CLI. */
@@ -87,7 +87,7 @@ export async function readBareProject(root: string, opts: ReadProjectOptions = {
     // on that SDK's set (G1–G3).
     const sdk = installedExpoMajor(root);
     if (sdk !== undefined && sdk < 58) {
-      const { expo, "react-native": rn } = SUPPORTED_EXPO[58].pins;
+      const { expo, "react-native": rn } = expoPinsFor(58)!;
       throw new DetectError(
         `Expo SDK ${sdk} (expo ${installedExpoVersion(root)}) with Expo modules is not supported in a bare app. Expo modules ` +
           `in a bare app need Expo SDK 58 or newer: install expo ~${expo} and run \`npx expo install --fix\`, then move ` +
