@@ -21,7 +21,14 @@ export async function loadConfig(projectRoot: string): Promise<ExpoXtoolConfig> 
   const jsonPath = join(projectRoot, "rn-xtool.config.json");
   if (existsSync(jsonPath)) {
     const raw = await readFile(jsonPath, "utf8");
-    config = { ...config, ...(JSON.parse(raw) as Partial<ExpoXtoolConfig>) };
+    let parsed: Partial<ExpoXtoolConfig>;
+    try {
+      parsed = JSON.parse(raw) as Partial<ExpoXtoolConfig>;
+    } catch (e) {
+      // JSON.parse names no file, and a project has several JSON files.
+      throw new Error(`rn-xtool.config.json: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    config = { ...config, ...parsed };
   }
 
   const jsPath = join(projectRoot, "rn-xtool.config.js");

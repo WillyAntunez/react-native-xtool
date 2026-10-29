@@ -593,7 +593,7 @@ describe("doctor --project", () => {
       const r = await doctor(dir, undefined, { projectOnly: true });
       const project = r.checks.find((c) => c.name === "project");
       expect(project?.status).toBe("fail");
-      expect(project?.detail).toMatch(/JSON/);
+      expect(project?.detail).toMatch(/^rn-xtool\.config\.json: .*JSON/);
       expect(r.checks.map((c) => c.name)).toEqual(["node", "project", "project-config"]);
       expect(r.ok).toBe(false);
     } finally {
