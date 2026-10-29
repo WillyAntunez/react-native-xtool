@@ -12,7 +12,9 @@ far with their fixes. Wi‑Fi install problems have their own list in [wifi-inst
 
 1. Enable Developer Mode (Settings > Privacy & Security > Developer Mode); the phone reboots.
 2. Trust the certificate: Settings > General > VPN & Device Management > your Apple ID > Trust.
-3. Open the app by hand, and allow Local Network access when asked.
+3. Open the app by hand, and allow Local Network access when asked. On the first launch after an install, the red
+   screen "No script URL provided" shows behind that prompt: the app looked for Metro before access was allowed. Tap
+   Allow, then Reload.
 4. Keep the phone and the computer on the same Wi‑Fi network with `rn-xtool start` running.
 
 ## The app does not start or cannot reach Metro
@@ -20,8 +22,9 @@ far with their fixes. Wi‑Fi install problems have their own list in [wifi-inst
 - **Black screen on launch:** Info.plist had an unresolved `$(VAR)` (for example
   `$(PRODUCT_MODULE_NAME).SceneDelegate`). rn-xtool resolves them; if you see this, rebuild with `build --clean` and
   report it.
-- **Red screen "No script URL provided":** the app cannot reach Metro. Check that `start` is running, that the phone is
-  on the same Wi‑Fi, that Local Network is allowed, and the firewall (below).
+- **Red screen "No script URL provided":** the app cannot reach Metro. On the first launch after an install this is
+  expected behind iOS's Local Network prompt: tap Allow, then Reload. Otherwise check that `start` is running, that the
+  phone is on the same Wi‑Fi, that Local Network is allowed, and the firewall (below).
 - **"No script URL" with a VPN on:** rn-xtool bakes in the IP of your default route; a VPN can make that a tunnel
   address (`tun0`, `wg0`, `tailscale0`) the phone cannot reach. `build` and `doctor` warn about it; set `lanIp` in
   `rn-xtool.config.json` to your Wi‑Fi address and rebuild.

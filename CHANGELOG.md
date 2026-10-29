@@ -69,6 +69,8 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   Swift layout changes that keep the same symbols, or lookups by name at runtime (see `docs/troubleshooting.md`).
 
 ### Changed
+- `install`'s first-run checklist explains the red screen "No script URL provided" that shows behind iOS's Local
+  Network prompt on the first launch after an install: tap Allow, then Reload.
 - Expo SDK 58 builds on the 58.0.21 set as a floor: react-native 0.88.1 exactly, and at least expo 58.0.21,
   expo-modules-core 58.0.28, expo-modules-jsi 58.0.21, expo-modules-autolinking 58.0.16, expo-file-system 58.0.13 and
   expo-font 58.0.11. An older or missing package stops `doctor` and `build`. The remedy removes the expo-modules-*

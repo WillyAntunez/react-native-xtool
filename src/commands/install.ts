@@ -75,6 +75,7 @@ export function firstRunChecklist(appleId: string | undefined): string {
     "  - Enable Developer Mode: Settings → Privacy & Security → Developer Mode (the phone reboots).",
     `  - Trust the developer certificate: Settings → General → VPN & Device Management → Apple Development: ${appleId ?? "<your Apple ID>"} → Trust.`,
     "  - Allow Local Network access when iOS asks (needed to reach Metro).",
+    '  - On the first launch iOS asks for Local Network access and "No script URL provided" shows behind it: tap Allow, then Reload.',
     "  - With a free Apple ID the signature expires in 7 days; reinstall the app with `rn-xtool install`.",
   ].join("\n");
 }
