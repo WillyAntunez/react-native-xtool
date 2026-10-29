@@ -443,7 +443,7 @@ A refactor with no change in behaviour.
   //   with that title, comment `Green again on ${date}: ${runUrl}`. unknown: nothing.
   export function issueBody(line: LineResult, ctx: { runUrl: string; date: string }): string;
   export function summaryMarkdown(lines: LineResult[]): string;   // one row per line: title, status, failing steps
-  export function reportExitCode(lines: LineResult[]): number;    // 1 when any line is unknown ("watch could not run"), else 0
+  export function reportExitCode(lines: LineResult[]): number;    // 1 when any target is unknown ("watch could not run"), even on a red line, else 0
   ```
 - Issue body (verbatim parts, in order):
   - `rn-xtool's drift watch found this line broken on ${date}.`
