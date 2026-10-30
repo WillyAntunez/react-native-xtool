@@ -18,19 +18,26 @@ Demo video coming soon.
 | Project or target | Status |
 | --- | --- |
 | Expo SDK 58 (expo 58.0.21 or newer 58.x, react-native 0.88.1) | ✅ [details](docs/how-it-works.md#expo-sdk-58) |
-| Expo SDK 57 (expo 57.0.31 exact) | ✅ [details](docs/how-it-works.md#expo-sdk-57) |
-| Bare React Native 0.88.0 and 0.88.1 (`@react-native-community/cli init`) | ✅ [details](docs/bare-react-native.md) |
-| Bare React Native 0.86.3 and 0.87.1 (0.86.2 build-verified only) | ✅ [details](docs/bare-react-native.md#supported-react-native-versions) |
+| Expo SDK 57 (expo 57.0.31 or newer 57.x, react-native 0.86.3) | ✅ [details](docs/how-it-works.md#expo-sdk-57) |
+| Bare React Native 0.88.x from 0.88.0 (`@react-native-community/cli init`) | ✅ [details](docs/bare-react-native.md) |
+| Bare React Native 0.86.x from 0.86.2, 0.87.x from 0.87.1 (0.86.2 build-verified only) | ✅ [details](docs/bare-react-native.md#supported-react-native-versions) |
 | Bare React Native + Expo modules (hybrid), React Native 0.88.1 | ✅ [details](docs/bare-react-native.md#hybrid-bare--expo-modules) |
-| Expo SDK 54–56, React Native 0.85 and older, 0.86.0, 0.87.0 | ⏳ not yet (Expo SDK 53 and older are refused as well) |
+| Expo SDK 54–56, React Native 0.85 and older, 0.86.0, 0.86.1, 0.87.0 | ⏳ not yet (Expo SDK 53 and older are refused as well) |
 | iOS simulator | ❌ macOS only |
 | Production / App Store builds | ❌ use EAS |
 | macOS or Windows as the host | ❌ (WSL2 on x86_64 should work as Linux; not tested yet, reports welcome) |
 
-Bare React Native versions: exactly 0.86.2, 0.86.3, 0.87.1, 0.88.0 and 0.88.1 (0.88.1, 0.88.0, 0.87.1 and 0.86.3 are
-verified on a device; 0.86.2 only builds, it has not been run on a device), see
-[Supported React Native versions](docs/bare-react-native.md#supported-react-native-versions). Any other version stops
-with one error naming this list.
+Bare React Native versions: 0.86.x from 0.86.2, 0.87.x from 0.87.1 and 0.88.x from 0.88.0 (0.88.1, 0.88.0, 0.87.1
+and 0.86.3 are verified on a device; 0.86.2 only builds, it has not been run on a device), see
+[Supported React Native versions](docs/bare-react-native.md#supported-react-native-versions). A newer patch of one of
+these lines builds with a warning naming the verified versions. An older version, a prerelease or another minor stops
+with one error naming these floors. Expo SDK 57 and 58 work the same way: newer patches of the SDK's packages build
+with a warning, older ones stop, and react-native stays exact (0.86.3 on SDK 57, 0.88.1 on SDK 58)
+([details](docs/troubleshooting.md#newer-than-the-verified-versions)).
+
+`rn-xtool doctor --project` shows which line your project is on and what rn-xtool finds in it (the SwiftPM scripts
+and prebuilt artifacts it would use, Expo's plugin and modules, podspec features), without the toolchain, login and
+device checks ([details](docs/troubleshooting.md#doctor---project)).
 
 CocoaPods is not needed: the `Podfile` is ignored. Any library with a podspec is tried automatically (CocoaPods-only
 ones get a generated `Package.swift`); [docs/libraries.md](docs/libraries.md) lists the ones verified on a device and
@@ -38,7 +45,7 @@ what does not work yet (library resource bundles, vendored binaries, Xcode-only 
 
 ## Before you start
 
-- Linux x86_64 (arm64 should work, untested). Node 20+. About 15 GB of free disk.
+- Linux x86_64 (arm64 should work, untested). Node 22.12+. About 15 GB of free disk.
 - `Xcode.xip` (Xcode 27.x, about 12 GB), downloaded yourself from developer.apple.com with an Apple ID.
 - An Apple ID. Free accounts: signatures last 7 days, 3 apps at a time, no push notifications or special entitlements
   (a paid developer account lifts these).
@@ -108,7 +115,7 @@ compares them with the last successful build and install ([details](docs/how-it-
 | --- | --- |
 | `setup [--xcode-xip <path>] [--wifi [--yes] [--udid <udid>]]` | Installs Swift via swiftly, the xtool AppImage and the Darwin SDK. Idempotent. `--wifi` is the one-time USB step for Wi‑Fi installs: it caches the pair record and, with `--yes`, enables Wi‑Fi connections on the iPhone. |
 | `auth [args...]` | Runs `xtool auth <args>` (`auth login`, `auth logout`); with no arguments, `xtool auth status`. |
-| `doctor` | Checks toolchain, SDK, login, connected device, Wi‑Fi install readiness and project. Exits non-zero on problems. |
+| `doctor [--project]` | Checks toolchain, SDK, login, connected device, Wi‑Fi install readiness and project. Exits non-zero on problems. `--project` checks only the project in the current folder: its version gates and what rn-xtool finds in it. |
 | `build [--clean]` | Prebuild if `ios/` is missing (Expo only), patches, RN/Expo SwiftPM pipeline, ExpoModulesJSI (Expo modules only), generates `ios-xtool/`, `xtool dev build`. `--clean` re-runs `expo prebuild --clean` for Expo; for bare it removes `ios/build` and `ios-xtool` and leaves the rest of `ios/` alone. |
 | `install [--network [ip] [--udid <udid>] [--pair-record <file>]]` | Signs and installs the app on the USB-connected iPhone (over Wi‑Fi without the cable with `--network`, see [docs/wifi-install.md](docs/wifi-install.md)), then prints the Metro URL (Expo apps with `expo-dev-client` only) and the first-run checklist. |
 | `start [--clear]` | Starts Metro (`npx expo start`; `npx react-native start` for bare) on the port and LAN IP the app was built for. Tells you to rebuild if either changed; clears the Metro cache when dependencies changed (or with `--clear`). |
@@ -142,6 +149,9 @@ CommonJS (`module.exports = {...}`) unless your project is ESM. Both are merged,
 - Bare projects: one app target and one `.xcodeproj`, always built for iOS 16.4; `.xcconfig` files, entitlements,
   capabilities, script phases, storyboards, asset catalogs and `.xib` files are not used ([details](docs/bare-react-native.md#limits)).
 - Metal shaders are not compiled on Linux: react-native-svg's Metal filters are unavailable.
+- A daily drift watch checks the newest patch of each supported line (version gates, bundled patches, portable library
+  manifests) and opens an issue in this repo when one breaks. It does not compile or run the app, so a patch release it
+  reports green can still fail G4 or the build ([details](docs/RELEASING.md#drift-watch)).
 
 ## Learn more
 

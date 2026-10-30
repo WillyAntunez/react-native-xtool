@@ -1,0 +1,15 @@
+module.exports = {
+  BUILTIN_FRAMEWORKS,
+  FLAVORED_FRAMEWORKS_MANIFEST,
+  PENDING_ARTIFACT_STAMP,
+  INVARIANT_BINARY_TARGETS,
+  PLUGIN_FRAMEWORKS_MANIFEST,
+  parseXcframework,
+  finalizeArtifactPublication,
+  prepareFlavoredFrameworks,
+  readFlavoredFrameworksManifest,
+  readPluginFrameworks,
+  sdkConditionForSlice,
+  transformReactModuleMap,
+  validatePair,
+};

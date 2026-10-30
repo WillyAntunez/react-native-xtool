@@ -1,8 +1,9 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { DetectError } from "./detect.js";
+import { DetectError, VersionGateError } from "./detect.js";
 import {
+  andList,
   checkExpoPackages,
   defaultBundleIdentifier,
   installedExpoMajor,
@@ -14,7 +15,10 @@ import {
   RN_UPGRADE_DOCS,
 } from "./expo.js";
 import { buildSetting, openPbxproj, readTargetContent, resolveSetting } from "./pbxproj.js";
-import { rnScriptsFor, supportedRnList, SUPPORTED_EXPO, type RnScripts } from "../versions.js";
+import { scriptsCapability } from "./scriptsShape.js";
+import { projectPaths } from "../paths.js";
+import { resolveRnDir } from "../pipeline/rnSpm.js";
+import { expoPinsFor, rnLineStatus, supportedRnList, type BareLine } from "../versions.js";
 import type { ProjectInfo, ReadProjectOptions } from "./types.js";
 
 /** Shown by doctor (warn) and build (error) when a bare project lacks the React Native CLI. */
@@ -25,18 +29,29 @@ export const RN_CLI_MISSING =
 
 const EXPO_NEEDS_088 = "Expo SDK 58 needs React Native 0.88.1.";
 
-function checkRnVersion(version: string, hasExpoModulesCore: boolean): RnScripts {
-  const scripts = rnScriptsFor(version);
-  if (scripts === undefined) {
-    throw new DetectError(
+/**
+ * The row of a bare React Native version rn-xtool builds: a verified one, or a newer release of its minor (warned about
+ * by readBareProject). Below the floor, a prerelease or a minor without a row is refused.
+ */
+function checkRnVersion(version: string, hasExpoModulesCore: boolean): BareLine {
+  const { status, line } = rnLineStatus(version);
+  if (line === undefined || (status !== "verified" && status !== "newer")) {
+    throw new VersionGateError(
       `React Native ${version} is not supported; rn-xtool supports ${supportedRnList()} (bare). Pin react-native to one of them.` +
         (hasExpoModulesCore ? ` ${EXPO_NEEDS_088}` : ""),
     );
   }
-  if (scripts === "vendored" && hasExpoModulesCore) {
-    throw new DetectError(`React Native ${version} with Expo modules is not supported. ${EXPO_NEEDS_088}`);
-  }
-  return scripts;
+  return line;
+}
+
+/** A release of a bare line newer than the versions this rn-xtool release was verified with: the build goes on. */
+function rnNewerWarning(version: string, line: BareLine): string {
+  return (
+    `⚠ Newer than the React Native ${line.minor} line this rn-xtool release was verified with: react-native ${version}. ` +
+    `Verified: ${andList(line.verified)}. The build continues; if it fails or the app crashes at launch, move ` +
+    `react-native back to ${line.verified.at(-1)} as ${RN_UPGRADE_DOCS} describes, and report it at ` +
+    "https://github.com/WillyAntunez/react-native-xtool/issues."
+  );
 }
 
 async function appJsonName(root: string): Promise<string | undefined> {
@@ -58,7 +73,13 @@ export async function readBareProject(root: string, opts: ReadProjectOptions = {
     );
   }
   const rnVersion = await installedRnVersion(root);
-  const rnScripts = checkRnVersion(rnVersion, isInstalled(root, "expo-modules-core"));
+  const hasExpoModulesCore = isInstalled(root, "expo-modules-core");
+  const rnLine = checkRnVersion(rnVersion, hasExpoModulesCore);
+  // The installed scripts' shape picks the mode; a shape that is not recognised takes the line's row.
+  const rnScripts = scriptsCapability(resolveRnDir(projectPaths(root)), rnVersion).mode ?? rnLine.scripts;
+  if (rnScripts === "vendored" && hasExpoModulesCore) {
+    throw new VersionGateError(`React Native ${rnVersion} with Expo modules is not supported. ${EXPO_NEEDS_088}`);
+  }
 
   const pbx = openPbxproj(iosDir);
   const name = resolveSetting(pbx, "PRODUCT_NAME") || pbx.appTarget.name;
@@ -69,7 +90,7 @@ export async function readBareProject(root: string, opts: ReadProjectOptions = {
   if (!infoPlist) throw new DetectError(`target ${pbx.appTarget.name} has no INFOPLIST_FILE`);
   const infoPlistPath = path.resolve(iosDir, infoPlist);
 
-  let hasExpoModules = isInstalled(root, "expo-modules-core");
+  let hasExpoModules = hasExpoModulesCore;
   if (hasExpoModules) {
     if (!isInstalled(root, "expo")) {
       throw new DetectError("expo-modules-core is installed without expo; run npx install-expo-modules (it installs both)");
@@ -87,8 +108,8 @@ export async function readBareProject(root: string, opts: ReadProjectOptions = {
     // on that SDK's set (G1–G3).
     const sdk = installedExpoMajor(root);
     if (sdk !== undefined && sdk < 58) {
-      const { expo, "react-native": rn } = SUPPORTED_EXPO[58].pins;
-      throw new DetectError(
+      const { expo, "react-native": rn } = expoPinsFor(58)!;
+      throw new VersionGateError(
         `Expo SDK ${sdk} (expo ${installedExpoVersion(root)}) with Expo modules is not supported in a bare app. Expo modules ` +
           `in a bare app need Expo SDK 58 or newer: install expo ~${expo} and run \`npx expo install --fix\`, then move ` +
           `react-native to ${rn} as ${RN_UPGRADE_DOCS} describes.`,
@@ -96,6 +117,8 @@ export async function readBareProject(root: string, opts: ReadProjectOptions = {
     }
     if (sdk !== undefined) checkExpoPackages(root, sdk, opts.log, { kind: "bare" });
   }
+  // checkRnVersion let through only verified versions and newer releases of the line.
+  if (!rnLine.verified.includes(rnVersion)) opts.log?.(rnNewerWarning(rnVersion, rnLine));
 
   return {
     kind: "bare",

@@ -5,6 +5,58 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 
 ## [Unreleased]
 
+### Upgrading from 0.1.0-alpha.3
+- Nothing to do for most projects: projects on the verified versions build as before. `rn-xtool doctor --project`
+  shows the new lines (versions, rn-scripts, rn-artifacts, expo-plugin, expo-modules, podspecs) for your project.
+- On Expo SDK 58, a package of another SDK's release line, for example expo-modules-core 59.x, got only a warning
+  before; now G1 stops the build and names it. Follow G1's remedy to move it back to SDK 58's line (see Changed).
+
+### Added
+- Bare React Native accepts every patch release of a supported minor from its floor: 0.86.x from 0.86.2, 0.87.x from
+  0.87.1 and 0.88.x from 0.88.0. A version that is not verified builds with "⚠ Newer than the React Native <minor>
+  line this rn-xtool release was verified with: react-native <version>. ...", which names the verified versions and
+  the one to move back to. A version below the floor, a prerelease or another minor stops with "React Native
+  <version> is not supported; rn-xtool supports 0.86.x from 0.86.2, 0.87.x from 0.87.1 and 0.88.x from 0.88.0 (bare).
+  Pin react-native to one of them." Hybrid apps still need React Native 0.88.1.
+- `rn-xtool doctor --project` checks only the project in the current folder, with no toolchain, login or device
+  checks. After the version gates it prints what rn-xtool finds in the project: the line that covers the installed
+  versions (or why none does), the SwiftPM scripts the build would use, whether React Native's prebuilt artifacts are
+  cached, local (`rnArtifactsDir`) or published (HEAD requests, at most 10 s), whether expo ships its SwiftPM plugin,
+  whether the Expo modules are precompiled, and which tracked podspec features the dependencies use. Plain `doctor`
+  is unchanged and makes no new network request. See
+  [troubleshooting.md](docs/troubleshooting.md#doctor---project).
+- A daily drift watch (`.github/workflows/drift-watch.yml`): each supported line gets a fresh project at its newest
+  patch release, and the version gates, a dry run of the bundled patches and the portable-manifest rewrite are checked
+  on it. A broken line gets one GitHub issue labelled `drift`, which is updated while it stays broken and closed when
+  it is green again. A weekly, report-only exploration writes the capabilities of Expo SDK 54–56 and bare React Native
+  0.81–0.85 to the run summary. Nothing is compiled, so a green line can still fail G4 or the build. See
+  [RELEASING.md](docs/RELEASING.md#drift-watch).
+
+### Changed
+- Expo SDK 57 is a floor, like SDK 58: expo 57.0.31, expo-modules-core 57.0.24, expo-modules-autolinking 57.0.16 and
+  expo-modules-jsi 57.1.3 or any newer release of SDK 57's line, with react-native exactly 0.86.3. A newer 57.x builds
+  with "⚠ Newer than the Expo SDK 57 set this rn-xtool release was verified with: ...". G1 now reads "Expo SDK 57 needs
+  react-native 0.86.3 and at least expo 57.0.31, expo-modules-core 57.0.24, expo-modules-autolinking 57.0.16 and
+  expo-modules-jsi 57.1.3; installed: ...", with SDK 58's remedy (remove the pins, `npx expo install --fix`, then
+  `npx expo install react-native@0.86.3`). G2 (a nested expo-modules-jsi) gives SDK 58's text: remove the pin, then
+  `npm update expo-modules-jsi`. SDK 56 and older read "Expo SDK <n> is not supported; rn-xtool supports SDK 57 (expo
+  57.0.31 or newer 57.x) and SDK 58 or newer." A bundled SDK 57 patch that does not apply on a newer 57.x gives the
+  npm `"overrides"` remedy with the 57 set.
+- On Expo SDK 57 and 58, a package of another SDK's release line (expo-modules-jsi 58.0.19 on SDK 57,
+  expo-modules-core 59.0.0 on SDK 58) stops at G1 instead of counting as newer than the floor.
+- Bare and hybrid projects get the vendored or the installed SwiftPM scripts according to the installed scripts'
+  layout, not their version number; a layout rn-xtool does not recognise falls back to the version's line. Every
+  supported version gets the same scripts as before: 0.86.x and 0.87.x the vendored copy, 0.88.x the installed one.
+- Bundled patches are selected by release line: the patch for the installed version, else the highest bundled patch
+  of the same line (react-native 0.88.2 gets the 0.88.1 patch, a newer 57.x expo-modules-jsi the 57.1.3 patch). An
+  SDK 57 project never gets another SDK's patch.
+
+### Fixed
+- A malformed `rn-xtool.config.json` is named in the error, in every command: "rn-xtool.config.json: <JSON error>".
+- rn-xtool needs Node 22.12 or newer, the floor its own dependencies declare (commander 15, execa 10); it said Node 20
+  before, which was never tested and is end of life. package.json `engines`, the README and `doctor`'s node check
+  ("<version> (need 22.12.0 or newer)") now say so.
+
 ## [0.1.0-alpha.3] - 2026-10-28
 
 ### Upgrading from 0.1.0-alpha.2

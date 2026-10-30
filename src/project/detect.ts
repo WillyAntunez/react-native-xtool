@@ -9,6 +9,14 @@ export class DetectError extends Error {
   }
 }
 
+/** A refusal of the installed versions: a bare line's floor, G1 (the Expo pins) or a hybrid app's gate. */
+export class VersionGateError extends DetectError {
+  constructor(message: string) {
+    super(message);
+    this.name = "VersionGateError";
+  }
+}
+
 const APP_CONFIG_FILES = ["app.config.js", "app.config.ts", "app.config.mjs", "app.config.cjs", "app.config.json"];
 
 function readJson(file: string): any {

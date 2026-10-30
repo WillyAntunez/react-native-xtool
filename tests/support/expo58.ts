@@ -6,6 +6,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ExpoPinName } from "../../src/versions.js";
+import { fakeRnScripts, shapeForVersion } from "./rnScripts.js";
 
 /** The SDK 58 floor, in table order, written out here so the tests do not read it from the code under test. */
 export const EXPO58_PINS: Record<ExpoPinName, string> = {
@@ -77,7 +78,10 @@ export async function fakeExpo58Modules(
   const defaults: Record<FakePackage, string> = { ...EXPO58_PINS, "expo-modules-macros": MACROS_VERSION };
   for (const [name, wanted] of Object.entries(defaults) as [FakePackage, string][]) {
     const version = Object.hasOwn(overrides, name) ? overrides[name] : wanted;
-    if (version !== null && version !== undefined) await writePackage(path.join(dir, INSTALLED_AT[name]), name, version);
+    if (version === null || version === undefined) continue;
+    await writePackage(path.join(dir, INSTALLED_AT[name]), name, version);
+    // react-native's SwiftPM scripts, in the shape its version ships (the 0.88 stub for 0.88.1).
+    if (name === "react-native") await fakeRnScripts(path.join(dir, INSTALLED_AT[name]), shapeForVersion(version));
   }
   for (const [name, version] of Object.entries(nested) as [ExpoPinName, string][]) {
     await writePackage(path.join(dir, RESOLVER[name], "node_modules", name), name, version);

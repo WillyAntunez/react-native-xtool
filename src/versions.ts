@@ -9,40 +9,10 @@ export const XTOOL_SHA256: Record<string, string | undefined> = {
   aarch64: "649e8bdc799c9273ca54be1a84e7093e4be970d4780b4b22409517935dc2053b",
 };
 export const SWIFT_VERSION = "6.4";
+/** The oldest Node rn-xtool runs on: package.json's engines floor, the highest of its dependencies' (commander 15). */
+export const NODE_MIN = "22.12.0";
 export const IOS_MIN = "16.4";
 
-/**
- * Expo SDKs rn-xtool builds, where their SwiftPM plugin comes from, and the package versions they were verified with.
- * SDK 57 builds only with its exact pins, through the Expo 58 plugin vendored in rn-xtool. SDK 58 uses the installed
- * plugin and its pins are a floor: older is refused, newer is let through with a warning (react-native stays exact).
- * SDK 59 and newer use the installed plugin and pin nothing.
- */
-export const SUPPORTED_EXPO = {
-  57: {
-    plugin: "vendored",
-    policy: "exact",
-    pins: {
-      expo: "57.0.31",
-      "react-native": "0.86.3",
-      "expo-modules-core": "57.0.24",
-      "expo-modules-autolinking": "57.0.16",
-      "expo-modules-jsi": "57.1.3",
-    },
-  },
-  58: {
-    plugin: "installed",
-    policy: "floor",
-    pins: {
-      expo: "58.0.21",
-      "react-native": "0.88.1",
-      "expo-modules-core": "58.0.28",
-      "expo-modules-jsi": "58.0.21",
-      "expo-modules-autolinking": "58.0.16",
-      "expo-file-system": "58.0.13",
-      "expo-font": "58.0.11",
-    },
-  },
-} as const;
 export type ExpoPlugin = "installed" | "vendored";
 export type ExpoPinName =
   | "expo"
@@ -52,22 +22,154 @@ export type ExpoPinName =
   | "expo-modules-autolinking"
   | "expo-file-system"
   | "expo-font";
-export type ExpoPinPolicy = "exact" | "floor";
+export type ExpoPinPolicy = "floor";
+export type RnScripts = "installed" | "vendored";
+/** Where a line's React Native artifacts come from. adapted: pre-headers-spec slots rn-xtool rebuilds (0.86). */
+export type RnArtifacts = "adapted" | "published";
 
-/** SDK 58 and newer: the installed plugin; 57: the vendored one; older: unsupported. */
+/** An Expo SDK rn-xtool builds: where its SwiftPM plugin comes from and the package versions it was verified with. */
+export interface ExpoLine {
+  kind: "expo";
+  sdk: number;
+  plugin: ExpoPlugin;
+  policy: ExpoPinPolicy;
+  scripts: RnScripts;
+  artifacts: RnArtifacts;
+  /** In the order the gate names them. */
+  pins: Readonly<Partial<Record<ExpoPinName, string>>>;
+  /** The create-expo-app templates the drift watch creates. */
+  templates: readonly string[];
+  /**
+   * The create-expo the drift watch creates the line's projects with: the version create-expo-app@latest ran when the
+   * line was verified (create-expo-app itself only forwards to create-expo, with an open range).
+   */
+  createExpo: string;
+}
+
+/** A React Native minor rn-xtool builds as a bare project, and where its SwiftPM scripts come from. */
+export interface BareLine {
+  kind: "bare";
+  minor: string;
+  floor: string;
+  verified: readonly string[];
+  scripts: RnScripts;
+  artifacts: RnArtifacts;
+  /**
+   * The @react-native-community/cli the drift watch creates the line's project with: the version the template of the
+   * last verified release declares (`template/package.json` devDependencies of @react-native-community/template).
+   */
+  cli: string;
+}
+
+export type SupportedLine = ExpoLine | BareLine;
+
+/**
+ * Every line rn-xtool supports. SDK 57 builds through the Expo 58 plugin vendored in rn-xtool, SDK 58 through the
+ * installed one. On both the pins are a floor: older is refused, newer of the same release line is let through with a
+ * warning (react-native stays exact). SDKs newer than the last Expo row use its plugin and pin nothing.
+ */
+export const SUPPORTED_LINES: readonly SupportedLine[] = [
+  {
+    kind: "expo",
+    sdk: 57,
+    plugin: "vendored",
+    policy: "floor",
+    scripts: "vendored",
+    artifacts: "adapted",
+    pins: {
+      expo: "57.0.31",
+      "react-native": "0.86.3",
+      "expo-modules-core": "57.0.24",
+      "expo-modules-autolinking": "57.0.16",
+      "expo-modules-jsi": "57.1.3",
+    },
+    templates: ["blank-typescript"],
+    createExpo: "5.1.5",
+  },
+  {
+    kind: "expo",
+    sdk: 58,
+    plugin: "installed",
+    policy: "floor",
+    scripts: "installed",
+    artifacts: "published",
+    pins: {
+      expo: "58.0.21",
+      "react-native": "0.88.1",
+      "expo-modules-core": "58.0.28",
+      "expo-modules-jsi": "58.0.21",
+      "expo-modules-autolinking": "58.0.16",
+      "expo-file-system": "58.0.13",
+      "expo-font": "58.0.11",
+    },
+    templates: ["blank-typescript", "default"],
+    createExpo: "5.1.5",
+  },
+  {
+    kind: "bare",
+    minor: "0.86",
+    floor: "0.86.2",
+    verified: ["0.86.2", "0.86.3"],
+    scripts: "vendored",
+    artifacts: "adapted",
+    cli: "20.1.0",
+  },
+  {
+    kind: "bare",
+    minor: "0.87",
+    floor: "0.87.1",
+    verified: ["0.87.1"],
+    scripts: "vendored",
+    artifacts: "published",
+    cli: "20.2.0",
+  },
+  {
+    kind: "bare",
+    minor: "0.88",
+    floor: "0.88.0",
+    verified: ["0.88.0", "0.88.1"],
+    scripts: "installed",
+    artifacts: "published",
+    cli: "20.2.0",
+  },
+];
+
+/** "expo-57", "bare-0.88" */
+export function lineId(line: SupportedLine): string {
+  return line.kind === "expo" ? `expo-${line.sdk}` : `bare-${line.minor}`;
+}
+
+const expoLines = (): ExpoLine[] => SUPPORTED_LINES.filter((l): l is ExpoLine => l.kind === "expo");
+/** The bare React Native rows, oldest minor first. */
+export const bareLines = (): BareLine[] => SUPPORTED_LINES.filter((l): l is BareLine => l.kind === "bare");
+
+/** The row of an SDK that has one (57 and 58); undefined for any other SDK. */
+export function expoLineFor(sdk: number): ExpoLine | undefined {
+  return expoLines().find((l) => l.sdk === sdk);
+}
+
+/** The row of the version's "<major>.<minor>", prereleases included; undefined when that minor has no row. */
+export function bareLineFor(version: string): BareLine | undefined {
+  const minor = /^(\d+\.\d+)\./.exec(version)?.[1];
+  return minor === undefined ? undefined : bareLines().find((l) => l.minor === minor);
+}
+
+/** An SDK's row's plugin; SDKs newer than the last Expo row take its plugin; older ones are unsupported. */
 export function expoPluginFor(sdk: number): ExpoPlugin | undefined {
-  if (sdk >= 58) return SUPPORTED_EXPO[58].plugin;
-  return sdk === 57 ? SUPPORTED_EXPO[57].plugin : undefined;
+  const line = expoLineFor(sdk);
+  if (line !== undefined) return line.plugin;
+  const newest = expoLines().at(-1);
+  return newest !== undefined && sdk > newest.sdk ? newest.plugin : undefined;
 }
 
 /** The versions an SDK was verified with, in the order the gate names them; undefined when the SDK pins nothing. */
 export function expoPinsFor(sdk: number): Readonly<Partial<Record<ExpoPinName, string>>> | undefined {
-  return sdk === 57 || sdk === 58 ? SUPPORTED_EXPO[sdk].pins : undefined;
+  return expoLineFor(sdk)?.pins;
 }
 
-/** How an SDK's pins are read: "exact" (57) or "floor" (58); undefined when the SDK pins nothing. */
+/** How an SDK's pins are read: "floor" (57 and 58); undefined when the SDK pins nothing. */
 export function expoPinPolicyFor(sdk: number): ExpoPinPolicy | undefined {
-  return sdk === 57 || sdk === 58 ? SUPPORTED_EXPO[sdk].policy : undefined;
+  return expoLineFor(sdk)?.policy;
 }
 
 export type PinStatus = "ok" | "missing" | "off" | "below" | "newer";
@@ -80,8 +182,8 @@ export interface PinCheck {
 
 /**
  * Each of the SDK's pins against the installed versions, in table order; undefined when the SDK pins nothing.
- * Not installed is "missing". Under "exact", and for react-native under either policy, anything else than the pin is
- * "off". Under "floor" the other packages are "below" or "newer" than the pin.
+ * Not installed is "missing". react-native is exact: anything else than the pin is "off". The other packages are
+ * "off" on another release line than the pin (expo-modules-jsi 58.x on SDK 57), else "below" or "newer" than it.
  */
 export function checkPins(
   sdk: number,
@@ -94,7 +196,8 @@ export function checkPins(
     const version = installed[name];
     let status: PinStatus;
     if (version === undefined) status = "missing";
-    else if (policy === "exact" || name === "react-native") status = version === wanted ? "ok" : "off";
+    else if (name === "react-native") status = version === wanted ? "ok" : "off";
+    else if (releaseLine(version) !== releaseLine(wanted)) status = "off";
     else {
       const order = compareVersions(version, wanted);
       status = order < 0 ? "below" : order > 0 ? "newer" : "ok";
@@ -103,23 +206,30 @@ export function checkPins(
   });
 }
 
-/** React Native versions rn-xtool builds as bare projects, and where their SwiftPM scripts come from. */
-export const SUPPORTED_RN = {
-  "0.86.2": "vendored",
-  "0.86.3": "vendored",
-  "0.87.1": "vendored",
-  "0.88.0": "installed",
-  "0.88.1": "installed",
-} as const;
-export type RnScripts = "installed" | "vendored";
-
-export function rnScriptsFor(version: string): RnScripts | undefined {
-  return Object.hasOwn(SUPPORTED_RN, version) ? SUPPORTED_RN[version as keyof typeof SUPPORTED_RN] : undefined;
+/** A version's release line: "0.y" for "0.y.z", else the major ("57.1.4" → "57"; "58.0.21-rc.1" → "58"). */
+export function releaseLine(version: string): string {
+  const [major = "", minor = ""] = version.split(/[.+-]/, 2);
+  return major === "0" ? `0.${minor}` : major;
 }
 
-/** "0.86.2, 0.86.3, 0.87.1, 0.88.0 and 0.88.1" */
+export type RnLineStatus = "verified" | "newer" | "below" | "prerelease" | "unsupported";
+
+/**
+ * A bare React Native version against its minor's row: "verified" (in the row's list), "newer" (a release at or above
+ * the floor that was not verified: built with a warning), "below" the floor, "prerelease" (anything but a plain x.y.z
+ * release, refused), or "unsupported" (no row for the minor, and then no `line`).
+ */
+export function rnLineStatus(version: string): { status: RnLineStatus; line?: BareLine } {
+  const line = bareLineFor(version);
+  if (line === undefined) return { status: "unsupported" };
+  if (line.verified.includes(version)) return { status: "verified", line };
+  if (!/^\d+\.\d+\.\d+$/.test(version)) return { status: "prerelease", line };
+  return { status: compareVersions(version, line.floor) < 0 ? "below" : "newer", line };
+}
+
+/** "0.86.x from 0.86.2, 0.87.x from 0.87.1 and 0.88.x from 0.88.0" */
 export function supportedRnList(): string {
-  const all = Object.keys(SUPPORTED_RN);
+  const all = bareLines().map((l) => `${l.minor}.x from ${l.floor}`);
   return `${all.slice(0, -1).join(", ")} and ${all[all.length - 1]}`;
 }
 

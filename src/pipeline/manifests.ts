@@ -58,6 +58,12 @@ function linuxCode(text: string): string {
   return text.replace(STRINGS_OR_COMMENTS, (m) => (m.startsWith('"') ? m : "")).replace(DARWIN_ONLY, "");
 }
 
+/** The MANIFEST_FIXES names whose API the Linux host would still compile in this manifest (comments and Darwin branches left out). */
+export function unportableSymbols(text: string): string[] {
+  const code = linuxCode(text.replace(/\r\n/g, "\n"));
+  return MANIFEST_FIXES.filter((f) => f.symbol.test(code)).map((f) => f.name);
+}
+
 /** True when `match` at `index` is plain code: not in a comment or string, and not under any `#if`. */
 function inPlainCode(text: string, index: number, match: string): boolean {
   // Comments and strings blanked, newlines kept, so offsets and lines stay put.
@@ -85,8 +91,7 @@ function rewrite(text: string): { text: string; fixes: string[] } {
     out = fix.companions.reduce((t, c) => t.replace(c.pattern, c.replacement), next);
     fixes.push(fix.name);
   }
-  const code = linuxCode(out);
-  if (fixes.length === 0 || MANIFEST_FIXES.some((f) => f.symbol.test(code))) return UNCHANGED(text);
+  if (fixes.length === 0 || unportableSymbols(out).length > 0) return UNCHANGED(text);
   return { text: out, fixes };
 }
 
@@ -130,6 +135,11 @@ export async function packagesWithManifest(root: string): Promise<{ pkg: string;
 
 const VERSIONED_MANIFEST = /^Package@swift-\d+(?:\.\d+){0,2}\.swift$/;
 
+/** The manifests SwiftPM may read in a package directory: Package.swift, then each Package@swift-*.swift, sorted. */
+export async function manifestFiles(dir: string): Promise<string[]> {
+  return ["Package.swift", ...(await entries(dir)).filter((n) => VERSIONED_MANIFEST.test(n)).sort()];
+}
+
 /** A library manifest that needs the fix could not be written (read-only `node_modules`). */
 export class ManifestWriteError extends Error {
   constructor(file: string, code: string) {
@@ -162,7 +172,7 @@ export async function fixLibraryManifests(root: string, log: (line: string) => v
   for (const { pkg, dir } of found) {
     const real = await realpath(dir);
     const linked = outside(realModules, real);
-    const files = ["Package.swift", ...(await entries(dir)).filter((n) => VERSIONED_MANIFEST.test(n)).sort()];
+    const files = await manifestFiles(dir);
     const fixedFiles: string[] = [];
     const names = new Set<string>();
     for (const file of files) {

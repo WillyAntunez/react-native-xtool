@@ -4,8 +4,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildVars, defaultBundleIdentifier, MissingBundleIdentifierError, readExpoProject } from "../../src/project/index.js";
+import { VersionGateError } from "../../src/project/detect.js";
 import { expoMacrosBinaryError, expoPackageDir, readExpoPins } from "../../src/project/expo.js";
-import { checkPins, expoPinPolicyFor, expoPinsFor, expoPluginFor, type ExpoPinName } from "../../src/versions.js";
+import { checkPins, expoPinPolicyFor, expoPinsFor, expoPluginFor } from "../../src/versions.js";
 import { EXPO57_PINS, fakeExpo57Modules } from "../support/expo57.js";
 import { EXPO58_PINS, fakeExpo58Modules } from "../support/expo58.js";
 import { loadSpm, shared58Spm, vendoredSpm, type Plugin } from "../support/expoSpm.js";
@@ -65,7 +66,9 @@ describe("readExpoProject", () => {
       pkg.dependencies.expo = `~${sdk}.0.0`;
     }, false);
     await expect(readExpoProject(dir)).rejects.toThrow(
-      new Error(`Expo SDK ${sdk} is not supported; rn-xtool supports SDK 57 (expo 57.0.31) and SDK 58 or newer.`),
+      new Error(
+        `Expo SDK ${sdk} is not supported; rn-xtool supports SDK 57 (expo 57.0.31 or newer 57.x) and SDK 58 or newer.`,
+      ),
     );
   });
 
@@ -109,6 +112,7 @@ describe("readExpoProject", () => {
         pkg.dependencies.expo = range;
       }, false);
       await expect(readExpoProject(dir)).rejects.toThrow(/^Expo SDK 58 needs react-native 0\.88\.1 .*; installed: expo not installed, /);
+      await expect(readExpoProject(dir)).rejects.toBeInstanceOf(VersionGateError);
     },
   );
 
@@ -190,11 +194,17 @@ describe("readExpoProject", () => {
 });
 
 describe("Expo SDK 57", () => {
-  const PIN_ERROR = (list: string) =>
-    new Error(
-      "Expo SDK 57 needs exactly expo 57.0.31, react-native 0.86.3, expo-modules-core 57.0.24, " +
-        `expo-modules-autolinking 57.0.16 and expo-modules-jsi 57.1.3; installed: ${list}. Pin those versions in package.json and reinstall.`,
-    );
+  const PREFIX =
+    "Expo SDK 57 needs react-native 0.86.3 and at least expo 57.0.31, expo-modules-core 57.0.24, " +
+    "expo-modules-autolinking 57.0.16 and expo-modules-jsi 57.1.3; installed: ";
+  const FIX_REMEDY =
+    "Remove any pin or override on these packages from package.json, then run `npx expo install --fix`; then run " +
+    "`npx expo install react-native@0.86.3`, since `--fix` alone can leave react-native on another version.";
+  const EXPO_REMEDY =
+    "Remove any pin or override on these packages from package.json, then run `npx expo install expo@~57.0.31` and " +
+    "`npx expo install --fix`; then run `npx expo install react-native@0.86.3`, since `--fix` alone can leave " +
+    "react-native on another version.";
+  const PIN_ERROR = (list: string, remedy = FIX_REMEDY) => new VersionGateError(`${PREFIX}${list}. ${remedy}`);
 
   async function expo57(
     overrides?: Parameters<typeof fakeExpo57Modules>[1],
@@ -214,32 +224,75 @@ describe("Expo SDK 57", () => {
     ]);
   });
 
-  it("accepts SDK 57 with the exact pins", async () => {
+  it("accepts the SDK 57 floor set", async () => {
     const dir = await expo57();
-    const p = await readExpoProject(dir);
+    const log = vi.fn();
+    const p = await readExpoProject(dir, { log });
     expect(p).toMatchObject({ sdkVersion: 57, rnVersion: "0.86.3", rnScripts: "vendored", expoPlugin: "vendored" });
     expect(p.iosTargetDir).toBe(path.join(dir, "ios", "Spike57"));
     expect(readExpoPins(dir, 57)).toEqual(EXPO57_PINS);
+    expect(log).not.toHaveBeenCalled();
   });
 
-  const NEXT_PATCH: Partial<Record<ExpoPinName, string>> = {
-    expo: "57.0.32",
-    "react-native": "0.86.4",
-    "expo-modules-core": "57.0.25",
-    "expo-modules-autolinking": "57.0.17",
-    "expo-modules-jsi": "57.1.4",
-  };
-
-  it.each(Object.entries(NEXT_PATCH))("names %s when it is off", async (name, version) => {
+  it.each([
+    ["expo", "57.0.30"],
+    ["expo-modules-core", "57.0.23"],
+    ["expo-modules-autolinking", "57.0.15"],
+    ["expo-modules-jsi", "57.1.2"],
+  ])("names each SDK 57 pin below the floor: %s %s", async (name, version) => {
     const dir = await expo57({ [name]: version });
-    await expect(readExpoProject(dir)).rejects.toThrow(PIN_ERROR(`${name} ${version}`));
+    const err = (await readExpoProject(dir).catch((e: unknown) => e)) as Error;
+    expect(err.message.startsWith(`${PREFIX}${name} ${version}. `)).toBe(true);
+    expect(err).toEqual(PIN_ERROR(`${name} ${version}`, name === "expo" ? EXPO_REMEDY : FIX_REMEDY));
   });
 
-  it("names each pin that is off, in pin order", async () => {
-    const two = await expo57({ "expo-modules-jsi": "57.1.4", expo: "57.0.32" });
-    await expect(readExpoProject(two)).rejects.toThrow(PIN_ERROR("expo 57.0.32, expo-modules-jsi 57.1.4"));
-    const missing = await expo57({ "expo-modules-jsi": null });
-    await expect(readExpoProject(missing)).rejects.toThrow(PIN_ERROR("expo-modules-jsi not installed"));
+  it("names a missing SDK 57 pin", async () => {
+    const dir = await expo57({ "expo-modules-jsi": null });
+    await expect(readExpoProject(dir)).rejects.toThrow(PIN_ERROR("expo-modules-jsi not installed"));
+  });
+
+  it("gives the full G1 text for expo below the floor", async () => {
+    const dir = await expo57({ expo: "57.0.30" });
+    await expect(readExpoProject(dir)).rejects.toThrow(
+      new VersionGateError(
+        "Expo SDK 57 needs react-native 0.86.3 and at least expo 57.0.31, expo-modules-core 57.0.24, " +
+          "expo-modules-autolinking 57.0.16 and expo-modules-jsi 57.1.3; installed: expo 57.0.30. Remove any pin or " +
+          "override on these packages from package.json, then run `npx expo install expo@~57.0.31` and `npx expo " +
+          "install --fix`; then run `npx expo install react-native@0.86.3`, since `--fix` alone can leave react-native " +
+          "on another version.",
+      ),
+    );
+  });
+
+  it("refuses react-native other than 0.86.3", async () => {
+    const dir = await expo57({ "react-native": "0.86.4" });
+    await expect(readExpoProject(dir)).rejects.toThrow(
+      new VersionGateError(
+        `${PREFIX}react-native 0.86.4. Run \`npx expo install react-native@0.86.3\`. React Native 0.86.4 is newer than ` +
+          "this rn-xtool release supports: pin react-native to 0.86.3, or update rn-xtool.",
+      ),
+    );
+  });
+
+  it("warns and continues on a newer 57.x", async () => {
+    const dir = await expo57({ expo: "57.0.32", "expo-modules-jsi": "57.1.4" });
+    const log = vi.fn();
+    await expect(readExpoProject(dir, { log })).resolves.toMatchObject({ sdkVersion: 57, expoPlugin: "vendored" });
+    expect(log.mock.calls).toEqual([
+      [
+        "⚠ Newer than the Expo SDK 57 set this rn-xtool release was verified with: expo 57.0.32, expo-modules-jsi " +
+          "57.1.4. Verified: expo 57.0.31, react-native 0.86.3, expo-modules-core 57.0.24, expo-modules-autolinking " +
+          "57.0.16 and expo-modules-jsi 57.1.3. The build continues; if it fails or the app crashes at launch, report it " +
+          "at https://github.com/WillyAntunez/react-native-xtool/issues.",
+      ],
+    ]);
+  });
+
+  it("refuses a package of another SDK's line instead of warning", async () => {
+    const dir = await expo57({ "expo-modules-jsi": "58.0.19" });
+    const log = vi.fn();
+    await expect(readExpoProject(dir, { log })).rejects.toThrow(PIN_ERROR("expo-modules-jsi 58.0.19"));
+    expect(log).not.toHaveBeenCalled();
   });
 
   it("reads each pin where the build resolves it", async () => {
@@ -247,7 +300,11 @@ describe("Expo SDK 57", () => {
     expect(expoPackageDir(nestedCore, "expo-modules-core")).toBe(
       path.join(nestedCore, "node_modules", "expo", "node_modules", "expo-modules-core"),
     );
-    await expect(readExpoProject(nestedCore)).rejects.toThrow(PIN_ERROR("expo-modules-core 57.0.25"));
+    const log = vi.fn();
+    await expect(readExpoProject(nestedCore, { log })).resolves.toMatchObject({ expoPlugin: "vendored" });
+    expect(log.mock.calls[0]![0]).toContain("with: expo-modules-core 57.0.25. ");
+    const nestedOldCore = await expo57({}, { "expo-modules-core": "57.0.23" });
+    await expect(readExpoProject(nestedOldCore)).rejects.toThrow(PIN_ERROR("expo-modules-core 57.0.23"));
 
     const nestedAutolinking = await expo57({ "expo-modules-autolinking": null }, { "expo-modules-autolinking": "57.0.16" });
     expect(readExpoPins(nestedAutolinking, 57)["expo-modules-autolinking"]).toBe("57.0.16");
@@ -265,9 +322,10 @@ describe("Expo SDK 57", () => {
     await expect(readExpoProject(dir)).rejects.toThrow(
       new Error(
         "expo-modules-jsi 57.1.3 resolves from node_modules/expo-modules-core/node_modules/expo-modules-jsi, not from the " +
-          "project's top-level node_modules: rn-xtool patches and builds only the top-level copy. Pin expo-modules-jsi to " +
-          "57.1.3 in package.json and reinstall; if the copy stays nested, run `npm update expo-modules-jsi` (npm dedupe " +
-          "may also fix it).",
+          "project's top-level node_modules: rn-xtool patches and builds only the top-level copy. Remove any " +
+          "expo-modules-jsi pin or override from package.json (`npm uninstall expo-modules-jsi` removes a pin), then run " +
+          "`npm update expo-modules-jsi`: it moves the copy to the top level, which a reinstall does not do while " +
+          "package-lock.json keeps it nested.",
       ),
     );
   });
@@ -331,7 +389,7 @@ describe("Expo SDK 58 floor model", () => {
   it("SDK 58 pins the 58.0.21 set as a floor", () => {
     expect(expoPinsFor(58)).toEqual(EXPO58_PINS);
     expect(Object.keys(expoPinsFor(58)!)).toEqual(Object.keys(EXPO58_PINS));
-    expect([56, 57, 58, 59].map(expoPinPolicyFor)).toEqual([undefined, "exact", "floor", undefined]);
+    expect([56, 57, 58, 59].map(expoPinPolicyFor)).toEqual([undefined, "floor", "floor", undefined]);
     expect(expoPinsFor(59)).toBeUndefined();
   });
 
@@ -351,7 +409,7 @@ describe("Expo SDK 58 floor model", () => {
     expect(checks[5]).toEqual({ name: "expo-file-system", wanted: "58.0.13", installed: undefined, status: "missing" });
     expect(checkPins(58, { ...installed, "react-native": "0.88.2" })![1]!.status).toBe("off");
     const sdk57 = checkPins(57, { ...EXPO57_PINS, "expo-modules-core": "57.0.25" })!;
-    expect(sdk57.map((c) => c.status)).toEqual(["ok", "ok", "off", "ok", "ok"]);
+    expect(sdk57.map((c) => c.status)).toEqual(["ok", "ok", "newer", "ok", "ok"]);
     expect(checkPins(59, installed)).toBeUndefined();
   });
 
@@ -389,7 +447,7 @@ describe("Expo SDK 58 gate", () => {
   /** Only react-native is off. */
   const RN_REMEDY = "Run `npx expo install react-native@0.88.1`.";
   const PIN_ERROR = (list: string, remedy = FIX_REMEDY, tail = "") =>
-    new Error(
+    new VersionGateError(
       "Expo SDK 58 needs react-native 0.88.1 and at least expo 58.0.21, expo-modules-core 58.0.28, expo-modules-jsi 58.0.21, " +
         `expo-modules-autolinking 58.0.16, expo-file-system 58.0.13 and expo-font 58.0.11; installed: ${list}. ${remedy}` +
         tail,
@@ -485,6 +543,13 @@ describe("Expo SDK 58 gate", () => {
     const log = vi.fn();
     await expect(readExpoProject(dir, { log })).resolves.toMatchObject({ sdkVersion: 58, expoPlugin: "installed" });
     expect(log.mock.calls).toEqual([[WARNING("expo 58.0.22, expo-modules-core 58.0.29")]]);
+  });
+
+  it("refuses a package of another SDK's line instead of warning", async () => {
+    const dir = await expo58({ "expo-modules-core": "59.0.0" });
+    const log = vi.fn();
+    await expect(readExpoProject(dir, { log })).rejects.toThrow(PIN_ERROR("expo-modules-core 59.0.0"));
+    expect(log).not.toHaveBeenCalled();
   });
 
   it("a package below the floor wins over a newer one", async () => {

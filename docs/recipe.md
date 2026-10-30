@@ -50,12 +50,14 @@ headers, modulemaps and `.swiftinterface` files. ExpoModulesCore's interface was
 imports fine with Swift 6.4.1.
 
 `src/pipeline/patches.ts` (`selectBundledPatches`) stages the bundled patch-package patches from `patches/` whose
-package is installed: per package the patch for the installed version, else the highest version (react-native: only
-its exact version). On a newer 58.x than the floor, the highest is the floor's patch: patch-package applies it with
-its version warning, or, when it does not apply, the build stops with "rn-xtool could not patch <package>", whose SDK
-58 remedy is an npm `"overrides"` block with the verified set, or waiting for an rn-xtool release. With the vendored
-Expo plugin (SDK 57) only exact versions are staged. It applies them, then the project's own `patches/` (persisted
-library `Package.swift` files) when present. Before that, the project read checks SDK 58's floor set (G1–G3,
+package is installed: per package the patch for the installed version, else the highest one of the installed
+version's release line (`releaseLine` in `src/versions.ts`: `0.y` for a `0.y.z` version, else the major), else, for
+packages other than react-native, the highest version. On a newer 58.x than the floor, that is the floor's patch:
+patch-package applies it with its version warning, or, when it does not apply, the build stops with "rn-xtool could
+not patch <package>", whose SDK 58 remedy is an npm `"overrides"` block with the verified set, or waiting for an
+rn-xtool release. With the vendored Expo plugin (SDK 57) the last fallback is left out (`lineOnly`), so only patches of
+the installed release lines are staged. It applies them, then the project's own `patches/` (persisted library
+`Package.swift` files) when present. Before that, the project read checks SDK 58's floor set (G1–G3,
 `checkExpoPackages` in `src/project/expo.ts`, texts in [troubleshooting.md](troubleshooting.md#expo-sdk-58)). An Expo
 SDK 58 project gets these four:
 
@@ -180,11 +182,13 @@ Bare projects (no `expo`, or `expo` plus Expo modules as a hybrid) follow the sa
 Expo SDK 57 projects (`expoPlugin: "vendored"`, `rnScripts: "vendored"` in `ProjectInfo`) follow the recipe with these
 differences:
 
-- **Gate** (`SUPPORTED_EXPO` in `src/versions.ts`, `readExpoProject` in `src/project/expo.ts`): SDK 57 needs exactly
-  expo 57.0.31, react-native 0.86.3, expo-modules-core 57.0.24, expo-modules-autolinking 57.0.16 and expo-modules-jsi
-  57.1.3, each read where the build resolves it (`expoPackageDir`: expo and react-native from the root,
-  expo-modules-core from `expo`, expo-modules-jsi from expo-modules-core, expo-modules-autolinking from the root, else
-  from `expo`). That expo-modules-jsi must be `node_modules/expo-modules-jsi`, the copy patch-package patches.
+- **Gate** (the `expo-57` row of `SUPPORTED_LINES` in `src/versions.ts`, `readExpoProject` and `checkExpoPackages` in
+  `src/project/expo.ts`): SDK 57 is a floor, like SDK 58. It needs at least expo 57.0.31, expo-modules-core 57.0.24,
+  expo-modules-autolinking 57.0.16 and expo-modules-jsi 57.1.3, each on SDK 57's release line, and react-native
+  exactly 0.86.3; a newer 57.x is logged as a warning. Each is read where the build resolves it (`expoPackageDir`:
+  expo and react-native from the root, expo-modules-core from `expo`, expo-modules-jsi from expo-modules-core,
+  expo-modules-autolinking from the root, else from `expo`). That expo-modules-jsi must be
+  `node_modules/expo-modules-jsi`, the copy patch-package patches.
   The `@expo/modules-macros-linux-<arch>` of the expo-modules-macros the vendored plugin uses must resolve
   (`expoMacrosBinaryError`): a copy expo-modules-core resolves, else rn-xtool's (the plugin's own order). SDK 58 and
   newer use the installed plugin, and older SDKs are refused. The texts are in [troubleshooting.md](troubleshooting.md#expo-sdk-57).
@@ -207,10 +211,13 @@ differences:
   declares none) and `RN_XTOOL_PROJECT_ROOT` (P2: the plugin resolves `@expo/config-plugins` through the app's `expo`,
   and `xcode` next to it, never from rn-xtool's own copies). The scaffold rerun adds `--scaffold` and skips `expo`
   (D1): the plugin provides it, and refuses an `expo` with a scaffolded `Package.swift`.
-- **Section 3**: `selectBundledPatches` with `exactOnly` stages only `expo-modules-jsi+57.1.3.patch`. Expo's plugin is
-  the vendored `vendor/expo-spm/spm/plugin.js`: expo 58.0.19's `scripts/spm/`, plus `patches/expo+58.0.21.patch`, plus
-  the vendored-only edits P1–P6 of `vendor/expo-spm/rn-xtool-edits.patch` (see
-  [vendor/expo-spm/README.md](../vendor/expo-spm/README.md)). It calls expo-modules-autolinking 58.0.15 and loads the
+- **Section 3**: `selectBundledPatches` with `lineOnly` stages, per package, the patch for the installed version, else
+  the highest bundled one of its release line, and never another SDK's: today only `expo-modules-jsi+57.1.3.patch`
+  (also on a newer 57.x jsi). A patch that does not apply gets the SDK 57 `"overrides"` remedy (`floorRemedy` in
+  `src/pipeline/patches.ts`). Expo's plugin is the vendored `vendor/expo-spm/spm/plugin.js`: expo 58.0.19's
+  `scripts/spm/`, plus `patches/expo+58.0.21.patch`, plus the vendored-only edits P1–P6 of
+  `vendor/expo-spm/rn-xtool-edits.patch` (see [vendor/expo-spm/README.md](../vendor/expo-spm/README.md)). It calls
+  expo-modules-autolinking 58.0.15 and loads the
   macro plugin of expo-modules-macros 0.22.0, both exact dependencies of rn-xtool, so Expo source modules compile with
   `-load-plugin-executable` pointing at `@expo/modules-macros-linux-<arch>/ExpoModulesMacros`. rn-xtool's
   autolinking copy is not patched: on Linux its `@ExpoModule` scanner returns early without a warning, and the modules

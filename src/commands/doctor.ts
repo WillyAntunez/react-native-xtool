@@ -1,8 +1,17 @@
 import { execa } from "execa";
 import { depsFingerprint } from "../deps.js";
-import { loadConfig, type ExpoXtoolConfig } from "../config.js";
+import { DEFAULT_CONFIG, loadConfig, type ExpoXtoolConfig } from "../config.js";
 import { detectLanRoute, isPortFree, suspiciousLanRoute, tunnelWarning, type LanRoute } from "../net.js";
 import { projectPaths } from "../paths.js";
+import {
+  detectCapabilities,
+  unsupportedReason,
+  type ArtifactsCapability,
+  type Capabilities,
+} from "../project/capabilities.js";
+import { andList } from "../project/expo.js";
+import type { ScriptsCapability } from "../project/scriptsShape.js";
+import { VersionGateError } from "../project/detect.js";
 import { MissingBundleIdentifierError, readProject, RN_CLI_MISSING, type ProjectKind } from "../project/index.js";
 import { openPbxproj } from "../project/pbxproj.js";
 import { makeNmRunner } from "../pipeline/symbols.js";
@@ -11,7 +20,18 @@ import { NO_FINGERPRINT_WARNING } from "./start.js";
 import { sha256File } from "../tools/download.js";
 import { toolEnv } from "../tools/exec.js";
 import { authStatus, listDevices, defaultXtoolPath, xtoolBin, xtoolUnrunnableError, type AuthStatus, type Device } from "../tools/xtool.js";
-import { XTOOL_VERSION, XTOOL_SHA256, SWIFT_VERSION, type ExpoPlugin, type RnScripts } from "../versions.js";
+import {
+  XTOOL_VERSION,
+  XTOOL_SHA256,
+  SWIFT_VERSION,
+  NODE_MIN,
+  compareVersions,
+  expoLineFor,
+  expoPluginFor,
+  rnLineStatus,
+  type ExpoPlugin,
+  type RnScripts,
+} from "../versions.js";
 import { isExecutable, sdkBundle, swiftAtLeast, swiftMeetsMin, swiftVersionText } from "./setup.js";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -58,6 +78,8 @@ export interface DoctorProbes {
   portFree: (port: number) => Promise<boolean>;
   /** Wi‑Fi install readiness; read-only (never caches or changes anything). */
   wifi: (root?: string) => Promise<WifiProbe>;
+  /** What the project has (`doctor --project` only); the artifact probe may reach the network, bounded. */
+  capabilities: (root: string) => Promise<Capabilities>;
 }
 
 export interface ProjectProbe {
@@ -175,6 +197,7 @@ export function realProbes(config: ExpoXtoolConfig): DoctorProbes {
     depsFingerprint: (root) => depsFingerprint(root),
     portFree: (port) => isPortFree(port),
     wifi: (root) => probeWifi(root),
+    capabilities: (root) => detectCapabilities(root),
   };
 }
 
@@ -232,6 +255,172 @@ export function wifiCheck(p: WifiProbe): Omit<DoctorCheck, "name"> {
   return { status, detail: notes.join("; ") };
 }
 
+type CheckResult = Omit<DoctorCheck, "name">;
+
+/** The scripts and the plugin rn-xtool vendors (vendor/rn-spm, vendor/expo-spm). */
+const VENDORED_RN_SCRIPTS = "rn-xtool's vendored copy (React Native 0.88.0)";
+const VENDORED_EXPO_PLUGIN = "rn-xtool's vendored copy (Expo 58.0.19)";
+
+/** The text of the line that covers `v`, once unsupportedReason has given no reason. */
+function lineText(c: Capabilities, v: string): CheckResult {
+  if (c.kind === "expo" && c.sdk !== undefined) {
+    const pins = expoLineFor(c.sdk)?.pins;
+    return pins
+      ? {
+          status: "ok",
+          detail: `Expo SDK ${c.sdk}: expo ${c.expoVersion} (verified ${pins.expo}), react-native ${v} (verified ${pins["react-native"]})`,
+        }
+      : {
+          status: "info",
+          detail: `Expo SDK ${c.sdk}: no verified set in this release; the installed plugin builds it, gated by G4 only`,
+        };
+  }
+  // No reason: a verified or newer release of a bare row.
+  const line = rnLineStatus(v).line!;
+  return { status: "ok", detail: `React Native ${v}: the ${line.minor} line (${line.floor} or newer), verified ${andList(line.verified)}` };
+}
+
+/**
+ * The installed versions against the table's lines. A version no line covers fails with its reason; one a line covers
+ * but a version gate refuses (G1's floor, a hybrid's gate) fails too, its numbers kept and the gate's text in project.
+ */
+function versionsCheck(c: Capabilities, refused: boolean): CheckResult {
+  // unsupportedReason names a missing react-native first, before any line is looked at.
+  const reason = unsupportedReason(c);
+  const v = c.rnVersion;
+  if (reason !== undefined || v === undefined) return { status: "fail", detail: reason ?? "react-native is not installed" };
+  const text = lineText(c, v);
+  return refused ? { status: "fail", detail: `${text.detail}; refused by the version gate (see project)` } : text;
+}
+
+/** On a version no line covers (`supported` false) every scripts line is info, and none promises the vendored copy. */
+function scriptsCheck(s: ScriptsCapability, supported: boolean): CheckResult {
+  const result = (status: DoctorCheck["status"], detail: string): CheckResult => ({ status: supported ? status : "info", detail });
+  const vendored = supported ? `: ${VENDORED_RN_SCRIPTS}` : "";
+  if (!s.recognised || s.shape === "unknown") {
+    const picks = s.mode
+      ? `the version table picks the ${s.mode} scripts — run npm install to reinstall react-native; if this line stays, reinstall rn-xtool`
+      : "no supported line (see versions)";
+    // Older scripts where rn-xtool's react-native patch expects 0.88-shaped ones: the build stops at that patch.
+    const certain = s.shape === "none" || s.shape === "0.87";
+    return result(certain ? "fail" : "warn", `not recognised (missing: ${s.missing.join("; ")}); ${picks}`);
+  }
+  switch (s.shape) {
+    case "0.88":
+      return result("ok", "react-native's own SwiftPM scripts (0.88 layout)");
+    case "none":
+      return result("ok", `react-native ships no SwiftPM scripts${vendored}`);
+    case "0.87":
+      return result("ok", `react-native's SwiftPM scripts lack ${s.missing.join("; ")} (0.87 layout)${vendored}`);
+  }
+}
+
+/**
+ * On a supported version, artifacts no release repository has fail (the build cannot download them; the drift watch
+ * goes red), and an unchecked probe warns. On a version no line covers, every artifacts line is info.
+ */
+function artifactsCheck(a: ArtifactsCapability, supported: boolean): CheckResult {
+  const result = (status: DoctorCheck["status"], detail: string): CheckResult => ({ status: supported ? status : "info", detail });
+  switch (a.status) {
+    case "cached":
+      return result("ok", `React Native ${a.version} artifacts are in the cache`);
+    case "local":
+      return result("ok", `React Native ${a.version} artifacts come from rnArtifactsDir ${a.detail ?? "(unset)"} (not probed)`);
+    case "published":
+      return result("ok", `published for React Native ${a.version}${a.detail ? ` (${a.detail})` : ""}`);
+    case "missing":
+      return result("fail", `not published for React Native ${a.version}: ${a.missing.join(", ")}`);
+    case "unknown":
+      return result("warn", `not checked: ${a.detail ?? "no reason given"}`);
+  }
+}
+
+function expoPluginCheck(plugin: "ships" | "none", sdk: number | undefined): CheckResult {
+  if (plugin === "ships") return { status: "ok", detail: "expo ships its SwiftPM plugin" };
+  return sdk !== undefined && expoPluginFor(sdk) === "vendored"
+    ? { status: "ok", detail: `expo ships no SwiftPM plugin: ${VENDORED_EXPO_PLUGIN}` }
+    : { status: "info", detail: "expo ships no SwiftPM plugin" };
+}
+
+function expoModulesCheck(modules: "precompiled" | "source", coreVersion: string | undefined): CheckResult {
+  const core = `expo-modules-core ${coreVersion ?? "unknown"}`;
+  return modules === "precompiled"
+    ? { status: "ok", detail: `precompiled (${core})` }
+    : { status: "info", detail: `built from source (${core} ships no prebuilds)` };
+}
+
+function podspecsCheck(podspecs: Capabilities["podspecs"]): CheckResult {
+  const used = Object.entries(podspecs)
+    .filter(([, names]) => names.length > 0)
+    .map(([feature, names]) => `${feature}: ${names.join(", ")}`);
+  return { status: "info", detail: used.length > 0 ? used.join("; ") : "no tracked podspec features in the dependencies" };
+}
+
+/**
+ * `doctor --project`'s capability lines, in order: versions, rn-scripts, rn-artifacts, expo-plugin, expo-modules and
+ * podspecs. The four in between are left out when the project has no such field (no react-native, no expo).
+ * `projectError` is why the project could not be read; a `VersionGateError` fails the versions line.
+ */
+export function capabilityChecks(c: Capabilities, projectError?: unknown): DoctorCheck[] {
+  const supported = unsupportedReason(c) === undefined;
+  const lines: [string, CheckResult | undefined][] = [
+    ["versions", versionsCheck(c, projectError instanceof VersionGateError)],
+    ["rn-scripts", c.scripts && scriptsCheck(c.scripts, supported)],
+    ["rn-artifacts", c.artifacts && artifactsCheck(c.artifacts, supported)],
+    ["expo-plugin", c.expoPlugin && expoPluginCheck(c.expoPlugin, c.sdk)],
+    ["expo-modules", c.expoModules && expoModulesCheck(c.expoModules, c.expoModulesCoreVersion)],
+    ["podspecs", podspecsCheck(c.podspecs)],
+  ];
+  return lines.flatMap(([name, result]) => (result === undefined ? [] : [{ name, ...result }]));
+}
+
+type Settled<T> = { value: T } | { error: unknown };
+
+function settle<T>(fn: () => Promise<T>): Promise<Settled<T>> {
+  return Promise.resolve()
+    .then(fn)
+    .then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    );
+}
+
+/**
+ * The project and project-config lines. `readError` is another reader's failure on the same project (the capability
+ * probe under --project): it fails the project line too, so a project that cannot be read never passes.
+ */
+async function projectChecks(
+  add: (name: string, fn: () => Promise<CheckResult>) => Promise<void>,
+  projectResult: Settled<ProjectProbe>,
+  readError?: unknown,
+): Promise<void> {
+  await add("project", async () => {
+    if ("error" in projectResult) {
+      const err = projectResult.error;
+      if (err instanceof MissingBundleIdentifierError) {
+        if (readError !== undefined) throw readError;
+        return { status: "info", detail: "kind and versions are shown once the bundle identifier is set (see project-config)" };
+      }
+      if (readError !== undefined && message(readError) !== message(err)) {
+        throw new Error(`${message(err)}; ${message(readError)}`);
+      }
+      throw err;
+    }
+    if (readError !== undefined) throw readError;
+    const info = projectResult.value;
+    return info.warnings.length > 0
+      ? { status: "warn", detail: [projectSummary(info), ...info.warnings].join("; ") }
+      : { status: "ok", detail: projectSummary(info) };
+  });
+  await add("project-config", async () => {
+    if ("value" in projectResult) return { status: "ok", detail: `bundle identifier ${projectResult.value.bundleIdentifier}` };
+    const err = projectResult.error;
+    return err instanceof MissingBundleIdentifierError
+      ? { status: "warn", detail: missingBundleIdDetail(err) }
+      : { status: "info", detail: "not checked: the project could not be read (see project)" };
+  });
+}
+
 async function check(name: string, fn: () => Promise<Omit<DoctorCheck, "name">>): Promise<DoctorCheck> {
   try {
     return { name, ...(await fn()) };
@@ -240,7 +429,15 @@ async function check(name: string, fn: () => Promise<Omit<DoctorCheck, "name">>)
   }
 }
 
-export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<DoctorReport> {
+/**
+ * Every check, or with `projectOnly` (`doctor --project`) only node, the project and its capabilities: no toolchain,
+ * login, device or build-state probe runs, so it works where Swift and xtool are not installed.
+ */
+export async function doctorWithProbes(
+  p: DoctorProbes,
+  root?: string,
+  opts: { projectOnly?: boolean } = {},
+): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
   const add = async (name: string, fn: () => Promise<Omit<DoctorCheck, "name">>): Promise<void> => {
     checks.push(await check(name, fn));
@@ -248,8 +445,17 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
 
   await add("node", async () => {
     const v = p.nodeVersion();
-    return { status: Number(v.split(".")[0]) >= 20 ? "ok" : "fail", detail: v };
+    return compareVersions(v, NODE_MIN) >= 0
+      ? { status: "ok", detail: v }
+      : { status: "fail", detail: `${v} (need ${NODE_MIN} or newer)` };
   });
+  if (opts.projectOnly) {
+    const dir = root ?? process.cwd();
+    const [project, caps] = await Promise.all([settle(() => p.project(dir)), settle(() => p.capabilities(dir))]);
+    await projectChecks(add, project, "error" in caps ? caps.error : undefined);
+    if ("value" in caps) checks.push(...capabilityChecks(caps.value, "error" in project ? project.error : undefined));
+    return { checks, ok: checks.every((c) => c.status !== "fail") };
+  }
   await add("swift", async () => {
     const v = await p.swiftVersion();
     if (!v) return { status: "fail", detail: "not found — run rn-xtool setup" };
@@ -348,31 +554,7 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
   });
 
   if (root !== undefined && stateResult) {
-    const projectResult = await Promise.resolve()
-      .then(() => p.project(root))
-      .then(
-        (info) => ({ info }),
-        (error: unknown) => ({ error }),
-      );
-    await add("project", async () => {
-      if ("error" in projectResult) {
-        if (projectResult.error instanceof MissingBundleIdentifierError) {
-          return { status: "info", detail: "kind and versions are shown once the bundle identifier is set (see project-config)" };
-        }
-        throw projectResult.error;
-      }
-      const { info } = projectResult;
-      return info.warnings.length > 0
-        ? { status: "warn", detail: [projectSummary(info), ...info.warnings].join("; ") }
-        : { status: "ok", detail: projectSummary(info) };
-    });
-    await add("project-config", async () => {
-      if ("info" in projectResult) return { status: "ok", detail: `bundle identifier ${projectResult.info.bundleIdentifier}` };
-      const err = projectResult.error;
-      return err instanceof MissingBundleIdentifierError
-        ? { status: "warn", detail: missingBundleIdDetail(err) }
-        : { status: "info", detail: "not checked: the project could not be read (see project)" };
-    });
+    await projectChecks(add, await settle(() => p.project(root)));
     await add("build-state", async () => {
       if ("error" in stateResult) {
         return { status: "warn", detail: `unreadable build state (${message(stateResult.error)}) — run rn-xtool build` };
@@ -402,7 +584,13 @@ export async function doctorWithProbes(p: DoctorProbes, root?: string): Promise<
   return { checks, ok: checks.every((c) => c.status !== "fail") };
 }
 
-export async function doctor(root?: string, probes?: DoctorProbes): Promise<DoctorReport> {
-  const config = await loadConfig(root ?? process.cwd());
-  return doctorWithProbes(probes ?? realProbes(config), root);
+export async function doctor(
+  root?: string,
+  probes?: DoctorProbes,
+  opts: { projectOnly?: boolean } = {},
+): Promise<DoctorReport> {
+  const dir = root ?? process.cwd();
+  // --project's probes read no config field: a malformed config fails its project line (both readers load it).
+  const config = opts.projectOnly ? DEFAULT_CONFIG : await loadConfig(dir);
+  return doctorWithProbes(probes ?? realProbes(config), root, opts);
 }

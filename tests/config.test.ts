@@ -29,6 +29,11 @@ describe("loadConfig", () => {
     expect(await loadConfig(dir)).toEqual({ metroPort: 9000, lanIp: "10.0.0.2" });
   });
 
+  it("names rn-xtool.config.json when it is not valid JSON", async () => {
+    await writeFile(join(dir, "rn-xtool.config.json"), '{ "projectKind": "expo", }\n');
+    await expect(loadConfig(dir)).rejects.toThrow(/^rn-xtool\.config\.json: .*JSON/);
+  });
+
   it("rejects when rn-xtool.config.js exists but fails to load", async () => {
     await writeFile(join(dir, "rn-xtool.config.js"), 'import "nonexistent-module-xyz";\nexport default {};\n');
     await expect(loadConfig(dir)).rejects.toThrow();
