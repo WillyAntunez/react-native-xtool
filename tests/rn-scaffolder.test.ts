@@ -1349,7 +1349,7 @@ describe("scaffolder fixes 14–18 (vendor/rn-spm)", () => {
   const clang = [path.join(homedir(), ".local/share/swiftly/bin/clang"), "clang"].find(
     (c) => hasTool(c),
   );
-  it.skipIf(clang === undefined)("18: clang builds the module from the map, without the headers it leaves out", () => {
+  it.skipIf(clang === undefined)("18: clang builds the module from the map, without the headers it leaves out (needs clang)", () => {
     const root = lib(
       {
         "ios/A.h": "#pragma once\nint a(void);\n",
