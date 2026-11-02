@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { build, buildSteps, chooseMetroPort, type BuildDeps } from "../src/commands/build.js";
 import { jsiRnHeaderDirs } from "../src/pipeline/jsi.js";
 import { fixLibraryManifests } from "../src/pipeline/manifests.js";
+import { libraryFailures as realLibraryFailures, UnsupportedSetupError, type EarlyFailure } from "../src/project/earlyChecks.js";
 import { readState, writeState } from "../src/state.js";
 
 const expoFlags = { kind: "expo" as const, hasExpoModules: true, hasExpoConstants: true, rnArtifacts: false, expoPlugin: "installed" as const };
@@ -72,7 +73,7 @@ describe("buildSteps", () => {
 
 type ProjectOver = { kind?: "expo" | "bare"; hasExpoModules?: boolean; hasExpoConstants?: boolean; hasDevClient?: boolean; hasRnCli?: boolean; rnVersion?: string };
 
-function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunning?: (p: number) => Promise<boolean>; hasIos?: boolean; cfg?: object; route?: { ip?: string; dev?: string }; project?: ProjectOver & { rnScripts?: "installed" | "vendored"; expoPlugin?: "installed" | "vendored" }; applyPatches?: BuildDeps["applyPatches"] } = {}) {
+function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunning?: (p: number) => Promise<boolean>; hasIos?: boolean; cfg?: object; route?: { ip?: string; dev?: string }; project?: ProjectOver & { rnScripts?: "installed" | "vendored"; expoPlugin?: "installed" | "vendored" }; applyPatches?: BuildDeps["applyPatches"]; installFailures?: BuildDeps["installFailures"]; libraryFailures?: BuildDeps["libraryFailures"] } = {}) {
   const root = mkdtempSync(join(tmpdir(), "build-"));
   const calls: string[] = [];
   const logs: string[] = [];
@@ -84,6 +85,8 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
   });
   const deps: BuildDeps = {
     loadConfig: async () => ({ metroPort: 8081, ...over.cfg }),
+    installFailures: over.installFailures ?? (() => []),
+    libraryFailures: over.libraryFailures ?? (() => []),
     readProject: async () =>
       ({
         kind: "expo",
@@ -384,6 +387,146 @@ describe("build", () => {
     const u = setup({ project: { kind: "bare", hasExpoModules: true, hasExpoConstants: true } });
     await build(u.root, {}, u.deps);
     expect(u.calls).toContain("app-config");
+  });
+  it("stops before reading the project on a known unsupported install", async () => {
+    const r1: EarlyFailure = { id: "pnpm", allowKey: "pnpm", reason: "This project was installed with pnpm." };
+    const r2: EarlyFailure = { id: "hoisted", allowKey: "hoisted", reason: "react-native is installed in ../../node_modules/react-native." };
+    const h = (key: string) => `To build anyway, add "${key}" to knownLimits.allow in rn-xtool.config.json.`;
+    for (const [failures, message] of [
+      [[r1], `${r1.reason}\n${h("pnpm")}`],
+      [[r1, r2], `rn-xtool cannot build this project yet:\n- ${r1.reason}\n  ${h("pnpm")}\n- ${r2.reason}\n  ${h("hoisted")}`],
+    ] as const) {
+      const roots: string[] = [];
+      const libraryFailures = vi.fn(() => []);
+      const t = setup({
+        installFailures: (root) => {
+          roots.push(root);
+          return [...failures];
+        },
+        libraryFailures,
+      });
+      const readProject = vi.fn(t.deps.readProject);
+      const error = await build(t.root, {}, { ...t.deps, readProject }).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(UnsupportedSetupError);
+      expect((error as UnsupportedSetupError).name).toBe("UnsupportedSetupError");
+      expect((error as UnsupportedSetupError).message).toBe(message);
+      expect((error as UnsupportedSetupError).failures).toEqual(failures);
+      expect(roots).toEqual([t.root]);
+      expect(readProject).not.toHaveBeenCalled();
+      expect(libraryFailures).toHaveBeenCalledWith(t.root);
+      expect(t.calls).toEqual([]);
+      expect(t.logs.filter((l) => l.startsWith("▸"))).toEqual([]);
+    }
+  });
+  it("stops on a refused library before reading the project or writing anything", async () => {
+    const r1: EarlyFailure = { id: "vendored-binaries", allowKey: "lib", reason: "lib 1.0.0: its podspec declares vendored_frameworks." };
+    const r2: EarlyFailure = { id: "vendored-sources", allowKey: "expo-sqlite", reason: "expo-sqlite 58.0.14: its podspec builds C sources." };
+    const h = (key: string) => `To build anyway, add "${key}" to knownLimits.allow in rn-xtool.config.json.`;
+    for (const [failures, message] of [
+      [[r1], `${r1.reason}\n${h("lib")}`],
+      [[r1, r2], `rn-xtool cannot build this project yet:\n- ${r1.reason}\n  ${h("lib")}\n- ${r2.reason}\n  ${h("expo-sqlite")}`],
+    ] as const) {
+      const t = setup({ hasIos: true });
+      const roots: string[] = [];
+      const libraryFailures = vi.fn((root: string) => {
+        roots.push(root);
+        return [...failures];
+      });
+      const readProject = vi.fn(t.deps.readProject);
+      const error = await build(t.root, {}, { ...t.deps, libraryFailures, readProject }).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(UnsupportedSetupError);
+      expect((error as UnsupportedSetupError).message).toBe(message);
+      expect(roots).toEqual([t.root]);
+      expect(readProject).not.toHaveBeenCalled();
+      expect(t.calls).toEqual([]);
+      expect(t.logs.filter((l) => l.startsWith("▸"))).toEqual([]);
+    }
+  });
+  it("a refused bare project built with --clean keeps ios/build", async () => {
+    const lib: EarlyFailure = { id: "vendored-binaries", allowKey: "lib", reason: "lib 1.0.0 declares binaries." };
+    const t = setup({ hasIos: true, project: { kind: "bare" }, libraryFailures: () => [lib] });
+    const iosBuild = join(t.root, "ios", "build");
+    mkdirSync(iosBuild, { recursive: true });
+    writeFileSync(join(iosBuild, "keep"), "");
+    const remove = vi.fn(async (path: string) => {
+      t.calls.push(`remove ${path}`);
+    });
+    await expect(build(t.root, { clean: true }, { ...t.deps, remove })).rejects.toBeInstanceOf(UnsupportedSetupError);
+    expect(remove).not.toHaveBeenCalled();
+    expect(t.calls).toEqual([]);
+    expect(readFileSync(join(iosBuild, "keep"), "utf8")).toBe("");
+  });
+  it("a refused Expo project without ios/ gets no prebuild", async () => {
+    const lib: EarlyFailure = { id: "vendored-binaries", allowKey: "lib", reason: "lib 1.0.0 declares binaries." };
+    for (const clean of [false, true]) {
+      const t = setup({ hasIos: false, libraryFailures: () => [lib] });
+      await expect(build(t.root, { clean }, t.deps)).rejects.toBeInstanceOf(UnsupportedSetupError);
+      expect(t.calls).toEqual([]);
+    }
+  });
+  it("builds a project whose patches/ create the library's Package.swift", async () => {
+    const name = "@react-native-async-storage/async-storage";
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ name: "app", dependencies: { [name]: "3.1.1" } }),
+      [`node_modules/${name}/package.json`]: JSON.stringify({ name, version: "3.1.1" }),
+      [`node_modules/${name}/AsyncStorage.podspec`]:
+        'Pod::Spec.new do |s|\n  s.ios.vendored_frameworks = "apple-frameworks/SharedAsyncStorage.xcframework"\nend\n',
+    };
+    const write = (root: string, extra: Record<string, string> = {}) => {
+      for (const [rel, text] of Object.entries({ ...files, ...extra })) {
+        mkdirSync(dirname(join(root, rel)), { recursive: true });
+        writeFileSync(join(root, rel), text);
+      }
+    };
+    const refused = setup({ hasIos: true, libraryFailures: realLibraryFailures });
+    write(refused.root);
+    await expect(build(refused.root, {}, refused.deps)).rejects.toBeInstanceOf(UnsupportedSetupError);
+    expect(refused.calls).toEqual([]);
+
+    const persisted = setup({ hasIos: true, libraryFailures: realLibraryFailures });
+    write(persisted.root, {
+      "patches/@react-native-async-storage+async-storage+3.1.1.patch":
+        `diff --git a/node_modules/${name}/Package.swift b/node_modules/${name}/Package.swift\nnew file mode 100644\n` +
+        `--- /dev/null\n+++ b/node_modules/${name}/Package.swift\n@@ -0,0 +1,2 @@\n+// swift-tools-version: 6.0\n+import PackageDescription\n`,
+    });
+    await build(persisted.root, {}, persisted.deps);
+    expect(persisted.calls).toEqual(buildSteps({ ...expoFlags, hasIos: true, clean: false }));
+  });
+  it("warns and builds on when rn-xtool.config.json allows every refusal", async () => {
+    const pnpm: EarlyFailure = { id: "pnpm", allowKey: "pnpm", reason: "This project was installed with pnpm." };
+    const hoisted: EarlyFailure = { id: "hoisted", allowKey: "hoisted", reason: "react-native is hoisted." };
+    const lib: EarlyFailure = { id: "vendored-binaries", allowKey: "@scope/lib", reason: "@scope/lib 1.0.0 declares binaries." };
+    const t = setup({
+      cfg: { knownLimits: { allow: ["pnpm", "hoisted", "@scope/lib", "not-installed"] } },
+      installFailures: () => [pnpm, hoisted],
+      libraryFailures: () => [lib],
+    });
+    await build(t.root, {}, t.deps);
+    expect(t.calls).toEqual(buildSteps({ ...expoFlags, hasIos: false, clean: false }));
+    const allowed = " (allowed by rn-xtool.config.json knownLimits.allow; the build may fail later)";
+    expect(t.logs.filter((l) => l.startsWith("⚠ known-limits"))).toEqual([
+      `⚠ known-limits — ${pnpm.reason}${allowed}`,
+      `⚠ known-limits — ${hoisted.reason}${allowed}`,
+      `⚠ known-limits — ${lib.reason}${allowed}`,
+    ]);
+  });
+  it("still stops on the refusals the allow list does not name", async () => {
+    const pnpm: EarlyFailure = { id: "pnpm", allowKey: "pnpm", reason: "This project was installed with pnpm." };
+    const hoisted: EarlyFailure = { id: "hoisted", allowKey: "hoisted", reason: "react-native is hoisted." };
+    const t = setup({ cfg: { knownLimits: { allow: ["pnpm", "react-native"] } }, installFailures: () => [pnpm, hoisted] });
+    await expect(build(t.root, {}, t.deps)).rejects.toThrow(
+      'react-native is hoisted.\nTo build anyway, add "hoisted" to knownLimits.allow in rn-xtool.config.json.',
+    );
+    expect(t.calls).toEqual([]);
+    const lib: EarlyFailure = { id: "vendored-binaries", allowKey: "@scope/lib", reason: "@scope/lib 1.0.0 declares binaries." };
+    const u = setup({ hasIos: true, cfg: { knownLimits: { allow: ["other-lib"] } }, libraryFailures: () => [lib] });
+    await expect(build(u.root, {}, u.deps)).rejects.toBeInstanceOf(UnsupportedSetupError);
+    expect(u.calls).toEqual([]);
+  });
+  it("builds as before without known limits", async () => {
+    const t = setup({ installFailures: () => [], libraryFailures: () => [] });
+    await build(t.root, {}, t.deps);
+    expect(t.calls).toEqual(buildSteps({ ...expoFlags, hasIos: false, clean: false }));
   });
   it("stops a bare build before any step when @react-native-community/cli is missing", async () => {
     const t = setup({ hasIos: true, project: { kind: "bare", hasRnCli: false } });

@@ -532,6 +532,63 @@ describe("doctor --project", () => {
     expect(r.ok).toBe(true);
   });
 
+  it("--project names each known limit", async () => {
+    const withLimits = async (limits: Capabilities["limits"]) =>
+      doctorWithProbes({ ...good, capabilities: async () => ({ ...expo58Caps, limits }) }, "/proj", { projectOnly: true });
+    const two = await withLimits([
+      { id: "pnpm", allowKey: "pnpm", reason: "installed with pnpm." },
+      { id: "vendored-binaries", allowKey: "lib", reason: "lib 1.0.0 declares vendored_frameworks." },
+    ]);
+    expect(two.checks.map((c) => c.name).slice(-3)).toEqual(["podspecs", "known-limits", "known-limits"]);
+    expect(two.checks.filter((c) => c.name === "known-limits")).toEqual([
+      {
+        name: "known-limits",
+        status: "fail",
+        detail: 'installed with pnpm.\n  To build anyway, add "pnpm" to knownLimits.allow in rn-xtool.config.json.',
+      },
+      {
+        name: "known-limits",
+        status: "fail",
+        detail: 'lib 1.0.0 declares vendored_frameworks.\n  To build anyway, add "lib" to knownLimits.allow in rn-xtool.config.json.',
+      },
+    ]);
+    expect(two.ok).toBe(false);
+
+    const none = await withLimits([]);
+    expect(none.checks.at(-1)).toEqual({
+      name: "known-limits",
+      status: "ok",
+      detail:
+        "none of the setups rn-xtool refuses early (CocoaPods-only libraries with prebuilt binaries or vendored C sources, " +
+        "pnpm, Yarn PnP, hoisted packages)",
+    });
+    expect(none.checks.filter((c) => c.name === "known-limits")).toHaveLength(1);
+    expect(none.ok).toBe(true);
+
+    const allowed = await withLimits([
+      { id: "hoisted", allowKey: "hoisted", reason: "react-native is hoisted.", allowed: true },
+      { id: "vendored-binaries", allowKey: "lib", reason: "lib 1.0.0 declares vendored_frameworks." },
+    ]);
+    expect(allowed.checks.filter((c) => c.name === "known-limits")).toEqual([
+      {
+        name: "known-limits",
+        status: "warn",
+        detail: "react-native is hoisted. (allowed by rn-xtool.config.json knownLimits.allow; the build may fail later)",
+      },
+      expect.objectContaining({ status: "fail" }),
+    ]);
+    expect(renderReport(allowed.checks)).toContain(
+      "⚠ known-limits — react-native is hoisted. (allowed by rn-xtool.config.json knownLimits.allow; the build may fail later)",
+    );
+    expect(allowed.ok).toBe(false);
+    const allAllowed = await withLimits([{ id: "pnpm", allowKey: "pnpm", reason: "installed with pnpm.", allowed: true }]);
+    expect(allAllowed.checks.at(-1)).toMatchObject({ name: "known-limits", status: "warn" });
+    expect(allAllowed.ok).toBe(true);
+
+    const unknown = await withLimits(undefined);
+    expect(unknown.checks.some((c) => c.name === "known-limits")).toBe(false);
+  });
+
   it("plain doctor prints no capability lines", async () => {
     const called: string[] = [];
     const r = await doctorWithProbes(

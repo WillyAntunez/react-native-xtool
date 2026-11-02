@@ -9,6 +9,7 @@ import {
   type ArtifactsCapability,
   type Capabilities,
 } from "../project/capabilities.js";
+import { allowedLimitText, refusalText } from "../project/earlyChecks.js";
 import { andList } from "../project/expo.js";
 import type { ScriptsCapability } from "../project/scriptsShape.js";
 import { VersionGateError } from "../project/detect.js";
@@ -356,10 +357,28 @@ function podspecsCheck(podspecs: Capabilities["podspecs"]): CheckResult {
   return { status: "info", detail: used.length > 0 ? used.join("; ") : "no tracked podspec features in the dependencies" };
 }
 
+const NO_KNOWN_LIMITS =
+  "none of the setups rn-xtool refuses early (CocoaPods-only libraries with prebuilt binaries or vendored C sources, " +
+  "pnpm, Yarn PnP, hoisted packages)";
+
 /**
- * `doctor --project`'s capability lines, in order: versions, rn-scripts, rn-artifacts, expo-plugin, expo-modules and
- * podspecs. The four in between are left out when the project has no such field (no react-native, no expo).
- * `projectError` is why the project could not be read; a `VersionGateError` fails the versions line.
+ * One ok line without known limits, else one line per limit: a warning when the config allows it, else a failure whose
+ * detail ends with how to build anyway.
+ */
+function knownLimitsChecks(limits: NonNullable<Capabilities["limits"]>): DoctorCheck[] {
+  if (limits.length === 0) return [{ name: "known-limits", status: "ok", detail: NO_KNOWN_LIMITS }];
+  return limits.map((f) =>
+    f.allowed
+      ? { name: "known-limits", status: "warn", detail: allowedLimitText(f) }
+      : { name: "known-limits", status: "fail", detail: refusalText(f, "  ") },
+  );
+}
+
+/**
+ * `doctor --project`'s capability lines, in order: versions, rn-scripts, rn-artifacts, expo-plugin, expo-modules,
+ * podspecs and known-limits. The four in between are left out when the project has no such field (no react-native, no
+ * expo), and known-limits when `limits` is undefined. `projectError` is why the project could not be read; a
+ * `VersionGateError` fails the versions line.
  */
 export function capabilityChecks(c: Capabilities, projectError?: unknown): DoctorCheck[] {
   const supported = unsupportedReason(c) === undefined;
@@ -371,7 +390,10 @@ export function capabilityChecks(c: Capabilities, projectError?: unknown): Docto
     ["expo-modules", c.expoModules && expoModulesCheck(c.expoModules, c.expoModulesCoreVersion)],
     ["podspecs", podspecsCheck(c.podspecs)],
   ];
-  return lines.flatMap(([name, result]) => (result === undefined ? [] : [{ name, ...result }]));
+  return [
+    ...lines.flatMap(([name, result]) => (result === undefined ? [] : [{ name, ...result }])),
+    ...(c.limits === undefined ? [] : knownLimitsChecks(c.limits)),
+  ];
 }
 
 type Settled<T> = { value: T } | { error: unknown };

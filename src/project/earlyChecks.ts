@@ -8,13 +8,53 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { troubleshootingUrl } from "../docs.js";
 import { packageRoot } from "../tools/exec.js";
-import { attribute, dependencyDirs, podspecFiles } from "./capabilities.js";
+import { attribute, dependencyDirs, podspecFiles } from "./podspecs.js";
 
 export type EarlyCheckId = "vendored-binaries" | "vendored-sources" | "pnpm" | "yarn-pnp" | "hoisted";
 
 export interface EarlyFailure {
   id: EarlyCheckId;
+  /** The `knownLimits.allow` entry that lets it through: the package's name, or "pnpm", "pnp" or "hoisted". */
+  allowKey: string;
   reason: string;
+  /** Set when rn-xtool.config.json's `knownLimits.allow` names `allowKey`: a warning, not a refusal. */
+  allowed?: true;
+}
+
+/** The sentence every refusal ends with: how to build anyway. */
+export function knownLimitHint(f: EarlyFailure): string {
+  return `To build anyway, add "${f.allowKey}" to knownLimits.allow in rn-xtool.config.json.`;
+}
+
+/** A refusal: its reason (which ends with the docs link), then how to build anyway on its own line after `indent`. */
+export function refusalText(f: EarlyFailure, indent = ""): string {
+  return `${f.reason}\n${indent}${knownLimitHint(f)}`;
+}
+
+/** An allowed refusal as doctor's and build's warning reads it. */
+export function allowedLimitText(f: EarlyFailure): string {
+  return `${f.reason} (allowed by rn-xtool.config.json knownLimits.allow; the build may fail later)`;
+}
+
+/** `failures`, those whose `allowKey` `allow` names marked allowed. Entries that name no failure are ignored. */
+export function allowKnownLimits(failures: readonly EarlyFailure[], allow: readonly string[]): EarlyFailure[] {
+  const names = new Set(allow);
+  return failures.map((f) => (names.has(f.allowKey) ? { ...f, allowed: true } : f));
+}
+
+/** `build` stops with it before reading the project: one failure reads as its reason, several as a list. */
+export class UnsupportedSetupError extends Error {
+  readonly failures: readonly EarlyFailure[];
+
+  constructor(failures: readonly EarlyFailure[]) {
+    super(
+      failures.length === 1
+        ? refusalText(failures[0]!)
+        : `rn-xtool cannot build this project yet:\n${failures.map((f) => `- ${refusalText(f, "  ")}`).join("\n")}`,
+    );
+    this.name = "UnsupportedSetupError";
+    this.failures = failures;
+  }
 }
 
 /** The vendored Expo plugin's podspec and source-tree readers (vendor/expo-spm/spm), the ones `sourceLayout` uses. */
@@ -190,6 +230,7 @@ function binariesFailure(name: string, version: string, podspecs: Podspec[]): Ea
     if (attrs.length === 0) continue;
     return {
       id: "vendored-binaries",
+      allowKey: name,
       reason:
         `${name} ${version}: its podspec (${rel}) declares ${attrs.join(" and ")} and the package ships no Package.swift, ` +
         "so rn-xtool would have to scaffold it, and it cannot link prebuilt binaries yet. " +
@@ -210,6 +251,7 @@ function sourcesFailure(name: string, version: string, dir: string, podspecs: Po
   if (files.length === 0) return undefined;
   return {
     id: "vendored-sources",
+    allowKey: name,
     reason:
       `${name} ${version}: its podspec (${podspec.rel}) builds C sources from vendor/ (${firstThree(files)}) and the ` +
       "package ships no Package.swift; rn-xtool cannot build vendored C sources yet. " +
@@ -355,6 +397,7 @@ function pnpmFailure(root: string): EarlyFailure | undefined {
   if (!isDirectory(path.join(root, "node_modules", ".pnpm")) || pnpmHoisted(root)) return undefined;
   return {
     id: "pnpm",
+    allowKey: "pnpm",
     reason:
       "This project was installed with pnpm (pnpm-lock.yaml and a node_modules/.pnpm store); rn-xtool needs " +
       "the flat node_modules that npm or Yarn classic installs. Remove node_modules and install with npm. " +
@@ -368,6 +411,7 @@ function pnpFailure(root: string): EarlyFailure | undefined {
   if (pnp === undefined || existsSync(path.join(root, "node_modules", "react-native", "package.json"))) return undefined;
   return {
     id: "yarn-pnp",
+    allowKey: "pnp",
     reason:
       `This project uses Yarn Plug'n'Play (${pnp}); rn-xtool needs a node_modules folder. Add ` +
       `nodeLinker: node-modules to .yarnrc.yml and run yarn install. See ${troubleshootingUrl("pnpm-and-yarn-pnp")}`,
@@ -397,6 +441,7 @@ function hoistedFailures(root: string, stopAt?: string): EarlyFailure[] {
     return [
       {
         id: "hoisted",
+        allowKey: "hoisted",
         reason:
           `${name} is installed in ${rel}, outside this project: a workspace hoisted it to a parent folder, and rn-xtool ` +
           `patches and builds only the project's own node_modules/${name}. Install the app outside the workspace, or ` +
