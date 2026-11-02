@@ -37,7 +37,8 @@ export function xtoolBin(config: ExpoXtoolConfig): string {
 export function xtoolUnrunnableError(exitCode: number | undefined, output: string): Error {
   return new Error(
     `xtool could not run (exit ${exitCode ?? "unknown"}): ${output.trim().slice(0, 300)}. ` +
-      "On Ubuntu this usually means libfuse2 is missing: sudo apt install libfuse2",
+      "On Ubuntu this usually means FUSE 2 is missing: " +
+      "sudo apt install libfuse2t64 on Ubuntu 24.04 and newer, sudo apt install libfuse2 on older releases",
   );
 }
 

@@ -50,8 +50,9 @@ what does not work yet (library resource bundles, vendored binaries, Xcode-only 
 - An Apple ID. Free accounts: signatures last 7 days, 3 apps at a time, no push notifications or special entitlements
   (a paid developer account lifts these).
 - An iPhone connected over USB for the first install (later installs can go [over Wi‑Fi](docs/wifi-install.md)).
-- `libfuse2` (`sudo apt install libfuse2`), `python3`, `iproute2`. `setup` installs Swift and prints the exact `apt-get`
-  line for any missing Swift system packages ([list](docs/how-it-works.md#what-setup-installs)).
+- FUSE 2 for the xtool AppImage (`sudo apt install libfuse2t64` on Ubuntu 24.04 and newer, `sudo apt install libfuse2`
+  on older releases), `python3`, `iproute2`. `setup` installs Swift and prints the exact `apt-get` line for any missing
+  Swift system packages ([list](docs/how-it-works.md#what-setup-installs)).
 - npm or Yarn classic. patch-package needs a flat `node_modules`; pnpm and Yarn PnP are not supported.
 
 ## Install

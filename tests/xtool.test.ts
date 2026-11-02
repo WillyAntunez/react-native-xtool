@@ -15,6 +15,7 @@ import {
   parseDevices,
   parseIpaPath,
   xtoolBin,
+  xtoolUnrunnableError,
 } from "../src/tools/xtool.js";
 
 const dirs: string[] = [];
@@ -144,6 +145,12 @@ describe("authStatus", () => {
   it("reports an unrunnable binary with the libfuse2 hint instead of logged out", async () => {
     const bin = script("echo 'fuse: failed to open /dev/fuse' >&2\nexit 1");
     await expect(authStatus(bin)).rejects.toThrow(/xtool could not run \(exit 1\): fuse: failed to open.*libfuse2/s);
+  });
+  it("names the FUSE package of each Ubuntu release", () => {
+    expect(xtoolUnrunnableError(1, "fuse: failed to open /dev/fuse\n").message).toBe(
+      "xtool could not run (exit 1): fuse: failed to open /dev/fuse. On Ubuntu this usually means FUSE 2 is missing: " +
+        "sudo apt install libfuse2t64 on Ubuntu 24.04 and newer, sudo apt install libfuse2 on older releases",
+    );
   });
   it("throws when the binary cannot be spawned", async () => {
     await expect(authStatus("/nonexistent/xtool")).rejects.toBeDefined();
