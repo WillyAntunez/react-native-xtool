@@ -1,0 +1,54 @@
+# CI: on every pull request to main and every push to main, install, fetch the pinned upstream tarballs the tests
+# read, type-check, scan the tracked files for private identifiers and run the whole test suite.
+#
+# Nothing is compiled for iOS and no device is touched: there is no Swift, no Darwin SDK and no iPhone here. Tests that
+# need a real app, a toolchain or a device are skipped, and the run summary lists them by name (and, on a red run, the
+# tests whose setup failed). Each skipped test's title says what it needs.
+#
+# The private scan runs with its generic patterns only: the private literals live in the untracked .scan-private.local.
+
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A newer push to a PR cancels its older run; runs on main are never cancelled, so every merge gets a result.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # Also bounds the fetch script's npm pack, which has no timeout of its own.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      # npm ci runs the package's prepare script, which builds dist/.
+      - name: Install and build
+        run: npm ci
+      - name: Fetch the test tarballs
+        run: node scripts/fetch-test-tarballs.mjs
+      - name: Type-check
+        run: npm run lint
+      # Before the tests: a leak is reported even when the suite is red.
+      - name: Scan for private identifiers
+        run: npm run scan:private
+      - name: Test
+        run: npm test -- --reporter=default --reporter=json --outputFile=test-results.json
+      # Runs after a failed test step too, so a red run still says what did not run.
+      - name: List skipped tests
+        if: ${{ !cancelled() }}
+        run: node scripts/ci-skipped.mjs test-results.json >> "$GITHUB_STEP_SUMMARY"
