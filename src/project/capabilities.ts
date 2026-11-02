@@ -153,7 +153,7 @@ export type PodspecFeature =
   | "resource_bundles";
 
 /** `<spec>.<name> =` or `<spec>.ios.<name> =`: a pod attribute being set, not a Ruby variable or a `==` test. */
-const attribute = (name: string): RegExp => new RegExp(`\\b[A-Za-z_]\\w*\\.(?:ios\\.)?${name}\\s*=(?!=)`);
+export const attribute = (name: string): RegExp => new RegExp(`\\b[A-Za-z_]\\w*\\.(?:ios\\.)?${name}\\s*=(?!=)`);
 
 /** Each feature as it reads in a podspec's text (comment lines dropped); singular aliases count too. */
 const PODSPEC_FEATURES: readonly [PodspecFeature, RegExp][] = [
@@ -182,11 +182,12 @@ function packageDir(root: string, pkg: string): string | undefined {
   return lookup.map((dir) => path.join(dir, pkg)).find((dir) => existsSync(path.join(dir, "package.json")));
 }
 
-/** The `*.podspec` files directly in `dir`. */
+/** The `*.podspec` files directly in `dir`, sorted. */
 function podspecsIn(dir: string): string[] {
   try {
     return readdirSync(dir)
       .filter((n) => n.endsWith(".podspec"))
+      .sort()
       .map((n) => path.join(dir, n));
   } catch {
     return [];
@@ -194,18 +195,22 @@ function podspecsIn(dir: string): string[] {
 }
 
 /**
- * The podspecs of the package at `dir`, where autolinking looks: the package root (React Native's CLI), `ios/` (Expo
- * modules) and the `podspecPath` an `expo-module.config.json` declares under `apple`, else `ios`. Comment lines are
- * dropped from each text.
+ * The podspec files of the package at `dir`, where autolinking looks: the package root (React Native's CLI), `ios/`
+ * (Expo modules) and the `podspecPath` an `expo-module.config.json` declares under `apple`, else `ios`. A declared
+ * path is listed whether or not it exists; readers skip the files they cannot read.
  */
-function podspecTexts(dir: string): string[] {
+export function podspecFiles(dir: string): string[] {
   const config = readJson(path.join(dir, "expo-module.config.json"));
   const declared: unknown = (config?.apple ?? config?.ios)?.podspecPath;
   const declaredFiles = (Array.isArray(declared) ? declared : [declared])
     .filter((p): p is string => typeof p === "string")
     .map((p) => path.join(dir, p));
-  const files = new Set([...podspecsIn(dir), ...podspecsIn(path.join(dir, "ios")), ...declaredFiles]);
-  return [...files].flatMap((file) => {
+  return [...new Set([...podspecsIn(dir), ...podspecsIn(path.join(dir, "ios")), ...declaredFiles])];
+}
+
+/** The text of each readable podspec of the package at `dir` (`podspecFiles`), comment lines dropped. */
+function podspecTexts(dir: string): string[] {
+  return podspecFiles(dir).flatMap((file) => {
     try {
       return [readFileSync(file, "utf8").replace(/^\s*#.*$/gm, "")];
     } catch {
@@ -218,16 +223,25 @@ function podspecTexts(dir: string): string[] {
 const NOT_AUTOLINKED = new Set(["react-native"]);
 
 /**
+ * The package.json `dependencies` of `root` (sorted by name, react-native left out) that resolve from it, with the
+ * directory each resolves to. Listed packages that are not installed are left out.
+ */
+export function dependencyDirs(root: string): { name: string; dir: string }[] {
+  const deps = readJson(path.join(root, "package.json"))?.dependencies;
+  const names = deps !== null && typeof deps === "object" ? Object.keys(deps).filter((n) => !NOT_AUTOLINKED.has(n)).sort() : [];
+  return names.flatMap((name) => {
+    const dir = packageDir(root, name);
+    return dir === undefined ? [] : [{ name, dir }];
+  });
+}
+
+/**
  * For each tracked feature, the package.json `dependencies` (sorted by name, react-native left out) that resolve from
  * `root` and whose package directory has a podspec using it. The podspecs are read as text, never evaluated.
  */
 export function podspecFeatures(root: string): Record<PodspecFeature, string[]> {
   const result = Object.fromEntries(PODSPEC_FEATURES.map(([f]) => [f, [] as string[]])) as Record<PodspecFeature, string[]>;
-  const deps = readJson(path.join(root, "package.json"))?.dependencies;
-  const names = deps !== null && typeof deps === "object" ? Object.keys(deps).filter((n) => !NOT_AUTOLINKED.has(n)).sort() : [];
-  for (const name of names) {
-    const dir = packageDir(root, name);
-    if (dir === undefined) continue;
+  for (const { name, dir } of dependencyDirs(root)) {
     const texts = podspecTexts(dir);
     for (const [feature, re] of PODSPEC_FEATURES) if (texts.some((t) => re.test(t))) result[feature].push(name);
   }
