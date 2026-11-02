@@ -3,7 +3,7 @@
  * them, instead of failing minutes later inside rn-spm or SwiftPM. Every check reads files only. Nothing installed in
  * the project is run or `require`d; the only code loaded is rn-xtool's own vendored copy of the Expo plugin's readers.
  */
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { troubleshootingUrl } from "../docs.js";
@@ -308,4 +308,128 @@ export function libraryFailures(projectRoot: string): EarlyFailure[] {
       return [];
     }
   });
+}
+
+/** Where the parent-folder lookup stops (inclusive); `/` by default. Tests pass their own temp folder. */
+export interface LookupOptions {
+  stopAt?: string;
+}
+
+/** `root`, then each parent folder up to `stopAt` (when it is one of them) or `/`. */
+function upFrom(root: string, stopAt?: string): string[] {
+  const top = stopAt === undefined ? undefined : path.resolve(stopAt);
+  const dirs = [root];
+  for (let dir = root; dir !== top && path.dirname(dir) !== dir; dir = path.dirname(dir)) dirs.push(path.dirname(dir));
+  return dirs;
+}
+
+function isDirectory(p: string): boolean {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether pnpm installed the root with the hoisted node linker (a flat node_modules of real folders). The install's own
+ * record (`node_modules/.modules.yaml`) wins; without one, `node-linker=hoisted` in `.npmrc` or `nodeLinker: hoisted`
+ * in `pnpm-workspace.yaml`.
+ */
+function pnpmHoisted(root: string): boolean {
+  const recorded = /^\s*"?nodeLinker"?\s*:\s*["']?([\w-]+)/m.exec(readText(path.join(root, "node_modules", ".modules.yaml")) ?? "")?.[1];
+  if (recorded !== undefined) return recorded === "hoisted";
+  return (
+    /^\s*node-linker\s*=\s*hoisted\s*$/m.test(readText(path.join(root, ".npmrc")) ?? "") ||
+    /^\s*nodeLinker\s*:\s*["']?hoisted["']?\s*(?:#.*)?$/m.test(readText(path.join(root, "pnpm-workspace.yaml")) ?? "")
+  );
+}
+
+/**
+ * A pnpm install of the project itself: its lockfile and its `node_modules/.pnpm` store in the root, not under the
+ * hoisted node linker. Parent folders are not read: a workspace's or a stray home-folder lockfile says nothing about
+ * how this project was installed.
+ */
+function pnpmFailure(root: string): EarlyFailure | undefined {
+  if (!existsSync(path.join(root, "pnpm-lock.yaml"))) return undefined;
+  if (!isDirectory(path.join(root, "node_modules", ".pnpm")) || pnpmHoisted(root)) return undefined;
+  return {
+    id: "pnpm",
+    reason:
+      "This project was installed with pnpm (pnpm-lock.yaml and a node_modules/.pnpm store); rn-xtool needs " +
+      "the flat node_modules that npm or Yarn classic installs. Remove node_modules and install with npm. " +
+      `See ${troubleshootingUrl("pnpm-and-yarn-pnp")}`,
+  };
+}
+
+/** Yarn Plug'n'Play in the project itself: its loader in the root, and no react-native in the root's node_modules. */
+function pnpFailure(root: string): EarlyFailure | undefined {
+  const pnp = [".pnp.cjs", ".pnp.js"].find((name) => existsSync(path.join(root, name)));
+  if (pnp === undefined || existsSync(path.join(root, "node_modules", "react-native", "package.json"))) return undefined;
+  return {
+    id: "yarn-pnp",
+    reason:
+      `This project uses Yarn Plug'n'Play (${pnp}); rn-xtool needs a node_modules folder. Add ` +
+      `nodeLinker: node-modules to .yarnrc.yml and run yarn install. See ${troubleshootingUrl("pnpm-and-yarn-pnp")}`,
+  };
+}
+
+const HOISTED_PACKAGES = ["react-native", "expo"] as const;
+
+/**
+ * react-native or expo, listed in the root package.json, found first in a parent folder's node_modules instead of the
+ * root's own (links are not followed). Node's global folders (NODE_PATH, ~/.node_modules) are not read: a copy there
+ * is no workspace's. A package found nowhere is left to the existing errors.
+ */
+function hoistedFailures(root: string, stopAt?: string): EarlyFailure[] {
+  const pkg = readJson(path.join(root, "package.json"));
+  if (pkg === undefined) return [];
+  const listed = (name: string): boolean =>
+    [pkg.dependencies, pkg.devDependencies].some((deps) => deps !== null && typeof deps === "object" && name in deps);
+  const own = path.join(root, "node_modules");
+  const lookup = upFrom(root, stopAt)
+    .filter((dir) => path.basename(dir) !== "node_modules")
+    .map((dir) => path.join(dir, "node_modules"));
+  return HOISTED_PACKAGES.filter(listed).flatMap((name): EarlyFailure[] => {
+    const found = lookup.find((dir) => existsSync(path.join(dir, name, "package.json")));
+    if (found === undefined || found === own) return [];
+    const rel = path.relative(root, path.join(found, name));
+    return [
+      {
+        id: "hoisted",
+        reason:
+          `${name} is installed in ${rel}, outside this project: a workspace hoisted it to a parent folder, and rn-xtool ` +
+          `patches and builds only the project's own node_modules/${name}. Install the app outside the workspace, or ` +
+          `keep ${name} in the app's node_modules (for example with nohoist). ` +
+          `See ${troubleshootingUrl("packages-hoisted-to-a-parent-folder")}`,
+      },
+    ];
+  });
+}
+
+/** Each check on its own: one that throws says nothing about the others. */
+function settled<T>(fn: () => T, fallback: T): T {
+  try {
+    return fn();
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Install layouts rn-xtool cannot read, in this order: pnpm, Yarn Plug'n'Play, react-native or expo hoisted to a
+ * parent folder. A layout not listed here passes and fails later. Never throws.
+ */
+export function installFailures(projectRoot: string, opts: LookupOptions = {}): EarlyFailure[] {
+  const root = path.resolve(projectRoot);
+  return [
+    ...settled(() => [pnpmFailure(root)], []),
+    ...settled(() => [pnpFailure(root)], []),
+    ...settled(() => hoistedFailures(root, opts.stopAt), []),
+  ].filter((f): f is EarlyFailure => f !== undefined);
+}
+
+/** Every setup rn-xtool refuses before a build: the install's, then the libraries'. Never throws. */
+export function earlyFailures(root: string, opts: LookupOptions = {}): EarlyFailure[] {
+  return [...installFailures(root, opts), ...libraryFailures(root)];
 }

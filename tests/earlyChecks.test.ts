@@ -1,8 +1,10 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { libraryFailures } from "../src/project/earlyChecks.js";
+import Module, { createRequire } from "node:module";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { earlyFailures, installFailures, libraryFailures } from "../src/project/earlyChecks.js";
 
 const tempDirs: string[] = [];
 
@@ -337,3 +339,182 @@ describe("libraryFailures", () => {
     expect(libraryFailures(path.join(empty, "missing"))).toEqual([]);
   });
 });
+
+const PNPM_REASON = (lock: string) =>
+  `This project was installed with pnpm (${lock} and a node_modules/.pnpm store); rn-xtool needs the flat node_modules ` +
+  `that npm or Yarn classic installs. Remove node_modules and install with npm. See ${DOCS}#pnpm-and-yarn-pnp`;
+const PNP_REASON = (pnp: string) =>
+  `This project uses Yarn Plug'n'Play (${pnp}); rn-xtool needs a node_modules folder. Add nodeLinker: node-modules to ` +
+  `.yarnrc.yml and run yarn install. See ${DOCS}#pnpm-and-yarn-pnp`;
+const HOISTED_REASON = (pkg: string, rel: string) =>
+  `${pkg} is installed in ${rel}, outside this project: a workspace hoisted it to a parent folder, and rn-xtool patches ` +
+  `and builds only the project's own node_modules/${pkg}. Install the app outside the workspace, or keep ${pkg} in the ` +
+  `app's node_modules (for example with nohoist). See ${DOCS}#packages-hoisted-to-a-parent-folder`;
+
+/** A workspace folder with an app at `apps/demo` whose package.json is `app`; returns both paths. */
+async function workspace(app: Record<string, unknown> = { name: "demo" }): Promise<{ ws: string; app: string }> {
+  const ws = await tempDir();
+  const appDir = path.join(ws, "apps", "demo");
+  await writeFiles(appDir, { "package.json": JSON.stringify(app) });
+  return { ws, app: appDir };
+}
+
+describe("installFailures", () => {
+  // Each lookup stops at the test's own temp folder: nothing in /tmp, ~ or Node's global folders is read.
+  const within = (ws: string) => ({ stopAt: ws });
+
+  it("refuses a pnpm install", async () => {
+    const root = await project({});
+    await writeFiles(root, { "pnpm-lock.yaml": "lockfileVersion: '9.0'\n", "node_modules/.pnpm/lock.yaml": "" });
+    expect(installFailures(root, within(root))).toEqual([{ id: "pnpm", reason: PNPM_REASON("pnpm-lock.yaml") }]);
+  });
+
+  it("a parent pnpm lockfile and store do not refuse an npm project", async () => {
+    const npm = await workspace({ name: "demo", dependencies: { "react-native": "*" } });
+    await writeFiles(npm.ws, { "pnpm-lock.yaml": "lockfileVersion: '9.0'\n", "node_modules/.pnpm/lock.yaml": "" });
+    await writeFiles(npm.app, { "node_modules/react-native/package.json": JSON.stringify({ name: "react-native" }) });
+    expect(installFailures(npm.app, within(npm.ws))).toEqual([]);
+
+    // A stray ~/pnpm-lock.yaml and ~/node_modules/.pnpm (one `pnpm add` in the home folder) above the app.
+    const home = await workspace();
+    await writeFiles(home.ws, { "pnpm-lock.yaml": "", "node_modules/.pnpm/lock.yaml": "" });
+    await writeFiles(home.app, { "node_modules/.pnpm/lock.yaml": "" });
+    expect(installFailures(home.app, within(home.ws))).toEqual([]);
+  });
+
+  it("a stray lockfile without a .pnpm store does not fire", async () => {
+    const root = await project({});
+    await writeFiles(root, { "pnpm-lock.yaml": "lockfileVersion: '9.0'\n" });
+    expect(installFailures(root, within(root))).toEqual([]);
+  });
+
+  it("lets a pnpm install with the hoisted node linker through", async () => {
+    const pnpm = { "pnpm-lock.yaml": "", "node_modules/.pnpm/lock.yaml": "" };
+    const cases: Record<string, string>[] = [
+      { ".npmrc": "auto-install-peers=true\nnode-linker=hoisted\n" },
+      { "pnpm-workspace.yaml": "packages:\n  - .\nnodeLinker: hoisted\n" },
+      { "pnpm-workspace.yaml": "nodeLinker: 'hoisted' # flat\n" },
+      // What pnpm 11 records after a hoisted install.
+      { "node_modules/.modules.yaml": '{\n  "layoutVersion": 5,\n  "nodeLinker": "hoisted",\n  "storeDir": "x"\n}\n' },
+    ];
+    for (const files of cases) {
+      const root = await project({});
+      await writeFiles(root, { ...pnpm, ...files });
+      expect(installFailures(root, within(root))).toEqual([]);
+    }
+    // The install's own record wins: pnpm 11 ignores node-linker in .npmrc and installs isolated.
+    const isolated = await project({});
+    await writeFiles(isolated, {
+      ...pnpm,
+      ".npmrc": "node-linker=hoisted\n",
+      "node_modules/.modules.yaml": '{\n  "nodeLinker": "isolated"\n}\n',
+    });
+    expect(installFailures(isolated, within(isolated))).toEqual([{ id: "pnpm", reason: PNPM_REASON("pnpm-lock.yaml") }]);
+  });
+
+  it("refuses Yarn PnP", async () => {
+    const root = await project({}, { dependencies: { "react-native": "*" } });
+    await writeFiles(root, { ".pnp.cjs": "" });
+    expect(installFailures(root, within(root))).toEqual([{ id: "yarn-pnp", reason: PNP_REASON(".pnp.cjs") }]);
+    const js = await project({});
+    await writeFiles(js, { ".pnp.js": "" });
+    expect(installFailures(js, within(js))).toEqual([{ id: "yarn-pnp", reason: PNP_REASON(".pnp.js") }]);
+
+    const local = await project({}, { dependencies: { "react-native": "*" } });
+    await writeFiles(local, { ".pnp.cjs": "", "node_modules/react-native/package.json": JSON.stringify({ name: "react-native" }) });
+    expect(installFailures(local, within(local))).toEqual([]);
+  });
+
+  it("a parent Yarn PnP loader does not refuse the project", async () => {
+    const { ws, app } = await workspace();
+    await writeFiles(ws, { ".pnp.cjs": "", ".pnp.js": "" });
+    expect(installFailures(app, within(ws))).toEqual([]);
+  });
+
+  it("refuses react-native hoisted to a parent folder", async () => {
+    const { ws, app } = await workspace({ name: "demo", dependencies: { "react-native": "*" } });
+    await writeFiles(ws, { "node_modules/react-native/package.json": JSON.stringify({ name: "react-native" }) });
+    expect(installFailures(app, within(ws))).toEqual([
+      { id: "hoisted", reason: HOISTED_REASON("react-native", "../../node_modules/react-native") },
+    ]);
+
+    const expo = await workspace({ name: "demo", devDependencies: { expo: "*" } });
+    await writeFiles(path.join(expo.ws, "apps"), { "node_modules/expo/package.json": JSON.stringify({ name: "expo" }) });
+    expect(installFailures(expo.app, within(expo.ws))).toEqual([{ id: "hoisted", reason: HOISTED_REASON("expo", "../node_modules/expo") }]);
+  });
+
+  it("looks for hoisted packages only in the parent folders' node_modules", async () => {
+    // NODE_PATH and ~/.node_modules are on Node's lookup paths too; a copy found only there is not a workspace's.
+    const { ws, app } = await workspace({ name: "demo", dependencies: { "react-native": "*" } });
+    const global = path.join(ws, "global");
+    await writeFiles(global, { "react-native/package.json": JSON.stringify({ name: "react-native" }) });
+    vi.stubEnv("NODE_PATH", global);
+    (Module as unknown as { _initPaths(): void })._initPaths();
+    try {
+      expect(createRequire(path.join(app, "package.json")).resolve.paths("react-native")).toContain(global);
+      expect(installFailures(app, within(ws))).toEqual([]);
+      expect(installFailures(app)).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+      (Module as unknown as { _initPaths(): void })._initPaths();
+    }
+  });
+
+  it("leaves a package found nowhere, or not listed, to the existing errors", async () => {
+    const missing = await workspace({ name: "demo", dependencies: { "react-native": "*", expo: "*" } });
+    expect(installFailures(missing.app, within(missing.ws))).toEqual([]);
+    const unlisted = await workspace({ name: "demo", dependencies: {} });
+    await writeFiles(unlisted.ws, { "node_modules/react-native/package.json": JSON.stringify({ name: "react-native" }) });
+    expect(installFailures(unlisted.app, within(unlisted.ws))).toEqual([]);
+  });
+
+  it("a symlinked react-native in node_modules is not hoisted", async () => {
+    const { ws, app } = await workspace({ name: "demo", dependencies: { "react-native": "*" } });
+    const outside = path.join(ws, "store", "react-native");
+    await writeFiles(outside, { "package.json": JSON.stringify({ name: "react-native" }) });
+    await mkdir(path.join(app, "node_modules"), { recursive: true });
+    await symlink(outside, path.join(app, "node_modules", "react-native"));
+    expect(installFailures(app, within(ws))).toEqual([]);
+  });
+
+  it("reads a relative root as the folder it names", async () => {
+    const root = await project({});
+    await writeFiles(root, { "pnpm-lock.yaml": "", "node_modules/.pnpm/lock.yaml": "" });
+    expect(installFailures(path.relative(process.cwd(), root), within(root)).map((f) => f.id)).toEqual(["pnpm"]);
+  });
+
+  it("orders pnpm, yarn-pnp and hoisted", async () => {
+    const { ws, app } = await workspace({ name: "demo", dependencies: { "react-native": "*" } });
+    await writeFiles(app, { "pnpm-lock.yaml": "", "node_modules/.pnpm/lock.yaml": "", ".pnp.cjs": "" });
+    await writeFiles(ws, { "node_modules/react-native/package.json": JSON.stringify({ name: "react-native" }) });
+    expect(installFailures(app, within(ws)).map((f) => f.id)).toEqual(["pnpm", "yarn-pnp", "hoisted"]);
+  });
+
+  it("never throws on a broken project", async () => {
+    const invalid = await tempDir();
+    await writeFile(path.join(invalid, "package.json"), "{ not json");
+    expect(installFailures(invalid, within(invalid))).toEqual([]);
+    expect(installFailures(path.join(invalid, "missing"), within(invalid))).toEqual([]);
+  });
+});
+
+describe("earlyFailures", () => {
+  it("orders install failures before library failures", async () => {
+    const root = await project({ [ASYNC_STORAGE]: asyncStorage() });
+    await writeFiles(root, { "pnpm-lock.yaml": "", "node_modules/.pnpm/lock.yaml": "" });
+    expect(earlyFailures(root, { stopAt: root }).map((f) => f.id)).toEqual(["pnpm", "vendored-binaries"]);
+  });
+});
+
+const REFERENCE_APPS = ["app-expo-57", "app", "app-bare", "app-bare-086", "app-bare-087"].map((name) =>
+  path.resolve(import.meta.dirname, "..", "..", name),
+);
+
+describe.skipIf(!REFERENCE_APPS.every((app) => existsSync(path.join(app, "package.json"))))(
+  "fires on none of the reference apps (needs ../app-expo-57, ../app, ../app-bare, ../app-bare-086 and ../app-bare-087)",
+  () => {
+    it.each(REFERENCE_APPS.map((app) => [path.basename(app), app]))("%s", (_name, app) => {
+      expect(earlyFailures(app)).toEqual([]);
+    });
+  },
+);
