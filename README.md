@@ -53,7 +53,8 @@ what does not work yet (library resource bundles, vendored binaries, Xcode-only 
 - FUSE 2 for the xtool AppImage (`sudo apt install libfuse2t64` on Ubuntu 24.04 and newer, `sudo apt install libfuse2`
   on older releases), `python3`, `iproute2`. `setup` installs Swift and prints the exact `apt-get` line for any missing
   Swift system packages ([list](docs/how-it-works.md#what-setup-installs)).
-- npm or Yarn classic. patch-package needs a flat `node_modules`; pnpm and Yarn PnP are not supported.
+- npm or Yarn classic. patch-package needs a flat `node_modules`; pnpm and Yarn PnP are not supported, and `build`
+  stops on them early ([details](docs/troubleshooting.md#pnpm-and-yarn-pnp)).
 
 ## Install
 
@@ -116,7 +117,7 @@ compares them with the last successful build and install ([details](docs/how-it-
 | --- | --- |
 | `setup [--xcode-xip <path>] [--wifi [--yes] [--udid <udid>]]` | Installs Swift via swiftly, the xtool AppImage and the Darwin SDK. Idempotent. `--wifi` is the one-time USB step for Wi‑Fi installs: it caches the pair record and, with `--yes`, enables Wi‑Fi connections on the iPhone. |
 | `auth [args...]` | Runs `xtool auth <args>` (`auth login`, `auth logout`); with no arguments, `xtool auth status`. |
-| `doctor [--project]` | Checks toolchain, SDK, login, connected device, Wi‑Fi install readiness and project. Exits non-zero on problems. `--project` checks only the project in the current folder: its version gates and what rn-xtool finds in it. |
+| `doctor [--project] [--report]` | Checks toolchain, SDK, login, connected device, Wi‑Fi install readiness and project. Exits non-zero on problems. `--project` checks only the project in the current folder: its version gates, what rn-xtool finds in it and the setups it cannot build yet. `--report` prints the same checks as one block to paste into a GitHub issue, with your home folder, Apple ID, Team ID, bundle identifiers, UDIDs, device names, IP and MAC addresses replaced by placeholders, and makes no network request ([details](docs/troubleshooting.md#reporting-a-problem)). |
 | `build [--clean]` | Prebuild if `ios/` is missing (Expo only), patches, RN/Expo SwiftPM pipeline, ExpoModulesJSI (Expo modules only), generates `ios-xtool/`, `xtool dev build`. `--clean` re-runs `expo prebuild --clean` for Expo; for bare it removes `ios/build` and `ios-xtool` and leaves the rest of `ios/` alone. |
 | `install [--network [ip] [--udid <udid>] [--pair-record <file>]]` | Signs and installs the app on the USB-connected iPhone (over Wi‑Fi without the cable with `--network`, see [docs/wifi-install.md](docs/wifi-install.md)), then prints the Metro URL (Expo apps with `expo-dev-client` only) and the first-run checklist. |
 | `start [--clear]` | Starts Metro (`npx expo start`; `npx react-native start` for bare) on the port and LAN IP the app was built for. Tells you to rebuild if either changed; clears the Metro cache when dependencies changed (or with `--clear`). |
@@ -140,6 +141,7 @@ CommonJS (`module.exports = {...}`) unless your project is ESM. Both are merged,
 | `rnArtifactsDir` | none | Use already-downloaded React Native prebuilts instead of downloading (offline). |
 | `xtoolPath` | managed copy | Use a specific xtool binary in `setup`, `doctor` and `install` (`setup` skips the download; it must exist and be executable). |
 | `projectKind` | auto-detected | `"expo"` or `"bare"`, to skip [project detection](docs/bare-react-native.md#detection). |
+| `knownLimits` | none | `{ "allow": [...] }`: build anyway a setup rn-xtool refuses early. List a package name, or `"pnpm"`, `"pnp"` or `"hoisted"`; the refusal becomes a warning, and the build may fail later ([details](docs/troubleshooting.md#unsupported-setups)). |
 
 ## Limits
 
@@ -150,6 +152,11 @@ CommonJS (`module.exports = {...}`) unless your project is ESM. Both are merged,
 - Bare projects: one app target and one `.xcodeproj`, always built for iOS 16.4; `.xcconfig` files, entitlements,
   capabilities, script phases, storyboards, asset catalogs and `.xib` files are not used ([details](docs/bare-react-native.md#limits)).
 - Metal shaders are not compiled on Linux: react-native-svg's Metal filters are unavailable.
+- `doctor --project` and `build` refuse early, with the reason and a link, the setups rn-xtool knows it cannot build
+  yet: CocoaPods-only libraries with prebuilt binaries (async-storage 3.x), Expo modules that build vendored C sources
+  (expo-sqlite), pnpm and Yarn PnP installs, and react-native or expo hoisted to a parent folder. `knownLimits.allow`
+  in `rn-xtool.config.json` builds them anyway. Other unsupported setups still fail during the build
+  ([details](docs/troubleshooting.md#unsupported-setups)).
 - A daily drift watch checks the newest patch of each supported line (version gates, bundled patches, portable library
   manifests) and opens an issue in this repo when one breaks. It does not compile or run the app, so a patch release it
   reports green can still fail G4 or the build ([details](docs/RELEASING.md#drift-watch)).
@@ -168,10 +175,15 @@ CommonJS (`module.exports = {...}`) unless your project is ESM. Both are merged,
 ## Contributing
 
 Branches: `feature/<kebab-name>` or `fix/<kebab-name>`; Conventional Commits in English (`type: short imperative
-summary`). Run `npm test` before opening a PR. It needs no external setup: tests reading the patched React Native / Expo
-files use the reference app (default `../app`, a sibling of the checkout; `RN_XTOOL_REF_APP` overrides) and skip without
-it. The functional Expo plugin check re-runs `setup-apple-spm.js update`, rewriting that app's `ios/build`, so it runs
-only with `RN_XTOOL_E2E=1` (it also needs Swift and the `shims/` directory on `PATH`).
+summary`). Run `npm test` before opening a PR; CI runs it, with lint and the private-names scan, on every pull request
+to `main` and every push to `main`. Tests read the patched upstream React Native and Expo files from pinned npm
+tarballs: run `node scripts/fetch-test-tarballs.mjs` once to fetch them into `tests/.cache` (each is checked against its
+pinned checksum). A failed fetch is retried once and then stops with the error. Without the tarballs, the tests that
+read them skip and their titles give the command; a cached tarball whose checksum does not match fails them. Tests that
+need a reference app or a device say so in their titles and skip; CI lists them by name in the run summary.
+
+To report a problem, run `rn-xtool doctor --report` and open an issue with one of the templates
+([details](docs/troubleshooting.md#reporting-a-problem)).
 
 ## License
 

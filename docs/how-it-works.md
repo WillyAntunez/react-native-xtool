@@ -267,6 +267,14 @@ patch above is what makes that scaffolder work for real-world podspecs.
   to the Expo packages that depend on the library.
 - A persisted patch written by an older scaffolder revision (or for another React Native version) gets a warning at the
   `patches` step naming the file to delete and the library to reinstall; rn-xtool then regenerates it.
+- Before anything is scaffolded, `doctor --project` and `build` check every dependency's podspec. A CocoaPods-only
+  library whose podspec declares prebuilt binaries (`vendored_frameworks`, `vendored_libraries`) cannot be scaffolded
+  yet: the generated `Package.swift` cannot link them. `build` stops on it before it changes anything, with the reason
+  and a link, instead of failing minutes later in the build. Expo modules are left to Expo's plugin, which
+  links their binaries; an Expo module that builds C sources from its `vendor/` folder (expo-sqlite) is refused the
+  same way. A `Package.swift` the library ships or your `patches/` create counts, and `knownLimits.allow` in
+  `rn-xtool.config.json` builds a refused library anyway
+  ([troubleshooting.md](troubleshooting.md#unsupported-setups)).
 
 Which libraries are verified: [libraries.md](libraries.md).
 
