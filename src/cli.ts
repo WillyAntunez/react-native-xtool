@@ -3,6 +3,7 @@ import path from "node:path";
 import { Command } from "commander";
 import { existsSync } from "node:fs";
 import { loadConfig } from "./config.js";
+import { ExitError } from "./exitError.js";
 import { auth } from "./commands/auth.js";
 import { build } from "./commands/build.js";
 import { doctor, renderReport } from "./commands/doctor.js";
@@ -19,8 +20,9 @@ function action<A extends unknown[]>(fn: (...args: A) => Promise<void>): (...arg
     try {
       await fn(...args);
     } catch (e) {
-      console.error(`✖ ${e instanceof Error ? e.message : String(e)}`);
-      process.exitCode = 1;
+      const silent = e instanceof ExitError && e.message === "";
+      if (!silent) console.error(`✖ ${e instanceof Error ? e.message : String(e)}`);
+      process.exitCode = e instanceof ExitError ? e.status : 1;
     }
   };
 }

@@ -4,11 +4,18 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildProgram } from "../src/cli.js";
+import { ExitError } from "../src/exitError.js";
 
 const doctor = vi.hoisted(() => vi.fn(async () => ({ checks: [], ok: true })));
 vi.mock("../src/commands/doctor.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/commands/doctor.js")>()),
   doctor,
+}));
+
+const auth = vi.hoisted(() => vi.fn(async (): Promise<void> => {}));
+vi.mock("../src/commands/auth.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/commands/auth.js")>()),
+  auth,
 }));
 
 const pkg = createRequire(import.meta.url)("../package.json") as { version: string };
@@ -43,6 +50,34 @@ describe("buildProgram", () => {
     expect(doctorCmd.options.map((o) => [o.flags, o.description])).toEqual([
       ["--project", "check only the project (version gates and capabilities): no toolchain, login or device checks"],
     ]);
+  });
+
+  describe("a failing action", () => {
+    const failWith = async (e: unknown): Promise<{ printed: string[]; exitCode: typeof process.exitCode }> => {
+      auth.mockRejectedValueOnce(e);
+      const printed: string[] = [];
+      const err = vi.spyOn(console, "error").mockImplementation((s: string) => void printed.push(s));
+      const saved = process.exitCode;
+      try {
+        await buildProgram().parseAsync(["node", "rn-xtool", "auth", "login"]);
+        return { printed, exitCode: process.exitCode };
+      } finally {
+        err.mockRestore();
+        process.exitCode = saved;
+      }
+    };
+
+    it("prints the error and exits 1", async () => {
+      expect(await failWith(new Error("boom"))).toEqual({ printed: ["✖ boom"], exitCode: 1 });
+    });
+
+    it("exits with an ExitError's status, printing its message if it has one", async () => {
+      expect(await failWith(new ExitError("Sign-in was interrupted.", 130))).toEqual({
+        printed: ["✖ Sign-in was interrupted."],
+        exitCode: 130,
+      });
+      expect(await failWith(new ExitError("", 130))).toEqual({ printed: [], exitCode: 130 });
+    });
   });
 
   describe("doctor action", () => {
