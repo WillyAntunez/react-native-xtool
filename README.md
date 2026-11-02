@@ -70,7 +70,7 @@ Updating: re-run `npm i -g react-native-xtool@alpha` (or use `npx react-native-x
 ## Quick start
 
 ```sh
-rn-xtool setup --xcode-xip ~/Downloads/Xcode_27.1.xip   # once per machine: Swift 6.4, xtool 1.23.0, Darwin SDK
+rn-xtool setup --xcode-xip ~/Downloads/Xcode_27.1.xip   # once per machine: Swift 6.4, xtool 1.24.0, Darwin SDK
 rn-xtool auth login                                     # your Apple ID (interactive, handled by xtool)
 ```
 

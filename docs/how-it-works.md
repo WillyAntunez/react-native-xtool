@@ -11,7 +11,7 @@ step with file locations.
 
 ## What `setup` installs
 
-- Swift 6.4 via swiftly, the xtool 1.23.0 AppImage (needs FUSE 2: `libfuse2t64` on Ubuntu 24.04 and newer, `libfuse2`
+- Swift 6.4 via swiftly, the xtool 1.24.0 AppImage (needs FUSE 2: `libfuse2t64` on Ubuntu 24.04 and newer, `libfuse2`
   on older releases) and the Darwin SDK extracted from your `Xcode.xip` (Xcode 27.x). About 15 GB of free disk:
   Xcode.xip is about 12 GB, the extracted SDK about 7 GB. `setup` is idempotent.
 - Swift's system packages are not installed for you: when some are missing, `setup` prints the exact

@@ -9,7 +9,7 @@ for [Expo SDK 57](#expo-sdk-57-notes) and [bare React Native](#bare-react-native
 - **Swift 6.4** via swiftly (`~/.local/share/swiftly`). SwiftPM older than 6.4 does not resolve xcframeworks on Linux
   (SwiftPM PR #9301, in 6.3, fixed binary-target `artifactPath` with `--build-system swiftbuild`; xtool PR #369 shipped
   a static xcframework built on Linux). `parseXCFrameworks` picks the `ios` slice regardless of host.
-- **xtool 1.23.0** AppImage, used unmodified (pinned in `src/versions.ts`).
+- **xtool 1.24.0** AppImage, used unmodified (pinned in `src/versions.ts`).
 - **Darwin SDK** (iPhoneOS 27.1) extracted from the user's `Xcode.xip` into
   `~/.swiftpm/swift-sdks/darwin.artifactbundle` (about 7 GB). Sanity check: `xtool dev build` on
   `Examples/DemoSimple` builds in about 6.5 s.
