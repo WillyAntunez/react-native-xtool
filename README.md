@@ -7,7 +7,7 @@ SwiftPM pipeline.
 [![npm](https://img.shields.io/npm/v/react-native-xtool/alpha?label=npm%20%40alpha)](https://www.npmjs.com/package/react-native-xtool)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-**Status:** alpha, [`react-native-xtool@0.1.0-alpha.3` on npm](https://www.npmjs.com/package/react-native-xtool) under the
+**Status:** alpha, [`react-native-xtool@0.1.0-alpha.4` on npm](https://www.npmjs.com/package/react-native-xtool) under the
 `alpha` tag. Verified end to end on a physical iPhone on 2026-10-28.
 
 <!-- demo GIF: rn-xtool run → app opens on the iPhone → Fast Refresh -->
