@@ -254,7 +254,7 @@ const repoRoot = path.resolve(here, "..");
 const referenceApps = ["app-bare-086", "app-bare-087", "app-bare"].map((a) => path.resolve(repoRoot, "..", a));
 
 describe.skipIf(!referenceApps.every((a) => existsSync(path.join(a, "node_modules", "react-native", "scripts"))))(
-  "the reference apps",
+  "the reference apps (needs ../app-bare-086, ../app-bare-087 and ../app-bare)",
   () => {
     it("detects the installed shapes of the reference apps", () => {
       const shapes = referenceApps.map((a) => readScriptsShape(path.join(a, "node_modules", "react-native", "scripts")));

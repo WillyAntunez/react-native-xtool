@@ -1,10 +1,9 @@
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
-import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { execa } from "execa";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   GOLDEN_LIBS,
   PODSPEC_FIXTURES,
@@ -13,28 +12,30 @@ import {
   scaffoldLibraries,
   withRnRoot,
 } from "./support/rnScaffold.js";
+import { needsTarball, packageFromTarball, patchedSpm } from "./support/tarballs.js";
+import { SWIFT_TEST_TIMEOUT_MS, SWIFT_TIMEOUT_MS, hasTool, tool } from "./support/tools.js";
 
-// Exercises the PATCHED react-native SwiftPM scaffolder (patches/react-native+<version>.patch, the
-// bundled patch for the React Native the reference app has installed) as installed in the reference
-// app (override with RN_XTOOL_REF_APP). Skipped when that app is not on this machine.
+// Exercises the PATCHED react-native SwiftPM scaffolder (patches/react-native+0.88.1.patch applied to the pristine
+// react-native 0.88.1 from tests/.cache) on fixtures and on the real podspecs of pinned library tarballs. Its tests
+// skip without those tarballs, and load the patched copy in a test or beforeAll, never while the file is collected.
+const RN = "react-native@0.88.1";
+const NEEDS_RN = needsTarball(RN);
+let SPM = "";
+/** A real library podspec from its pinned tarball, and what its tests need to run. */
+const realPodspec = (spec: string, file: string) => ({
+  needs: needsTarball(spec),
+  path: () => path.join(packageFromTarball(spec)!, file),
+});
+const RNGH_PODSPEC = realPodspec("react-native-gesture-handler@3.4.0", "RNGestureHandler.podspec");
+const SCREENS_PODSPEC = realPodspec("react-native-screens@4.30.0", "RNScreens.podspec");
+const SVG_PODSPEC = realPodspec("react-native-svg@15.16.0", "RNSVG.podspec");
+// The golden test scaffolds the reference app's libraries (override with RN_XTOOL_REF_APP).
 const APP = process.env["RN_XTOOL_REF_APP"] ?? path.resolve(import.meta.dirname, "../../app");
-const SPM = path.join(APP, "node_modules/react-native/scripts/spm");
-const RNGH_PODSPEC = path.join(
-  APP,
-  "node_modules/react-native-gesture-handler/RNGestureHandler.podspec",
+const SWIFTLY_PATH = `${process.env["HOME"]}/.local/share/swiftly/bin:${process.env["PATH"]}`;
+/** `swift package dump-package` reads the 6.4 manifest only with a 6.4 toolchain (6.5 picks Package@swift-6.5.swift). */
+const swift64 = /\bSwift version 6\.4(\.\d+)?\b/.test(
+  tool("swift", ["--version"], { env: { ...process.env, PATH: SWIFTLY_PATH }, timeout: SWIFT_TIMEOUT_MS }).stdout ?? "",
 );
-const SVG_PODSPEC = path.join(APP, "node_modules/react-native-svg/RNSVG.podspec");
-const APP_RN = ((): string | undefined => {
-  try {
-    return JSON.parse(readFileSync(path.join(APP, "node_modules/react-native/package.json"), "utf8")).version;
-  } catch {
-    return undefined;
-  }
-})();
-const PATCH = path.resolve(import.meta.dirname, `../patches/react-native+${APP_RN}.patch`);
-const SCREENS_PODSPEC = path.join(APP, "node_modules/react-native-screens/RNScreens.podspec");
-const available = existsSync(path.join(SPM, "read-podspec.js"));
-const hasPatchBinary = spawnSync("patch", ["--version"]).error === undefined;
 
 type Model = { sourceFiles: string[] };
 type Spec = { publicHeadersPath: string | null; namespacedShimHeaders: string[]; warnings: string[] };
@@ -52,8 +53,8 @@ afterAll(() => {
   for (const d of tmp) rmSync(d, { recursive: true, force: true });
 });
 /**
- * A copy of one of the reference app's podspecs, with what it reads (package.json, svg's scripts/): reading a podspec
- * writes a temporary `.spm-scaffold-*.podspec` next to it, which must not land in the app's node_modules.
+ * A copy of a library podspec, with what it reads (package.json, svg's scripts/): reading a podspec
+ * writes a temporary `.spm-scaffold-*.podspec` next to it, which must not land in the shared pristine tree.
  */
 function podspecCopy(file: string): string {
   const dir = tempDir();
@@ -64,7 +65,10 @@ function podspecCopy(file: string): string {
   return path.join(dir, path.basename(file));
 }
 
-describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
+describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () => {
+  beforeAll(() => {
+    SPM = patchedSpm(RN)!;
+  }, 60_000);
   const req = createRequire(import.meta.url);
   const load = <T>(f: string) => req(path.join(SPM, f)) as T;
 
@@ -75,7 +79,7 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
     return file;
   }
 
-  describe("the installed RN files carry the patch", () => {
+  describe("the patched RN files carry the patch", () => {
     // Guards against testing an unpatched RN: each hunk must be present in what the tests load.
     const src = (f: string) => readFileSync(path.join(SPM, f), "utf8");
     it("read-podspec.js has the bare-list hunk", () => {
@@ -146,15 +150,6 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
     expect(map).not.toMatch(/umbrella|header "/);
   });
 
-  if (existsSync(PATCH)) {
-    it.skipIf(!hasPatchBinary)(`the committed ${path.basename(PATCH)} reverse-applies cleanly to the installed RN files`, async () => {
-      const r = await execa("patch", ["-R", "-p1", "-F0", "--dry-run", "-i", PATCH], { cwd: APP, reject: false });
-      expect(r.exitCode, `${r.stdout}\n${r.stderr}`).toBe(0);
-    });
-  } else {
-    it.skip(`the committed patch reverse-applies: no bundled patch for the reference app's React Native ${APP_RN}`, () => {});
-  }
-
   describe("read-podspec getArrayField", () => {
     const read = (body: string) =>
       load<ReadPodspec>("read-podspec.js").readPodspecCached(podspec(body)).sourceFiles;
@@ -171,8 +166,8 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
     it("keeps the single string form", () => {
       expect(read('s.source_files = "a/*.h"')).toEqual(["a/*.h"]);
     });
-    it.skipIf(!existsSync(RNGH_PODSPEC))("reads all globs of the real RNGH podspec", () => {
-      const globs = load<ReadPodspec>("read-podspec.js").readPodspecCached(podspecCopy(RNGH_PODSPEC)).sourceFiles;
+    it.skipIf(RNGH_PODSPEC.needs !== "")(`reads all globs of the real RNGH podspec${RNGH_PODSPEC.needs}`, () => {
+      const globs = load<ReadPodspec>("read-podspec.js").readPodspecCached(podspecCopy(RNGH_PODSPEC.path())).sourceFiles;
       expect(globs).toContain("shared/**/*.{h,cpp}");
       expect(globs.length).toBeGreaterThan(1);
     });
@@ -198,8 +193,8 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
     it("leaves an unknown interpolation as-is", () => {
       expect(read('s.source_files = "a/*.#{x}"')).toEqual(["a/*.#{x}"]);
     });
-    it.skipIf(!existsSync(SCREENS_PODSPEC))("reads the real RNScreens podspec", () => {
-      const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(podspecCopy(SCREENS_PODSPEC)) as Model & {
+    it.skipIf(SCREENS_PODSPEC.needs !== "")(`reads the real RNScreens podspec${SCREENS_PODSPEC.needs}`, () => {
+      const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(podspecCopy(SCREENS_PODSPEC.path())) as Model & {
         excludeFiles: string[];
       };
       expect(m.sourceFiles.some((g) => g.startsWith("ios/**"))).toBe(true);
@@ -236,8 +231,8 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       const m = readModel(`s.default_subspecs = ["a"]\n  s.source_files = "m/*.mm"\n  ${SUB}`);
       expect(m.sourceFiles).toEqual(["m/*.mm", "a/*.cpp"]);
     });
-    it.skipIf(!existsSync(SCREENS_PODSPEC))("reads the real RNScreens common subspec", () => {
-      const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(podspecCopy(SCREENS_PODSPEC)) as Model & {
+    it.skipIf(SCREENS_PODSPEC.needs !== "")(`reads the real RNScreens common subspec${SCREENS_PODSPEC.needs}`, () => {
+      const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(podspecCopy(SCREENS_PODSPEC.path())) as Model & {
         headerSearchPaths: string[];
       };
       expect(m.sourceFiles.some((g) => g.startsWith("ios/**"))).toBe(true);
@@ -355,8 +350,8 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       expect(m.excludeFiles).toContain("**/*.macos.{h,m,mm}");
       expect(m.excludeFiles).not.toContain("**/*.ios.{h,m,mm}");
     });
-    it.skipIf(!existsSync(SVG_PODSPEC))("reads the real react-native-svg podspec", () => {
-      const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(podspecCopy(SVG_PODSPEC)) as Model & {
+    it.skipIf(SVG_PODSPEC.needs !== "")(`reads the real react-native-svg podspec${SVG_PODSPEC.needs}`, () => {
+      const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(podspecCopy(SVG_PODSPEC.path())) as Model & {
         excludeFiles: string[];
       };
       expect(m.excludeFiles).toContain("**/*.macos.{h,m,mm}");
@@ -400,10 +395,13 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       expect(names(m.preprocessorDefines)).toEqual(["OK=1"]);
     });
     describe("React Native version macros", () => {
-      const rnVersion = (
-        JSON.parse(readFileSync(path.join(APP, "node_modules/react-native/package.json"), "utf8")) as { version: string }
-      ).version.split(".");
-      const [major, minor, patch] = rnVersion;
+      // The patched copy reads the macros from its own package.json.
+      let major: string | undefined, minor: string | undefined, patch: string | undefined;
+      beforeAll(() => {
+        [major, minor, patch] = (
+          JSON.parse(readFileSync(path.join(SPM, "..", "..", "package.json"), "utf8")) as { version: string }
+        ).version.split(".");
+      });
       it("resolves REACT_NATIVE_*_VERSION=#{...} from the installed RN and warns", () => {
         const m = model(
           "s.pod_target_xcconfig = { \"OTHER_CFLAGS\" => \"$(inherited) -DREACT_NATIVE_MINOR_VERSION=#{cfg[:minor]} -DFOO=#{bar}\" }\n" +
@@ -424,8 +422,8 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
         const m = model('s.pod_target_xcconfig = { "OTHER_CFLAGS" => "-DFOO=#{bar} -DREACT_NATIVE_VERSION_X=#{y}" }');
         expect(names(m.preprocessorDefines)).toEqual([]);
       });
-      it.skipIf(!existsSync(SVG_PODSPEC))("the real react-native-svg podspec gets REACT_NATIVE_MINOR_VERSION", () => {
-        const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(podspecCopy(SVG_PODSPEC)) as unknown as Model;
+      it.skipIf(SVG_PODSPEC.needs !== "")(`the real react-native-svg podspec gets REACT_NATIVE_MINOR_VERSION${SVG_PODSPEC.needs}`, () => {
+        const m = load<ReadPodspec>("read-podspec.js").readPodspecCached(podspecCopy(SVG_PODSPEC.path())) as unknown as Model;
         expect(names(m.preprocessorDefines)).toContain(`REACT_NATIVE_MINOR_VERSION=${minor}`);
       });
     });
@@ -546,7 +544,8 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       const pkg = readFileSync(path.join(dep.root, "Package.swift"), "utf8");
       expect(pkg).toContain('exclude: ["apple/Filters/A.metal", "apple/Filters/B.metal"]');
     });
-    it("emits target arguments in SwiftPM's required order (resources before publicHeadersPath)", async () => {
+    /** A library with resources and public headers, scaffolded: its root. */
+    function scaffoldWithResources(): string {
       const { dep } = lib("apple/**/*.{h,m}", 's.resources = "assets/*.png"');
       mkdirSync(path.join(dep.root, "assets"), { recursive: true });
       writeFileSync(path.join(dep.root, "assets/a.png"), "");
@@ -557,45 +556,26 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       };
       const ctx = { appRoot: dep.root, projectRoot: dep.root, reactNativeRoot: dep.root, force: true, dryRun: false, cacheSlotLabel: null, remote: null };
       load<{ scaffoldPackageSwiftForDep(d: object, c: object): unknown }>("scaffold-package-swift.js").scaffoldPackageSwiftForDep(full, ctx);
-      const pkg = readFileSync(path.join(dep.root, "Package.swift"), "utf8");
+      return dep.root;
+    }
+    it("emits target arguments in SwiftPM's required order (resources before publicHeadersPath)", () => {
+      const pkg = readFileSync(path.join(scaffoldWithResources(), "Package.swift"), "utf8");
       const at = (k: string) => pkg.indexOf(`${k}:`, pkg.indexOf("path:"));
       expect(at("resources")).toBeGreaterThan(-1);
       expect(at("publicHeadersPath")).toBeGreaterThan(-1);
       expect(at("sources")).toBeLessThan(at("resources"));
       expect(at("resources")).toBeLessThan(at("publicHeadersPath"));
+    });
+    it.skipIf(!swift64)("the manifest with resources and public headers is accepted by swift package dump-package (needs Swift 6.4)", async () => {
       const swift = await execa("swift", ["package", "dump-package"], {
-        cwd: dep.root,
+        cwd: scaffoldWithResources(),
         reject: false,
-        env: { PATH: `${process.env["HOME"]}/.local/share/swiftly/bin:${process.env["PATH"]}` },
+        env: { PATH: SWIFTLY_PATH },
+        timeout: SWIFT_TIMEOUT_MS,
       });
       expect(swift.stderr).not.toContain("must precede argument");
-    });
-    it("emits target arguments in SwiftPM's required order (resources before publicHeadersPath)", async () => {
-      const { dep } = lib("apple/**/*.{h,m}", 's.resources = "assets/*.png"');
-      mkdirSync(path.join(dep.root, "assets"), { recursive: true });
-      writeFileSync(path.join(dep.root, "assets/a.png"), "");
-      const full = {
-        ...dep,
-        swiftNameSource: "podspec",
-        platforms: { ios: { podspecPath: path.join(dep.root, "Foo.podspec") } },
-      };
-      const ctx = { appRoot: dep.root, projectRoot: dep.root, reactNativeRoot: dep.root, force: true, dryRun: false, cacheSlotLabel: null, remote: null };
-      load<{ scaffoldPackageSwiftForDep(d: object, c: object): unknown }>("scaffold-package-swift.js").scaffoldPackageSwiftForDep(full, ctx);
-      const pkg = readFileSync(path.join(dep.root, "Package.swift"), "utf8");
-      const at = (k: string) => pkg.indexOf(`${k}:`, pkg.indexOf("path:"));
-      expect(at("resources")).toBeGreaterThan(-1);
-      expect(at("publicHeadersPath")).toBeGreaterThan(-1);
-      expect(at("sources")).toBeLessThan(at("resources"));
-      expect(at("resources")).toBeLessThan(at("publicHeadersPath"));
-      const swift = await execa("swift", ["package", "dump-package"], {
-        cwd: dep.root,
-        reject: false,
-        env: { PATH: `${process.env["HOME"]}/.local/share/swiftly/bin:${process.env["PATH"]}` },
-      });
-      if (!swift.failed || !/ENOENT/.test(String(swift.code ?? swift.message))) {
-        expect(swift.stderr).not.toContain("must precede argument");
-      }
-    });
+      expect(swift.exitCode, swift.stderr).toBe(0);
+    }, SWIFT_TEST_TIMEOUT_MS);
   });
 
   describe("umbrella header layout", () => {
@@ -939,21 +919,16 @@ describe.skipIf(!available)("patched RN SwiftPM scaffolder", () => {
       expect(pkg).not.toContain("Package@swift-6.5.swift");
     });
 
-    it("emits a manifest SwiftPM accepts (a 6.4 toolchain ignores the 6.5 one)", async () => {
+    it.skipIf(!swift64)("emits a manifest SwiftPM accepts (a 6.4 toolchain ignores the 6.5 one) (needs Swift 6.4)", async () => {
       const lib = mixedLib(FIXTURES["circular"]!);
       const { pkg } = scaffoldMixed(lib);
       const root = tempDir();
       writeFileSync(path.join(root, "Package.swift"), pkg);
       writeFileSync(path.join(root, "Package@swift-6.5.swift"), readFileSync(path.join(lib, "Package@swift-6.5.swift"), "utf8"));
-      const swift = await execa("swift", ["package", "dump-package"], {
-        cwd: root,
-        reject: false,
-        env: { PATH: `${process.env["HOME"]}/.local/share/swiftly/bin:${process.env["PATH"]}` },
-      });
-      if (swift.failed && /ENOENT/.test(String(swift.code ?? swift.message))) return;
+      const swift = await execa("swift", ["package", "dump-package"], { cwd: root, reject: false, env: { PATH: SWIFTLY_PATH }, timeout: SWIFT_TIMEOUT_MS });
       expect(swift.exitCode, swift.stderr).toBe(0);
       expect(JSON.parse(swift.stdout).toolsVersion._version).toBe("6.4.0");
-    });
+    }, SWIFT_TEST_TIMEOUT_MS);
   });
 
   describe("bare React header imports", () => {
@@ -1141,7 +1116,7 @@ describe("scaffolder fixes 14–18 (vendor/rn-spm)", () => {
   const defineOf = (pkg: string, name: string) => pkg.match(new RegExp(`\\.define\\("${name}", to: "([^"]*)"\\)`))?.[1];
 
   it.skipIf(!GOLDEN_LIBS.every((l) => existsSync(path.join(APP, "node_modules", l))))(
-    "scaffolds the reference app's libraries as the golden",
+    "scaffolds the reference app's libraries as the golden (needs RN_XTOOL_REF_APP or ../app with the eight golden libraries)",
     () => {
       const golden = readGolden();
       const now = scaffoldLibraries(
@@ -1372,7 +1347,7 @@ describe("scaffolder fixes 14–18 (vendor/rn-spm)", () => {
   });
 
   const clang = [path.join(homedir(), ".local/share/swiftly/bin/clang"), "clang"].find(
-    (c) => spawnSync(c, ["--version"]).status === 0,
+    (c) => hasTool(c),
   );
   it.skipIf(clang === undefined)("18: clang builds the module from the map, without the headers it leaves out", () => {
     const root = lib(
@@ -1389,11 +1364,16 @@ describe("scaffolder fixes 14–18 (vendor/rn-spm)", () => {
     const importer = path.join(tempDir(), "importer.c");
     writeFileSync(importer, '#include "A.h"\nint main(void) { return a(); }\n');
     const build = () =>
-      spawnSync(
-        clang!,
-        ["-fmodules", `-fmodules-cache-path=${tempDir()}`, `-fmodule-map-file=${map}`, "-I", path.join(root, "ios"), "-fsyntax-only", "-Rmodule-import", importer],
-        { encoding: "utf8" },
-      );
+      tool(clang!, [
+        "-fmodules",
+        `-fmodules-cache-path=${tempDir()}`,
+        `-fmodule-map-file=${map}`,
+        "-I",
+        path.join(root, "ios"),
+        "-fsyntax-only",
+        "-Rmodule-import",
+        importer,
+      ]);
     const ok = build();
     expect(ok.status, ok.stderr).toBe(0);
     // A kept header is still a member: the importer's #include becomes a module import.

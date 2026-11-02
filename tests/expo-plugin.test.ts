@@ -1,10 +1,10 @@
-import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { execa } from "execa";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import {
+  EXPO_SKIP_NOTE,
   type Classify,
   type Diagnostics,
   DEV_CLIENT_DEPS,
@@ -25,28 +25,27 @@ import {
   vendoredSpm,
 } from "./support/expoSpm.js";
 import { PODSPEC_FIXTURES, VENDORED_RN_SPM, scaffoldLibraries } from "./support/rnScaffold.js";
+import { needsTarball, patchedSpm } from "./support/tarballs.js";
 
-// Exercises the PATCHED Expo SwiftPM plugin (patches/expo+58.0.21.patch) as installed in the
-// reference app (override with RN_XTOOL_REF_APP). Skipped when that app is not on this machine.
-const APP = process.env["RN_XTOOL_REF_APP"] ?? path.resolve(import.meta.dirname, "../../app");
-const SPM = path.join(APP, "node_modules/expo/scripts/spm");
-const MANIFESTS = path.join(SPM, "manifests.js");
+// Exercises the PATCHED Expo SwiftPM plugin (patches/expo+58.0.21.patch applied to the pristine expo 58.0.21 from
+// tests/.cache). Its blocks skip without that tarball. Each test loads the patched copy, never the file's collection.
+const EXPO = "expo@58.0.21";
+const NEEDS_EXPO = needsTarball(EXPO);
+let SPM = "";
+/** Extracts and patches the copy (once per file) before the block's tests. */
+const withPatchedSpm = () =>
+  beforeAll(() => {
+    SPM = patchedSpm(EXPO)!;
+  }, 60_000);
 const COMMITTED_PATCH = path.resolve(import.meta.dirname, "../patches/expo+58.0.21.patch");
-// The functional test re-runs `setup-apple-spm.js update` and rewrites the app's ios/build, so it
-// is opt-in: RN_XTOOL_E2E=1.
+// The functional test re-runs `setup-apple-spm.js update` in the reference app (override with RN_XTOOL_REF_APP) and
+// rewrites its ios/build, so it is opt-in: RN_XTOOL_E2E=1.
+const APP = process.env["RN_XTOOL_REF_APP"] ?? path.resolve(import.meta.dirname, "../../app");
 const e2e = process.env["RN_XTOOL_E2E"] === "1";
-const available = existsSync(MANIFESTS) && existsSync(path.join(APP, "ios/build"));
-const hasPatchBinary = spawnSync("patch", ["--version"]).error === undefined;
 
-// Guards the committed patch against drift from the installed copy (the RN patch has the same guard).
-describe.skipIf(!existsSync(MANIFESTS) || !hasPatchBinary)("committed Expo patch", () => {
-  it("reverse-applies cleanly to the installed Expo files", async () => {
-    const r = await execa("patch", ["-R", "-p1", "-F0", "--dry-run", "-i", COMMITTED_PATCH], { cwd: APP, reject: false });
-    expect(r.exitCode, `${r.stdout}\n${r.stderr}`).toBe(0);
-  });
-});
+describe.skipIf(NEEDS_EXPO !== "")(`patched Expo SwiftPM plugin${NEEDS_EXPO}`, () => {
+  withPatchedSpm();
 
-describe.skipIf(!available)("patched Expo SwiftPM plugin", () => {
   it("the committed patch carries the umbrella-header hunk", () => {
     const patch = readFileSync(COMMITTED_PATCH, "utf8");
     const hunk = patch.split(/^diff --git /m).find((h) => h.includes("scripts/spm/manifests.js")) ?? "";
@@ -66,54 +65,67 @@ describe.skipIf(!available)("patched Expo SwiftPM plugin", () => {
     expect(patch).toContain("writeIfChanged(umbrella, umbrellaSource);");
   });
 
-  it("the installed copy carries the umbrella-header hunk", () => {
-    const src = readFileSync(MANIFESTS, "utf8");
+  it("the patched copy carries the umbrella-header hunk", () => {
+    const src = readFileSync(path.join(SPM, "manifests.js"), "utf8");
     expect(src).toContain("declaresBridgingHeader");
     expect(src).toContain("umbrella.h");
     expect(src).toContain("-import-objc-header");
   });
 
-  it.skipIf(!e2e)("emits umbrella.h and the bridging-header flag for ExpoImagePicker", async () => {
-    const shims = path.resolve(import.meta.dirname, "../shims");
-    const env = {
-      ...process.env,
-      PATH: [path.join(homedir(), ".local/share/swiftly/bin"), shims, process.env["PATH"]].join(path.delimiter),
-    };
-    await execa(
-      "node",
-      [
-        "../node_modules/react-native/scripts/setup-apple-spm.js",
-        "update",
-        "--yes",
-        "--config-command",
-        '["npx","expo-modules-autolinking","react-native-config","--json","--platform","ios"]',
-      ],
-      { cwd: path.join(APP, "ios"), env },
-    );
-    const dir = path.join(APP, "ios/build/generated/autolinking/expo/expo-source/ExpoImagePicker");
-    expect(readFileSync(path.join(dir, "umbrella.h"), "utf8")).toBe(
-      "#import <Foundation/Foundation.h>\n#import <UIKit/UIKit.h>\n",
-    );
-    expect(readFileSync(path.join(dir, "Package.swift"), "utf8")).toContain(
-      `"-import-objc-header", "${path.join(dir, "umbrella.h")}"`,
-    );
-  }, 120_000);
+  it.skipIf(!e2e || !existsSync(path.join(APP, "ios/build")))(
+    "emits umbrella.h and the bridging-header flag for ExpoImagePicker (needs ../app and RN_XTOOL_E2E=1)",
+    async () => {
+      const shims = path.resolve(import.meta.dirname, "../shims");
+      const env = {
+        ...process.env,
+        PATH: [path.join(homedir(), ".local/share/swiftly/bin"), shims, process.env["PATH"]].join(path.delimiter),
+      };
+      await execa(
+        "node",
+        [
+          "../node_modules/react-native/scripts/setup-apple-spm.js",
+          "update",
+          "--yes",
+          "--config-command",
+          '["npx","expo-modules-autolinking","react-native-config","--json","--platform","ios"]',
+        ],
+        { cwd: path.join(APP, "ios"), env, timeout: 110_000 },
+      );
+      const dir = path.join(APP, "ios/build/generated/autolinking/expo/expo-source/ExpoImagePicker");
+      expect(readFileSync(path.join(dir, "umbrella.h"), "utf8")).toBe(
+        "#import <Foundation/Foundation.h>\n#import <UIKit/UIKit.h>\n",
+      );
+      expect(readFileSync(path.join(dir, "Package.swift"), "utf8")).toContain(
+        `"-import-objc-header", "${path.join(dir, "umbrella.h")}"`,
+      );
+    },
+    120_000,
+  );
 });
 
 // --- Generated source packages for modules without a Package.swift (mixed, ObjC-only, ...) ---
 
-const spmAvailable = existsSync(path.join(SPM, "classify.js"));
-
-describe.skipIf(!spmAvailable)("patched Expo SwiftPM plugin: generated source packages", () => {
+describe.skipIf(NEEDS_EXPO !== "")(`patched Expo SwiftPM plugin: generated source packages${NEEDS_EXPO}`, () => {
+  withPatchedSpm();
   const load = <T>(f: string) => loadSpm<T>(SPM, f);
-  const classify = load<Classify>("classify.js");
-  const podspec = load<Podspec>("podspec.js");
-  const plugin = load<Plugin>("plugin.js");
-  const manifests = load<Manifests>("manifests.js");
+  let classify: Classify;
+  let podspec: Podspec;
+  let plugin: Plugin;
+  let manifests: Manifests;
+  beforeAll(() => {
+    classify = load<Classify>("classify.js");
+    podspec = load<Podspec>("podspec.js");
+    plugin = load<Plugin>("plugin.js");
+    manifests = load<Manifests>("manifests.js");
+  });
 
   describe("mixed Swift + Objective-C (expo-application's shape)", () => {
     const root = moduleFixture("MixMod", MIXMOD_FILES);
-    const { sources, layout } = layoutOf(SPM, "MixMod", root);
+    let sources: ReturnType<typeof layoutOf>["sources"];
+    let layout: ReturnType<typeof layoutOf>["layout"];
+    beforeAll(() => {
+      ({ sources, layout } = layoutOf(SPM, "MixMod", root));
+    });
 
     it("classifies as mixed with C++", () => {
       expect(layout).toBe("mixed");
@@ -468,7 +480,7 @@ const ROUTER_PODSPEC = `s.source_files = "**/*.{h,m,swift}"\n  s.dependency 'Exp
 describe.skipIf(shared58 === undefined).each([
   ["shared 58", shared58!],
   ["vendored", vendoredSpm()],
-])("Expo SwiftPM plugin fixes (%s copy)", (_label, spm) => {
+])(`Expo SwiftPM plugin fixes (%s copy)${shared58 === undefined ? EXPO_SKIP_NOTE : ""}`, (_label, spm) => {
   const plugin = () => loadSpm<PluginDeps>(spm, "plugin.js");
 
   it("X3 keeps own -Swift.h importers out of the umbrella", () => {
@@ -644,7 +656,7 @@ describe.skipIf(shared58 === undefined).each([
   });
 });
 
-describe.skipIf(shared58 === undefined)("Expo 58 golden", () => {
+describe.skipIf(shared58 === undefined)(`Expo 58 golden${shared58 === undefined ? EXPO_SKIP_NOTE : ""}`, () => {
   it("Expo 58's generated packages are unchanged", () => {
     const emitted = expo58GoldenEmissions(shared58!);
     const golden = Object.fromEntries(

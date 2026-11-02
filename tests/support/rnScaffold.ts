@@ -14,6 +14,10 @@ const ROOT = packageRoot();
 export const VENDORED_RN_SPM = path.join(ROOT, "vendor", "rn-spm", "spm");
 export const SCAFFOLD_GOLDEN = path.join(ROOT, "tests", "fixtures", "scaffold-golden");
 export const PODSPEC_FIXTURES = path.join(ROOT, "tests", "fixtures", "podspecs");
+/** The pristine React Native that `vendor/rn-spm` derives from, and its npm integrity. */
+export const RN_TARBALL = path.join(ROOT, "tests", ".cache", "react-native-0.88.0.tgz");
+export const RN_INTEGRITY =
+  "sha512-v/wee0nYWcammMYBnSat/e3WY/5iaf9YQOMcBrfKT/wPApPPlHp94hgZovBtwhMuthR01yc/8cGn0FpFTE/C4A==";
 
 /** The libraries whose scaffolds the reference app persists in `patches/`. */
 export const GOLDEN_LIBS = [
