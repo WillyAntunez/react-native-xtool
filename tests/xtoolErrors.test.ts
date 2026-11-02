@@ -65,6 +65,33 @@ describe("explainXtoolOutput", () => {
   });
 });
 
+const appIdLimit = (n: number, days: number): string =>
+  `Apple refused to register another App ID: a free Apple ID can register ${n} App IDs per ${days} days, and each new ` +
+  "bundle identifier takes one. Reuse a bundle identifier that is already installed on your iPhone, without the " +
+  "XTL-<Team ID>. prefix xtool adds: set it as ios.bundleIdentifier in the Expo app config, or as " +
+  "PRODUCT_BUNDLE_IDENTIFIER of the app target in a bare project, then run `rn-xtool build` and `rn-xtool install` " +
+  `again. Or wait until the oldest of those App IDs is ${days} days old. ` +
+  "See https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/troubleshooting.md#app-id-limit";
+
+describe("explainXtoolOutput: App ID limit", () => {
+  it("explains the free App ID limit", () => {
+    const dump = fixture("app-id-limit");
+    expect(explainXtoolOutput(dump)).toEqual({ id: "app-id-limit", message: appIdLimit(10, 7) });
+    const other = dump.replace("up to 10 App IDs every 7 days", "up to 12 App IDs every 5 days");
+    expect(other).not.toBe(dump);
+    expect(explainXtoolOutput(other)).toEqual({ id: "app-id-limit", message: appIdLimit(12, 5) });
+    expect(explainXtoolOutput("maximum App ID limit has been reached.")).toEqual({
+      id: "app-id-limit",
+      message: appIdLimit(10, 7),
+    });
+  });
+
+  it("is matched before the sign-in failures", () => {
+    const both = `${fixture("connect-timeout")}\n${fixture("app-id-limit")}`;
+    expect(explainXtoolOutput(both, { login: true })?.id).toBe("app-id-limit");
+  });
+});
+
 describe("explainXtoolError", () => {
   it("reads both stderr and stdout", () => {
     const signIn = { signIn: true };

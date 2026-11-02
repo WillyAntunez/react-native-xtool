@@ -1,3 +1,5 @@
+import { troubleshootingUrl } from "../docs.js";
+
 /**
  * Known xtool failures whose raw output says little to a user: each gets what happened, whose side
  * it is on and what to do. Output that matches none passes through unchanged (xtool may reword an
@@ -7,10 +9,29 @@
  * way for developerservices2 during an install, where "sign-in" would name the wrong cause.
  */
 
-export type XtoolFailureId = "gsa-503" | "anisette-deadline" | "connect-timeout" | "login-interrupted";
+export type XtoolFailureId =
+  | "app-id-limit"
+  | "gsa-503"
+  | "anisette-deadline"
+  | "connect-timeout"
+  | "login-interrupted";
 
 /** The xtool release that fixed one cause of the sign-in HTTP 503; the gsa-503 message names it. */
 export const GSA_503_FIXED_IN_XTOOL = "1.24.0";
+
+/** Apple's limit as its own sentence states it; a free account's 10 per 7 days otherwise. */
+function appIdLimitMessage(output: string): string {
+  const m = /up to (\d+) App IDs every (\d+) days/i.exec(output);
+  const n = m?.[1] ?? "10";
+  const days = m?.[2] ?? "7";
+  return (
+    `Apple refused to register another App ID: a free Apple ID can register ${n} App IDs per ${days} days, and each ` +
+    "new bundle identifier takes one. Reuse a bundle identifier that is already installed on your iPhone, without " +
+    "the XTL-<Team ID>. prefix xtool adds: set it as ios.bundleIdentifier in the Expo app config, or as " +
+    "PRODUCT_BUNDLE_IDENTIFIER of the app target in a bare project, then run `rn-xtool build` and `rn-xtool install` " +
+    `again. Or wait until the oldest of those App IDs is ${days} days old. See ${troubleshootingUrl("app-id-limit")}`
+  );
+}
 
 /** Where a failure is named: anywhere (no scope), on `rn-xtool auth` (`signIn`), or on `auth login` only. */
 export interface ExplainOptions {
@@ -29,9 +50,10 @@ const LOGIN_INTERRUPTED =
 const OUTPUT_FAILURES: ReadonlyArray<{
   id: XtoolFailureId;
   pattern: RegExp;
-  message: string;
+  message: string | ((output: string) => string);
   scope?: "signIn" | "login";
 }> = [
+  { id: "app-id-limit", pattern: /maximum App ID limit has been reached/i, message: appIdLimitMessage },
   {
     id: "gsa-503",
     pattern: /GsService2\S*\s+failed:\s+HTTP 503\b/,
@@ -84,7 +106,9 @@ export function explainXtoolOutput(
   opts: ExplainOptions = {},
 ): { id: XtoolFailureId; message: string } | undefined {
   for (const f of OUTPUT_FAILURES) {
-    if (inScope(f.scope, opts) && f.pattern.test(output)) return { id: f.id, message: f.message };
+    if (inScope(f.scope, opts) && f.pattern.test(output)) {
+      return { id: f.id, message: typeof f.message === "string" ? f.message : f.message(output) };
+    }
   }
   return undefined;
 }
