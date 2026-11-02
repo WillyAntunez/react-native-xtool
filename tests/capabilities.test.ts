@@ -80,6 +80,24 @@ describe("probeArtifacts", () => {
     expect(head).not.toHaveBeenCalled();
   });
 
+  it("offline, reads the cache only and never probes", async () => {
+    const { rnDir } = await rnRoot("0.88.1");
+    const cacheRoot = await tempDir("rn-xtool-caps-cache-");
+    const head = vi.fn(ok200);
+    expect(await probeArtifacts(rnDir, "0.88.1", { cacheRoot, head, offline: true })).toEqual({
+      status: "offline",
+      version: "0.88.1",
+      missing: [],
+    });
+    for (const flavor of ["debug", "release"]) makeFakeSlot088(path.join(cacheRoot, "0.88.1", flavor));
+    expect(await probeArtifacts(rnDir, "0.88.1", { cacheRoot, head, offline: true })).toEqual({
+      status: "cached",
+      version: "0.88.1",
+      missing: [],
+    });
+    expect(head).not.toHaveBeenCalled();
+  });
+
   it("probes when only one flavor is cached", async () => {
     const { rnDir } = await rnRoot("0.88.1");
     const cacheRoot = await tempDir("rn-xtool-caps-cache-");

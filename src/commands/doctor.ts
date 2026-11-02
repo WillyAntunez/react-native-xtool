@@ -51,6 +51,8 @@ export interface DoctorCheck {
 export interface DoctorReport {
   checks: DoctorCheck[];
   ok: boolean;
+  /** What the capability probe found, whenever it ran (`--project`, or `withCapabilities` with a root). */
+  capabilities?: Capabilities;
 }
 
 export interface DoctorProbes {
@@ -79,7 +81,10 @@ export interface DoctorProbes {
   portFree: (port: number) => Promise<boolean>;
   /** Wi‑Fi install readiness; read-only (never caches or changes anything). */
   wifi: (root?: string) => Promise<WifiProbe>;
-  /** What the project has (`doctor --project` only); the artifact probe may reach the network, bounded. */
+  /**
+   * What the project has (`doctor --project` and `doctor --report`); the artifact probe may reach the network, bounded,
+   * unless the probes were made offline.
+   */
   capabilities: (root: string) => Promise<Capabilities>;
 }
 
@@ -156,7 +161,8 @@ export function renderReport(checks: DoctorCheck[]): string {
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-export function realProbes(config: ExpoXtoolConfig): DoctorProbes {
+/** `offline`: the capability probe reads the artifact cache only and makes no network request (`doctor --report`). */
+export function realProbes(config: ExpoXtoolConfig, opts: { offline?: boolean } = {}): DoctorProbes {
   const bin = (): string => xtoolBin(config);
   return {
     nodeVersion: () => process.versions.node,
@@ -198,7 +204,7 @@ export function realProbes(config: ExpoXtoolConfig): DoctorProbes {
     depsFingerprint: (root) => depsFingerprint(root),
     portFree: (port) => isPortFree(port),
     wifi: (root) => probeWifi(root),
-    capabilities: (root) => detectCapabilities(root),
+    capabilities: (root) => detectCapabilities(root, { offline: opts.offline === true }),
   };
 }
 
@@ -333,6 +339,8 @@ function artifactsCheck(a: ArtifactsCapability, supported: boolean): CheckResult
       return result("fail", `not published for React Native ${a.version}: ${a.missing.join(", ")}`);
     case "unknown":
       return result("warn", `not checked: ${a.detail ?? "no reason given"}`);
+    case "offline":
+      return result("info", "not checked (offline)");
   }
 }
 
@@ -453,12 +461,16 @@ async function check(name: string, fn: () => Promise<Omit<DoctorCheck, "name">>)
 
 /**
  * Every check, or with `projectOnly` (`doctor --project`) only node, the project and its capabilities: no toolchain,
- * login, device or build-state probe runs, so it works where Swift and xtool are not installed.
+ * login, device or build-state probe runs, so it works where Swift and xtool are not installed. `withCapabilities`
+ * (`doctor --report`) appends the capability lines to every check when there is a root; as under `--project`, a
+ * capability probe that throws fails the project line. `noLiveProbes` (`doctor --report`) leaves out the device probe
+ * (`xtool devices` opens a lockdown connection to each iPhone, over Wi‑Fi too) and the Wi‑Fi probe (a lockdown session
+ * with the USB iPhone, a connection to its last known IP).
  */
 export async function doctorWithProbes(
   p: DoctorProbes,
   root?: string,
-  opts: { projectOnly?: boolean } = {},
+  opts: { projectOnly?: boolean; withCapabilities?: boolean; noLiveProbes?: boolean } = {},
 ): Promise<DoctorReport> {
   const checks: DoctorCheck[] = [];
   const add = async (name: string, fn: () => Promise<Omit<DoctorCheck, "name">>): Promise<void> => {
@@ -476,7 +488,7 @@ export async function doctorWithProbes(
     const [project, caps] = await Promise.all([settle(() => p.project(dir)), settle(() => p.capabilities(dir))]);
     await projectChecks(add, project, "error" in caps ? caps.error : undefined);
     if ("value" in caps) checks.push(...capabilityChecks(caps.value, "error" in project ? project.error : undefined));
-    return { checks, ok: checks.every((c) => c.status !== "fail") };
+    return report(checks, "value" in caps ? caps.value : undefined);
   }
   await add("swift", async () => {
     const v = await p.swiftVersion();
@@ -522,6 +534,7 @@ export async function doctorWithProbes(
       : { status: "fail", detail: `logged out — run rn-xtool auth login` };
   });
   await add("device", async () => {
+    if (opts.noLiveProbes) return { status: "info", detail: "not checked (report)" };
     if (!p.xtoolInstalled()) return { status: "warn", detail: "xtool not installed" };
     let d: Device | undefined;
     try {
@@ -534,6 +547,7 @@ export async function doctorWithProbes(
       : { status: "warn", detail: "no USB device found — connect and unlock your iPhone" };
   });
   await add("wifi", async () => {
+    if (opts.noLiveProbes) return { status: "info", detail: "not checked (report)" };
     try {
       return wifiCheck(await p.wifi(root));
     } catch (e) {
@@ -575,8 +589,14 @@ export async function doctorWithProbes(
       : { status: "ok", detail: `${route.ip} (${route.dev ?? "unknown"})` };
   });
 
+  let caps: Settled<Capabilities> | undefined;
+  let project: Settled<ProjectProbe> | undefined;
   if (root !== undefined && stateResult) {
-    await projectChecks(add, await settle(() => p.project(root)));
+    [project, caps] = await Promise.all([
+      settle(() => p.project(root)),
+      opts.withCapabilities ? settle(() => p.capabilities(root)) : undefined,
+    ]);
+    await projectChecks(add, project, caps && "error" in caps ? caps.error : undefined);
     await add("build-state", async () => {
       if ("error" in stateResult) {
         return { status: "warn", detail: `unreadable build state (${message(stateResult.error)}) — run rn-xtool build` };
@@ -602,8 +622,14 @@ export async function doctorWithProbes(
       );
     }
   }
+  if (caps && "value" in caps) {
+    checks.push(...capabilityChecks(caps.value, project && "error" in project ? project.error : undefined));
+  }
+  return report(checks, caps && "value" in caps ? caps.value : undefined);
+}
 
-  return { checks, ok: checks.every((c) => c.status !== "fail") };
+function report(checks: DoctorCheck[], capabilities: Capabilities | undefined): DoctorReport {
+  return { checks, ok: checks.every((c) => c.status !== "fail"), ...(capabilities && { capabilities }) };
 }
 
 export async function doctor(
