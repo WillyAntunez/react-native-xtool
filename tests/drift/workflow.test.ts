@@ -111,10 +111,10 @@ describe("drift-watch workflow", () => {
   it("pins each action to an existing major", () => {
     const uses = [...text().matchAll(/uses:\s*(\S+)/g)].map((m) => m[1]);
     const allowed = [
-      "actions/checkout@v4",
-      "actions/setup-node@v4",
-      "actions/upload-artifact@v4",
-      "actions/download-artifact@v4",
+      "actions/checkout@v7",
+      "actions/setup-node@v7",
+      "actions/upload-artifact@v7",
+      "actions/download-artifact@v8",
     ];
     for (const u of uses) expect(allowed).toContain(u);
   });
@@ -152,7 +152,7 @@ describe("drift-watch workflow", () => {
     // `--drill=` keeps a value that starts with "-" a value; the script then refuses anything but a line id.
     expect(report).toContain('--drill="$DRILL"');
     expect(report).toContain("MATRIX: ${{ needs.targets.outputs.matrix }}");
-    expect(report).toContain("actions/checkout@v4");
+    expect(report).toContain("actions/checkout@v7");
     expect(report).toContain("pattern: drift-*");
     expect(report).toContain("merge-multiple: true");
   });
@@ -191,7 +191,7 @@ describe("drift-watch workflow", () => {
     const floor = Number(/\d+/.exec(pkg.engines.node)![0]);
     for (const name of ["targets", "check", "report", "explore", "explore-summary"]) {
       const steps = job(name).join("\n");
-      expect(steps, name).toMatch(/uses: actions\/setup-node@v4\n\s*with:\n(\s*\S.*\n)*?\s*node-version: 22\n/);
+      expect(steps, name).toMatch(/uses: actions\/setup-node@v7\n\s*with:\n(\s*\S.*\n)*?\s*node-version: 22\n/);
     }
     const versions = [...text().matchAll(/node-version:\s*(\S+)/g)].map((m) => m[1]);
     expect(versions).toEqual(["22", "22", "22", "22", "22"]);
@@ -199,7 +199,7 @@ describe("drift-watch workflow", () => {
   });
 
   it("does not persist the checkout token", () => {
-    const checkouts = text().match(/uses: actions\/checkout@v4/g) ?? [];
+    const checkouts = text().match(/uses: actions\/checkout@v7/g) ?? [];
     expect(checkouts).toHaveLength(5);
     expect(text().match(/persist-credentials: false/g)).toHaveLength(5);
   });

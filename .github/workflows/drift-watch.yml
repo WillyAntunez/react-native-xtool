@@ -42,10 +42,10 @@ jobs:
       mode: ${{ steps.pick.outputs.mode }}
       matrix: ${{ steps.pick.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -76,10 +76,10 @@ jobs:
       # patch must print its English messages: the offset and "already applied" checks read them.
       LC_ALL: C
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -96,7 +96,7 @@ jobs:
           dir="$RUNNER_TEMP/drift/$SLUG/app"
           rm -rf "$dir"
           node scripts/drift-watch.mjs check --target "$TARGET" --dir "$dir" --out "drift-results/$SLUG.json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
           name: drift-${{ matrix.slug }}
@@ -116,10 +116,10 @@ jobs:
       group: drift-watch-report
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -129,7 +129,7 @@ jobs:
           npm ci
           test -f dist/drift/explore.js
       # A target without a result is reported as "could not run", so a failed download must not stop the report.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           pattern: drift-*
@@ -153,10 +153,10 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.targets.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -173,7 +173,7 @@ jobs:
           dir="$RUNNER_TEMP/explore/$SLUG/app"
           rm -rf "$dir"
           node scripts/drift-watch.mjs explore --target "$TARGET" --dir "$dir" --out "explore-results/$SLUG.json"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
           name: explore-${{ matrix.slug }}
@@ -186,10 +186,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -198,7 +198,7 @@ jobs:
         run: |
           npm ci
           test -f dist/drift/explore.js
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           pattern: explore-*
