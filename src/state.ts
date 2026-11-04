@@ -26,6 +26,11 @@ export interface BuildState {
   deviceIp?: string;
   /** UDID of the iPhone last installed over Wi‑Fi. */
   deviceUdid?: string;
+  /** The signed id (`XTL-…`) of the app the last `install` put on the iPhone; `start` announces Metro under it. */
+  installedBundleId?: string;
+  /** The app's name and slug from the project, for `start`'s Bonjour announcement. */
+  name?: string;
+  slug?: string;
 }
 
 const STATE_FILE = ".rn-xtool-state.json";
@@ -58,11 +63,17 @@ export async function readState(iosXtoolDir: string): Promise<BuildState | undef
 
 /**
  * Records where the iPhone answered over Wi‑Fi (and, after an install, the installed build's
- * fingerprint) in one write; a no-op before the first build.
+ * fingerprint and bundle id) in one write; a no-op before the first build.
  */
 export async function rememberDevice(
   iosXtoolDir: string,
-  device: { deviceIp: string; deviceUdid: string; installedUdid?: string; installedFingerprint?: string },
+  device: {
+    deviceIp: string;
+    deviceUdid: string;
+    installedUdid?: string;
+    installedFingerprint?: string;
+    installedBundleId?: string;
+  },
 ): Promise<void> {
   const state = await readState(iosXtoolDir);
   if (state) await writeState(iosXtoolDir, { ...state, ...device });

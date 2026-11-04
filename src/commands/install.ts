@@ -56,7 +56,13 @@ export interface InstallDeps {
     installOverWifi?: (o: WifiInstallOptions) => Promise<WifiInstallResult>;
     rememberDevice?: (
       iosXtoolDir: string,
-      device: { deviceIp: string; deviceUdid: string; installedUdid?: string; installedFingerprint?: string },
+      device: {
+        deviceIp: string;
+        deviceUdid: string;
+        installedUdid?: string;
+        installedFingerprint?: string;
+        installedBundleId?: string;
+      },
     ) => Promise<void>;
     sleep?: (ms: number) => Promise<void>;
   };
@@ -181,11 +187,13 @@ export async function install(root: string, deps: InstallDeps = {}, opts: Instal
   const state = await (x.readState ?? readState)(iosXtool).catch(() => undefined);
   if (!state) throw new Error("No build found. Run `rn-xtool build` first.");
   await explainingXtool(() => (x.devRun ?? devRun)(bin, iosXtool));
-  // Which iPhone got this build: `run` must not skip the install for a different one.
+  const id = installedBundleId(auth.teamId, state.bundleIdentifier);
+  // Which iPhone got this build: `run` must not skip the install for a different one. The id is the one xtool signs
+  // with for an Apple ID login (`start` announces Metro under it).
   const installed: Partial<BuildState> = { installedUdid: devices[0]!.udid };
   if (state.depsFingerprint !== undefined) installed.installedFingerprint = state.depsFingerprint;
+  installed.installedBundleId = id;
   await (x.writeState ?? writeState)(iosXtool, { ...(state as BuildState), ...installed });
-  const id = installedBundleId(auth.teamId, state.bundleIdentifier);
   log(`Installed ${id} on ${devices[0]!.name}`);
   await logDevLauncherLink(root, state, deps, log);
   log(firstRunChecklist(auth.appleId, { devClient: state.hasDevClient === true, autoReload: state.devSupport === true }));
@@ -258,6 +266,8 @@ async function installNetwork(root: string, deps: InstallDeps, opts: InstallOpti
     deviceUdid: where.udid,
     installedUdid: where.udid,
     ...(state.depsFingerprint !== undefined && { installedFingerprint: state.depsFingerprint }),
+    // The id the iPhone reports for the uploaded app: the real signed one, whatever the login kind.
+    ...(typeof result.app.CFBundleIdentifier === "string" && { installedBundleId: result.app.CFBundleIdentifier }),
   };
   await (w.rememberDevice ?? rememberDevice)(iosXtool, installed).catch((e: unknown) =>
     log(`⚠ Could not save the iPhone's address in the build state: ${message(e)}`),

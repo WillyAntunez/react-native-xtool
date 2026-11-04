@@ -658,6 +658,43 @@ describe("build keeps the Wi‑Fi device", () => {
   });
 });
 
+describe("build keeps the installed id", () => {
+  it("keeps a matching installed id across builds", async () => {
+    const t = setup({ project: { name: "My App", slug: "my-app" } });
+    const dir = join(t.root, "ios-xtool");
+    const previous = { version: 1 as const, metroPort: 8081, lanIp: "x", builtAt: "t", installedBundleId: "XTL-TEAMID0000.com.example.app" };
+    await writeState(dir, { ...previous, bundleIdentifier: "com.example.app" });
+    await build(t.root, {}, t.deps);
+    expect(await readState(dir)).toMatchObject({ installedBundleId: "XTL-TEAMID0000.com.example.app", name: "My App", slug: "my-app" });
+
+    const changed = setup({ project: { bundleIdentifier: "com.example.other", name: "My App", slug: "my-app" } });
+    const changedDir = join(changed.root, "ios-xtool");
+    await writeState(changedDir, { ...previous, bundleIdentifier: "com.example.app" });
+    await build(changed.root, {}, changed.deps);
+    const s = await readState(changedDir);
+    expect(s?.bundleIdentifier).toBe("com.example.other");
+    expect(s).not.toHaveProperty("installedBundleId");
+    expect(s).toMatchObject({ name: "My App", slug: "my-app" });
+  });
+
+  it("reads no id it cannot match", async () => {
+    const cases: [string, string][] = [
+      ["XTL-TEAMID0000.com.example.app", "example.app"],
+      ["XTL-TEAMID0000.com.example.app", "app"],
+      ["com.example.app", "com.example.app"],
+      ["XTL-TEAMID0000.comXexample.app", "com.example.app"],
+      ["XTL-.com.example.app", "com.example.app"],
+    ];
+    for (const [installedBundleId, bundleIdentifier] of cases) {
+      const t = setup({ project: { bundleIdentifier } });
+      const dir = join(t.root, "ios-xtool");
+      await writeState(dir, { version: 1, metroPort: 8081, lanIp: "x", builtAt: "t", bundleIdentifier, installedBundleId });
+      await build(t.root, {}, t.deps);
+      expect(await readState(dir), installedBundleId).not.toHaveProperty("installedBundleId");
+    }
+  });
+});
+
 describe("build corrupt state", () => {
   it("warns, ignores the unreadable state, continues and rewrites it", async () => {
     const t = setup();

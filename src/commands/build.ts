@@ -52,6 +52,12 @@ export interface BuildPlanInput {
   expoPlugin: ExpoPlugin;
 }
 
+/** Whether `installed` is xtool's signed form of `bundleIdentifier`: XTL-<one segment>.<bundleIdentifier>, exactly. */
+function signedIdOf(installed: string, bundleIdentifier: string): boolean {
+  const escaped = bundleIdentifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^XTL-[^.]+\\.${escaped}$`).test(installed);
+}
+
 /**
  * Expo: every step but rn-artifacts, with `expo prebuild` first when `ios/` is missing or on `--clean`.
  * Expo on the vendored plugin (SDK 57) also gets rn-artifacts (when planned), and jsi moves before rn-spm
@@ -299,8 +305,15 @@ export async function build(
     hasDevClient: project.hasDevClient,
     ...(hasDevSupport(project) && { devSupport: true }),
     rnVersion: project.rnVersion,
+    name: project.name,
+    slug: project.slug,
     ...(previousState?.deviceIp && { deviceIp: previousState.deviceIp }),
     ...(previousState?.deviceUdid && { deviceUdid: previousState.deviceUdid }),
+    // The app on the iPhone keeps its id until the next install; a changed bundle id makes it another app.
+    ...(previousState?.installedBundleId !== undefined &&
+      signedIdOf(previousState.installedBundleId, project.bundleIdentifier) && {
+        installedBundleId: previousState.installedBundleId,
+      }),
   };
   await step("generate", async () => {
     await d.writeIosXtool({ project, paths, frameworks, metroPort, lanIp, log: d.log });

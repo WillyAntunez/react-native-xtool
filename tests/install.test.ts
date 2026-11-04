@@ -287,7 +287,27 @@ describe("install", () => {
       ...st,
       installedUdid: "u",
       installedFingerprint: "fp",
+      installedBundleId: "XTL-T.com.a.b",
     });
+  });
+  it("records the installed id", async () => {
+    const writeState = vi.fn(async () => {});
+    const st = { version: 1, bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20", builtAt: "t" };
+    await install("/p", {
+      xtool: {
+        ...base,
+        authStatus: async () => ({ loggedIn: true, teamId: "TEAMID0000" }),
+        listDevices: async () => [{ name: "P", udid: "u", transport: "usb" }],
+        readState: async () => st,
+        devRun: async () => {},
+        writeState,
+      },
+      log: () => {},
+    });
+    expect(writeState).toHaveBeenCalledWith(
+      expect.stringContaining("ios-xtool"),
+      expect.objectContaining({ installedBundleId: "XTL-TEAMID0000.com.a.b" }),
+    );
   });
   it("does not record it when devRun fails", async () => {
     const writeState = vi.fn(async () => {});
@@ -408,6 +428,7 @@ describe("install --network", () => {
       deviceIp: "192.168.1.10",
       deviceUdid: UD,
       installedUdid: UD,
+      installedBundleId: "XTL-TEAM.com.a.b",
     });
     const text = logs.join("\n");
     expect(text).toContain("Installed XTL-TEAM.com.a.b 1.0.0 1 on iPhone 00008030-0000000012345678 over Wi‑Fi (192.168.1.10)");
@@ -443,7 +464,20 @@ describe("install --network", () => {
       deviceUdid: UD,
       installedUdid: UD,
       installedFingerprint: "F1",
+      installedBundleId: "XTL-TEAM.com.a.b",
     });
+  });
+
+  it("records the installed id", async () => {
+    // The id the install reports for the uploaded app: the real signed id, whatever the login kind.
+    const { d, calls } = deps({
+      wifi: { installOverWifi: vi.fn(async () => ({ ...result, app: { ...app, CFBundleIdentifier: "XTL-ISSUER00.com.a.b" } })) },
+    });
+    await install("/p", d, { network: true });
+    expect(calls.rememberDevice).toHaveBeenCalledWith(
+      expect.stringMatching(/ios-xtool$/),
+      expect.objectContaining({ installedBundleId: "XTL-ISSUER00.com.a.b" }),
+    );
   });
 
   it("scans the private LAN of the default route", async () => {
