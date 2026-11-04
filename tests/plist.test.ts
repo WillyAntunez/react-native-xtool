@@ -124,4 +124,47 @@ describe("transformInfoPlist", () => {
     };
     expect(out.NSBonjourServices).toEqual(["_foo._tcp", "_http._tcp"]);
   });
+
+  const devClientUrl = "http://192.168.1.20:8082";
+  const parse = (xml: string) => plist.parse(xml) as Record<string, any>;
+
+  it("bakes the dev launcher's default URL", () => {
+    const out = parse(transformInfoPlist(template, { ...opts, devClientUrl }));
+    expect(out.DEV_CLIENT_DEFAULT_LAUNCHER_URL).toBe("http://192.168.1.20:8082");
+  });
+
+  it("keeps the project's own default URL", () => {
+    const own = template.replace(
+      "<dict>",
+      "<dict><key>DEV_CLIENT_DEFAULT_LAUNCHER_URL</key><string>http://192.168.1.2:8081</string>",
+    );
+    expect(parse(transformInfoPlist(own, { ...opts, devClientUrl })).DEV_CLIENT_DEFAULT_LAUNCHER_URL).toBe(
+      "http://192.168.1.2:8081",
+    );
+    const empty = template.replace(
+      "<dict>",
+      "<dict><key>DEV_CLIENT_DEFAULT_LAUNCHER_URL</key><string></string>",
+    );
+    expect(parse(transformInfoPlist(empty, { ...opts, devClientUrl })).DEV_CLIENT_DEFAULT_LAUNCHER_URL).toBe(
+      devClientUrl,
+    );
+  });
+
+  it("adds _expo._tcp for dev-client builds", () => {
+    const out = parse(transformInfoPlist(template, { ...opts, devClientUrl }));
+    const services = out.NSBonjourServices as string[];
+    expect(services.filter((s) => s === "_expo._tcp")).toHaveLength(1);
+    expect(services.filter((s) => s === "_http._tcp")).toHaveLength(1);
+    const listed = plist.build({ NSBonjourServices: ["_expo._tcp"] });
+    expect(parse(transformInfoPlist(listed, { ...opts, devClientUrl })).NSBonjourServices).toEqual([
+      "_expo._tcp",
+      "_http._tcp",
+    ]);
+  });
+
+  it("adds nothing without a dev client", () => {
+    const out = parse(transformInfoPlist(template, opts));
+    expect(out).not.toHaveProperty("DEV_CLIENT_DEFAULT_LAUNCHER_URL");
+    expect(out.NSBonjourServices).not.toContain("_expo._tcp");
+  });
 });

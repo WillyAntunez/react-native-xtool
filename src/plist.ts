@@ -5,11 +5,15 @@ export type BuildVars = Record<string, string>;
 export interface InfoPlistOptions {
   vars: BuildVars;
   metroPort: number;
+  /** Set for dev-client builds: the dev launcher's default Metro URL, and its Bonjour service. */
+  devClientUrl?: string;
 }
 
 const VAR_PATTERN = /\$[({]([A-Za-z_][A-Za-z0-9_]*)[)}]/g;
 const LEFTOVER_PATTERN = /\$[({]([^)}\r\n]*)/g;
 const BONJOUR_HTTP = "_http._tcp";
+// expo-dev-launcher browses this type. Expo prebuild adds it; a bare app with the dev client never runs prebuild.
+const BONJOUR_EXPO = "_expo._tcp";
 
 function substitute(text: string, vars: BuildVars): string {
   return text.replace(VAR_PATTERN, (match, name: string) =>
@@ -87,11 +91,16 @@ export function transformInfoPlist(
   info.RCTMetroPort = String(opts.metroPort);
   info.NSLocalNetworkUsageDescription =
     "Connects to the Metro development server on your local network.";
-  const existing = Array.isArray(info.NSBonjourServices)
-    ? info.NSBonjourServices
+  const services = Array.isArray(info.NSBonjourServices)
+    ? [...info.NSBonjourServices]
     : [];
-  info.NSBonjourServices = existing.includes(BONJOUR_HTTP)
-    ? existing
-    : [...existing, BONJOUR_HTTP];
+  const wanted = opts.devClientUrl === undefined ? [BONJOUR_HTTP] : [BONJOUR_HTTP, BONJOUR_EXPO];
+  for (const service of wanted) if (!services.includes(service)) services.push(service);
+  info.NSBonjourServices = services;
+  if (opts.devClientUrl !== undefined) {
+    // A user's own defaultLaunchURL wins; an empty string counts as unset.
+    const own = info.DEV_CLIENT_DEFAULT_LAUNCHER_URL;
+    if (typeof own !== "string" || own === "") info.DEV_CLIENT_DEFAULT_LAUNCHER_URL = opts.devClientUrl;
+  }
   return plist.build(info);
 }

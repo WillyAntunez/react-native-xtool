@@ -366,6 +366,17 @@ describe("writeIosXtool", () => {
     }
   });
 
+  it("sets the launcher keys for dev-client projects only", async () => {
+    const { paths, ctx } = await expoProject("ios-target");
+    const info = async () => readFile(join(paths.iosXtool, "Info.plist"), "utf8");
+    await writeIosXtool({ ...ctx, project: { ...ctx.project, hasDevClient: true }, lanIp: "192.168.1.5", metroPort: 8083 });
+    expect(await info()).toContain("<string>http://192.168.1.5:8083</string>");
+    expect(await info()).toContain("<string>_expo._tcp</string>");
+    await writeIosXtool({ ...ctx, project: { ...ctx.project, hasDevClient: false }, lanIp: "192.168.1.5", metroPort: 8083 });
+    expect(await info()).not.toContain("http://192.168.1.5:8083");
+    expect(await info()).not.toContain("_expo._tcp");
+  });
+
   it("copies AppDelegate only for an SDK 57 shell", async () => {
     const { source, paths, ctx } = await expoProject("expo-57/ios/Spike57", { sdkVersion: 57 });
     await writeIosXtool(ctx);

@@ -143,11 +143,18 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
   const template = await readRequired(project.infoPlistPath, "Info.plist");
   await writeFile(
     join(paths.iosXtool, "Info.plist"),
-    transformInfoPlist(template, { vars: buildVars(project), metroPort: ctx.metroPort }),
+    transformInfoPlist(template, {
+      vars: buildVars(project),
+      metroPort: ctx.metroPort,
+      devClientUrl: project.hasDevClient ? `http://${ctx.lanIp}:${ctx.metroPort}` : undefined,
+    }),
   );
-  // Bare RN reads only the packager host from ip.txt (RCTBundleURLProvider.guessPackagerHost) and
-  // takes the port from the compile-time RCT_METRO_PORT, 8081 in the prebuilt React framework; a
-  // host with a colon is used verbatim. The RCTMetroPort Info.plist key is read by Expo's dev launcher only.
+  // React Native reads the packager host from ip.txt (RCTBundleURLProvider.guessPackagerHost) and uses a host with a
+  // colon verbatim; otherwise it adds the compile-time RCT_METRO_PORT, 8081 in the prebuilt React framework. Bare: ip.txt
+  // holds host:port. Expo: ip.txt holds the host only, and in Debug without the dev launcher Expo's
+  // ExpoReactNativeFactory (adoptInfoPlistMetroPort) sets RCTBundleURLProvider's jsLocation to <ip.txt>:<RCTMetroPort>.
+  // The RNXtoolDevSupport helper reads the same pair. expo-dev-launcher reads neither: it finds Metro over Bonjour, from
+  // DEV_CLIENT_DEFAULT_LAUNCHER_URL or from a deep link.
   const packagerHost = project.kind === "bare" ? `${ctx.lanIp}:${ctx.metroPort}` : ctx.lanIp;
   await writeFile(join(paths.iosXtool, "ip.txt"), `${packagerHost}\n`);
   await writeFile(
