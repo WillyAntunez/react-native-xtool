@@ -282,3 +282,10 @@ describe.skipIf(!HAS_IOS_TOOLS)(
     });
   },
 );
+
+describe("the npm package", () => {
+  it("ships the templates", () => {
+    const pkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { files: string[] };
+    expect(pkg.files).toContain("templates");
+  });
+});

@@ -14,6 +14,8 @@ export interface BuildState {
   rnVersion?: string;
   /** expo-dev-client was installed at build time (the app opens the dev launcher). */
   hasDevClient?: boolean;
+  /** The app has the RNXtoolDevSupport auto-reload helper; absent in states written by older versions. */
+  devSupport?: true;
   /** Hash of the installed dependencies at build time; absent in states written by older versions. */
   depsFingerprint?: string;
   /** depsFingerprint of the build that `install` last put on the device. */

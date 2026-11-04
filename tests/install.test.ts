@@ -14,6 +14,13 @@ const DEVICE_NOT_REGISTERED = readFileSync(
 );
 const APP_ID_LIMIT_MESSAGE = /^Apple refused to register another App ID: a free Apple ID can register 10 App IDs per 7 days, .*#app-id-limit$/;
 
+const RELOADS_LINE =
+  '  - On the first launch iOS asks for Local Network access, and the red screen "No script URL provided" may show behind it: tap Allow, and the app reloads by itself.';
+const RELOAD_BY_HAND_LINE =
+  '  - On the first launch iOS asks for Local Network access and "No script URL provided" shows behind it: tap Allow, then Reload.';
+const DEV_CLIENT_LINE =
+  "  - On the first launch the dev launcher asks for Local Network access: tap Allow, then open the link or QR code above, or enter the Metro URL above in the launcher.";
+
 describe("firstRunChecklist", () => {
   it("mentions the 7-day expiry and the Apple ID", () => {
     const text = firstRunChecklist("me@example.com");
@@ -22,10 +29,59 @@ describe("firstRunChecklist", () => {
     expect(text).toContain("Developer Mode");
     expect(text).toContain("Local Network");
   });
-  it("explains the red screen behind the first Local Network prompt", () => {
-    expect(firstRunChecklist(undefined)).toContain(
-      '  - On the first launch iOS asks for Local Network access and "No script URL provided" shows behind it: tap Allow, then Reload.',
-    );
+  it("says the app reloads by itself after the first Local Network prompt", () => {
+    const lines = firstRunChecklist(undefined, { autoReload: true }).split("\n");
+    expect(lines).toContain(RELOADS_LINE);
+    expect(lines).not.toContain(RELOAD_BY_HAND_LINE);
+  });
+  it("says to tap Reload when the app has no auto-reload helper", () => {
+    for (const lines of [firstRunChecklist(undefined), firstRunChecklist(undefined, { devClient: false })]) {
+      expect(lines.split("\n")).toContain(RELOAD_BY_HAND_LINE);
+      expect(lines.split("\n")).not.toContain(RELOADS_LINE);
+    }
+  });
+  it("tells a dev-client user to open the link after the prompt", () => {
+    const lines = firstRunChecklist(undefined, { devClient: true }).split("\n");
+    expect(lines).toContain(DEV_CLIENT_LINE);
+    expect(lines).not.toContain(RELOADS_LINE);
+  });
+});
+
+describe("install's first-launch checklist line", () => {
+  const usb = (state: object) => {
+    const logs: string[] = [];
+    const run = install("/p", {
+      xtool: {
+        loadConfig: async () => ({}),
+        bin: () => "/bin/xtool",
+        authStatus: async () => ({ loggedIn: true, teamId: "TEAM", appleId: "a@b.c" }),
+        listDevices: async () => [{ name: "Phone", udid: "u", transport: "usb" }],
+        readState: async () => ({ bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20", ...state }),
+        devRun: async () => {},
+        writeState: async () => {},
+      },
+      log: (s) => logs.push(s),
+    });
+    return run.then(() => logs.join("\n").split("\n"));
+  };
+  it("names the auto-reload when the build generated the helper", async () => {
+    for (const state of [{ hasDevClient: false, devSupport: true }, { kind: "bare" as const, devSupport: true }]) {
+      const lines = await usb(state);
+      expect(lines).toContain(RELOADS_LINE);
+      expect(lines).not.toContain(DEV_CLIENT_LINE);
+    }
+  });
+  it("says to tap Reload for a build without the helper on record", async () => {
+    for (const state of [{ hasDevClient: false }, { kind: "bare" as const }]) {
+      const lines = await usb(state);
+      expect(lines).toContain(RELOAD_BY_HAND_LINE);
+      expect(lines).not.toContain(RELOADS_LINE);
+    }
+  });
+  it("names the link with the dev client", async () => {
+    const lines = await usb({ hasDevClient: true });
+    expect(lines).toContain(DEV_CLIENT_LINE);
+    expect(lines).not.toContain(RELOADS_LINE);
   });
 });
 
@@ -305,6 +361,19 @@ describe("install --network", () => {
     await install("/p", d, { network: true });
     expect(logs.join("\n")).toContain("over Wi‑Fi");
     expect(logs.join("\n")).not.toContain("dev launcher");
+  });
+
+  it("prints the first-launch checklist line for the build's kind over Wi‑Fi", async () => {
+    const cases = [
+      [{ hasDevClient: false, devSupport: true }, RELOADS_LINE],
+      [{ hasDevClient: false }, RELOAD_BY_HAND_LINE],
+      [{ hasDevClient: true }, DEV_CLIENT_LINE],
+    ] as const;
+    for (const [state, line] of cases) {
+      const { d, logs } = deps({ state });
+      await install("/p", d, { network: true });
+      expect(logs.join("\n").split("\n")).toContain(line);
+    }
   });
 
   it("records the installed build's fingerprint together with the iPhone's address", async () => {

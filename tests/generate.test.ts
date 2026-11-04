@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { renderPackageSwift } from "../src/generate/packageSwift.js";
 import { renderXtoolYml } from "../src/generate/xtoolYml.js";
-import { sceneDelegateClassNames, writeIosXtool } from "../src/generate/iosXtool.js";
+import { devSupportTemplatesDir, sceneDelegateClassNames, writeIosXtool } from "../src/generate/iosXtool.js";
 import { expoClangImporterInputs, type ClangImporterInputs } from "../src/generate/expoImporter.js";
 import { IMPORTER_MARKER, scaffoldedImporterPaths } from "../src/generate/scaffoldImporter.js";
 import { PODSPEC_FIXTURES, VENDORED_RN_SPM, scaffoldLibraries } from "./support/rnScaffold.js";
@@ -91,6 +91,41 @@ describe("renderPackageSwift", () => {
     });
     expect(o.manifest).toBe(snapshot);
     expect(o.manifest65).toBeUndefined();
+  });
+
+  describe("the dev-support target", () => {
+    const BLOCK = `        .target(
+            name: "RNXtoolDevSupport",
+            path: "Sources/RNXtoolDevSupport",
+            cSettings: [
+                .define("DEBUG", to: "1", .when(configuration: .debug)),
+                .unsafeFlags(["-fobjc-arc"]),
+            ],
+            linkerSettings: [
+                .linkedFramework("Network"),
+                .linkedFramework("UIKit"),
+            ]
+        ),
+`;
+    const count = (text: string, part: string) => text.split(part).length - 1;
+    it("renders the dev-support target", () => {
+      const { manifest } = renderPackageSwift({ iosDir: "/p/ios", frameworks, iosMin: "16.4", expo: expoInputs(), app: noApp, devSupport: true });
+      expect(count(manifest, BLOCK)).toBe(1);
+      // Right after the App target's closing `),`.
+      expect(manifest).toContain(`            ]\n        ),\n${BLOCK}    ],\n`);
+      const deps = manifest.slice(manifest.indexOf("dependencies: [", manifest.indexOf("targets: [")));
+      expect(deps.slice(0, deps.indexOf("            ],"))).toMatch(/\n {16}"RNXtoolDevSupport",\n$/);
+      const mixed = renderPackageSwift({
+        iosDir: "/p/ios", frameworks, iosMin: "16.4", app: { ...noApp, mixed: true }, devSupport: true,
+      });
+      expect(count(mixed.manifest, BLOCK)).toBe(1);
+      expect(count(mixed.manifest65!, BLOCK)).toBe(1);
+    });
+    it("leaves the manifest unchanged without it", () => {
+      const input = { iosDir: "/p/ios", frameworks, iosMin: "16.4", expo: expoInputs(), app: noApp };
+      expect(renderPackageSwift({ ...input, devSupport: false }).manifest).toBe(renderPackageSwift(input).manifest);
+      expect(renderPackageSwift(input).manifest).not.toContain("RNXtoolDevSupport");
+    });
   });
 
   it("gives the App's Swift the scaffolded importer paths, after the Expo and bridging flags", () => {
@@ -296,6 +331,40 @@ describe("writeIosXtool", () => {
     const paths = projectPaths(root);
     return { source, target, paths, ctx: { project, paths, frameworks, metroPort: 8081, lanIp: "192.168.1.5" } };
   }
+
+  /** The helper's files as `writeIosXtool` stages them, relative to its folder. */
+  const HELPER_FILES = ["RNXAutoReload.m", "RNXAutoReloadPolicy.c", join("include", "RNXtoolDevSupport.h")];
+  const helperDir = (paths: { iosXtool: string }) => join(paths.iosXtool, "Sources", "RNXtoolDevSupport");
+  const exists = (p: string) => lstat(p).then(() => true, () => false);
+
+  it("writes the helper for an app without the dev client", async () => {
+    const { paths, ctx } = await expoProject("ios-target");
+    await writeIosXtool(ctx);
+    for (const file of HELPER_FILES) {
+      expect(await readFile(join(helperDir(paths), file)), file).toEqual(
+        await readFile(join(devSupportTemplatesDir(), file)),
+      );
+    }
+    expect((await readdir(helperDir(paths), { recursive: true })).sort()).toEqual(
+      ["RNXAutoReload.m", "RNXAutoReloadPolicy.c", "include", join("include", "RNXtoolDevSupport.h")],
+    );
+    expect(await readFile(join(paths.iosXtool, "Package.swift"), "utf8")).toContain('name: "RNXtoolDevSupport"');
+    expect((await readdir(paths.sources)).sort()).toEqual(
+      ["AppDelegate.swift", "ExpoModulesProvider.swift", "SceneDelegate.swift"],
+    );
+  });
+
+  it("leaves the helper out of dev-client builds", async () => {
+    const expo = await expoProject("ios-target");
+    const bare = await bareProject();
+    for (const { paths, ctx } of [expo, bare]) {
+      await writeIosXtool(ctx);
+      expect(await exists(join(helperDir(paths), "RNXAutoReload.m"))).toBe(true);
+      await writeIosXtool({ ...ctx, project: { ...ctx.project, hasDevClient: true } });
+      expect(await exists(helperDir(paths))).toBe(false);
+      expect(await readFile(join(paths.iosXtool, "Package.swift"), "utf8")).not.toContain("RNXtoolDevSupport");
+    }
+  });
 
   it("copies AppDelegate only for an SDK 57 shell", async () => {
     const { source, paths, ctx } = await expoProject("expo-57/ios/Spike57", { sdkVersion: 57 });

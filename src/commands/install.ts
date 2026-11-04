@@ -70,13 +70,22 @@ export interface InstallOptions {
   pairRecord?: string;
 }
 
-export function firstRunChecklist(appleId: string | undefined): string {
+/** devClient: the app opens the dev launcher. autoReload: the build has the RNXtoolDevSupport helper (an app built by
+ *  an older rn-xtool has none and still needs a Reload). */
+export function firstRunChecklist(
+  appleId: string | undefined,
+  opts: { devClient?: boolean; autoReload?: boolean } = {},
+): string {
   return [
     "First-run checklist:",
     "  - Enable Developer Mode: Settings → Privacy & Security → Developer Mode (the phone reboots).",
     `  - Trust the developer certificate: Settings → General → VPN & Device Management → Apple Development: ${appleId ?? "<your Apple ID>"} → Trust.`,
     "  - Allow Local Network access when iOS asks (needed to reach Metro).",
-    '  - On the first launch iOS asks for Local Network access and "No script URL provided" shows behind it: tap Allow, then Reload.',
+    opts.devClient
+      ? "  - On the first launch the dev launcher asks for Local Network access: tap Allow, then open the link or QR code above, or enter the Metro URL above in the launcher."
+      : opts.autoReload
+        ? '  - On the first launch iOS asks for Local Network access, and the red screen "No script URL provided" may show behind it: tap Allow, and the app reloads by itself.'
+        : '  - On the first launch iOS asks for Local Network access and "No script URL provided" shows behind it: tap Allow, then Reload.',
     "  - With a free Apple ID the signature expires in 7 days; reinstall the app with `rn-xtool install`.",
   ].join("\n");
 }
@@ -167,7 +176,7 @@ export async function install(root: string, deps: InstallDeps = {}, opts: Instal
   const id = installedBundleId(auth.teamId, state.bundleIdentifier);
   log(`Installed ${id} on ${devices[0]!.name}`);
   logDevLauncherUrl(state, log);
-  log(firstRunChecklist(auth.appleId));
+  log(firstRunChecklist(auth.appleId, { devClient: state.hasDevClient === true, autoReload: state.devSupport === true }));
 }
 
 async function installNetwork(root: string, deps: InstallDeps, opts: InstallOptions): Promise<void> {
@@ -247,5 +256,5 @@ async function installNetwork(root: string, deps: InstallDeps, opts: InstallOpti
       `upload ${secs(result.uploadMs)}, install ${secs(result.installMs)}`,
   );
   logDevLauncherUrl(state, log);
-  log(firstRunChecklist(auth.appleId));
+  log(firstRunChecklist(auth.appleId, { devClient: state.hasDevClient === true, autoReload: state.devSupport === true }));
 }

@@ -550,6 +550,16 @@ describe("build", () => {
     await build(e.root, {}, e.deps);
     expect(await readState(join(e.root, "ios-xtool"))).toMatchObject({ kind: "expo", hasDevClient: false });
   });
+  it("records the auto-reload helper in the state only when it generates it", async () => {
+    for (const kind of ["expo", "bare"] as const) {
+      const t = setup({ project: { kind } });
+      await build(t.root, {}, t.deps);
+      expect(await readState(join(t.root, "ios-xtool"))).toMatchObject({ devSupport: true });
+      const d = setup({ project: { kind, hasDevClient: true } });
+      await build(d.root, {}, d.deps);
+      expect(await readState(join(d.root, "ios-xtool"))).not.toHaveProperty("devSupport");
+    }
+  });
   it("picks another port when the configured one is busy", async () => {
     const t = setup({ isPortFree: async () => false });
     t.deps.findFreePort = async (s) => s + 3;

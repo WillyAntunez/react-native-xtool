@@ -1,14 +1,15 @@
-import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import * as plist from "plist";
 import type { RuntimeFramework } from "../frameworks.js";
 import { swiftHeadersDir, type ProjectPaths } from "../paths.js";
 import { transformInfoPlist } from "../plist.js";
 import { buildVars, type ProjectInfo } from "../project/index.js";
+import { packageRoot } from "../tools/exec.js";
 import { IOS_MIN } from "../versions.js";
 import { copyBareTarget } from "./bareSources.js";
 import { expoClangImporterInputs } from "./expoImporter.js";
-import { renderPackageSwift, type AppTargetInputs } from "./packageSwift.js";
+import { DEV_SUPPORT_TARGET, renderPackageSwift, type AppTargetInputs } from "./packageSwift.js";
 import { scaffoldedImporterPaths } from "./scaffoldImporter.js";
 import { BASE_RESOURCES, DEFAULT_RESOURCES, renderXtoolYml } from "./xtoolYml.js";
 
@@ -22,6 +23,16 @@ export interface GenerateContext {
 }
 
 const MANIFEST_6_5 = "Package@swift-6.5.swift";
+
+/** The app gets the auto-reload helper target: apps without expo-dev-client only. */
+export function hasDevSupport(project: Pick<ProjectInfo, "hasDevClient">): boolean {
+  return !project.hasDevClient;
+}
+
+/** The auto-reload helper's sources, copied byte for byte into ios-xtool/Sources/RNXtoolDevSupport. */
+export function devSupportTemplatesDir(): string {
+  return join(packageRoot(), "templates", "dev-support");
+}
 
 /** The file's text, or undefined when it does not exist. */
 async function readOptional(path: string): Promise<string | undefined> {
@@ -113,6 +124,11 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
   await rm(resourcesDir, { recursive: true, force: true });
   await mkdir(paths.sources, { recursive: true });
   const { app, resources } = await writeAppSources(ctx, headersDir, resourcesDir);
+  // The auto-reload helper, for apps without expo-dev-client only; removed when a project gains the dev client.
+  const devSupportDir = join(paths.iosXtool, "Sources", DEV_SUPPORT_TARGET);
+  await rm(devSupportDir, { recursive: true, force: true });
+  const devSupport = hasDevSupport(project);
+  if (devSupport) await cp(devSupportTemplatesDir(), devSupportDir, { recursive: true });
 
   if (project.hasExpoModules) {
     const linkPath = join(paths.sources, "ExpoModulesProvider.swift");
@@ -156,6 +172,7 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
         }
       : undefined,
     app: { ...app, importerPaths: await scaffoldedImporterPaths(paths.autolinking) },
+    devSupport,
   });
   await writeFile(join(paths.iosXtool, "Package.swift"), manifest);
   if (manifest65 !== undefined) await writeFile(join(paths.iosXtool, MANIFEST_6_5), manifest65);

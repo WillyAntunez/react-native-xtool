@@ -34,6 +34,7 @@
     "scripts/build-expo-modules-jsi.sh",
     "scripts/stage-frameworks.sh",
     "shims",
+    "templates",
     "vendor",
     "README.md",
     "CHANGELOG.md",

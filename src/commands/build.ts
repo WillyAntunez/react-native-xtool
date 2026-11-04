@@ -3,7 +3,7 @@ import { rm } from "node:fs/promises";
 import { depsFingerprint } from "../deps.js";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
 import { readFlavoredFrameworks, stageFrameworks, type RuntimeFramework } from "../frameworks.js";
-import { writeIosXtool } from "../generate/iosXtool.js";
+import { hasDevSupport, writeIosXtool } from "../generate/iosXtool.js";
 import { detectLanIp, detectLanRoute, findFreePort, isMetroRunning, isPortFree, suspiciousLanRoute, tunnelWarning, type LanRoute } from "../net.js";
 import { projectPaths, type ProjectPaths } from "../paths.js";
 import { generateAppConfig } from "../pipeline/appConfig.js";
@@ -297,6 +297,7 @@ export async function build(
     builtAt: new Date().toISOString(),
     kind: project.kind,
     hasDevClient: project.hasDevClient,
+    ...(hasDevSupport(project) && { devSupport: true }),
     rnVersion: project.rnVersion,
     ...(previousState?.deviceIp && { deviceIp: previousState.deviceIp }),
     ...(previousState?.deviceUdid && { deviceUdid: previousState.deviceUdid }),
