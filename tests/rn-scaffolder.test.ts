@@ -137,6 +137,12 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
     it("spm-utils.js has the header-less ReactAppHeaders module map hunk", () => {
       expect(src("spm-utils.js")).toContain("module ReactAppHeaders {");
     });
+    it("scaffold-package-swift.js has the fix 20 hunk", () => {
+      expect(src("scaffold-package-swift.js")).toContain("function classifyPodDependency");
+    });
+    it("read-podspec.js has the fix 20 hunk", () => {
+      expect(src("read-podspec.js")).toContain("dropSubspecs");
+    });
   });
 
   it("gives the per-app header farm a header-less module map, so Objective-C imports it textually", () => {
@@ -1471,5 +1477,179 @@ describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
   it("gesture-handler 2.32.0 scaffolds", () => {
     expect(run().statuses["react-native-gesture-handler"]).toBe("written");
     expect(run().results.filter((r) => r.status === "error")).toEqual([]);
+  });
+});
+
+// Fixes 20–25 (React Native 0.88.0 patch), exercised on the vendored copy, so they never skip. The podspec fixtures are
+// written in each library's shape (react-native-vision-camera 4.7.3, react-native-video 6.19.3,
+// react-native-device-info 15.0.2, @react-native-community/netinfo 11.5.2), not copied from the libraries.
+describe("scaffolder fixes 20–25 (vendor/rn-spm)", () => {
+  const req = createRequire(import.meta.url);
+  const load = <T>(f: string) => req(path.join(VENDORED_RN_SPM, f)) as T;
+  /** A library with the given files and podspec body, as a temp dir. */
+  function lib(files: Record<string, string>, podBody: string, name = "Foo", npm = "foo"): string {
+    const root = tempDir();
+    for (const [f, text] of Object.entries({ "package.json": JSON.stringify({ name: npm, version: "1.0.0" }), ...files })) {
+      mkdirSync(path.dirname(path.join(root, f)), { recursive: true });
+      writeFileSync(path.join(root, f), text);
+    }
+    writeFileSync(path.join(root, `${name}.podspec`), `Pod::Spec.new do |s|\n  s.name = "${name}"\n${podBody}\nend\n`);
+    return root;
+  }
+  const warningsOf = (run: ReturnType<typeof scaffoldLibraries>, name: string) =>
+    run.results.find((r) => r.depName === name)?.warnings ?? [];
+  const MISSING = (dep: string) =>
+    `Dependency "${dep}" is not installed (or not linked for iOS); left out, as CocoaPods leaves it out.`;
+  const MISSING_WITH_SUBSPEC = (dep: string, subspec: string) =>
+    `Dependency "${dep}" is not installed (or not linked for iOS); left out with the subspec "${subspec}" that declares it (its sources, headers, settings and dependencies), as CocoaPods leaves it out.`;
+
+  describe("20: a dependency on a package that is not installed", () => {
+    // react-native-vision-camera 4.7.3's shape: the FrameProcessors subspec exists only `if enableFrameProcessors`,
+    // which the podspec turns off when react-native-worklets-core does not resolve. The regex reader sees it anyway.
+    const VISION_CAMERA = [
+      "  s.requires_arc = true",
+      "  s.subspec 'Core' do |core|",
+      '    core.source_files = ["ios/Core/**/*.swift"]',
+      "  end",
+      "  s.subspec 'React' do |core|",
+      '    core.source_files = ["ios/React/**/*.swift", "ios/React/**/*.{h,m}"]',
+      '    core.public_header_files = ["ios/React/CameraBridge.h"]',
+      '    core.dependency "React-Core"',
+      "    if enableFrameProcessors",
+      '      core.dependency "VisionCamera/FrameProcessors"',
+      "    end",
+      "  end",
+      "  if enableFrameProcessors",
+      "    s.subspec 'FrameProcessors' do |fp|",
+      '      fp.source_files = ["ios/FrameProcessors/**/*.{h,m,mm}"]',
+      '      fp.public_header_files = ["ios/FrameProcessors/Frame.h"]',
+      '      fp.pod_target_xcconfig = {"CLANG_CXX_LANGUAGE_STANDARD" => "c++17", "GCC_PREPROCESSOR_DEFINITIONS" => "$(inherited) FP_ENABLED=1"}',
+      '      fp.frameworks = "Accelerate"',
+      '      fp.dependency "React-callinvoker"',
+      '      fp.dependency "react-native-worklets-core"',
+      "    end",
+      "  end",
+    ].join("\n");
+    const visionCamera = () =>
+      lib(
+        {
+          "ios/Core/CameraSession.swift": "import Foundation\n",
+          "ios/React/CameraView.swift": "import Foundation\n",
+          "ios/React/CameraBridge.h": "#import <Foundation/Foundation.h>\n",
+          "ios/React/CameraViewManager.m": '#import "CameraBridge.h"\n',
+          "ios/FrameProcessors/Frame.h": "#import <Foundation/Foundation.h>\n",
+          "ios/FrameProcessors/Frame.m": '#import "Frame.h"\n',
+          "ios/FrameProcessors/VisionCameraInstaller.mm": '#import "Frame.h"\n',
+        },
+        VISION_CAMERA,
+        "VisionCamera",
+        "react-native-vision-camera",
+      );
+
+    it("drops the subspec that declares a missing sibling, with its sources, headers and settings", () => {
+      const run = scaffoldLibraries(VENDORED_RN_SPM, { "react-native-vision-camera": visionCamera() });
+      expect(run.statuses["react-native-vision-camera"]).toBe("written");
+      const pkg = run.files["react-native-vision-camera/Package.swift"]!;
+      expect(pkg).not.toContain("react-native-worklets-core");
+      expect(pkg).not.toContain("ios/FrameProcessors/");
+      expect(pkg).not.toContain('.define("FP_ENABLED"');
+      expect(pkg).not.toContain('"Accelerate"');
+      expect(pkg).toContain('"ios/React/CameraView.swift",');
+      expect(pkg).toContain('"ios/Core/CameraSession.swift",');
+      expect(run.files["react-native-vision-camera/rn-spm-swift/umbrella.h"]).not.toContain("FrameProcessors");
+      expect(warningsOf(run, "react-native-vision-camera")).toContain(
+        MISSING_WITH_SUBSPEC("react-native-worklets-core", "FrameProcessors"),
+      );
+      expect(warningsOf(run, "react-native-vision-camera")).not.toContain(MISSING("react-native-worklets-core"));
+    });
+
+    it("drops a main-spec dependency alone and keeps its sources", () => {
+      const root = lib(
+        { "ios/Foo.h": "", "ios/Foo.m": '#import "Foo.h"\n' },
+        '  s.source_files = "ios/**/*.{h,m}"\n  s.dependency "react-native-missing"',
+        "Foo",
+        "react-native-foo",
+      );
+      const run = scaffoldLibraries(VENDORED_RN_SPM, { "react-native-foo": root });
+      expect(run.statuses["react-native-foo"]).toBe("written");
+      const pkg = run.files["react-native-foo/Package.swift"]!;
+      expect(pkg).not.toContain("react-native-missing");
+      expect(pkg).toContain('"ios/Foo.h",');
+      expect(pkg).toContain('"ios/Foo.m",');
+      expect(warningsOf(run, "react-native-foo")).toContain(MISSING("react-native-missing"));
+    });
+
+    it("a pod-style dependency on a package autolinking lists without iOS is a missing sibling", () => {
+      const a = lib({ "ios/A.h": "", "ios/A.m": "" }, '  s.source_files = "ios/**/*.{h,m}"\n  s.dependency "RNB"', "A", "a");
+      const b = lib({ "ios/B.h": "", "ios/B.m": "" }, '  s.source_files = "ios/**/*.{h,m}"', "RNB", "b");
+      const run = scaffoldLibraries(VENDORED_RN_SPM, { a, b }, { noIos: ["b"] });
+      expect(run.statuses).toEqual({ a: "written", b: "skipped-no-ios" });
+      expect(warningsOf(run, "a")).toContain(MISSING("RNB"));
+      expect(warningsOf(run, "a").filter((w) => w.includes("no known SwiftPM equivalent"))).toEqual([]);
+      expect(run.files["a/Package.swift"]).not.toContain("RNB");
+    });
+
+    it("an autolinked sibling is still wired", () => {
+      const a = lib({ "ios/A.h": "", "ios/A.m": "" }, '  s.source_files = "ios/**/*.{h,m}"\n  s.dependency "react-native-b"', "A", "react-native-a");
+      const b = lib({ "ios/B.h": "", "ios/B.m": "" }, '  s.source_files = "ios/**/*.{h,m}"', "B", "react-native-b");
+      const run = scaffoldLibraries(VENDORED_RN_SPM, { "react-native-a": a, "react-native-b": b });
+      expect(run.statuses).toEqual({ "react-native-a": "written", "react-native-b": "written" });
+      const pkg = run.files["react-native-a/Package.swift"]!;
+      expect(pkg).toContain('.package(name: "B", path: "../B")');
+      expect(pkg).toContain('.product(name: "B", package: "B")');
+      expect(warningsOf(run, "react-native-a").filter((w) => w.includes("not installed"))).toEqual([]);
+    });
+
+    it("a react-native-* pod name of an installed scoped package is wired to that package", () => {
+      // @react-native-community/netinfo's podspec is react-native-netinfo.podspec.
+      const a = lib(
+        { "ios/A.h": "", "ios/A.m": "" },
+        '  s.source_files = "ios/**/*.{h,m}"\n  s.dependency "react-native-netinfo"',
+        "A",
+        "react-native-a",
+      );
+      const n = lib({ "ios/N.h": "", "ios/N.m": "" }, '  s.source_files = "ios/**/*.{h,m}"', "react-native-netinfo", "@scope/netinfo");
+      const run = scaffoldLibraries(VENDORED_RN_SPM, { "react-native-a": a, "@scope/netinfo": n });
+      expect(run.statuses).toEqual({ "react-native-a": "written", "@scope/netinfo": "written" });
+      const pkg = run.files["react-native-a/Package.swift"]!;
+      expect(pkg).toContain('.package(name: "react-native-netinfo", path: "../react-native-netinfo")');
+      expect(pkg).toContain('.product(name: "react-native-netinfo", package: "react-native-netinfo")');
+      expect(warningsOf(run, "react-native-a").filter((w) => w.includes("not installed"))).toEqual([]);
+    });
+
+    type Classify = (
+      depName: string,
+      ctx: { selfPodName: string; ownNpm: string; podToNpm: Map<string, string>; linkedNpm: Set<string>; table: object },
+    ) => { kind: string; pod: string; npm?: string; entry?: object };
+    const table = { SwiftUIIntrospect: { url: "https://github.com/siteline/swiftui-introspect", exact: "1.5.0", product: "SwiftUIIntrospect" } };
+    it.each([
+      ["Foo/Sub", "subspec", undefined],
+      ["React-Core", "core", undefined],
+      ["ExpoModulesCore", "expo", undefined],
+      ["react-native-x", "sibling", "react-native-x"],
+      ["react-native-y/Sub", "missing-sibling", "react-native-y"],
+      ["RNX", "sibling", "react-native-x"],
+      ["RNZ", "missing-sibling", "react-native-z"],
+      ["react-native-n", "sibling", "@scope/n"],
+      ["SwiftUIIntrospect", "mapped", undefined],
+      ["MMKV", "unmapped", undefined],
+    ])("classifyPodDependency(%s) is %s", (depName, kind, npm) => {
+      const classify = load<{ classifyPodDependency: Classify }>("scaffold-package-swift.js").classifyPodDependency;
+      const got = classify(depName, {
+        selfPodName: "Foo",
+        ownNpm: "react-native-foo",
+        podToNpm: new Map([
+          ["RNX", "react-native-x"],
+          ["RNZ", "react-native-z"],
+          ["react-native-n", "@scope/n"],
+        ]),
+        linkedNpm: new Set(["react-native-foo", "react-native-x", "@scope/n"]),
+        table,
+      });
+      expect(got.kind).toBe(kind);
+      expect(got.pod).toBe(depName.split("/")[0]);
+      expect(got.npm).toBe(npm);
+      if (kind === "mapped") expect(got.entry).toEqual(table.SwiftUIIntrospect);
+    });
   });
 });

@@ -74,11 +74,13 @@ export function withRnRoot<T>(version: string, run: () => T): T {
  * Copies each library (`name` → its source dir) into a temp `node_modules`, drops the scaffolder's
  * earlier output (a persisted scaffold patch), runs `scaffoldAll` over them with `spmDir`, and
  * returns each library's status and every file the run created or changed, keyed
- * `<name>/<relative path>`, with the temp root replaced by `<tmp>`.
+ * `<name>/<relative path>`, with the temp root replaced by `<tmp>`. The libraries in `noIos` are listed
+ * without an iOS platform, as autolinking lists a package a config takes out of iOS.
  */
 export function scaffoldLibraries(
   spmDir: string,
   libs: Record<string, string>,
+  { noIos = [] }: { noIos?: string[] } = {},
 ): { statuses: Record<string, string>; results: ScaffoldResult[]; files: Record<string, string>; roots: Record<string, string> } {
   const base = mkTmp("rn-scaffold-");
   const projectRoot = path.join(base, "app");
@@ -111,7 +113,9 @@ export function scaffoldLibraries(
       root,
       name,
       platforms: {
-        ios: { podspecPath: podspec ? path.join(root, podspec) : null, version, configurations: [], scriptPhases: [] },
+        ios: noIos.includes(name)
+          ? null
+          : { podspecPath: podspec ? path.join(root, podspec) : null, version, configurations: [], scriptPhases: [] },
       },
     };
   }

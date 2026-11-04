@@ -601,6 +601,43 @@ still not evaluated. The scaffolded worklets target then gets
 (the Expo SDK 57 pin) gets the same define in a new scaffold; a scaffold persisted earlier keeps its manifest, since
 `RN_XTOOL_SCAFFOLD_REVISION` stays 3.
 
+## 20. `scripts/spm/*`: a dependency on a package that is not installed stops the scaffold
+
+react-native-vision-camera 4.7.3 defines its `FrameProcessors` subspec (Objective-C++ sources and
+`fp.dependency "react-native-worklets-core"`) only `if enableFrameProcessors`, and the podspec sets that to false when
+react-native-worklets-core does not resolve. The regex reader evaluates no condition and merges every subspec (fix 4),
+and the dependency loop makes any `react-native-*` dependency a sibling, so the emitter threw and no manifest was
+written:
+
+```
+react-native spm scaffold: no resolved Swift name for the sibling 'react-native-worklets-core'. expandSpmDependencies must resolve every dep's name before a manifest is written.
+```
+
+React Native then reported `"react-native-vision-camera" has mixed Swift + Objective-C/C++ sources`, which hid the
+cause.
+
+Fix: `classifyPodDependency` names what a dependency is (a subspec of the same pod, React Native core, an Expo module,
+an autolinked sibling, a sibling that is not linked for iOS, a mapped or an unmapped CocoaPods pod), in the order the
+dependency loop always checked. A sibling is a pod name that the index of the autolinked podspecs maps to an npm
+package, else an npm package named `react-native-*`. The index comes first because a `react-native-*` pod name can
+belong to a scoped package (@react-native-community/netinfo's pod is `react-native-netinfo`). The index also holds the
+packages autolinking lists without iOS, so a pod-style dependency on one of those is a sibling too, not an unknown pod.
+A sibling that is not linked for iOS is left out, as CocoaPods leaves it out:
+
+- declared by the main spec, the dependency alone is left out, and every source stays:
+  `Dependency "<name>" is not installed (or not linked for iOS); left out, as CocoaPods leaves it out.`
+- declared by a subspec, the subspec goes with it. The podspec is read again without that subspec
+  (`readPodspecCached(path, {dropSubspecs})`, on both the regex and the `pod ipc spec` path): its sources, excludes,
+  public headers, `header_dir`, `header_mappings_dir`, frameworks, libraries, xcconfig defines and dependencies, and the
+  spec's `<Pod>/<subspec>` references to it.
+  `Dependency "<name>" is not installed (or not linked for iOS); left out with the subspec "<subspec>" that declares it
+  (its sources, headers, settings and dependencies), as CocoaPods leaves it out.`
+
+The model keeps each selected subspec's own dependencies (`subspecDependencies`) for this. Not covered: a pod-style name
+of an npm package that is not installed at all cannot be told from a CocoaPods pod, and is warned about as an unmapped
+pod; CocoaPods fails on it too. Found on react-native-vision-camera 4.7.3 without react-native-worklets-core: it
+scaffolds without Frame Processors, as CocoaPods builds it.
+
 ## Known limitation (deferred): pure-Swift packages importing a mixed Expo module
 
 A Swift module built with a bridging header (every mixed target) makes each Swift importer re-read that
@@ -615,7 +652,7 @@ every generated or scaffolded Swift target that depends on a mixed module the sa
 
 `tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks the
 fixes against fixtures (skipped when the reference app is not present; set `RN_XTOOL_REF_APP` to point at it). It also
-asserts that each hunk is present in the installed RN files. Fixes 14 to 19 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
+asserts that each hunk is present in the installed RN files. Fixes 14 to 20 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
 against podspec fixtures from the SDK 57 pins in `tests/fixtures/podspecs/` (worklets 0.10.1, reanimated 4.5.1,
 screens 4.26.2, gesture-handler 2.32.0), from screens 4.30.1 (the clang-only importer paths and module map) and from
 worklets 0.8.3 (the `RCT_HERMES_V1_ENABLED` ternary). A golden test re-scaffolds the reference app's libraries and compares them

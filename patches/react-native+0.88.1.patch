@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native/scripts/spm/read-podspec.js b/node_modules/react-native/scripts/spm/read-podspec.js
-index 8fcf04b..d4f801d 100644
+index 8fcf04b..0438e70 100644
 --- a/node_modules/react-native/scripts/spm/read-podspec.js
 +++ b/node_modules/react-native/scripts/spm/read-podspec.js
 @@ -102,13 +102,12 @@ function runPodIpcSpec(podspecPath /*: string */) /*: RawSpec | null */ {
@@ -22,7 +22,7 @@ index 8fcf04b..d4f801d 100644
      });
    } catch {
      cleanupPatchedPodspec(patchedPath);
-@@ -170,58 +169,332 @@ function cleanupPatchedPodspec(patchedPath /*: ?string */) /*: void */ {
+@@ -170,58 +169,337 @@ function cleanupPatchedPodspec(patchedPath /*: ?string */) /*: void */ {
  // Regex fallback
  // ---------------------------------------------------------------------------
  
@@ -309,10 +309,16 @@ index 8fcf04b..d4f801d 100644
 + * ENV[], $config[:...]) and most interpolation are not evaluated — a warning
 + * is appended so the caller can surface it. Known limits: nested subspecs,
 + * heredocs, `{ |x| … }` brace blocks and conditionals are not understood.
-+ * Always returns a RawSpec; pure-JS, no Ruby dep required.
++ * Always returns a RawSpec; pure-JS, no Ruby dep required. The subspecs named in
++ * `opts.dropSubspecs` are left out, as if the podspec did not declare them.
   */
- function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+-function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
++function regexPodspec(
++  podspecPath /*: string */,
++  opts /*:: ?: {dropSubspecs?: ReadonlyArray<string>} */,
++) /*: RawSpec */ {
    const content = readPodspecSource(podspecPath);
++  const dropped = new Set(opts?.dropSubspecs ?? []);
 +  const mainName = mainReceiverName(content);
 +  const MAIN_RECV = mainRecvPattern(mainName);
    const warnings /*: Array<string> */ = [];
@@ -380,7 +386,7 @@ index 8fcf04b..d4f801d 100644
    }
  
    // The fields that identify the spec, and only when the receiver spelling
-@@ -235,9 +508,27 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -235,9 +513,27 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    // Matches:
    //   s.<field> = ["a", "b"]            (array)
    //   s.<field> = "single"              (single value treated as 1-element array)
@@ -411,7 +417,7 @@ index 8fcf04b..d4f801d 100644
      if (mArr != null) {
        const inner = mArr[1];
        const out /*: Array<string> */ = [];
-@@ -249,16 +540,34 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -249,16 +545,34 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
        }
        return out;
      }
@@ -450,7 +456,7 @@ index 8fcf04b..d4f801d 100644
        if (m == null) break;
        out.push(m[1]);
      }
-@@ -269,21 +578,25 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -269,21 +583,25 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    //   s.framework "X"          → ["X"]
    //   s.framework = "X"        → ["X"]
    //   s.frameworks = ["X","Y"] → ["X","Y"]
@@ -481,7 +487,7 @@ index 8fcf04b..d4f801d 100644
        if (m == null) break;
        const itemRe = /["']([^"']+)["']/g;
        while (true) {
-@@ -298,12 +611,14 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -298,12 +616,14 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    // Matches:  'HEADER_SEARCH_PATHS' => '...'   or  => ["...","..."]
    // Returns the raw token strings (still containing $(PODS_TARGET_SRCROOT)
    // etc.); substitution happens at translation time.
@@ -498,7 +504,7 @@ index 8fcf04b..d4f801d 100644
        if (m == null) break;
        const itemRe = /["']((?:[^"'\\]|\\.)+)["']/g;
        while (true) {
-@@ -321,7 +636,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -321,7 +641,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      const strRe =
        /["']HEADER_SEARCH_PATHS["']\s*=>\s*["']((?:[^"'\\]|\\.)+)["']/g;
      while (true) {
@@ -507,7 +513,7 @@ index 8fcf04b..d4f801d 100644
        if (m == null) break;
        for (const token of m[1].split(/\s+/)) {
          if (token.length > 0) {
-@@ -332,15 +647,37 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -332,15 +652,37 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      return Array.from(new Set(out));
    }
  
@@ -547,7 +553,7 @@ index 8fcf04b..d4f801d 100644
      );
    }
    if (/install_modules_dependencies/.test(content)) {
-@@ -354,24 +691,81 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -354,24 +696,91 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      );
    }
  
@@ -561,11 +567,13 @@ index 8fcf04b..d4f801d 100644
 +  const none = new RegExp(
 +    `${MAIN_RECV}\\.default_subspecs?\\s*=\\s*:none\\b`,
 +  ).test(main);
-+  const subspecs = none
-+    ? []
-+    : defaults.size > 0
-+      ? allSubspecs.filter(sub => defaults.has(sub.name))
-+      : allSubspecs;
++  const subspecs = (
++    none
++      ? []
++      : defaults.size > 0
++        ? allSubspecs.filter(sub => defaults.has(sub.name))
++        : allSubspecs
++  ).filter(sub => !dropped.has(sub.name));
 +  // Layer 0 is the main spec; the rest are the selected subspecs, each read
 +  // with the same helpers anchored on its own block variable.
 +  const layers = [
@@ -639,10 +647,18 @@ index 8fcf04b..d4f801d 100644
 +        sourceFiles: getArrayField('source_files', l.text, l.recv),
 +      })),
 +    ),
++    // Each selected subspec's own dependencies, so a caller can tell which
++    // subspec declares a dependency (flattenSubspecs: subspecDependencies).
++    __subspec_dependencies__: Object.fromEntries(
++      layers.slice(1).map((l, i) => [
++        subspecs[i].name,
++        getDependencies(l.text, l.recv),
++      ]),
++    ),
      __regex_partial__: true,
      __warnings__: warnings,
    };
-@@ -423,6 +817,58 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
+@@ -423,6 +832,58 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
    return tokens;
  }
  
@@ -701,7 +717,25 @@ index 8fcf04b..d4f801d 100644
  // ---------------------------------------------------------------------------
  // Subspec flattening
  // ---------------------------------------------------------------------------
-@@ -456,7 +902,12 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -438,8 +899,16 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
+  *   - String fields → top-level wins; if absent, take the first subspec's value
+  *   - pod_target_xcconfig HEADER_SEARCH_PATHS → array-union across all selected subspecs
+  *   - dependencies  → array-union of name strings (version constraints dropped)
++ *
++ * The subspecs named in `opts.dropSubspecs` are left out (their sources,
++ * headers, settings and dependencies), and so are the spec's references to
++ * them (`<Pod>/<subspec>`).
+  */
+-function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
++function flattenSubspecs(
++  rawSpec /*: RawSpec */,
++  opts /*:: ?: {dropSubspecs?: ReadonlyArray<string>} */,
++) /*: PodspecModel */ {
++  const dropped = new Set(opts?.dropSubspecs ?? []);
+   const warnings /*: Array<string> */ = [];
+   // $FlowFixMe[prop-missing] dynamic shape
+   const partial /*: boolean */ = rawSpec.__regex_partial__ === true;
+@@ -456,7 +925,12 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
    //   - `default_subspecs`: array of names (or undefined → use all subspecs)
    const subspecs = Array.isArray(rawSpec.subspecs) ? rawSpec.subspecs : [];
    let selected = subspecs;
@@ -715,7 +749,18 @@ index 8fcf04b..d4f801d 100644
      const wanted = new Set(rawSpec.default_subspecs);
      selected = subspecs.filter(s => {
        // $FlowFixMe[prop-missing] dynamic shape
-@@ -482,6 +933,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -464,6 +938,10 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+       return name != null && wanted.has(name);
+     });
+   }
++  selected = selected.filter(
++    // $FlowFixMe[prop-missing] dynamic shape
++    s => !(s != null && typeof s.name === 'string' && dropped.has(s.name)),
++  );
+   const layers = [rawSpec, ...selected];
+ 
+   function mergeArrayField(key /*: string */) /*: Array<string> */ {
+@@ -482,6 +960,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return Array.from(new Set(out));
    }
  
@@ -733,7 +778,7 @@ index 8fcf04b..d4f801d 100644
    // Only the spec's own value: a subspec's `header_dir` names that subspec's
    // headers, and several subspecs can disagree.
    function specStringField(key /*: string */) /*: string | null */ {
-@@ -544,6 +1006,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -544,6 +1033,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
    // `-D`s are safe to forward; arbitrary flags may be machine- or
    // example-app-specific. $(inherited), unresolved $(...) tokens, and invalid
    // C identifiers are skipped.
@@ -754,7 +799,7 @@ index 8fcf04b..d4f801d 100644
    function mergePreprocessorDefines() /*: Array<PreprocessorDefine> */ {
      const out /*: Array<PreprocessorDefine> */ = [];
      const seen /*: Set<string> */ = new Set();
-@@ -554,7 +1030,23 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -554,7 +1057,23 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        config /*: ?('debug' | 'release') */,
      ) => {
        if (!validName.test(name)) return;
@@ -779,7 +824,7 @@ index 8fcf04b..d4f801d 100644
          return; // unresolved Xcode/Ruby token — don't emit a broken define
        }
        const key = `${name}|${config ?? ''}`;
-@@ -571,6 +1063,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -571,6 +1090,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        'xcconfig',
        'user_target_xcconfig',
      ];
@@ -800,26 +845,100 @@ index 8fcf04b..d4f801d 100644
      for (const layer of layers) {
        if (layer == null || typeof layer !== 'object') continue;
        for (const xcKey of XCCONFIG_KEYS) {
-@@ -648,23 +1154,35 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
-     return Array.from(new Set(out));
+@@ -627,44 +1160,84 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+     return out;
    }
  
--  function mergeCompilerFlags() /*: Array<string> */ {
++  // A layer's dependency names. pod ipc returns deps as
++  // {name: [versionConstraint, ...], ...}, the regex reader as [name, ...].
++  // A reference to a dropped subspec (`<Pod>/<subspec>`) is left out.
++  const ownName = specStringField('name');
++  const refersToDropped = (d /*: string */) /*: boolean */ => {
++    const [pod, sub] = d.split('/');
++    return sub != null && dropped.has(sub) && (ownName == null || pod === ownName);
++  };
++  function dependencyNames(deps /*: unknown */) /*: Array<string> */ {
++    const out /*: Array<string> */ = [];
++    if (Array.isArray(deps)) {
++      for (const d of deps) {
++        if (typeof d === 'string') out.push(d);
++      }
++    } else if (deps != null && typeof deps === 'object') {
++      out.push(...Object.keys(deps));
++    }
++    return out.filter(d => !refersToDropped(d));
++  }
++
+   function mergeDependencies() /*: Array<string> */ {
+     const out /*: Array<string> */ = [];
+     for (const layer of layers) {
+       // $FlowFixMe[incompatible-use] layer narrowed from `mixed`; runtime-validated below
+-      const deps = layer != null ? layer.dependencies : null;
+-      if (deps == null) continue;
+-      // pod ipc returns deps as: {name: [versionConstraint, ...], ...}
+-      // regex returns deps as: [name, name, ...]
+-      if (Array.isArray(deps)) {
+-        for (const d of deps) {
+-          if (typeof d === 'string') out.push(d);
+-        }
+-      } else if (typeof deps === 'object') {
+-        for (const name of Object.keys(deps)) {
+-          out.push(name);
++      out.push(...dependencyNames(layer != null ? layer.dependencies : null));
++    }
++    return Array.from(new Set(out));
++  }
++
++  // Each selected subspec's own dependencies, by subspec name.
++  function subspecDependencies() /*: {[string]: Array<string>} */ {
++    const out /*: {[string]: Array<string>} */ = {};
++    // $FlowFixMe[prop-missing] dynamic shape
++    const fromRegex = rawSpec.__subspec_dependencies__;
++    if (fromRegex != null && typeof fromRegex === 'object') {
++      for (const name of Object.keys(fromRegex)) {
++        if (!dropped.has(name)) out[name] = dependencyNames(fromRegex[name]);
++      }
++      return out;
++    }
++    for (const sub of selected) {
++      // $FlowFixMe[prop-missing] dynamic shape
++      if (sub == null || typeof sub.name !== 'string') continue;
++      // $FlowFixMe[prop-missing] dynamic shape
++      out[sub.name] = dependencyNames(sub.dependencies);
++    }
++    return out;
++  }
++
 +  function compilerFlagTokens(layer /*: unknown */) /*: Array<string> */ {
 +    // $FlowFixMe[incompatible-use] layer narrowed from `mixed`; runtime-validated below
 +    const value = layer != null ? layer.compiler_flags : null;
-     const out /*: Array<string> */ = [];
--    for (const layer of layers) {
--      // $FlowFixMe[incompatible-use] layer narrowed from `mixed`; runtime-validated below
--      const value = layer != null ? layer.compiler_flags : null;
--      if (typeof value === 'string') {
--        for (const tok of value.split(/\s+/)) {
++    const out /*: Array<string> */ = [];
 +    const values = Array.isArray(value) ? value : [value];
 +    for (const v of values) {
 +      if (typeof v === 'string') {
 +        for (const tok of v.split(/\s+/)) {
-           if (tok.length > 0) out.push(tok);
++          if (tok.length > 0) out.push(tok);
          }
+       }
+     }
+-    return Array.from(new Set(out));
++    return out;
+   }
+ 
+   function mergeCompilerFlags() /*: Array<string> */ {
++    const liftedDefines = new Set(
++      mergePreprocessorDefines()
++        .filter(d => d.config == null)
++        .map(d => (d.value != null ? `${d.name}=${d.value}` : d.name)),
++    );
+     const out /*: Array<string> */ = [];
+     for (const layer of layers) {
+-      // $FlowFixMe[incompatible-use] layer narrowed from `mixed`; runtime-validated below
+-      const value = layer != null ? layer.compiler_flags : null;
+-      if (typeof value === 'string') {
+-        for (const tok of value.split(/\s+/)) {
+-          if (tok.length > 0) out.push(tok);
+-        }
 -      } else if (Array.isArray(value)) {
 -        for (const v of value) {
 -          if (typeof v === 'string') {
@@ -828,19 +947,6 @@ index 8fcf04b..d4f801d 100644
 -            }
 -          }
 -        }
-+      }
-+    }
-+    return out;
-+  }
-+
-+  function mergeCompilerFlags() /*: Array<string> */ {
-+    const liftedDefines = new Set(
-+      mergePreprocessorDefines()
-+        .filter(d => d.config == null)
-+        .map(d => (d.value != null ? `${d.name}=${d.value}` : d.name)),
-+    );
-+    const out /*: Array<string> */ = [];
-+    for (const layer of layers) {
 +      for (const tok of compilerFlagTokens(layer)) {
 +        // A `-D` already emitted as a `.define(...)` is not repeated as a flag.
 +        if (tok.startsWith('-D') && liftedDefines.has(tok.slice(2))) continue;
@@ -850,7 +956,7 @@ index 8fcf04b..d4f801d 100644
        }
      }
      return out;
-@@ -677,6 +1195,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -677,6 +1250,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        ? false
        : true; // RN ecosystem default
  
@@ -871,7 +977,7 @@ index 8fcf04b..d4f801d 100644
    return {
      name: specStringField('name') ?? '',
      version: specStringField('version') ?? '',
-@@ -693,13 +1225,29 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -693,13 +1280,30 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      // header_mappings_dir copy step, which SPM has no equivalent for.
      headerMappingsDirs: mergeArrayField('header_mappings_dir'),
      headerDir: specStringField('header_dir'),
@@ -898,12 +1004,36 @@ index 8fcf04b..d4f801d 100644
      dependencies: mergeDependencies(),
 -    preprocessorDefines: mergePreprocessorDefines(),
 -    compilerFlags: mergeCompilerFlags(),
++    subspecDependencies: subspecDependencies(),
 +    preprocessorDefines,
 +    compilerFlags,
      headerSearchPaths: mergeHeaderSearchPaths(),
      resources: mergeArrayField('resources'),
      requiresArc,
-@@ -746,6 +1294,26 @@ function readPodspec(podspecPath /*: string */) /*: PodspecModel */ {
+@@ -722,15 +1326,18 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+  * Throws when the file doesn't exist. Otherwise always returns a
+  * PodspecModel — warnings on the model surface partial parses to the
+  * caller, who can decide whether to proceed or abort scaffolding for that
+- * dep.
++ * dep. The subspecs named in `opts.dropSubspecs` are left out.
+  */
+-function readPodspec(podspecPath /*: string */) /*: PodspecModel */ {
++function readPodspec(
++  podspecPath /*: string */,
++  opts /*:: ?: {dropSubspecs?: ReadonlyArray<string>} */,
++) /*: PodspecModel */ {
+   if (!fs.existsSync(podspecPath)) {
+     throw new Error(`readPodspec: file does not exist: ${podspecPath}`);
+   }
+   const podIpc = runPodIpcSpec(podspecPath);
+-  const raw = podIpc != null ? podIpc : regexPodspec(podspecPath);
+-  const model = flattenSubspecs(raw);
++  const raw = podIpc != null ? podIpc : regexPodspec(podspecPath, opts);
++  const model = flattenSubspecs(raw, opts);
+   // Record whether the podspec calls `install_modules_dependencies(s)`. We
+   // strip that helper before `pod ipc` and the regex parser can't expand it,
+   // so the React-Core family it injects never lands in `model.dependencies`.
+@@ -746,21 +1353,46 @@ function readPodspec(podspecPath /*: string */) /*: PodspecModel */ {
    return model;
  }
  
@@ -930,7 +1060,31 @@ index 8fcf04b..d4f801d 100644
  const podspecModels /*: Map<string, PodspecModel> */ = new Map();
  
  /**
-@@ -794,12 +1362,13 @@ function readPodspecNames(
+  * readPodspec memoized on the resolved path. `pod ipc spec` costs a process
+  * spawn, and one autolinking run reads the same podspec from several sites
+  * (name resolution, header search paths, scaffolding). The model is shared, so
+- * callers must treat it as read-only.
++ * callers must treat it as read-only. The key is the resolved path plus the
++ * sorted `opts.dropSubspecs`.
+  */
+-function readPodspecCached(podspecPath /*: string */) /*: PodspecModel */ {
+-  const key = path.resolve(podspecPath);
++function readPodspecCached(
++  podspecPath /*: string */,
++  opts /*:: ?: {dropSubspecs?: ReadonlyArray<string>} */,
++) /*: PodspecModel */ {
++  const drop = [...(opts?.dropSubspecs ?? [])].sort();
++  const key = [path.resolve(podspecPath), ...drop].join('\0');
+   const cached = podspecModels.get(key);
+   if (cached != null) {
+     return cached;
+   }
+-  const model = readPodspec(podspecPath);
++  const model = readPodspec(podspecPath, {dropSubspecs: drop});
+   podspecModels.set(key, model);
+   return model;
+ }
+@@ -794,12 +1426,13 @@ function readPodspecNames(
    if (hasShadowingSubspec(source)) {
      return null;
    }
@@ -946,7 +1100,7 @@ index 8fcf04b..d4f801d 100644
    const name = field('name');
    const moduleName = field('module_name');
 diff --git a/node_modules/react-native/scripts/spm/scaffold-package-swift.js b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
-index cf7e587..5c78e58 100644
+index cf7e587..05559d5 100644
 --- a/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 +++ b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 @@ -54,6 +54,7 @@ const {
@@ -957,7 +1111,7 @@ index cf7e587..5c78e58 100644
  } = require('./spm-utils');
  const {readSwiftpmConfig, writeSwiftpmName} = require('./swiftpm-config');
  const fs = require('node:fs');
-@@ -113,6 +114,53 @@ const {log, warn} = makeLogger('scaffold-package-swift');
+@@ -113,6 +114,143 @@ const {log, warn} = makeLogger('scaffold-package-swift');
  const SCAFFOLDER_VERSION = 20;
  const SCAFFOLDER_VERSION_LINE_RE = /^\/\/ AUTO-SCAFFOLDED-VERSION: (\d+)$/m;
  
@@ -1004,6 +1158,96 @@ index cf7e587..5c78e58 100644
 +  return /^(expo-|Expo[A-Z]|EX[A-Z])/.test(depName);
 +}
 +
++/*::
++type PodDependencyKind =
++  | 'subspec'
++  | 'core'
++  | 'expo'
++  | 'sibling'
++  | 'missing-sibling'
++  | 'mapped'
++  | 'unmapped';
++*/
++
++/**
++ * What a podspec `s.dependency "<name>"` is, checked in this order:
++ *   - 'subspec': `<own pod>/<subspec>`, a reference inside the same podspec;
++ *   - 'core': React Native core (React-Core, RCT-Folly, ...);
++ *   - 'sibling': an npm package that is autolinked for iOS (`linkedNpm`),
++ *     named by a pod name `podToNpm` maps to it, else as `react-native-*`;
++ *   - 'missing-sibling': the same, for a package that is not installed or not
++ *     linked for iOS. CocoaPods would not have it either;
++ *   - 'expo': an Expo module's pod;
++ *   - 'mapped': a CocoaPods pod with a SwiftPM package in `table`;
++ *   - 'unmapped': any other CocoaPods pod.
++ * `pod` is the name before any `/<subspec>`.
++ */
++function classifyPodDependency(
++  depName /*: string */,
++  ctx /*: {
++    selfPodName: ?string,
++    ownNpm: string,
++    podToNpm: Map<string, string>,
++    linkedNpm: Set<string>,
++    table: {[pod: string]: {...}},
++  } */,
++) /*: {kind: PodDependencyKind, pod: string, npm?: string, entry?: {...}} */ {
++  const pod = depName.split('/')[0];
++  if (
++    ctx.selfPodName != null &&
++    ctx.selfPodName !== '' &&
++    depName.startsWith(`${ctx.selfPodName}/`)
++  ) {
++    return {kind: 'subspec', pod};
++  }
++  if (isReactCoreDep(depName)) {
++    return {kind: 'core', pod};
++  }
++  // The pod-name index first: a `react-native-*` pod name can belong to a
++  // package published under another npm name (a scoped one).
++  const podSibling = ctx.podToNpm.get(pod);
++  const npm =
++    podSibling != null && podSibling !== ctx.ownNpm
++      ? podSibling
++      : pod.startsWith('react-native-')
++        ? pod
++        : null;
++  if (npm != null) {
++    return {
++      kind: ctx.linkedNpm.has(npm) ? 'sibling' : 'missing-sibling',
++      pod,
++      npm,
++    };
++  }
++  if (isExpoModuleDep(depName)) {
++    return {kind: 'expo', pod};
++  }
++  if (Object.hasOwn(ctx.table, pod)) {
++    return {kind: 'mapped', pod, entry: ctx.table[pod]};
++  }
++  return {kind: 'unmapped', pod};
++}
++
++// The dependencies of a podspec model that are npm packages not linked for
++// iOS (fix 20), each once.
++function missingSiblings(
++  model /*: PodspecModel */,
++  dep /*: AutolinkedDep */,
++  podToNpm /*: Map<string, string> */,
++  linkedNpm /*: Set<string> */,
++) /*: Array<string> */ {
++  const ctx = {
++    selfPodName: model.name,
++    ownNpm: dep.name,
++    podToNpm,
++    linkedNpm,
++    table: KNOWN_POD_SPM_PACKAGES,
++  };
++  return model.dependencies.filter(
++    d => classifyPodDependency(d, ctx).kind === 'missing-sibling',
++  );
++}
++
 +function spmPackageIdentity(url /*: string */) /*: string */ {
 +  return path.basename(url).replace(/\.git$/, '').toLowerCase();
 +}
@@ -1011,7 +1255,7 @@ index cf7e587..5c78e58 100644
  const AUTOGEN_MARKER =
    '// AUTO-GENERATED by scripts/generate-spm-autolinking.js';
  
-@@ -145,6 +193,297 @@ const SCAFFOLD_PREFIX_HEADER_CONTENTS = `// AUTO-SCAFFOLDED by react-native spm
+@@ -145,6 +283,297 @@ const SCAFFOLD_PREFIX_HEADER_CONTENTS = `// AUTO-SCAFFOLDED by react-native spm
  #endif
  `;
  
@@ -1309,7 +1553,7 @@ index cf7e587..5c78e58 100644
  // Names of deps the scaffolder always refuses to touch — `react-native`
  // itself is handled by the xcframework subpackage, never as an autolinked
  // target.
-@@ -167,10 +506,17 @@ const REACT_CORE_DEP_PREFIXES = [
+@@ -167,10 +596,17 @@ const REACT_CORE_DEP_PREFIXES = [
    'DoubleConversion',
    'Yoga',
    'hermes-engine',
@@ -1328,7 +1572,7 @@ index cf7e587..5c78e58 100644
  }
  
  // True when the dep ships a `codegenConfig` in package.json — RN's standard
-@@ -248,6 +594,10 @@ function translatePodspecToSpmTarget(
+@@ -248,6 +684,10 @@ function translatePodspecToSpmTarget(
    // npm name → resolved Swift name for every autolinked dep, so a sibling
    // reference honors that sibling's `spm.name` instead of re-deriving it.
    swiftNameByNpm /*: Map<string, string> */ = new Map(),
@@ -1339,48 +1583,101 @@ index cf7e587..5c78e58 100644
  ) /*: SpmScaffoldSpec */ {
    const warnings = [...model.warnings];
  
-@@ -329,6 +679,8 @@ function translatePodspecToSpmTarget(
-   // existing spm-deps mechanism. Unknown names are dropped with a warning.
+@@ -322,46 +762,65 @@ function translatePodspecToSpmTarget(
+     }
+   }
+ 
+-  // Bucket dependencies. React-Core / React-jsi / RCT-Folly / glog etc. ALL
+-  // collapse to the invariant React header products
++  // Bucket dependencies (classifyPodDependency). React-Core / React-jsi /
++  // RCT-Folly / glog etc. ALL collapse to the invariant React header products
+   // reference because they're bundled in the prebuilt React.xcframework.
+   // Sibling RN libs (autolinked or self-managed deps) flow through the
+-  // existing spm-deps mechanism. Unknown names are dropped with a warning.
++  // existing spm-deps mechanism; a pod-style name (reanimated's `s.dependency
++  // "RNWorklets"`) is wired to its sibling's npm package through podToNpm.
++  // A sibling that is not linked for iOS is left out, as CocoaPods leaves it
++  // out. Unknown names are dropped with a warning.
    let coreReactNative = false;
    const siblingNames /*: Array<string> */ = [];
+-  const selfPodspecName = model.name;
 +  const externalPackages /*: Array<{pod: string, url: string, exact: string, product: string, package: string}> */ = [];
 +  const unmappedPods /*: Array<string> */ = [];
-   const selfPodspecName = model.name;
++  const leftOut /*: Array<string> */ = [];
++  // Every iOS-autolinked dep has a resolved Swift name.
++  const linkedNpm /*: Set<string> */ = new Set(swiftNameByNpm.keys());
    for (const depName of model.dependencies) {
-     // Cross-subspec refs like "react-native-safe-area-context/common" are a
-@@ -355,13 +707,27 @@ function translatePodspecToSpmTarget(
-       if (!siblingNames.includes(podSibling)) {
-         siblingNames.push(podSibling);
+-    // Cross-subspec refs like "react-native-safe-area-context/common" are a
+-    // CocoaPods construct for one subspec depending on another from the
+-    // SAME podspec. After flattenSubspecs has merged everything into one
+-    // target the subspec ref is meaningless — drop silently.
+-    if (depName.includes('/') && depName.startsWith(`${selfPodspecName}/`)) {
++    const {kind, pod, npm, entry} = classifyPodDependency(depName, {
++      selfPodName: model.name,
++      ownNpm: dep.name,
++      podToNpm,
++      linkedNpm,
++      table: KNOWN_POD_SPM_PACKAGES,
++    });
++    if (kind === 'subspec') {
++      // Cross-subspec refs like "react-native-safe-area-context/common" are a
++      // CocoaPods construct for one subspec depending on another from the
++      // SAME podspec. After flattenSubspecs has merged everything into one
++      // target the subspec ref is meaningless — drop silently.
+       continue;
+-    }
+-    const podSibling = podToNpm.get(depName.split('/')[0]);
+-    if (isReactCoreDep(depName)) {
++    } else if (kind === 'core') {
+       coreReactNative = true;
+-    } else if (depName.startsWith('react-native-')) {
+-      // Generic cross-subspec ref guard for any "package/subspec" form.
+-      const baseName = depName.split('/')[0];
+-      if (!siblingNames.includes(baseName)) {
+-        siblingNames.push(baseName);
++    } else if (kind === 'sibling' && npm != null) {
++      if (!siblingNames.includes(npm)) {
++        siblingNames.push(npm);
+       }
+-    } else if (podSibling != null && podSibling !== dep.name) {
+-      // A pod-style dependency name (e.g. reanimated's `s.dependency
+-      // "RNWorklets"`) that resolves to an autolinked sibling's npm package
+-      // (react-native-worklets). Wire it as a sibling .package/.product so
+-      // the dep's cross-package includes (`<worklets/...>`) resolve.
+-      if (!siblingNames.includes(podSibling)) {
+-        siblingNames.push(podSibling);
++    } else if (kind === 'missing-sibling') {
++      if (!leftOut.includes(pod)) {
++        leftOut.push(pod);
++        warnings.push(
++          `Dependency "${pod}" is not installed (or not linked for iOS); left out, as CocoaPods leaves it out.`,
++        );
        }
 -    } else {
 -      // Could be a non-RN dep ("MMKV", "AFNetworking"). The scaffolder
 -      // doesn't know how to wire those — surface a warning so user can
 -      // edit the generated Package.swift.
-+    } else if (isExpoModuleDep(depName)) {
++    } else if (kind === 'expo') {
        warnings.push(
          `Unknown dependency "${depName}" — not wired into the scaffolded Package.swift. Edit manually if needed.`,
        );
-+    } else {
-+      // A CocoaPods pod ("SwiftUIIntrospect", "MMKV"): wire it to its SwiftPM
-+      // package when the map knows one, else say loudly that the build may fail.
-+      const pod = depName.split('/')[0];
-+      const known = Object.hasOwn(KNOWN_POD_SPM_PACKAGES, pod)
-+        ? KNOWN_POD_SPM_PACKAGES[pod]
-+        : null;
-+      if (known != null) {
-+        if (!externalPackages.some(e => e.pod === pod)) {
-+          externalPackages.push({pod, ...known, package: spmPackageIdentity(known.url)});
-+        }
-+      } else if (!unmappedPods.includes(pod)) {
-+        unmappedPods.push(pod);
-+        warnings.push(
-+          `Dependency "${pod}" is a CocoaPods pod with no known SwiftPM equivalent; the scaffolded package may fail to build — add it to the pod→SwiftPM map in scaffold-package-swift.js`,
-+        );
++    } else if (kind === 'mapped' && entry != null) {
++      // A CocoaPods pod ("SwiftUIIntrospect") wired to its SwiftPM package.
++      if (!externalPackages.some(e => e.pod === pod)) {
++        // $FlowFixMe[incompatible-type] KNOWN_POD_SPM_PACKAGES entry
++        const known /*: {url: string, exact: string, product: string} */ = entry;
++        externalPackages.push({pod, ...known, package: spmPackageIdentity(known.url)});
 +      }
++    } else if (!unmappedPods.includes(pod)) {
++      // Any other CocoaPods pod ("MMKV"): say loudly that the build may fail.
++      unmappedPods.push(pod);
++      warnings.push(
++        `Dependency "${pod}" is a CocoaPods pod with no known SwiftPM equivalent; the scaffolded package may fail to build — add it to the pod→SwiftPM map in scaffold-package-swift.js`,
++      );
      }
    }
  
-@@ -427,15 +793,55 @@ function translatePodspecToSpmTarget(
+@@ -427,15 +886,55 @@ function translatePodspecToSpmTarget(
      f =>
        f !== SCAFFOLD_PREFIX_HEADER &&
        f !== 'Package.swift' &&
@@ -1438,7 +1735,7 @@ index cf7e587..5c78e58 100644
    try {
      for (const f of expandSpmSourceGlobs(dep.root, model.publicHeaderFiles)) {
        if (/\.(h|hh|hpp)$/i.test(f)) headerFiles.push(f);
-@@ -497,6 +903,40 @@ function translatePodspecToSpmTarget(
+@@ -497,6 +996,40 @@ function translatePodspecToSpmTarget(
      }
    }
    let namespacedShimHeaders /*: Array<string> */ = [];
@@ -1479,7 +1776,7 @@ index cf7e587..5c78e58 100644
    if (publicHeadersPath == null) {
      // Root-level podspecs (`s.source_files = "*.{h,m,mm}"`) keep their
      // headers in the package root. CocoaPods exposes them to dependents as
-@@ -518,6 +958,101 @@ function translatePodspecToSpmTarget(
+@@ -518,6 +1051,101 @@ function translatePodspecToSpmTarget(
      );
    }
  
@@ -1581,7 +1878,7 @@ index cf7e587..5c78e58 100644
    const siblingSwiftNames /*: {[npmName: string]: string} */ = {};
    for (const npmName of siblingNames) {
      const resolved = swiftNameByNpm.get(npmName);
-@@ -526,21 +1061,181 @@ function translatePodspecToSpmTarget(
+@@ -526,21 +1154,181 @@ function translatePodspecToSpmTarget(
      }
    }
  
@@ -1765,7 +2062,7 @@ index cf7e587..5c78e58 100644
      warnings,
    };
  }
-@@ -629,10 +1324,25 @@ function emitScaffoldedPackageSwift(
+@@ -629,10 +1417,25 @@ function emitScaffoldedPackageSwift(
    const prefixFlag = spec.needsObjCPrefix
      ? `.unsafeFlags(["-include", "${SCAFFOLD_PREFIX_HEADER}"])`
      : '';
@@ -1792,7 +2089,7 @@ index cf7e587..5c78e58 100644
        ...(customFlagsCxx.length > 0
          ? [`.unsafeFlags([${customFlagsCxx.join(', ')}])`]
          : []),
-@@ -723,6 +1433,11 @@ function emitScaffoldedPackageSwift(
+@@ -723,6 +1526,11 @@ function emitScaffoldedPackageSwift(
        `.product(name: "${swiftSibling}", package: "${swiftSibling}")`,
      );
    }
@@ -1804,7 +2101,7 @@ index cf7e587..5c78e58 100644
  
    // sources: emit only when the podspec declared them. If empty (regex-fallback
    // podspec), no `sources:`/`exclude:` is emitted and SPM auto-scans the target
-@@ -740,6 +1455,11 @@ function emitScaffoldedPackageSwift(
+@@ -740,6 +1548,11 @@ function emitScaffoldedPackageSwift(
        ? `\n            publicHeadersPath: "${spec.publicHeadersPath}",`
        : '';
  
@@ -1816,7 +2113,7 @@ index cf7e587..5c78e58 100644
    const resourcesLine =
      spec.resources.length > 0
        ? `\n            resources: [${spec.resources.map(r => `.copy("${r}")`).join(', ')}],`
-@@ -755,9 +1475,42 @@ function emitScaffoldedPackageSwift(
+@@ -755,9 +1568,42 @@ function emitScaffoldedPackageSwift(
        ? `\n            dependencies: [${targetDeps.join(', ')}],`
        : '';
  
@@ -1861,7 +2158,7 @@ index cf7e587..5c78e58 100644
  // Edit the contents below if needed and re-run \`npx patch-package <dep-name>\`
  // to persist across \`npm install\`. To regenerate from the podspec, remove
  // this file (or just this marker) and re-run \`npx react-native spm scaffold\`.
-@@ -768,7 +1521,7 @@ ${SCAFFOLDER_MARKER}
+@@ -768,7 +1614,7 @@ ${SCAFFOLDER_MARKER}
  // (dropping the file) anyway.
  
  import PackageDescription
@@ -1870,7 +2167,7 @@ index cf7e587..5c78e58 100644
  let package = Package(
      name: "${spec.swiftName}",
      platforms: [.iOS("${iosDeploymentTarget}")],
-@@ -778,9 +1531,9 @@ let package = Package(
+@@ -778,9 +1624,9 @@ let package = Package(
  ${packageDepsBlock}    targets: [
          .target(
              name: "${spec.swiftName}",${targetDepsLine}
@@ -1882,7 +2179,7 @@ index cf7e587..5c78e58 100644
              linkerSettings: [${linkerEntries.join(', ')}]
          ),
      ],
-@@ -844,6 +1597,65 @@ function reportSwiftName(
+@@ -844,6 +1690,65 @@ function reportSwiftName(
    }
  }
  
@@ -1948,7 +2245,7 @@ index cf7e587..5c78e58 100644
  // ---------------------------------------------------------------------------
  // Per-dep orchestrator
  // ---------------------------------------------------------------------------
-@@ -953,7 +1765,11 @@ function scaffoldPackageSwiftForDep(
+@@ -953,7 +1858,11 @@ function scaffoldPackageSwiftForDep(
        // regenerating existing files; --force is not needed here.
        const vMatch = existing.match(SCAFFOLDER_VERSION_LINE_RE);
        const existingVersion = vMatch != null ? parseInt(vMatch[1], 10) : 1;
@@ -1961,7 +2258,7 @@ index cf7e587..5c78e58 100644
        if (!ctx.force && !versionStale) {
          // Slot label change is the other auto-regen trigger — bumps SPM's
          // manifest hash so the cache-slot path gets re-resolved.
-@@ -970,7 +1786,7 @@ function scaffoldPackageSwiftForDep(
+@@ -970,7 +1879,7 @@ function scaffoldPackageSwiftForDep(
        }
        if (versionStale) {
          log(
@@ -1970,12 +2267,55 @@ index cf7e587..5c78e58 100644
          );
        }
        // Fall through: regenerate (force, slot changed, or version bumped).
-@@ -1014,33 +1830,13 @@ function scaffoldPackageSwiftForDep(
+@@ -998,9 +1907,37 @@ function scaffoldPackageSwiftForDep(
+     };
+   }
+ 
++  const podToNpm = ctx.podToNpm ?? new Map();
++  const swiftNameByNpm = ctx.swiftNameByNpm ?? new Map();
+   let model;
++  // A subspec that declares a dependency on a package that is not linked for
++  // iOS goes with it, as CocoaPods leaves it out (react-native-vision-camera's
++  // FrameProcessors without react-native-worklets-core). The podspec is read
++  // again without those subspecs; a dependency the main spec declares too is
++  // still there afterwards, and translate leaves it out alone.
++  const subspecWarnings /*: Array<string> */ = [];
+   try {
+     model = readPodspecCached(podspecPath);
++    const missing = missingSiblings(
++      model,
++      dep,
++      podToNpm,
++      new Set(swiftNameByNpm.keys()),
++    );
++    const subspecDeps = model.subspecDependencies ?? {};
++    const drop = Object.keys(subspecDeps).filter(sub =>
++      subspecDeps[sub].some(d => missing.includes(d)),
++    );
++    if (drop.length > 0) {
++      for (const sub of drop) {
++        for (const d of subspecDeps[sub].filter(x => missing.includes(x))) {
++          subspecWarnings.push(
++            `Dependency "${d.split('/')[0]}" is not installed (or not linked for iOS); left out with the subspec "${sub}" that declares it (its sources, headers, settings and dependencies), as CocoaPods leaves it out.`,
++          );
++        }
++      }
++      model = readPodspecCached(podspecPath, {dropSubspecs: drop});
++    }
+   } catch (e) {
+     return {
+       depName,
+@@ -1012,35 +1949,16 @@ function scaffoldPackageSwiftForDep(
+   const spec = translatePodspecToSpmTarget(
+     model,
      dep,
-     ctx.podToNpm ?? new Map(),
-     ctx.swiftNameByNpm ?? new Map(),
+-    ctx.podToNpm ?? new Map(),
+-    ctx.swiftNameByNpm ?? new Map(),
++    podToNpm,
++    swiftNameByNpm,
 +    reactIncludeRoots(ctx.appRoot),
    );
++  spec.warnings.push(...subspecWarnings);
  
 -  // Mixed-language fail-closed: SPM can't compile Swift + C-family in one
 -  // target. Don't emit a manifest that would fail with a cryptic "mixed
@@ -2009,7 +2349,7 @@ index cf7e587..5c78e58 100644
  
    // Relative paths into the app, embedded in the scaffolded Package.swift.
    //
-@@ -1083,6 +1879,19 @@ function scaffoldPackageSwiftForDep(
+@@ -1083,6 +2001,19 @@ function scaffoldPackageSwiftForDep(
  
    if (!ctx.dryRun) {
      fs.writeFileSync(pkgSwiftPath, content, 'utf8');
@@ -2029,7 +2369,7 @@ index cf7e587..5c78e58 100644
      // Emit the ambient-import prefix header next to the manifest when the
      // target has ObjC(++) sources (the manifest `-include`s it by bare name).
      if (spec.needsObjCPrefix) {
-@@ -1099,16 +1908,82 @@ function scaffoldPackageSwiftForDep(
+@@ -1099,16 +2030,82 @@ function scaffoldPackageSwiftForDep(
        const shimDir = path.join(dep.root, 'include', spec.swiftName);
        fs.mkdirSync(shimDir, {recursive: true});
        for (const header of spec.namespacedShimHeaders) {
@@ -2114,8 +2454,78 @@ index cf7e587..5c78e58 100644
    }
  
    reportSwiftName(dep, spec.swiftName, model);
+@@ -1141,7 +2138,7 @@ function collectAutolinkedDeps(
+   opts /*: {
+     autolinkingJsonPath: string,
+     remote: ?{url: string, version: string, identity: string},
+-    onSkipped?: (name: string) => void,
++    onSkipped?: (name: string, root: ?string) => void,
+   } */,
+ ) /*: ?Array<AutolinkedDep> */ {
+   const {autolinkingJsonPath, remote, onSkipped} = opts;
+@@ -1162,7 +2159,7 @@ function collectAutolinkedDeps(
+     const root = raw.root;
+     const ios = raw.platforms?.ios;
+     if (typeof root !== 'string' || ios == null) {
+-      onSkipped?.(name);
++      onSkipped?.(name, typeof root === 'string' ? root : null);
+       continue;
+     }
+     // $FlowFixMe[incompatible-type] `ios` shape is runtime-validated above
+@@ -1323,6 +2320,14 @@ function scaffoldAll(
+   // scaffolded here — leaving `react-native spm scaffold` unable to clear the
+   // autolinker's missing-manifest error.
+   const results /*: Array<ScaffoldResult> */ = [];
++  // Index every autolinked dep's podspec name → its npm name, so a dep that
++  // depends on a sibling by its pod name (reanimated's `s.dependency
++  // "RNWorklets"`) can be wired to the sibling's package (react-native-worklets).
++  // The podspec file basename is the pod name for RN-ecosystem libs (and is
++  // cheap — no `pod ipc` pre-pass). The deps autolinking lists without iOS are
++  // indexed too, so a pod-style dependency on one of them is a sibling that is
++  // not linked (left out), not an unknown CocoaPods pod.
++  const podToNpm /*: Map<string, string> */ = new Map();
+   // Outside collectAutolinkedDeps' own try: a malformed remote config
+   // (RemoteVersionError) is a misconfiguration to surface, not an expansion
+   // failure to degrade past.
+@@ -1330,24 +2335,21 @@ function scaffoldAll(
+   const allDeps = collectAutolinkedDeps({
+     autolinkingJsonPath,
+     remote,
+-    onSkipped: name => {
++    onSkipped: (name, root) => {
+       results.push({
+         depName: name,
+         status: 'skipped-no-ios',
+         reason: 'no iOS platform in autolinking.json',
+       });
++      for (const found of root != null ? findPodspecs(root) : []) {
++        podToNpm.set(path.basename(found, '.podspec'), name);
++      }
+     },
+   });
+   if (allDeps == null) {
+     return results;
+   }
+ 
+-  // Index every autolinked dep's podspec name → its npm name, so a dep that
+-  // depends on a sibling by its pod name (reanimated's `s.dependency
+-  // "RNWorklets"`) can be wired to the sibling's package (react-native-worklets).
+-  // The podspec file basename is the pod name for RN-ecosystem libs (and is
+-  // cheap — no `pod ipc` pre-pass).
+-  const podToNpm /*: Map<string, string> */ = new Map();
+   for (const dep of allDeps) {
+     const podspecPath = dep.platforms?.ios?.podspecPath;
+     if (typeof podspecPath === 'string' && podspecPath.length > 0) {
+@@ -1404,6 +2406,7 @@ function scaffoldAll(
+ }
+ 
+ module.exports = {
++  classifyPodDependency,
+   refreshScaffoldedPlatformFloors,
+   scaffoldAll,
+   scaffoldPackageSwiftForDep,
 diff --git a/node_modules/react-native/scripts/spm/spm-utils.js b/node_modules/react-native/scripts/spm/spm-utils.js
-index fc53136..dbeb2af 100644
+index fc53136..f1e9c64 100644
 --- a/node_modules/react-native/scripts/spm/spm-utils.js
 +++ b/node_modules/react-native/scripts/spm/spm-utils.js
 @@ -595,6 +595,16 @@ function buildPerAppHeaderTree(
