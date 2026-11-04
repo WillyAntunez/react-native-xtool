@@ -1,7 +1,7 @@
 /**
  * Runs React Native's SwiftPM scaffolder (`scripts/spm/scaffold-package-swift.js`, whichever copy a
- * test loads) over real libraries, the way rn-xtool's driver does (`scaffoldAll`, `force`, a cache
- * slot label), and collects what it wrote.
+ * test loads) over real libraries, the way rn-xtool's driver does (`scaffoldAll`, a cache slot label;
+ * forced by default, so every copy is scaffolded afresh), and collects what it wrote.
  */
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";

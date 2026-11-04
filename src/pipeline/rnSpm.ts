@@ -71,12 +71,14 @@ export function rnSpmArgs(
  * same codegen, autolinking and artifact steps, minus the injection into the user's xcodeproj
  * (which `add` refuses anyway on a CocoaPods-integrated pbxproj). Only `ios/build/` is written.
  * Expo SDK 57 (the vendored Expo plugin) runs the driver too, with Expo's autolinking config command.
+ * Expo SDK 58 (kind "expo", the installed plugin) gets the same config command, for its scaffold step.
  */
 export function rnSpmGenerateArgs(
   paths: ProjectPaths,
-  opts: { rnArtifactsDir?: string; rnScripts: RnScripts; expoPlugin?: ExpoPlugin },
+  opts: { rnArtifactsDir?: string; rnScripts: RnScripts; expoPlugin?: ExpoPlugin; kind?: ProjectKind },
   rnDir: string = resolveRnDir(paths),
 ): string[] {
+  const expo = opts.expoPlugin === "vendored" || opts.kind === "expo";
   return [
     path.join(packageRoot(), "scripts", "rn-spm-generate.js"),
     "--rn-dir",
@@ -85,25 +87,24 @@ export function rnSpmGenerateArgs(
     paths.root,
     "--scripts-root",
     opts.rnScripts === "vendored" ? vendoredScriptsRoot() : path.join(rnDir, "scripts"),
-    ...(opts.expoPlugin === "vendored"
-      ? [
-          "--config-command",
-          JSON.stringify(AUTOLINKING_CONFIG_COMMAND),
-          "--expo-plugin",
-          vendoredExpoPlugin(),
-        ]
-      : []),
+    ...(expo ? ["--config-command", JSON.stringify(AUTOLINKING_CONFIG_COMMAND)] : []),
+    ...(opts.expoPlugin === "vendored" ? ["--expo-plugin", vendoredExpoPlugin()] : []),
     ...(opts.rnArtifactsDir ? ["--artifacts", opts.rnArtifactsDir] : []),
   ];
 }
 
-/** The driver's `scaffold` step alone: RN's `setup-apple-spm.js scaffold` would go on to inject into the xcodeproj. */
+/**
+ * The driver's `scaffold` step alone, for the libraries React Native named and no other: RN's
+ * `setup-apple-spm.js scaffold` would force every library's scaffold and go on to inject into the
+ * xcodeproj. Every project kind scaffolds through the driver, Expo SDK 58 included.
+ */
 export function rnSpmScaffoldArgs(
   paths: ProjectPaths,
-  opts: { rnArtifactsDir?: string; rnScripts: RnScripts; expoPlugin?: ExpoPlugin },
+  opts: { rnArtifactsDir?: string; rnScripts: RnScripts; expoPlugin?: ExpoPlugin; kind: ProjectKind },
+  names: readonly string[],
   rnDir: string = resolveRnDir(paths),
 ): string[] {
-  return [...rnSpmGenerateArgs(paths, opts, rnDir), "--scaffold"];
+  return [...rnSpmGenerateArgs(paths, opts, rnDir), "--scaffold", ...names.flatMap((n) => ["--only", n])];
 }
 
 /**
@@ -183,17 +184,6 @@ export function parseMissingPackageSwift(output: string): string[] {
   return names;
 }
 
-/** Same argv as the add/update run (incl. offline artifact flags) with only the action swapped. */
-export function scaffoldArgv(
-  paths: ProjectPaths,
-  opts: { rnArtifactsDir?: string },
-  rnDir: string = resolveRnDir(paths),
-): string[] {
-  const args = rnSpmArgs(paths, opts, rnDir);
-  args[1] = "scaffold";
-  return args;
-}
-
 /**
  * `--patch-dir patches` is relative to the project root: the user's patches, not rn-xtool's.
  * `--exclude` replaces patch-package's default (`package\.json$`): it also drops SwiftPM build
@@ -264,11 +254,7 @@ export async function runRnSpm(
     );
 
   log(`▸ scaffold — generating Package.swift for: ${names.join(", ")}`);
-  const scArgs = driver ? rnSpmScaffoldArgs(paths, opts, rnDir) : scaffoldArgv(paths, opts, rnDir);
-  const sc = await runner("node", scArgs, {
-    cwd: paths.ios,
-    env,
-  });
+  const sc = await runner("node", rnSpmScaffoldArgs(paths, opts, names, rnDir), { cwd: paths.ios, env });
   if (sc.exitCode !== 0)
     throw new Error(
       `React Native spm scaffold failed (exit ${sc.exitCode}):\n${tail(sc.output)}`,

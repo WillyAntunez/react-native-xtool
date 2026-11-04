@@ -8,7 +8,11 @@
  *
  * `--scaffold` instead runs RN's `scaffold` step alone: it writes a Package.swift into each autolinked
  * library that ships a podspec but no manifest. RN's own `setup-apple-spm.js scaffold` cannot be
- * used: after scaffolding it falls through into the whole `add` pipeline, injection included.
+ * used: after scaffolding it falls through into the whole `add` pipeline, injection included, and it
+ * forces a re-render of every library. `--only <name>` (repeatable) limits it to the libraries the
+ * autolinker reported; nothing is forced, so any other scaffold, hand-edited or not, stays as it is,
+ * and a named library's current scaffold too (the scaffolder still regenerates an older revision or
+ * cache slot).
  *
  * `--expo-plugin <abs>` (Expo SDK 57, whose `expo` ships no SwiftPM plugin) hands the vendored scripts
  * that plugin through RN_SPM_EXPO_PLUGIN (edit E5), and `--scaffold` then leaves `expo` alone: the
@@ -22,7 +26,7 @@ const path = require('node:path');
 const {parseArgs} = require('node:util');
 
 const USAGE =
-  'Usage: node scripts/rn-spm-generate.js --rn-dir <abs> --app-root <abs> --scripts-root <abs> [--artifacts <root>] [--config-command <json>] [--expo-plugin <abs>] [--scaffold]';
+  'Usage: node scripts/rn-spm-generate.js --rn-dir <abs> --app-root <abs> --scripts-root <abs> [--artifacts <root>] [--config-command <json>] [--expo-plugin <abs>] [--scaffold [--only <name>]...]';
 
 function parseCli(argv) {
   let values;
@@ -37,6 +41,7 @@ function parseCli(argv) {
         'config-command': {type: 'string'},
         'expo-plugin': {type: 'string'},
         scaffold: {type: 'boolean'},
+        only: {type: 'string', multiple: true},
       },
       strict: true,
       allowPositionals: false,
@@ -49,6 +54,7 @@ function parseCli(argv) {
   const scriptsRoot = values['scripts-root'];
   const expoPlugin = values['expo-plugin'] ?? null;
   if (rnDir == null || appRoot == null || scriptsRoot == null) return null;
+  if (values.only != null && values.scaffold !== true) return null;
   if (
     !path.isAbsolute(rnDir) ||
     !path.isAbsolute(appRoot) ||
@@ -65,6 +71,7 @@ function parseCli(argv) {
     configCommand: values['config-command'] ?? null,
     expoPlugin,
     scaffold: values.scaffold === true,
+    only: values.only ?? null,
   };
 }
 
@@ -126,6 +133,7 @@ async function generate(cli) {
       iosDeploymentTarget,
       version,
       ...(cli.expoPlugin != null ? {skipDeps: ['expo']} : {}),
+      ...(cli.only != null ? {onlyDeps: cli.only} : {}),
     });
     return 0;
   }
@@ -179,7 +187,8 @@ async function generate(cli) {
   return 0;
 }
 
-// Mirrors setup-apple-spm.js `runScaffold`, except that a scaffoldAll throw propagates (exit 1).
+// Mirrors setup-apple-spm.js `runScaffold`, except that it never forces and a scaffoldAll throw
+// propagates (exit 1).
 async function scaffold(rn, scaffoldAll, opts) {
   const {version, ...scaffoldOpts} = opts;
   // The slot label is written into each manifest so SwiftPM re-resolves on a slot change; RN
@@ -189,7 +198,7 @@ async function scaffold(rn, scaffoldAll, opts) {
     const {resolveCacheSlotVersion} = rn('spm/download-spm-artifacts.js');
     cacheSlotLabel = `${await resolveCacheSlotVersion(version)}/dual-flavor`;
   } catch {}
-  const results = scaffoldAll({...scaffoldOpts, cacheSlotLabel, force: true});
+  const results = scaffoldAll({...scaffoldOpts, cacheSlotLabel});
 
   const written = results.filter(r => r.status === 'written');
   if (written.length > 0) {

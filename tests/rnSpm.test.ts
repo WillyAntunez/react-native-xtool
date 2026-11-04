@@ -11,7 +11,6 @@ import {
   vendoredScriptsRoot,
   rnSpmScaffoldArgs,
   runRnSpm,
-  scaffoldArgv,
   type RnRunner,
 } from "../src/pipeline/rnSpm.js";
 import { projectPaths, swiftHeadersEnv, type ProjectPaths } from "../src/paths.js";
@@ -67,22 +66,8 @@ describe("parseMissingPackageSwift", () => {
 });
 
 describe("argv helpers", () => {
-  it("scaffoldArgv", () => {
-    const a = scaffoldArgv(paths, {}, rnDir);
-    expect(a[0]).toBe(`${rnDir}/scripts/setup-apple-spm.js`);
-    expect(a[1]).toBe("scaffold");
-    expect(a).toContain("--config-command");
-    expect(a).not.toContain("--download");
-  });
-  it("passes --yes to add/update and scaffold", () => {
+  it("passes --yes to add/update", () => {
     expect(rnSpmArgs(paths, {}, rnDir)).toContain("--yes");
-    expect(scaffoldArgv(paths, {}, rnDir)).toContain("--yes");
-  });
-  it("scaffoldArgv forwards the offline artifact flags", () => {
-    const a = scaffoldArgv(paths, { rnArtifactsDir: "/art" }, rnDir);
-    expect(a[1]).toBe("scaffold");
-    expect(a.slice(-4)).toEqual(["--download", "skip", "--artifacts", "/art"]);
-    expect(a.slice(2)).toEqual(rnSpmArgs(paths, { rnArtifactsDir: "/art" }, rnDir).slice(2));
   });
   it("persistScaffoldArgv uses the project patches dir", () => {
     const [, args] = persistScaffoldArgv("lib");
@@ -205,14 +190,14 @@ describe("Expo on the driver", () => {
     };
     expect(h.calls).toEqual([
       { cmd: "node", args: generate, cwd: "/proj/ios", env },
-      { cmd: "node", args: [...generate, "--scaffold"], cwd: "/proj/ios", env },
+      { cmd: "node", args: [...generate, "--scaffold", "--only", "lib-a"], cwd: "/proj/ios", env },
       { cmd: persistScaffoldArgv("lib-a")[0], args: persistScaffoldArgv("lib-a")[1], cwd: "/proj" },
       { cmd: "node", args: generate, cwd: "/proj/ios", env },
     ]);
     expect(rnSpmEnv(full, "vendored")).toEqual(env);
   });
 
-  it("keeps Expo 58's argv and env", async () => {
+  it("keeps Expo 58's add|update argv and env, and scaffolds through the driver", async () => {
     const setup = `${rnDir}/scripts/setup-apple-spm.js`;
     const cfg = '["npx","expo-modules-autolinking","react-native-config","--json","--platform","ios"]';
     const offline = ["--download", "skip", "--artifacts", "/art"];
@@ -226,7 +211,27 @@ describe("Expo on the driver", () => {
     await runRnSpm(full, { kind: "expo", rnScripts: "installed", expoPlugin: "installed", rnArtifactsDir: "/art" }, h.deps);
     expect(h.calls).toEqual([
       { cmd: "node", args: [setup, "add", "--config-command", cfg, "--yes", ...offline], cwd: "/proj/ios", env },
-      { cmd: "node", args: [setup, "scaffold", "--config-command", cfg, "--yes", ...offline], cwd: "/proj/ios", env },
+      {
+        cmd: "node",
+        args: [
+          DRIVER,
+          "--rn-dir",
+          rnDir,
+          "--app-root",
+          "/proj",
+          "--scripts-root",
+          `${rnDir}/scripts`,
+          "--config-command",
+          cfg,
+          "--artifacts",
+          "/art",
+          "--scaffold",
+          "--only",
+          "lib-a",
+        ],
+        cwd: "/proj/ios",
+        env,
+      },
       { cmd: persistScaffoldArgv("lib-a")[0], args: persistScaffoldArgv("lib-a")[1], cwd: "/proj" },
       { cmd: "node", args: [setup, "add", "--config-command", cfg, "--yes", ...offline], cwd: "/proj/ios", env },
     ]);
@@ -279,18 +284,36 @@ describe("runRnSpm", () => {
     const generate = rnSpmGenerateArgs(paths, { rnArtifactsDir: "/art", rnScripts: "installed" }, rnDir);
     expect(h.calls.map((c) => c.args)).toEqual([
       generate,
-      [...generate, "--scaffold"],
+      [...generate, "--scaffold", "--only", "lib-a"],
       persistScaffoldArgv("lib-a")[1],
       generate,
     ]);
-    expect(rnSpmScaffoldArgs(paths, { rnArtifactsDir: "/art", rnScripts: "installed" }, rnDir)).toEqual([...generate, "--scaffold"]);
+    expect(rnSpmScaffoldArgs(paths, { rnArtifactsDir: "/art", rnScripts: "installed", kind: "bare" }, ["lib-a"], rnDir)).toEqual([
+      ...generate,
+      "--scaffold",
+      "--only",
+      "lib-a",
+    ]);
     for (const c of [h.calls[0]!, h.calls[1]!, h.calls[3]!]) {
       expect(c.cwd).toBe("/proj/ios");
       expect(c.env).toEqual({ RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS });
     }
   });
 
-  it("keeps setup-apple-spm scaffold for the expo kind", async () => {
+  it("scaffolds only the libraries RN names", async () => {
+    const h = harness([
+      { exitCode: 2, output: `${missing("lib-a")}\nnoise\n${mixed("lib-b")}` },
+      { exitCode: 0, output: "" },
+      { exitCode: 0, output: "" },
+      { exitCode: 0, output: "" },
+      { exitCode: 0, output: "" },
+    ]);
+    await runRnSpm(paths, { kind: "bare", rnScripts: "installed", expoPlugin: "installed" }, h.deps);
+    expect(h.calls[1]!.args.slice(-5)).toEqual(["--scaffold", "--only", "lib-a", "--only", "lib-b"]);
+    expect(h.calls[1]!.args.filter((a) => a === "--only")).toHaveLength(2);
+  });
+
+  it("scaffolds Expo 58 through the driver with the Expo config command", async () => {
     const h = harness([
       { exitCode: 1, output: missing("lib-a") },
       { exitCode: 0, output: "" },
@@ -300,10 +323,25 @@ describe("runRnSpm", () => {
     await runRnSpm(paths, { kind: "expo", rnScripts: "installed", expoPlugin: "installed" }, h.deps);
     expect(h.calls.map((c) => c.args)).toEqual([
       rnSpmArgs(paths, {}, rnDir),
-      scaffoldArgv(paths, {}, rnDir),
+      [
+        path.join(packageRoot(), "scripts", "rn-spm-generate.js"),
+        "--rn-dir",
+        rnDir,
+        "--app-root",
+        "/proj",
+        "--scripts-root",
+        path.join(rnDir, "scripts"),
+        "--config-command",
+        '["npx","expo-modules-autolinking","react-native-config","--json","--platform","ios"]',
+        "--scaffold",
+        "--only",
+        "lib-a",
+      ],
       persistScaffoldArgv("lib-a")[1],
       rnSpmArgs(paths, {}, rnDir),
     ]);
+    expect(h.calls[0]!.args[1]).toBe("add");
+    expect(h.calls.map((c) => c.args.join(" ")).join("\n")).not.toContain("--expo-plugin");
   });
 
   it("runs once on success", async () => {
@@ -322,7 +360,7 @@ describe("runRnSpm", () => {
     ]);
     await runRnSpm(paths, { kind: "expo", rnScripts: "installed", expoPlugin: "installed" }, h.deps);
     expect(h.calls).toHaveLength(5);
-    expect(h.calls[1]!.args[1]).toBe("scaffold");
+    expect(h.calls[1]!.args.slice(-5)).toEqual(["--scaffold", "--only", "lib-a", "--only", "lib-b"]);
     expect(h.calls[1]!.cwd).toBe("/proj/ios");
     expect(h.calls[2]!.args.slice(1, 4)).toEqual(["lib-a", "--patch-dir", "patches"]);
     expect(h.calls[3]!.args.slice(1, 4)).toEqual(["lib-b", "--patch-dir", "patches"]);
@@ -340,9 +378,9 @@ describe("runRnSpm", () => {
     ]);
     await runRnSpm(paths, { kind: "expo", rnScripts: "installed", expoPlugin: "installed" }, h.deps);
     const rnRuns = h.calls.filter((c) => c.cmd === "node");
-    expect(rnRuns.map((c) => c.args[1])).toEqual([expect.stringMatching(/add|update/), "scaffold", expect.stringMatching(/add|update/)]);
+    expect(rnRuns.map((c) => c.args[1])).toEqual([expect.stringMatching(/add|update/), "--rn-dir", expect.stringMatching(/add|update/)]);
     for (const c of rnRuns) expect(c.env).toEqual({ RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS });
-    expect(h.calls[1]!.args[1]).toBe("scaffold");
+    expect(h.calls[1]!.args).toContain("--scaffold");
     expect(h.calls[2]!.args[1]).toBe("pager");
   });
 
@@ -354,8 +392,8 @@ describe("runRnSpm", () => {
       { exitCode: 0, output: "" },
     ]);
     await runRnSpm(paths, { kind: "expo", rnScripts: "installed", rnArtifactsDir: "/art", expoPlugin: "installed" }, h.deps);
-    expect(h.calls[1]!.args[1]).toBe("scaffold");
-    expect(h.calls[1]!.args).toContain("--artifacts");
+    expect(h.calls[1]!.args).toContain("--scaffold");
+    expect(h.calls[1]!.args[h.calls[1]!.args.indexOf("--artifacts") + 1]).toBe("/art");
   });
 
   it("throws naming the libs when the retry fails", async () => {
