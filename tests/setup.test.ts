@@ -271,6 +271,72 @@ describe("setup space check", () => {
   });
 });
 
+describe("setup on a second run", () => {
+  /**
+   * Action fakes that create what they install, on a temporary HOME and cache with the real probes. With
+   * `configHome`, XDG_CONFIG_HOME is set and the SDK goes where xtool puts it then.
+   */
+  const machine = (authOutput: string, configHome = false) => {
+    const base = tmp();
+    const home = join(base, "home");
+    mkdirSync(home);
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("XDG_CACHE_HOME", join(base, "cache"));
+    vi.stubEnv("XDG_CONFIG_HOME", configHome ? join(base, "config") : undefined);
+    // An empty PATH: no host Swift (/usr/bin/swift, a swiftly toolchain) is found; the fakes need none.
+    const emptyBin = join(base, "bin");
+    mkdirSync(emptyBin);
+    vi.stubEnv("PATH", emptyBin);
+    const swiftpm = configHome ? join(base, "config", "swiftpm") : join(home, ".swiftpm");
+    const script = (file: string, body: string) => {
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, `#!/bin/sh\n${body}\n`);
+      chmodSync(file, 0o755);
+    };
+    const actions = {
+      installSwift: vi.fn(async () =>
+        script(join(home, ".local", "share", "swiftly", "bin", "swift"), "echo 'Swift version 6.4.1 (swift-6.4.1-RELEASE)'"),
+      ),
+      downloadXtool: vi.fn(async (bin: string) =>
+        script(bin, `if [ "$1 $2" = "auth status" ]; then printf '%s\\n' ${authOutput}; fi`),
+      ),
+      installSdk: vi.fn(async () => void mkdirSync(join(swiftpm, "swift-sdks", "darwin.artifactbundle"), { recursive: true })),
+    };
+    const xip = join(base, "Xcode.xip");
+    writeFileSync(xip, "");
+    const spaceProbes = { filesystemOf: vi.fn(async () => ({ dev: 1, freeBytes: 100 * GB })) };
+    const run = async () => {
+      const log = vi.fn();
+      await setup({ xcodeXip: xip }, { spaceProbes, actions, log });
+      return log.mock.calls.map((c) => c[0] as string);
+    };
+    return { actions, spaceProbes, run };
+  };
+  const calls = (m: ReturnType<typeof machine>) =>
+    [...Object.values(m.actions), m.spaceProbes.filesystemOf].map((f) => f.mock.calls.length);
+
+  it("a second run downloads nothing", async () => {
+    const m = machine("'Logged in.' '- Apple ID: me@example.com' '- Team ID: TEAMID0000'");
+    await m.run();
+    expect(calls(m)).toEqual([1, 1, 1, 4]);
+    expect(await m.run()).toEqual(["✔ Nothing to do: toolchain already set up"]);
+    expect(calls(m)).toEqual([1, 1, 1, 4]);
+
+    const out = machine("'Logged out.'");
+    expect(await out.run()).toContain("Run: rn-xtool auth login");
+    expect(calls(out)).toEqual([1, 1, 1, 4]);
+    expect(await out.run()).toEqual(["Run: rn-xtool auth login"]);
+    expect(calls(out)).toEqual([1, 1, 1, 4]);
+  });
+
+  it("a second run downloads nothing with XDG_CONFIG_HOME set", async () => {
+    const m = machine("'Logged in.'", true);
+    await m.run();
+    expect(await m.run()).toEqual(["✔ Nothing to do: toolchain already set up"]);
+    expect(calls(m)).toEqual([1, 1, 1, 4]);
+  });
+});
+
 describe("setup config handling", () => {
   it("probes and hints with the configured xtoolPath and skips the download", async () => {
     const probe = vi.fn(async () => ({ ...all, loggedIn: false }));
