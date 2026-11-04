@@ -149,6 +149,10 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
     it("spm-utils.js has the fix 23 hunk", () => {
       expect(src("spm-utils.js")).toContain("function writeCodegenForwarders");
     });
+    it("the scaffolder has the fix 24 hunk", () => {
+      expect(src("read-podspec.js")).toContain("swiftConditions");
+      expect(src("scaffold-package-swift.js")).toContain("swiftConditionDefines");
+    });
     it("the scaffolder has the fix 21 hunk", () => {
       expect(src("read-podspec.js")).toContain("swiftVersions");
       expect(src("scaffold-package-swift.js")).toContain("swiftLanguageModes: [.v5]");
@@ -1845,6 +1849,63 @@ describe("scaffolder fixes 20–25 (vendor/rn-spm)", () => {
       expect(ok.status, ok.stderr).toBe(0);
       rmSync(path.join(farm, "RNCNetInfoSpec.h"));
       expect(compile().stderr).toContain("'RNCNetInfoSpec.h' file not found");
+    });
+  });
+
+  describe("24: Swift compilation conditions", () => {
+    const swiftSettingsOf = (pkg: string) => pkg.split("\n").find((l) => l.trim().startsWith("swiftSettings:"))?.trim();
+    const scaffold = (files: Record<string, string>, podBody: string) => {
+      const run = scaffoldLibraries(VENDORED_RN_SPM, { foo: lib(files, podBody) });
+      expect(run.statuses["foo"]).toBe("written");
+      return run.files["foo/Package.swift"]!;
+    };
+    const MIXED = { "ios/Foo.swift": "import Foundation\n", "ios/Foo.h": "", "ios/Foo.m": '#import "Foo.h"\n' };
+    const SWIFT = { "ios/Foo.swift": "import Foundation\n" };
+    const CLANG = { "ios/Foo.h": "", "ios/Foo.m": '#import "Foo.h"\n' };
+    const conditions = (value: string) => `\n  s.pod_target_xcconfig = { "SWIFT_ACTIVE_COMPILATION_CONDITIONS" => ${value} }`;
+
+    it("carries literal Swift compilation conditions into swiftSettings", () => {
+      const xc = conditions('"$(inherited) FOO BAR"');
+      expect(swiftSettingsOf(scaffold(MIXED, `  s.source_files = "ios/**/*.{h,m,swift}"${xc}`))).toBe(
+        'swiftSettings: [.unsafeFlags(["-import-objc-header", rnSpmBridgingHeader]), .define("FOO"), .define("BAR")],',
+      );
+      expect(swiftSettingsOf(scaffold(SWIFT, `  s.source_files = "ios/**/*.swift"${xc}`))).toBe(
+        'swiftSettings: [.define("FOO"), .define("BAR")],',
+      );
+    });
+
+    it("reads every layer and a single-quoted value", () => {
+      const pkg = scaffold(
+        SWIFT,
+        `  s.source_files = "ios/**/*.swift"${conditions("'$(inherited) FOO'")}\n` +
+          `  s.subspec "core" do |ss|\n    ss.pod_target_xcconfig = { 'SWIFT_ACTIVE_COMPILATION_CONDITIONS' => '$(inherited) CORE' }\n  end`,
+      );
+      expect(swiftSettingsOf(pkg)).toBe('swiftSettings: [.define("FOO"), .define("CORE")],');
+    });
+
+    it("drops interpolated and ternary tokens (vision-camera's shape)", () => {
+      const xc = conditions('"$(inherited) #{enableLocation ? "VISION_CAMERA_ENABLE_LOCATION" : ""} $(OTHER) A_#{x}"');
+      const mixed = scaffold(MIXED, `  s.source_files = "ios/**/*.{h,m,swift}"${xc}`);
+      expect(swiftSettingsOf(mixed)).toBe('swiftSettings: [.unsafeFlags(["-import-objc-header", rnSpmBridgingHeader])],');
+      expect(scaffold(SWIFT, `  s.source_files = "ios/**/*.swift"${xc}`)).not.toContain("swiftSettings");
+    });
+
+    it("none for a clang-only target", () => {
+      const pkg = scaffold(CLANG, `  s.source_files = "ios/**/*.{h,m}"${conditions('"$(inherited) FOO"')}`);
+      expect(pkg).not.toContain("swiftSettings");
+      expect(pkg).not.toContain('.define("FOO")');
+    });
+
+    it("reads them from pod ipc spec's JSON", () => {
+      const { flattenSubspecs } = load<{ flattenSubspecs(raw: object): { swiftConditions: string[] } }>("read-podspec.js");
+      const model = withRnRoot("0.86.3", () =>
+        flattenSubspecs({
+          name: "Foo",
+          pod_target_xcconfig: { SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCATION" },
+          subspecs: [{ name: "core", xcconfig: { SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(FOO) CORE" } }],
+        }),
+      );
+      expect(model.swiftConditions).toEqual(["LOCATION", "CORE"]);
     });
   });
 });

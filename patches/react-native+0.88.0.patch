@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native/scripts/spm/read-podspec.js b/node_modules/react-native/scripts/spm/read-podspec.js
-index 8fcf04b..329a3fe 100644
+index 8fcf04b..6dbb951 100644
 --- a/node_modules/react-native/scripts/spm/read-podspec.js
 +++ b/node_modules/react-native/scripts/spm/read-podspec.js
 @@ -102,13 +102,12 @@ function runPodIpcSpec(podspecPath /*: string */) /*: RawSpec | null */ {
@@ -513,7 +513,7 @@ index 8fcf04b..329a3fe 100644
        if (m == null) break;
        for (const token of m[1].split(/\s+/)) {
          if (token.length > 0) {
-@@ -332,15 +652,37 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -332,15 +652,53 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      return Array.from(new Set(out));
    }
  
@@ -539,6 +539,22 @@ index 8fcf04b..329a3fe 100644
 +    return out;
 +  }
 +
++  // Literal `'SWIFT_ACTIVE_COMPILATION_CONDITIONS' => '...'` entries from any
++  // xcconfig hash, space-joined. A double-quoted value may hold `#{...}` with
++  // its own quotes (react-native-vision-camera: `#{enableLocation ? "X" :
++  // ""}`), so the scan steps over it as a unit; flattenSubspecs drops it.
++  function getSwiftConditionsXcconfig(text /*: string */) /*: string */ {
++    const out /*: Array<string> */ = [];
++    const re =
++      /["']SWIFT_ACTIVE_COMPILATION_CONDITIONS["']\s*=>\s*(?:"((?:[^"\\\n#]|\\.|#\{[^}\n]*\}|#(?!\{))*)"|'((?:[^'\\\n]|\\.)*)')/g;
++    while (true) {
++      const m = re.exec(text);
++      if (m == null) break;
++      out.push(m[1] ?? m[2] ?? '');
++    }
++    return out.join(' ');
++  }
++
    // Surface known unparseable constructs so the caller can warn the user.
    if (shadowedIdentity) {
      warnings.push(
@@ -553,7 +569,7 @@ index 8fcf04b..329a3fe 100644
      );
    }
    if (/install_modules_dependencies/.test(content)) {
-@@ -354,24 +696,96 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -354,24 +712,100 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      );
    }
  
@@ -627,6 +643,10 @@ index 8fcf04b..329a3fe 100644
 +      HEADER_SEARCH_PATHS: unionOf(text => getHeaderSearchPaths(text)),
 +      ...layers.reduce((acc, l) => {
 +        const found = getDefineXcconfig(l.text);
++        const conditions = getSwiftConditionsXcconfig(l.text);
++        if (conditions.length > 0) {
++          found.SWIFT_ACTIVE_COMPILATION_CONDITIONS = conditions;
++        }
 +        for (const k of Object.keys(found)) {
 +          acc[k] = acc[k] != null ? `${acc[k]} ${found[k]}` : found[k];
 +        }
@@ -663,7 +683,7 @@ index 8fcf04b..329a3fe 100644
      __regex_partial__: true,
      __warnings__: warnings,
    };
-@@ -423,6 +837,58 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
+@@ -423,6 +857,58 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
    return tokens;
  }
  
@@ -722,7 +742,7 @@ index 8fcf04b..329a3fe 100644
  // ---------------------------------------------------------------------------
  // Subspec flattening
  // ---------------------------------------------------------------------------
-@@ -438,8 +904,16 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
+@@ -438,8 +924,16 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
   *   - String fields → top-level wins; if absent, take the first subspec's value
   *   - pod_target_xcconfig HEADER_SEARCH_PATHS → array-union across all selected subspecs
   *   - dependencies  → array-union of name strings (version constraints dropped)
@@ -740,7 +760,7 @@ index 8fcf04b..329a3fe 100644
    const warnings /*: Array<string> */ = [];
    // $FlowFixMe[prop-missing] dynamic shape
    const partial /*: boolean */ = rawSpec.__regex_partial__ === true;
-@@ -456,7 +930,12 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -456,7 +950,12 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
    //   - `default_subspecs`: array of names (or undefined → use all subspecs)
    const subspecs = Array.isArray(rawSpec.subspecs) ? rawSpec.subspecs : [];
    let selected = subspecs;
@@ -754,7 +774,7 @@ index 8fcf04b..329a3fe 100644
      const wanted = new Set(rawSpec.default_subspecs);
      selected = subspecs.filter(s => {
        // $FlowFixMe[prop-missing] dynamic shape
-@@ -464,6 +943,10 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -464,6 +963,10 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        return name != null && wanted.has(name);
      });
    }
@@ -765,7 +785,7 @@ index 8fcf04b..329a3fe 100644
    const layers = [rawSpec, ...selected];
  
    function mergeArrayField(key /*: string */) /*: Array<string> */ {
-@@ -482,6 +965,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -482,6 +985,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return Array.from(new Set(out));
    }
  
@@ -783,7 +803,7 @@ index 8fcf04b..329a3fe 100644
    // Only the spec's own value: a subspec's `header_dir` names that subspec's
    // headers, and several subspecs can disagree.
    function specStringField(key /*: string */) /*: string | null */ {
-@@ -544,6 +1038,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -544,6 +1058,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
    // `-D`s are safe to forward; arbitrary flags may be machine- or
    // example-app-specific. $(inherited), unresolved $(...) tokens, and invalid
    // C identifiers are skipped.
@@ -804,7 +824,7 @@ index 8fcf04b..329a3fe 100644
    function mergePreprocessorDefines() /*: Array<PreprocessorDefine> */ {
      const out /*: Array<PreprocessorDefine> */ = [];
      const seen /*: Set<string> */ = new Set();
-@@ -554,7 +1062,23 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -554,7 +1082,23 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        config /*: ?('debug' | 'release') */,
      ) => {
        if (!validName.test(name)) return;
@@ -829,7 +849,7 @@ index 8fcf04b..329a3fe 100644
          return; // unresolved Xcode/Ruby token — don't emit a broken define
        }
        const key = `${name}|${config ?? ''}`;
-@@ -571,6 +1095,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -571,6 +1115,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        'xcconfig',
        'user_target_xcconfig',
      ];
@@ -850,7 +870,7 @@ index 8fcf04b..329a3fe 100644
      for (const layer of layers) {
        if (layer == null || typeof layer !== 'object') continue;
        for (const xcKey of XCCONFIG_KEYS) {
-@@ -627,44 +1165,84 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -627,44 +1185,119 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return out;
    }
  
@@ -914,36 +934,57 @@ index 8fcf04b..329a3fe 100644
 +    return out;
 +  }
 +
-+  function compilerFlagTokens(layer /*: unknown */) /*: Array<string> */ {
-+    // $FlowFixMe[incompatible-use] layer narrowed from `mixed`; runtime-validated below
-+    const value = layer != null ? layer.compiler_flags : null;
++  // SWIFT_ACTIVE_COMPILATION_CONDITIONS tokens from every layer's xcconfig
++  // hashes, each once. `$(inherited)`, an Xcode `$(...)` token and a Ruby
++  // interpolation are left out, as for the C defines.
++  function mergeSwiftConditions() /*: Array<string> */ {
 +    const out /*: Array<string> */ = [];
-+    const values = Array.isArray(value) ? value : [value];
-+    for (const v of values) {
-+      if (typeof v === 'string') {
-+        for (const tok of v.split(/\s+/)) {
-+          if (tok.length > 0) out.push(tok);
++    const XCCONFIG_KEYS = [
++      'pod_target_xcconfig',
++      'xcconfig',
++      'user_target_xcconfig',
++    ];
++    for (const layer of layers) {
++      if (layer == null || typeof layer !== 'object') continue;
++      for (const xcKey of XCCONFIG_KEYS) {
++        // $FlowFixMe[incompatible-use] layer narrowed from `mixed`
++        const xc = layer[xcKey];
++        if (xc == null || typeof xc !== 'object') continue;
++        const val = xc.SWIFT_ACTIVE_COMPILATION_CONDITIONS;
++        const strs =
++          typeof val === 'string'
++            ? [val]
++            : Array.isArray(val)
++              ? val.filter(v => typeof v === 'string')
++              : [];
++        for (const str of strs) {
++          // An interpolation stays one token that is never a valid name.
++          const tokens = str.replace(/#\{[^}]*\}/g, '#{}').split(/\s+/);
++          for (const tok of tokens) {
++            if (/^[A-Za-z_]\w*$/.test(tok)) out.push(tok);
++          }
          }
        }
      }
--    return Array.from(new Set(out));
-+    return out;
+     return Array.from(new Set(out));
    }
  
-   function mergeCompilerFlags() /*: Array<string> */ {
-+    const liftedDefines = new Set(
-+      mergePreprocessorDefines()
-+        .filter(d => d.config == null)
-+        .map(d => (d.value != null ? `${d.name}=${d.value}` : d.name)),
-+    );
+-  function mergeCompilerFlags() /*: Array<string> */ {
++  function compilerFlagTokens(layer /*: unknown */) /*: Array<string> */ {
++    // $FlowFixMe[incompatible-use] layer narrowed from `mixed`; runtime-validated below
++    const value = layer != null ? layer.compiler_flags : null;
      const out /*: Array<string> */ = [];
-     for (const layer of layers) {
+-    for (const layer of layers) {
 -      // $FlowFixMe[incompatible-use] layer narrowed from `mixed`; runtime-validated below
 -      const value = layer != null ? layer.compiler_flags : null;
 -      if (typeof value === 'string') {
 -        for (const tok of value.split(/\s+/)) {
--          if (tok.length > 0) out.push(tok);
--        }
++    const values = Array.isArray(value) ? value : [value];
++    for (const v of values) {
++      if (typeof v === 'string') {
++        for (const tok of v.split(/\s+/)) {
+           if (tok.length > 0) out.push(tok);
+         }
 -      } else if (Array.isArray(value)) {
 -        for (const v of value) {
 -          if (typeof v === 'string') {
@@ -952,6 +993,19 @@ index 8fcf04b..329a3fe 100644
 -            }
 -          }
 -        }
++      }
++    }
++    return out;
++  }
++
++  function mergeCompilerFlags() /*: Array<string> */ {
++    const liftedDefines = new Set(
++      mergePreprocessorDefines()
++        .filter(d => d.config == null)
++        .map(d => (d.value != null ? `${d.name}=${d.value}` : d.name)),
++    );
++    const out /*: Array<string> */ = [];
++    for (const layer of layers) {
 +      for (const tok of compilerFlagTokens(layer)) {
 +        // A `-D` already emitted as a `.define(...)` is not repeated as a flag.
 +        if (tok.startsWith('-D') && liftedDefines.has(tok.slice(2))) continue;
@@ -961,7 +1015,7 @@ index 8fcf04b..329a3fe 100644
        }
      }
      return out;
-@@ -677,6 +1255,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -677,6 +1310,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        ? false
        : true; // RN ecosystem default
  
@@ -982,7 +1036,7 @@ index 8fcf04b..329a3fe 100644
    return {
      name: specStringField('name') ?? '',
      version: specStringField('version') ?? '',
-@@ -693,15 +1285,41 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -693,15 +1340,42 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      // header_mappings_dir copy step, which SPM has no equivalent for.
      headerMappingsDirs: mergeArrayField('header_mappings_dir'),
      headerDir: specStringField('header_dir'),
@@ -1011,6 +1065,7 @@ index 8fcf04b..329a3fe 100644
 -    compilerFlags: mergeCompilerFlags(),
 +    subspecDependencies: subspecDependencies(),
 +    preprocessorDefines,
++    swiftConditions: mergeSwiftConditions(),
 +    compilerFlags,
      headerSearchPaths: mergeHeaderSearchPaths(),
      resources: mergeArrayField('resources'),
@@ -1026,7 +1081,7 @@ index 8fcf04b..329a3fe 100644
      requiresArc,
      warnings,
      partial,
-@@ -722,15 +1340,18 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -722,15 +1396,18 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
   * Throws when the file doesn't exist. Otherwise always returns a
   * PodspecModel — warnings on the model surface partial parses to the
   * caller, who can decide whether to proceed or abort scaffolding for that
@@ -1049,7 +1104,7 @@ index 8fcf04b..329a3fe 100644
    // Record whether the podspec calls `install_modules_dependencies(s)`. We
    // strip that helper before `pod ipc` and the regex parser can't expand it,
    // so the React-Core family it injects never lands in `model.dependencies`.
-@@ -746,21 +1367,46 @@ function readPodspec(podspecPath /*: string */) /*: PodspecModel */ {
+@@ -746,21 +1423,46 @@ function readPodspec(podspecPath /*: string */) /*: PodspecModel */ {
    return model;
  }
  
@@ -1100,7 +1155,7 @@ index 8fcf04b..329a3fe 100644
    podspecModels.set(key, model);
    return model;
  }
-@@ -794,12 +1440,13 @@ function readPodspecNames(
+@@ -794,12 +1496,13 @@ function readPodspecNames(
    if (hasShadowingSubspec(source)) {
      return null;
    }
@@ -1116,7 +1171,7 @@ index 8fcf04b..329a3fe 100644
    const name = field('name');
    const moduleName = field('module_name');
 diff --git a/node_modules/react-native/scripts/spm/scaffold-package-swift.js b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
-index cf7e587..faa0982 100644
+index cf7e587..4aa49ea 100644
 --- a/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 +++ b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 @@ -54,6 +54,7 @@ const {
@@ -1905,7 +1960,7 @@ index cf7e587..faa0982 100644
    const siblingSwiftNames /*: {[npmName: string]: string} */ = {};
    for (const npmName of siblingNames) {
      const resolved = swiftNameByNpm.get(npmName);
-@@ -526,21 +1165,195 @@ function translatePodspecToSpmTarget(
+@@ -526,21 +1165,196 @@ function translatePodspecToSpmTarget(
      }
    }
  
@@ -2100,10 +2155,11 @@ index cf7e587..faa0982 100644
 +    resources,
 +    excludePaths,
 +    swiftLanguageModeV5,
++    swiftConditions: model.swiftConditions ?? [],
      warnings,
    };
  }
-@@ -629,10 +1442,25 @@ function emitScaffoldedPackageSwift(
+@@ -629,10 +1443,25 @@ function emitScaffoldedPackageSwift(
    const prefixFlag = spec.needsObjCPrefix
      ? `.unsafeFlags(["-include", "${SCAFFOLD_PREFIX_HEADER}"])`
      : '';
@@ -2130,7 +2186,7 @@ index cf7e587..faa0982 100644
        ...(customFlagsCxx.length > 0
          ? [`.unsafeFlags([${customFlagsCxx.join(', ')}])`]
          : []),
-@@ -723,6 +1551,11 @@ function emitScaffoldedPackageSwift(
+@@ -723,6 +1552,11 @@ function emitScaffoldedPackageSwift(
        `.product(name: "${swiftSibling}", package: "${swiftSibling}")`,
      );
    }
@@ -2142,7 +2198,7 @@ index cf7e587..faa0982 100644
  
    // sources: emit only when the podspec declared them. If empty (regex-fallback
    // podspec), no `sources:`/`exclude:` is emitted and SPM auto-scans the target
-@@ -740,6 +1573,11 @@ function emitScaffoldedPackageSwift(
+@@ -740,6 +1574,11 @@ function emitScaffoldedPackageSwift(
        ? `\n            publicHeadersPath: "${spec.publicHeadersPath}",`
        : '';
  
@@ -2154,7 +2210,7 @@ index cf7e587..faa0982 100644
    const resourcesLine =
      spec.resources.length > 0
        ? `\n            resources: [${spec.resources.map(r => `.copy("${r}")`).join(', ')}],`
-@@ -755,9 +1593,46 @@ function emitScaffoldedPackageSwift(
+@@ -755,9 +1594,58 @@ function emitScaffoldedPackageSwift(
        ? `\n            dependencies: [${targetDeps.join(', ')}],`
        : '';
  
@@ -2174,9 +2230,21 @@ index cf7e587..faa0982 100644
 +let rnSpmBridgingHeader = Context.packageDirectory + "/${mixed.bridgingHeader}"
 +`
 +      : '';
++  // A target with Swift sources gets the podspec's literal
++  // SWIFT_ACTIVE_COMPILATION_CONDITIONS as `.define(...)`, after a mixed
++  // target's bridging header. A clang-only target gets none.
++  const swiftConditionDefines = spec.sources.some(isSwiftSource)
++    ? (spec.swiftConditions ?? []).map(c => `.define(${JSON.stringify(c)})`)
++    : [];
++  const swiftSettings = [
++    ...(mixed != null
++      ? ['.unsafeFlags(["-import-objc-header", rnSpmBridgingHeader])']
++      : []),
++    ...swiftConditionDefines,
++  ];
 +  const swiftSettingsLine =
-+    mixed != null
-+      ? `\n            swiftSettings: [.unsafeFlags(["-import-objc-header", rnSpmBridgingHeader])],`
++    swiftSettings.length > 0
++      ? `\n            swiftSettings: [${swiftSettings.join(', ')}],`
 +      : '';
 +  const importerPaths = spec.headerSearchPaths.filter(
 +    p => !path.posix.isAbsolute(p) && !p.split('/').includes('..'),
@@ -2203,7 +2271,7 @@ index cf7e587..faa0982 100644
  // Edit the contents below if needed and re-run \`npx patch-package <dep-name>\`
  // to persist across \`npm install\`. To regenerate from the podspec, remove
  // this file (or just this marker) and re-run \`npx react-native spm scaffold\`.
-@@ -768,7 +1643,7 @@ ${SCAFFOLDER_MARKER}
+@@ -768,7 +1656,7 @@ ${SCAFFOLDER_MARKER}
  // (dropping the file) anyway.
  
  import PackageDescription
@@ -2212,7 +2280,7 @@ index cf7e587..faa0982 100644
  let package = Package(
      name: "${spec.swiftName}",
      platforms: [.iOS("${iosDeploymentTarget}")],
-@@ -778,13 +1653,13 @@ let package = Package(
+@@ -778,13 +1666,13 @@ let package = Package(
  ${packageDepsBlock}    targets: [
          .target(
              name: "${spec.swiftName}",${targetDepsLine}
@@ -2229,7 +2297,7 @@ index cf7e587..faa0982 100644
  )
  `;
  }
-@@ -844,6 +1719,65 @@ function reportSwiftName(
+@@ -844,6 +1732,65 @@ function reportSwiftName(
    }
  }
  
@@ -2295,7 +2363,7 @@ index cf7e587..faa0982 100644
  // ---------------------------------------------------------------------------
  // Per-dep orchestrator
  // ---------------------------------------------------------------------------
-@@ -953,7 +1887,11 @@ function scaffoldPackageSwiftForDep(
+@@ -953,7 +1900,11 @@ function scaffoldPackageSwiftForDep(
        // regenerating existing files; --force is not needed here.
        const vMatch = existing.match(SCAFFOLDER_VERSION_LINE_RE);
        const existingVersion = vMatch != null ? parseInt(vMatch[1], 10) : 1;
@@ -2308,7 +2376,7 @@ index cf7e587..faa0982 100644
        if (!ctx.force && !versionStale) {
          // Slot label change is the other auto-regen trigger — bumps SPM's
          // manifest hash so the cache-slot path gets re-resolved.
-@@ -970,7 +1908,7 @@ function scaffoldPackageSwiftForDep(
+@@ -970,7 +1921,7 @@ function scaffoldPackageSwiftForDep(
        }
        if (versionStale) {
          log(
@@ -2317,7 +2385,7 @@ index cf7e587..faa0982 100644
          );
        }
        // Fall through: regenerate (force, slot changed, or version bumped).
-@@ -998,9 +1936,37 @@ function scaffoldPackageSwiftForDep(
+@@ -998,9 +1949,37 @@ function scaffoldPackageSwiftForDep(
      };
    }
  
@@ -2355,7 +2423,7 @@ index cf7e587..faa0982 100644
    } catch (e) {
      return {
        depName,
-@@ -1012,35 +1978,16 @@ function scaffoldPackageSwiftForDep(
+@@ -1012,35 +1991,16 @@ function scaffoldPackageSwiftForDep(
    const spec = translatePodspecToSpmTarget(
      model,
      dep,
@@ -2399,7 +2467,7 @@ index cf7e587..faa0982 100644
  
    // Relative paths into the app, embedded in the scaffolded Package.swift.
    //
-@@ -1083,6 +2030,19 @@ function scaffoldPackageSwiftForDep(
+@@ -1083,6 +2043,19 @@ function scaffoldPackageSwiftForDep(
  
    if (!ctx.dryRun) {
      fs.writeFileSync(pkgSwiftPath, content, 'utf8');
@@ -2419,7 +2487,7 @@ index cf7e587..faa0982 100644
      // Emit the ambient-import prefix header next to the manifest when the
      // target has ObjC(++) sources (the manifest `-include`s it by bare name).
      if (spec.needsObjCPrefix) {
-@@ -1099,16 +2059,82 @@ function scaffoldPackageSwiftForDep(
+@@ -1099,16 +2072,82 @@ function scaffoldPackageSwiftForDep(
        const shimDir = path.join(dep.root, 'include', spec.swiftName);
        fs.mkdirSync(shimDir, {recursive: true});
        for (const header of spec.namespacedShimHeaders) {
@@ -2504,7 +2572,7 @@ index cf7e587..faa0982 100644
    }
  
    reportSwiftName(dep, spec.swiftName, model);
-@@ -1141,7 +2167,7 @@ function collectAutolinkedDeps(
+@@ -1141,7 +2180,7 @@ function collectAutolinkedDeps(
    opts /*: {
      autolinkingJsonPath: string,
      remote: ?{url: string, version: string, identity: string},
@@ -2513,7 +2581,7 @@ index cf7e587..faa0982 100644
    } */,
  ) /*: ?Array<AutolinkedDep> */ {
    const {autolinkingJsonPath, remote, onSkipped} = opts;
-@@ -1162,7 +2188,7 @@ function collectAutolinkedDeps(
+@@ -1162,7 +2201,7 @@ function collectAutolinkedDeps(
      const root = raw.root;
      const ios = raw.platforms?.ios;
      if (typeof root !== 'string' || ios == null) {
@@ -2522,7 +2590,7 @@ index cf7e587..faa0982 100644
        continue;
      }
      // $FlowFixMe[incompatible-type] `ios` shape is runtime-validated above
-@@ -1323,6 +2349,14 @@ function scaffoldAll(
+@@ -1323,6 +2362,14 @@ function scaffoldAll(
    // scaffolded here — leaving `react-native spm scaffold` unable to clear the
    // autolinker's missing-manifest error.
    const results /*: Array<ScaffoldResult> */ = [];
@@ -2537,7 +2605,7 @@ index cf7e587..faa0982 100644
    // Outside collectAutolinkedDeps' own try: a malformed remote config
    // (RemoteVersionError) is a misconfiguration to surface, not an expansion
    // failure to degrade past.
-@@ -1330,24 +2364,21 @@ function scaffoldAll(
+@@ -1330,24 +2377,21 @@ function scaffoldAll(
    const allDeps = collectAutolinkedDeps({
      autolinkingJsonPath,
      remote,
@@ -2566,7 +2634,7 @@ index cf7e587..faa0982 100644
    for (const dep of allDeps) {
      const podspecPath = dep.platforms?.ios?.podspecPath;
      if (typeof podspecPath === 'string' && podspecPath.length > 0) {
-@@ -1404,6 +2435,7 @@ function scaffoldAll(
+@@ -1404,6 +2448,7 @@ function scaffoldAll(
  }
  
  module.exports = {

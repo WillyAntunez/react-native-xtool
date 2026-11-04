@@ -1354,6 +1354,7 @@ function translatePodspecToSpmTarget(
     resources,
     excludePaths,
     swiftLanguageModeV5,
+    swiftConditions: model.swiftConditions ?? [],
     warnings,
   };
 }
@@ -1608,9 +1609,21 @@ let rnSpmSwiftHeadersDir = Context.environment["${SWIFT_HEADERS_DIR_ENV}"]
 let rnSpmBridgingHeader = Context.packageDirectory + "/${mixed.bridgingHeader}"
 `
       : '';
+  // A target with Swift sources gets the podspec's literal
+  // SWIFT_ACTIVE_COMPILATION_CONDITIONS as `.define(...)`, after a mixed
+  // target's bridging header. A clang-only target gets none.
+  const swiftConditionDefines = spec.sources.some(isSwiftSource)
+    ? (spec.swiftConditions ?? []).map(c => `.define(${JSON.stringify(c)})`)
+    : [];
+  const swiftSettings = [
+    ...(mixed != null
+      ? ['.unsafeFlags(["-import-objc-header", rnSpmBridgingHeader])']
+      : []),
+    ...swiftConditionDefines,
+  ];
   const swiftSettingsLine =
-    mixed != null
-      ? `\n            swiftSettings: [.unsafeFlags(["-import-objc-header", rnSpmBridgingHeader])],`
+    swiftSettings.length > 0
+      ? `\n            swiftSettings: [${swiftSettings.join(', ')}],`
       : '';
   const importerPaths = spec.headerSearchPaths.filter(
     p => !path.posix.isAbsolute(p) && !p.split('/').includes('..'),

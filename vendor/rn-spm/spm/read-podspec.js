@@ -674,6 +674,22 @@ function regexPodspec(
     return out;
   }
 
+  // Literal `'SWIFT_ACTIVE_COMPILATION_CONDITIONS' => '...'` entries from any
+  // xcconfig hash, space-joined. A double-quoted value may hold `#{...}` with
+  // its own quotes (react-native-vision-camera: `#{enableLocation ? "X" :
+  // ""}`), so the scan steps over it as a unit; flattenSubspecs drops it.
+  function getSwiftConditionsXcconfig(text /*: string */) /*: string */ {
+    const out /*: Array<string> */ = [];
+    const re =
+      /["']SWIFT_ACTIVE_COMPILATION_CONDITIONS["']\s*=>\s*(?:"((?:[^"\\\n#]|\\.|#\{[^}\n]*\}|#(?!\{))*)"|'((?:[^'\\\n]|\\.)*)')/g;
+    while (true) {
+      const m = re.exec(text);
+      if (m == null) break;
+      out.push(m[1] ?? m[2] ?? '');
+    }
+    return out.join(' ');
+  }
+
   // Surface known unparseable constructs so the caller can warn the user.
   if (shadowedIdentity) {
     warnings.push(
@@ -753,6 +769,10 @@ function regexPodspec(
       HEADER_SEARCH_PATHS: unionOf(text => getHeaderSearchPaths(text)),
       ...layers.reduce((acc, l) => {
         const found = getDefineXcconfig(l.text);
+        const conditions = getSwiftConditionsXcconfig(l.text);
+        if (conditions.length > 0) {
+          found.SWIFT_ACTIVE_COMPILATION_CONDITIONS = conditions;
+        }
         for (const k of Object.keys(found)) {
           acc[k] = acc[k] != null ? `${acc[k]} ${found[k]}` : found[k];
         }
@@ -1214,6 +1234,41 @@ function flattenSubspecs(
     return out;
   }
 
+  // SWIFT_ACTIVE_COMPILATION_CONDITIONS tokens from every layer's xcconfig
+  // hashes, each once. `$(inherited)`, an Xcode `$(...)` token and a Ruby
+  // interpolation are left out, as for the C defines.
+  function mergeSwiftConditions() /*: Array<string> */ {
+    const out /*: Array<string> */ = [];
+    const XCCONFIG_KEYS = [
+      'pod_target_xcconfig',
+      'xcconfig',
+      'user_target_xcconfig',
+    ];
+    for (const layer of layers) {
+      if (layer == null || typeof layer !== 'object') continue;
+      for (const xcKey of XCCONFIG_KEYS) {
+        // $FlowFixMe[incompatible-use] layer narrowed from `mixed`
+        const xc = layer[xcKey];
+        if (xc == null || typeof xc !== 'object') continue;
+        const val = xc.SWIFT_ACTIVE_COMPILATION_CONDITIONS;
+        const strs =
+          typeof val === 'string'
+            ? [val]
+            : Array.isArray(val)
+              ? val.filter(v => typeof v === 'string')
+              : [];
+        for (const str of strs) {
+          // An interpolation stays one token that is never a valid name.
+          const tokens = str.replace(/#\{[^}]*\}/g, '#{}').split(/\s+/);
+          for (const tok of tokens) {
+            if (/^[A-Za-z_]\w*$/.test(tok)) out.push(tok);
+          }
+        }
+      }
+    }
+    return Array.from(new Set(out));
+  }
+
   function compilerFlagTokens(layer /*: unknown */) /*: Array<string> */ {
     // $FlowFixMe[incompatible-use] layer narrowed from `mixed`; runtime-validated below
     const value = layer != null ? layer.compiler_flags : null;
@@ -1308,6 +1363,7 @@ function flattenSubspecs(
     dependencies: mergeDependencies(),
     subspecDependencies: subspecDependencies(),
     preprocessorDefines,
+    swiftConditions: mergeSwiftConditions(),
     compilerFlags,
     headerSearchPaths: mergeHeaderSearchPaths(),
     resources: mergeArrayField('resources'),

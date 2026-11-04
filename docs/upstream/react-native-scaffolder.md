@@ -701,6 +701,22 @@ to the `libs/<SwiftName>` symlink the autolinker references the package through.
 library's real directory in `node_modules`, so the path missed the codegen directory and the include still failed.
 Found on @react-native-community/netinfo 11.5.2, which built by hand with an absolute `-I` to the codegen directory.
 
+## 24. `scripts/spm/*`: Swift compilation conditions are not carried
+
+`SWIFT_ACTIVE_COMPILATION_CONDITIONS` in a podspec's xcconfig is how a pod switches Swift code on and off (`#if X`),
+and the scaffold never passed it to `swiftSettings`, so such code was always compiled out.
+
+Fix: the reader collects the tokens of literal `'SWIFT_ACTIVE_COMPILATION_CONDITIONS' => '…'` entries from any xcconfig
+hash of every layer (`swiftConditions`, on both the regex and the `pod ipc spec` path). `$(inherited)`, Xcode `$(…)`
+tokens and Ruby interpolations are left out, the same rule as for the C defines (fix 7). A target with Swift sources
+gets `.define("<X>")` in `swiftSettings` for each: after the bridging-header flag on a mixed target, in a new
+`swiftSettings:` line on a pure-Swift one. A clang-only target gets nothing. Conditions in `user_target_xcconfig` are
+carried too, though CocoaPods applies that hash to the app target and not to the pod: the C defines (fix 7) are read
+from it the same way. Not covered: react-native-vision-camera 4.7.3 switches its location tagging with a Ruby ternary
+(`"$(inherited) #{enableLocation ? "VISION_CAMERA_ENABLE_LOCATION" : ""}"`), which the regex reader cannot evaluate, so
+location tagging stays compiled out there; CocoaPods enables it by default. On the reference app's libraries nothing
+changes. Found on react-native-vision-camera 4.7.3.
+
 ## Known limitation (deferred): pure-Swift packages importing a mixed Expo module
 
 A Swift module built with a bridging header (every mixed target) makes each Swift importer re-read that
@@ -715,7 +731,7 @@ every generated or scaffolded Swift target that depends on a mixed module the sa
 
 `tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks the
 fixes against fixtures (skipped when the reference app is not present; set `RN_XTOOL_REF_APP` to point at it). It also
-asserts that each hunk is present in the installed RN files. Fixes 14 to 23 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
+asserts that each hunk is present in the installed RN files. Fixes 14 to 24 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
 against podspec fixtures from the SDK 57 pins in `tests/fixtures/podspecs/` (worklets 0.10.1, reanimated 4.5.1,
 screens 4.26.2, gesture-handler 2.32.0), from screens 4.30.1 (the clang-only importer paths and module map) and from
 worklets 0.8.3 (the `RCT_HERMES_V1_ENABLED` ternary). A golden test re-scaffolds the reference app's libraries and compares them
