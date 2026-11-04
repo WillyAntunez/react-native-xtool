@@ -12,7 +12,8 @@
  * forces a re-render of every library. `--only <name>` (repeatable) limits it to the libraries the
  * autolinker reported; nothing is forced, so any other scaffold, hand-edited or not, stays as it is,
  * and a named library's current scaffold too (the scaffolder still regenerates an older revision or
- * cache slot).
+ * cache slot). `--results <abs>` writes what the step did for each library, whenever scaffoldAll
+ * returned: {"results": [{depName, status, reason?, warnings?, root?}]}, `root` from autolinking.json.
  *
  * `--expo-plugin <abs>` (Expo SDK 57, whose `expo` ships no SwiftPM plugin) hands the vendored scripts
  * that plugin through RN_SPM_EXPO_PLUGIN (edit E5), and `--scaffold` then leaves `expo` alone: the
@@ -22,11 +23,12 @@
  * lines are already printed), 1 anything else.
  */
 
+const fs = require('node:fs');
 const path = require('node:path');
 const {parseArgs} = require('node:util');
 
 const USAGE =
-  'Usage: node scripts/rn-spm-generate.js --rn-dir <abs> --app-root <abs> --scripts-root <abs> [--artifacts <root>] [--config-command <json>] [--expo-plugin <abs>] [--scaffold [--only <name>]...]';
+  'Usage: node scripts/rn-spm-generate.js --rn-dir <abs> --app-root <abs> --scripts-root <abs> [--artifacts <root>] [--config-command <json>] [--expo-plugin <abs>] [--scaffold [--results <abs>] [--only <name>]...]';
 
 function parseCli(argv) {
   let values;
@@ -42,6 +44,7 @@ function parseCli(argv) {
         'expo-plugin': {type: 'string'},
         scaffold: {type: 'boolean'},
         only: {type: 'string', multiple: true},
+        results: {type: 'string'},
       },
       strict: true,
       allowPositionals: false,
@@ -53,13 +56,15 @@ function parseCli(argv) {
   const appRoot = values['app-root'];
   const scriptsRoot = values['scripts-root'];
   const expoPlugin = values['expo-plugin'] ?? null;
+  const results = values.results ?? null;
   if (rnDir == null || appRoot == null || scriptsRoot == null) return null;
-  if (values.only != null && values.scaffold !== true) return null;
+  if ((values.only != null || results != null) && values.scaffold !== true) return null;
   if (
     !path.isAbsolute(rnDir) ||
     !path.isAbsolute(appRoot) ||
     !path.isAbsolute(scriptsRoot) ||
-    (expoPlugin != null && !path.isAbsolute(expoPlugin))
+    (expoPlugin != null && !path.isAbsolute(expoPlugin)) ||
+    (results != null && !path.isAbsolute(results))
   ) {
     return null;
   }
@@ -72,6 +77,7 @@ function parseCli(argv) {
     expoPlugin,
     scaffold: values.scaffold === true,
     only: values.only ?? null,
+    results,
   };
 }
 
@@ -134,7 +140,7 @@ async function generate(cli) {
       version,
       ...(cli.expoPlugin != null ? {skipDeps: ['expo']} : {}),
       ...(cli.only != null ? {onlyDeps: cli.only} : {}),
-    });
+    }, cli.results);
     return 0;
   }
 
@@ -189,7 +195,7 @@ async function generate(cli) {
 
 // Mirrors setup-apple-spm.js `runScaffold`, except that it never forces and a scaffoldAll throw
 // propagates (exit 1).
-async function scaffold(rn, scaffoldAll, opts) {
+async function scaffold(rn, scaffoldAll, opts, resultsPath) {
   const {version, ...scaffoldOpts} = opts;
   // The slot label is written into each manifest so SwiftPM re-resolves on a slot change; RN
   // scaffolds without it when the slot cannot be resolved.
@@ -199,6 +205,7 @@ async function scaffold(rn, scaffoldAll, opts) {
     cacheSlotLabel = `${await resolveCacheSlotVersion(version)}/dual-flavor`;
   } catch {}
   const results = scaffoldAll({...scaffoldOpts, cacheSlotLabel});
+  if (resultsPath != null) writeResults(resultsPath, results, opts.autolinkingJsonPath);
 
   const written = results.filter(r => r.status === 'written');
   if (written.length > 0) {
@@ -211,6 +218,26 @@ async function scaffold(rn, scaffoldAll, opts) {
   for (const r of results.filter(x => x.status === 'error')) {
     console.error(`  ! ${r.depName}: ${r.reason}`);
   }
+}
+
+// rn-xtool reads this to tell which named library failed, and why, before anything is persisted.
+function writeResults(file, results, autolinkingJsonPath) {
+  let deps = {};
+  try {
+    deps = JSON.parse(fs.readFileSync(autolinkingJsonPath, 'utf8')).dependencies ?? {};
+  } catch {}
+  const entries = results.map(r => {
+    const root = deps[r.depName]?.root;
+    return {
+      depName: r.depName,
+      status: r.status,
+      ...(r.reason != null ? {reason: r.reason} : {}),
+      ...(r.warnings != null && r.warnings.length > 0 ? {warnings: r.warnings} : {}),
+      ...(typeof root === 'string' ? {root} : {}),
+    };
+  });
+  fs.mkdirSync(path.dirname(file), {recursive: true});
+  fs.writeFileSync(file, JSON.stringify({results: entries}, null, 2) + '\n');
 }
 
 const cli = parseCli(process.argv.slice(2));

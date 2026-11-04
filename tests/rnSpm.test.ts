@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { afterAll, describe, expect, it } from "vitest";
 import { streamingRunner } from "../src/pipeline/rnSpm.js";
 import {
   AUTOLINKING_CONFIG_COMMAND,
@@ -17,7 +19,8 @@ import { projectPaths, swiftHeadersEnv, type ProjectPaths } from "../src/paths.j
 import { packageRoot } from "../src/tools/exec.js";
 import path from "node:path";
 
-const paths = { root: "/proj", ios: "/proj/ios", iosXtool: "/proj/ios-xtool" } as unknown as ProjectPaths;
+const RESULTS = "/proj/ios/build/rn-xtool-scaffold-results.json";
+const paths = { root: "/proj", ios: "/proj/ios", iosXtool: "/proj/ios-xtool", scaffoldResults: RESULTS } as unknown as ProjectPaths;
 const SWIFT_HEADERS = "/proj/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos";
 const rnDir = "/proj/node_modules/react-native";
 const INST = { rnScripts: "installed" } as const;
@@ -190,7 +193,7 @@ describe("Expo on the driver", () => {
     };
     expect(h.calls).toEqual([
       { cmd: "node", args: generate, cwd: "/proj/ios", env },
-      { cmd: "node", args: [...generate, "--scaffold", "--only", "lib-a"], cwd: "/proj/ios", env },
+      { cmd: "node", args: [...generate, "--scaffold", "--results", RESULTS, "--only", "lib-a"], cwd: "/proj/ios", env },
       { cmd: persistScaffoldArgv("lib-a")[0], args: persistScaffoldArgv("lib-a")[1], cwd: "/proj" },
       { cmd: "node", args: generate, cwd: "/proj/ios", env },
     ]);
@@ -226,6 +229,8 @@ describe("Expo on the driver", () => {
           "--artifacts",
           "/art",
           "--scaffold",
+          "--results",
+          RESULTS,
           "--only",
           "lib-a",
         ],
@@ -284,13 +289,15 @@ describe("runRnSpm", () => {
     const generate = rnSpmGenerateArgs(paths, { rnArtifactsDir: "/art", rnScripts: "installed" }, rnDir);
     expect(h.calls.map((c) => c.args)).toEqual([
       generate,
-      [...generate, "--scaffold", "--only", "lib-a"],
+      [...generate, "--scaffold", "--results", RESULTS, "--only", "lib-a"],
       persistScaffoldArgv("lib-a")[1],
       generate,
     ]);
     expect(rnSpmScaffoldArgs(paths, { rnArtifactsDir: "/art", rnScripts: "installed", kind: "bare" }, ["lib-a"], rnDir)).toEqual([
       ...generate,
       "--scaffold",
+      "--results",
+      RESULTS,
       "--only",
       "lib-a",
     ]);
@@ -309,7 +316,7 @@ describe("runRnSpm", () => {
       { exitCode: 0, output: "" },
     ]);
     await runRnSpm(paths, { kind: "bare", rnScripts: "installed", expoPlugin: "installed" }, h.deps);
-    expect(h.calls[1]!.args.slice(-5)).toEqual(["--scaffold", "--only", "lib-a", "--only", "lib-b"]);
+    expect(h.calls[1]!.args.slice(-7)).toEqual(["--scaffold", "--results", RESULTS, "--only", "lib-a", "--only", "lib-b"]);
     expect(h.calls[1]!.args.filter((a) => a === "--only")).toHaveLength(2);
   });
 
@@ -334,6 +341,8 @@ describe("runRnSpm", () => {
         "--config-command",
         '["npx","expo-modules-autolinking","react-native-config","--json","--platform","ios"]',
         "--scaffold",
+        "--results",
+        RESULTS,
         "--only",
         "lib-a",
       ],
@@ -360,7 +369,7 @@ describe("runRnSpm", () => {
     ]);
     await runRnSpm(paths, { kind: "expo", rnScripts: "installed", expoPlugin: "installed" }, h.deps);
     expect(h.calls).toHaveLength(5);
-    expect(h.calls[1]!.args.slice(-5)).toEqual(["--scaffold", "--only", "lib-a", "--only", "lib-b"]);
+    expect(h.calls[1]!.args.slice(-7)).toEqual(["--scaffold", "--results", RESULTS, "--only", "lib-a", "--only", "lib-b"]);
     expect(h.calls[1]!.cwd).toBe("/proj/ios");
     expect(h.calls[2]!.args.slice(1, 4)).toEqual(["lib-a", "--patch-dir", "patches"]);
     expect(h.calls[3]!.args.slice(1, 4)).toEqual(["lib-b", "--patch-dir", "patches"]);
@@ -483,6 +492,156 @@ describe("runRnSpm", () => {
     const h = harness([{ exitCode: 2, output: "something else" }]);
     await expect(runRnSpm(paths, { kind: "expo", rnScripts: "installed", expoPlugin: "installed" }, h.deps)).rejects.toThrow(/something else/);
     expect(h.calls).toHaveLength(1);
+  });
+});
+
+describe("a failed scaffold comes first", () => {
+  const tmp: string[] = [];
+  afterAll(() => {
+    for (const d of tmp) rmSync(d, { recursive: true, force: true });
+  });
+  const BANNER = "// AUTO-SCAFFOLDED by react-native spm scaffold — safe to edit.\n// swift-tools-version: 6.0\n";
+  const SIBLING = "react-native spm scaffold: no resolved Swift name for the sibling 'x'. Run the autolinker first.";
+
+  /**
+   * A project whose scaffold run writes `results` (each `root` under the project) and a banner Package.swift for each
+   * library in `written`, as the driver would. React Native names every library in `results`, then those in `unseen`.
+   */
+  function project(
+    results: { depName: string; status: string; reason?: string; warnings?: string[] }[],
+    written: string[],
+    unseen: string[] = [],
+  ) {
+    const root = mkdtempSync(path.join(tmpdir(), "rn-spm-outcome-"));
+    tmp.push(root);
+    const full = projectPaths(root);
+    const calls: string[][] = [];
+    const logs: string[] = [];
+    const runner: RnRunner = async (_cmd, args) => {
+      calls.push(args);
+      if (calls.length === 1) {
+        return { exitCode: 2, output: [...results.map((r) => r.depName), ...unseen].map((n) => missing(n)).join("\n") };
+      }
+      if (args.includes("--scaffold")) {
+        const at = args.indexOf("--results");
+        if (at < 0) throw new Error("the scaffold run has no --results");
+        const file = args[at + 1]!;
+        const rooted = results.map((r) => ({ ...r, root: path.join(root, "node_modules", r.depName) }));
+        mkdirSync(path.dirname(file), { recursive: true });
+        writeFileSync(file, JSON.stringify({ results: rooted }));
+        for (const name of written) {
+          mkdirSync(path.join(root, "node_modules", name), { recursive: true });
+          writeFileSync(path.join(root, "node_modules", name, "Package.swift"), BANNER);
+        }
+      }
+      return { exitCode: 0, output: "" };
+    };
+    const run = () =>
+      runRnSpm(full, { kind: "bare", rnScripts: "vendored", expoPlugin: "installed" }, { runner, log: (l) => logs.push(l), rnDir });
+    const persisted = () => calls.filter((a) => a[0] === persistScaffoldArgv("x")[1][0]).map((a) => a[1]);
+    return { run, calls, logs, persisted, full };
+  }
+
+  it("stops on a library the scaffolder could not scaffold, with its reason first", async () => {
+    const p = project(
+      [
+        { depName: "lib-a", status: "error", reason: SIBLING },
+        { depName: "lib-b", status: "written" },
+      ],
+      ["lib-b"],
+    );
+    const err = await p.run().then(
+      () => undefined,
+      (e: Error) => e,
+    );
+    expect(err?.message.startsWith("Scaffolding lib-a failed: react-native spm scaffold: no resolved Swift name")).toBe(true);
+    expect(err?.message).toBe(`Scaffolding lib-a failed: ${SIBLING}`);
+    expect(p.persisted()).toEqual(["lib-b"]);
+    expect(p.calls.filter((a) => a[0]!.endsWith("rn-spm-generate.js"))).toHaveLength(2);
+  });
+
+  it("prints the failed library's warnings after its error", async () => {
+    const p = project(
+      [
+        { depName: "lib-a", status: "error", reason: SIBLING, warnings: ["first warning", "second warning"] },
+        { depName: "lib-c", status: "error", reason: "no podspec readable" },
+      ],
+      [],
+    );
+    await expect(p.run()).rejects.toThrow(
+      `Scaffolding lib-a failed: ${SIBLING}\n  ! first warning\n  ! second warning\n\nScaffolding lib-c failed: no podspec readable`,
+    );
+  });
+
+  it("a library without a scaffolded Package.swift afterwards failed too", async () => {
+    const p = project(
+      [
+        { depName: "lib-a", status: "written" },
+        { depName: "lib-b", status: "skipped-self-managed", reason: "Package.swift has no scaffolder marker." },
+      ],
+      [],
+    );
+    await expect(p.run()).rejects.toThrow(
+      "Scaffolding lib-a failed: no Package.swift was written\n\nScaffolding lib-b failed: Package.swift has no scaffolder marker.",
+    );
+    expect(p.persisted()).toEqual([]);
+  });
+
+  it("says so when React Native names a library the scaffolder never saw", async () => {
+    const p = project([{ depName: "lib-a", status: "written" }], ["lib-a"], ["lib-z"]);
+    await expect(p.run()).rejects.toThrow(
+      /^Scaffolding lib-z failed: the scaffolder did not find lib-z among the autolinked iOS libraries$/,
+    );
+    expect(p.persisted()).toEqual(["lib-a"]);
+  });
+
+  it("persists nothing for a failed library and never runs React Native again", async () => {
+    const p = project([{ depName: "lib-a", status: "error", reason: SIBLING }], []);
+    await expect(p.run()).rejects.toThrow(`Scaffolding lib-a failed: ${SIBLING}`);
+    expect(p.persisted()).toEqual([]);
+    expect(p.calls).toHaveLength(2);
+    expect(p.logs.some((l) => l.includes("Could not persist"))).toBe(false);
+  });
+
+  it("counts a library whose scaffold threw as failed, even with a bannered Package.swift", async () => {
+    const reason = "EACCES: permission denied, mkdir 'node_modules/lib-a/include'";
+    const p = project([{ depName: "lib-a", status: "error", reason }], ["lib-a"]);
+    const err = await p.run().then(
+      () => undefined,
+      (e: Error) => e,
+    );
+    expect(err?.message).toBe(`Scaffolding lib-a failed: ${reason}`);
+    expect(p.persisted()).toEqual([]);
+    expect(p.calls).toHaveLength(2);
+  });
+
+  it("persists and retries when every named library scaffolded", async () => {
+    const p = project([{ depName: "lib-a", status: "written" }], ["lib-a"]);
+    await expect(p.run()).resolves.toBeUndefined();
+    expect(p.persisted()).toEqual(["lib-a"]);
+    expect(p.calls).toHaveLength(4);
+  });
+
+  it("never reads a results file a previous run left", async () => {
+    const p = project([], []);
+    mkdirSync(path.dirname(p.full.scaffoldResults), { recursive: true });
+    writeFileSync(p.full.scaffoldResults, JSON.stringify({ results: [{ depName: "lib-a", status: "error", reason: "old" }] }));
+    const runner: RnRunner = async (_c, args) =>
+      args.includes("--scaffold") ? { exitCode: 1, output: "scaffoldAll exploded" } : { exitCode: 2, output: missing("lib-a") };
+    await expect(
+      runRnSpm(p.full, { kind: "bare", rnScripts: "vendored", expoPlugin: "installed" }, { runner, log: () => {}, rnDir }),
+    ).rejects.toThrow("React Native spm scaffold failed (exit 1):\nscaffoldAll exploded");
+  });
+
+  it("keeps today's message without a results file", async () => {
+    const h = harness([
+      { exitCode: 2, output: missing("lib-a") },
+      { exitCode: 1, output: "rn-spm-generate: boom" },
+    ]);
+    await expect(runRnSpm(paths, { kind: "bare", rnScripts: "installed", expoPlugin: "installed" }, h.deps)).rejects.toThrow(
+      "React Native spm scaffold failed (exit 1):\nrn-spm-generate: boom",
+    );
+    expect(h.calls).toHaveLength(2);
   });
 });
 
