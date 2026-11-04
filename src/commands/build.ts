@@ -13,6 +13,7 @@ import { applyPatches } from "../pipeline/patches.js";
 import { prepareRnArtifacts } from "../pipeline/rnArtifactsStep.js";
 import type { ExpoPlugin, RnScripts } from "../versions.js";
 import { runRnSpm } from "../pipeline/rnSpm.js";
+import { unbundledResources, unbundledResourcesLine } from "../pipeline/scaffoldResources.js";
 import { checkFrameworkSymbols } from "../pipeline/symbols.js";
 import {
   allowedLimitText,
@@ -143,6 +144,8 @@ export interface BuildDeps {
   xtoolBin: (config: ExpoXtoolConfig) => string;
   readState: (iosXtoolDir: string) => Promise<BuildState | undefined>;
   depsFingerprint: (root: string) => Promise<string>;
+  /** After rn-spm: the resources scaffolded libraries declare that do not reach the app. */
+  unbundledResources: (root: string) => { pkg: string; items: string[] }[];
   log: (s: string) => void;
 }
 
@@ -176,6 +179,7 @@ const realDeps: BuildDeps = {
   xtoolBin,
   readState,
   depsFingerprint: depsFingerprint,
+  unbundledResources,
   log: (s) => console.log(s),
 };
 
@@ -270,6 +274,8 @@ export async function build(
       expoPlugin: project.expoPlugin,
     }),
   );
+  const resources = unbundledResourcesLine(d.unbundledResources(paths.root));
+  if (resources !== undefined) d.log(resources);
   // Expo 58 and bare: jsi after rn-spm, as before.
   if (!vendoredExpo && planned("jsi")) jsi = await step("jsi", buildJsi);
   if (planned("app-config")) await step("app-config", () => d.generateAppConfig(paths));

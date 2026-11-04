@@ -8,7 +8,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { troubleshootingUrl } from "../docs.js";
 import { packageRoot } from "../tools/exec.js";
-import { attribute, dependencyDirs, podspecFiles } from "./podspecs.js";
+import { attribute, dependencyDirs, podspecFiles, unconditionalLines } from "./podspecs.js";
 
 export type EarlyCheckId = "vendored-binaries" | "vendored-sources" | "pnpm" | "yarn-pnp" | "hoisted";
 
@@ -163,45 +163,6 @@ function hasPrebuilds(dir: string): boolean {
       return false;
     }
   });
-}
-
-/** Comments and string contents blanked, so neither is read as code. */
-function rubyCode(line: string): string {
-  return line.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""').replace(/#.*$/, "");
-}
-
-const COND_OPENER = /^\s*(?:if|unless|case|while|until)\b|=\s*(?:if|unless|case)\b/;
-const OTHER_OPENER = /^\s*(?:begin|def|class|module)\b/;
-const HEREDOC = /<<[-~]?(["']?)([A-Za-z_]\w*)\1/;
-
-/**
- * The podspec lines that always apply, as code: lines inside a `test_spec` block or a Ruby condition (`if`, `unless`,
- * `case`, `while`, `until`), lines carrying an `if`/`unless` modifier or a ternary, and heredoc bodies are left out.
- * Block depth is counted from `do`, those keywords and `end`, as an approximation; nothing is evaluated.
- */
-function unconditionalLines(text: string): string[] {
-  const stack: boolean[] = []; // true: a frame whose lines may not apply
-  const kept: string[] = [];
-  let heredoc: string | undefined;
-  for (const raw of text.replace(/\r\n/g, "\n").split("\n")) {
-    if (heredoc !== undefined) {
-      if (raw.trim() === heredoc) heredoc = undefined;
-      continue;
-    }
-    const code = rubyCode(raw);
-    heredoc = HEREDOC.exec(raw)?.[2];
-    const opensCondition = COND_OPENER.test(code);
-    const testSpec = /\.test_spec\b/.test(code);
-    const modifier = /\S\s+(?:if|unless)\s/.test(code.replace(COND_OPENER, ""));
-    const ternary = /=(?!=)[^?]*\?\s[^:]*:/.test(code);
-    if (!stack.some(Boolean) && !opensCondition && !testSpec && !modifier && !ternary) kept.push(code);
-    const dos = (code.match(/\bdo\b/g) ?? []).length;
-    if (opensCondition) stack.push(true);
-    else if (OTHER_OPENER.test(code)) stack.push(false);
-    for (let i = 0; i < dos; i++) stack.push(testSpec);
-    for (let i = (code.match(/\bend\b/g) ?? []).length; i > 0 && stack.length > 0; i--) stack.pop();
-  }
-  return kept;
 }
 
 const VENDORED_FRAMEWORKS = attribute("vendored_frameworks?");

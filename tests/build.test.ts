@@ -132,12 +132,34 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
     xtoolBin: () => "/bin/xtool",
     readState,
     depsFingerprint: async () => "fp-test",
+    unbundledResources: () => [],
     log: (s) => logs.push(s),
   };
   return { root, calls, logs, deps, writeIosXtool };
 }
 
 describe("build", () => {
+  it("prints the resource line once, after rn-spm", async () => {
+    const t = setup();
+    const roots: string[] = [];
+    const unbundledResources = (root: string) => {
+      roots.push(root);
+      return [{ pkg: "react-native-device-info", items: ["PrivacyInfo.xcprivacy"] }];
+    };
+    await build(t.root, {}, { ...t.deps, unbundledResources });
+    const line =
+      "ℹ Not copied into the app: react-native-device-info (PrivacyInfo.xcprivacy). Development builds run without them; " +
+      "privacy manifests are read only at App Store submission.";
+    expect(t.logs.filter((l) => l === line)).toHaveLength(1);
+    const at = t.logs.indexOf(line);
+    expect(t.logs[at - 1]).toMatch(/^✔ rn-spm \(/);
+    expect(roots).toEqual([t.root]);
+
+    const quiet = setup();
+    await build(quiet.root, {}, quiet.deps);
+    expect(quiet.logs.some((l) => l.startsWith("ℹ Not copied into the app"))).toBe(false);
+  });
+
   it("leaves no fingerprint in the state when xtool-build fails", async () => {
     const t = setup();
     const devBuild = async () => {
