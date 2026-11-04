@@ -18,7 +18,7 @@ import { buildSetting, openPbxproj, readTargetContent, resolveSetting } from "./
 import { scriptsCapability } from "./scriptsShape.js";
 import { projectPaths } from "../paths.js";
 import { resolveRnDir } from "../pipeline/rnSpm.js";
-import { expoPinsFor, rnLineStatus, supportedRnList, type BareLine } from "../versions.js";
+import { compareVersions, expoPinsFor, rnLineStatus, supportedRnList, type BareLine } from "../versions.js";
 import type { ProjectInfo, ReadProjectOptions } from "./types.js";
 
 /** Shown by doctor (warn) and build (error) when a bare project lacks the React Native CLI. */
@@ -30,8 +30,8 @@ export const RN_CLI_MISSING =
 const EXPO_NEEDS_088 = "Expo SDK 58 needs React Native 0.88.1.";
 
 /**
- * The row of a bare React Native version rn-xtool builds: a verified one, or a newer release of its minor (warned about
- * by readBareProject). Below the floor, a prerelease or a minor without a row is refused.
+ * The row of a bare React Native version rn-xtool builds: a verified one, or an unverified release of its minor at or
+ * above the floor (warned about by readBareProject). Below the floor, a prerelease or a minor without a row is refused.
  */
 function checkRnVersion(version: string, hasExpoModulesCore: boolean): BareLine {
   const { status, line } = rnLineStatus(version);
@@ -44,13 +44,21 @@ function checkRnVersion(version: string, hasExpoModulesCore: boolean): BareLine 
   return line;
 }
 
-/** A release of a bare line newer than the versions this rn-xtool release was verified with: the build goes on. */
-function rnNewerWarning(version: string, line: BareLine): string {
+/**
+ * A release of a bare line at or above its floor that this rn-xtool release was not verified with: the build goes on.
+ * Above the last verified version it is "newer"; below it (between two verified versions) it is "not among" them, and
+ * the way out is a move up, not back.
+ */
+function rnUnverifiedWarning(version: string, line: BareLine): string {
+  const last = line.verified.at(-1)!;
+  const newer = compareVersions(version, last) > 0;
   return (
-    `⚠ Newer than the React Native ${line.minor} line this rn-xtool release was verified with: react-native ${version}. ` +
-    `Verified: ${andList(line.verified)}. The build continues; if it fails or the app crashes at launch, move ` +
-    `react-native back to ${line.verified.at(-1)} as ${RN_UPGRADE_DOCS} describes, and report it at ` +
-    "https://github.com/WillyAntunez/react-native-xtool/issues."
+    (newer
+      ? `⚠ Newer than the React Native ${line.minor} line this rn-xtool release was verified with: `
+      : `⚠ Not among the React Native ${line.minor} versions this rn-xtool release was verified with: `) +
+    `react-native ${version}. Verified: ${andList(line.verified)}. The build continues; if it fails or the app ` +
+    `crashes at launch, move react-native ${newer ? "back " : ""}to ${last} as ${RN_UPGRADE_DOCS} describes, and ` +
+    "report it at https://github.com/WillyAntunez/react-native-xtool/issues."
   );
 }
 
@@ -117,8 +125,8 @@ export async function readBareProject(root: string, opts: ReadProjectOptions = {
     }
     if (sdk !== undefined) checkExpoPackages(root, sdk, opts.log, { kind: "bare" });
   }
-  // checkRnVersion let through only verified versions and newer releases of the line.
-  if (!rnLine.verified.includes(rnVersion)) opts.log?.(rnNewerWarning(rnVersion, rnLine));
+  // checkRnVersion let through only verified versions and unverified releases at or above the line's floor.
+  if (!rnLine.verified.includes(rnVersion)) opts.log?.(rnUnverifiedWarning(rnVersion, rnLine));
 
   return {
     kind: "bare",

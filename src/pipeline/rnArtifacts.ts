@@ -6,9 +6,9 @@ import * as plist from "plist";
 import { RN_HEADERS_MODULES } from "./rnHeadersModules.js";
 
 /**
- * Pure pieces of the artifact adapter: React Native 0.86.x artifacts predate the "headers-spec" slot layout
- * (ReactNativeHeaders.xcframework, ReactNativeDependenciesHeaders.xcframework) that the vendored 0.88 SwiftPM scripts
- * expect. These helpers rebuild that layout's parts from the older slot alone.
+ * Pure pieces of the artifact adapter: pre-headers-spec slots (0.85.x, 0.86.x) predate the "headers-spec" slot
+ * layout (ReactNativeHeaders.xcframework, ReactNativeDependenciesHeaders.xcframework) that the vendored 0.88 SwiftPM
+ * scripts expect. These helpers rebuild that layout's parts from the older slot alone.
  */
 
 const ROOT_PATH = "${ROOT_PATH}";
@@ -323,8 +323,8 @@ function inspectSource(src: string, version: string): SourceLayout {
 }
 
 /**
- * Rebuilds a pre-headers-spec slot `src` (RN 0.86.x) in the headers-spec layout the vendored SwiftPM scripts expect,
- * as `dest`: mostly hard links into `src`, generated module maps, placeholder archives and Info.plists, an
+ * Rebuilds a pre-headers-spec slot `src` (0.85.x, 0.86.x) in the headers-spec layout the vendored SwiftPM scripts
+ * expect, as `dest`: mostly hard links into `src`, generated module maps, placeholder archives and Info.plists, an
  * `artifacts.json` RN's `validateArtifactsCache` accepts, and the stamp {@link adaptedSlotIsCurrent} reads.
  *
  * The tree is assembled in `${dest}.tmp-<pid>` and renamed over `dest` only when complete, so a failed run leaves the

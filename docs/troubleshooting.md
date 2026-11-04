@@ -371,6 +371,12 @@ same warning.
   release of 0.86.x, 0.87.x or 0.88.x above the floor that this release was not verified with, for example 0.88.2.
   A hybrid app (bare + Expo modules) does not get this warning: it needs react-native 0.88.1, and on a newer 0.88.x
   G1 stops it.
+- **"⚠ Not among the React Native <minor> versions this rn-xtool release was verified with: react-native <version>.
+  Verified: <versions>. The build continues; if it fails or the app crashes at launch, move react-native to
+  <version> as https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/bare-react-native.md#upgrading-react-native
+  describes, and report it at https://github.com/WillyAntunez/react-native-xtool/issues."** The same case, for a
+  release between two verified versions of the line: 0.85.1 and 0.85.2 sit between the verified 0.85.0 and 0.85.3.
+  The version to move to is the line's last verified one, which is newer than the installed one.
 
 On a newer version the build uses the line's patches: the patch for the installed version when rn-xtool bundles one,
 else the highest bundled patch of the same release line (react-native 0.88.2 gets the 0.88.1 patch; a newer 57.x

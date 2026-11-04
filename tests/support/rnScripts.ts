@@ -18,10 +18,13 @@ export async function fakeRnScripts(rnDir: string, shape: "none" | "0.87" | "0.8
   await cp(path.join(RN_SCRIPTS_FIXTURES, shape), scripts, { recursive: true });
 }
 
-/** The scripts shape a React Native release ships: 0.86 has none, 0.87 has the 0.87 shape, later ones the 0.88 shape. */
+/**
+ * The scripts shape a React Native release ships: 0.85 and 0.86 have none, 0.87 has the 0.87 shape, later ones the
+ * 0.88 shape.
+ */
 export function shapeForVersion(version: string): "none" | "0.87" | "0.88" {
   const [major, minor] = version.split(".");
-  if (major === "0" && minor === "86") return "none";
+  if (major === "0" && (minor === "85" || minor === "86")) return "none";
   if (major === "0" && minor === "87") return "0.87";
   return "0.88";
 }

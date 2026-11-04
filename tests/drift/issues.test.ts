@@ -139,18 +139,18 @@ describe("lines", () => {
     expect(lines.find((l) => l.line === "bare-0.88")!.status).toBe("green");
     expect(applyDrill(lines, "")).toEqual(lines);
     expect(() => applyDrill(lines, "x")).toThrow(
-      'unknown drift line "x"; lines: expo-57, expo-58, bare-0.86, bare-0.87, bare-0.88',
+      'unknown drift line "x"; lines: expo-57, expo-58, bare-0.85, bare-0.86, bare-0.87, bare-0.88',
     );
   });
 
   it("accepts only a line id, or nothing", () => {
-    for (const ok of ["", "expo-57", "expo-58", "bare-0.86", "bare-0.87", "bare-0.88"]) {
+    for (const ok of ["", "expo-57", "expo-58", "bare-0.85", "bare-0.86", "bare-0.87", "bare-0.88"]) {
       expect(() => checkDrill(ok), ok).not.toThrow();
     }
     const bads = ["-x", "--dry-run", " bare-0.88", "bare-0.88\n--dry-run", "bare-0.89", "expo-57/blank-typescript"];
     for (const bad of bads) {
       expect(() => checkDrill(bad), bad).toThrow(
-        `unknown drift line ${JSON.stringify(bad)}; lines: expo-57, expo-58, bare-0.86, bare-0.87, bare-0.88`,
+        `unknown drift line ${JSON.stringify(bad)}; lines: expo-57, expo-58, bare-0.85, bare-0.86, bare-0.87, bare-0.88`,
       );
     }
   });

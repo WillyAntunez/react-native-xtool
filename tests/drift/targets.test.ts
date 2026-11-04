@@ -33,6 +33,7 @@ describe("watchTargets", () => {
       "expo-57/blank-typescript",
       "expo-58/blank-typescript",
       "expo-58/default",
+      "bare-0.85",
       "bare-0.86",
       "bare-0.87",
       "bare-0.88",
@@ -69,6 +70,16 @@ describe("watchTargets", () => {
         createExpo: "5.1.5",
       },
       {
+        id: "bare-0.85",
+        slug: "bare-0.85",
+        line: "bare-0.85",
+        title: "Drift: React Native 0.85 (bare)",
+        kind: "bare",
+        minor: "0.85",
+        version: "0.85.3",
+        cli: "20.1.0",
+      },
+      {
         id: "bare-0.86",
         slug: "bare-0.86",
         line: "bare-0.86",
@@ -103,7 +114,7 @@ describe("watchTargets", () => {
 
   it("falls back to the last verified version when npm lists none of the minor", () => {
     const bare = watchTargets(["0.88.2"]).filter((t) => t.kind === "bare");
-    expect(bare.map((t) => t.version)).toEqual(["0.86.3", "0.87.1", "0.88.2"]);
+    expect(bare.map((t) => t.version)).toEqual(["0.85.3", "0.86.3", "0.87.1", "0.88.2"]);
   });
 });
 

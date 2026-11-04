@@ -11,6 +11,7 @@ import {
   NODE_MIN,
   releaseLine,
   rnLineStatus,
+  type BareLine,
   SUPPORTED_LINES,
   supportedRnList,
   XTOOL_SHA256,
@@ -36,7 +37,7 @@ describe("xtool pin", () => {
 
 describe("supported lines", () => {
   it("holds every supported line in one table", () => {
-    expect(SUPPORTED_LINES.map(lineId)).toEqual(["expo-57", "expo-58", "bare-0.86", "bare-0.87", "bare-0.88"]);
+    expect(SUPPORTED_LINES.map(lineId)).toEqual(["expo-57", "expo-58", "bare-0.85", "bare-0.86", "bare-0.87", "bare-0.88"]);
     expect(SUPPORTED_LINES).toEqual([
       {
         kind: "expo",
@@ -59,6 +60,15 @@ describe("supported lines", () => {
         pins: EXPO58_PINS,
         templates: ["blank-typescript", "default"],
         createExpo: "5.1.5",
+      },
+      {
+        kind: "bare",
+        minor: "0.85",
+        floor: "0.85.0",
+        verified: ["0.85.0", "0.85.3"],
+        scripts: "vendored",
+        artifacts: "adapted",
+        cli: "20.1.0",
       },
       {
         kind: "bare",
@@ -93,10 +103,32 @@ describe("supported lines", () => {
     expect(Object.keys((pinsOf(58) as { pins: object }).pins)).toEqual(Object.keys(EXPO58_PINS));
   });
 
+  /** What is wrong with a bare row's verified list: out of order, below the floor, or outside the row's minor. */
+  const verifiedProblems = (line: BareLine): string[] =>
+    line.verified.flatMap((v, i) => [
+      ...(i > 0 && compareVersions(line.verified[i - 1]!, v) >= 0 ? [`${v} is not above ${line.verified[i - 1]}`] : []),
+      ...(compareVersions(v, line.floor) < 0 ? [`${v} is below the floor ${line.floor}`] : []),
+      ...(releaseLine(v) !== line.minor ? [`${v} is outside ${line.minor}`] : []),
+    ]);
+  const bareRows = SUPPORTED_LINES.filter((l): l is BareLine => l.kind === "bare");
+
+  it("keeps each bare line's verified versions ascending, at or above its floor and inside its minor", () => {
+    expect(bareRows.length).toBeGreaterThan(0);
+    for (const line of bareRows) expect(verifiedProblems(line), line.minor).toEqual([]);
+  });
+
+  it("reports a bare row whose verified versions are out of order, below the floor or outside the minor", () => {
+    const row: BareLine = { ...bareRows[0]!, minor: "0.85", floor: "0.85.1" };
+    expect(verifiedProblems({ ...row, verified: ["0.85.3", "0.85.2"] })).toEqual(["0.85.2 is not above 0.85.3"]);
+    expect(verifiedProblems({ ...row, verified: ["0.85.0", "0.85.3"] })).toEqual(["0.85.0 is below the floor 0.85.1"]);
+    expect(verifiedProblems({ ...row, verified: ["0.85.3", "0.86.3"] })).toEqual(["0.86.3 is outside 0.85"]);
+  });
+
   it("pins the CLI each bare line's template declares", () => {
-    // @react-native-community/template@<last verified>'s template/package.json devDependencies (npm pack, 2026-10-29).
+    // @react-native-community/template@<last verified>'s template/package.json devDependencies (npm pack, 2026-10-29);
+    // @react-native-community/template@0.85.0 and @0.85.3 declare 20.1.0 as well (2026-11-04).
     const cli = Object.fromEntries(SUPPORTED_LINES.flatMap((l) => (l.kind === "bare" ? [[l.minor, l.cli]] : [])));
-    expect(cli).toStrictEqual({ "0.86": "20.1.0", "0.87": "20.2.0", "0.88": "20.2.0" });
+    expect(cli).toStrictEqual({ "0.85": "20.1.0", "0.86": "20.1.0", "0.87": "20.2.0", "0.88": "20.2.0" });
   });
 
   it("pins the create-expo each Expo line's drift project is created with", () => {
@@ -110,7 +142,9 @@ describe("supported lines", () => {
     expect([56, 57, 58, 59].map(expoPluginFor)).toEqual([undefined, "vendored", "installed", "installed"]);
     expect([56, 57, 58, 59].map(expoPinPolicyFor)).toEqual([undefined, "floor", "floor", undefined]);
     expect(expoPinsFor(59)).toBeUndefined();
-    expect(supportedRnList()).toBe("0.86.x from 0.86.2, 0.87.x from 0.87.1 and 0.88.x from 0.88.0");
+    expect(supportedRnList()).toBe(
+      "0.85.x from 0.85.0, 0.86.x from 0.86.2, 0.87.x from 0.87.1 and 0.88.x from 0.88.0",
+    );
   });
 
   it("bareLineFor reads the minor", () => {
@@ -118,21 +152,27 @@ describe("supported lines", () => {
     expect(line088).toBeDefined();
     expect(bareLineFor("0.88.2")).toBe(line088);
     expect(bareLineFor("0.88.0-rc.1")).toBe(line088);
-    expect(["0.89.0", "0.8.1", "58.0.21"].map(bareLineFor)).toEqual([undefined, undefined, undefined]);
+    const line085 = SUPPORTED_LINES.find((l) => lineId(l) === "bare-0.85");
+    expect(line085).toBeDefined();
+    expect(bareLineFor("0.85.0")).toBe(line085);
+    expect(bareLineFor("0.85.4-rc.0")).toBe(line085);
+    expect(["0.84.1", "0.89.0", "0.8.1", "58.0.21"].map(bareLineFor)).toEqual([undefined, undefined, undefined, undefined]);
   });
 
   it("classifies bare versions by line", () => {
     const status = (v: string) => rnLineStatus(v).status;
     const lineOf = (v: string) => rnLineStatus(v).line;
-    for (const v of ["0.86.2", "0.86.3", "0.87.1", "0.88.0", "0.88.1"]) expect(status(v), v).toBe("verified");
-    for (const v of ["0.86.4", "0.87.2", "0.88.12"]) expect(status(v), v).toBe("newer");
+    for (const v of ["0.85.0", "0.85.3", "0.86.2", "0.86.3", "0.87.1", "0.88.0", "0.88.1"]) {
+      expect(status(v), v).toBe("verified");
+    }
+    for (const v of ["0.85.1", "0.85.2", "0.85.4", "0.86.4", "0.87.2", "0.88.12"]) expect(status(v), v).toBe("newer");
     for (const v of ["0.86.1", "0.87.0"]) expect(status(v), v).toBe("below");
-    expect(status("0.88.2-rc.1")).toBe("prerelease");
-    for (const v of ["0.86.3", "0.86.4", "0.87.0", "0.88.2-rc.1"]) {
+    for (const v of ["0.88.2-rc.1", "0.85.4-rc.0"]) expect(status(v), v).toBe("prerelease");
+    for (const v of ["0.85.1", "0.85.4-rc.0", "0.86.3", "0.86.4", "0.87.0", "0.88.2-rc.1"]) {
       expect(lineOf(v), v).toBeDefined();
       expect(lineOf(v), v).toBe(bareLineFor(v));
     }
-    for (const v of ["0.85.3", "0.89.0"]) expect(rnLineStatus(v), v).toEqual({ status: "unsupported" });
+    for (const v of ["0.84.1", "0.89.0"]) expect(rnLineStatus(v), v).toEqual({ status: "unsupported" });
   });
 });
 

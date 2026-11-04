@@ -69,8 +69,15 @@ describe("readBareProject", () => {
   });
 
   it("accepts each supported version", async () => {
-    for (const [rn, scripts] of [["0.86.2", "vendored"], ["0.86.3", "vendored"], ["0.87.1", "vendored"], ["0.88.0", "installed"]] as const) {
-      const p = await readBareProject(await tempBare({ rn }));
+    for (const [rn, scripts, fixture] of [
+      ["0.85.0", "vendored", "bare-086"],
+      ["0.85.3", "vendored", "bare-086"],
+      ["0.86.2", "vendored", "bare"],
+      ["0.86.3", "vendored", "bare"],
+      ["0.87.1", "vendored", "bare"],
+      ["0.88.0", "installed", "bare"],
+    ] as const) {
+      const p = await readBareProject(await tempBare({ fixture, rn }));
       expect(p.rnVersion).toBe(rn);
       expect(p.rnScripts).toBe(scripts);
     }
@@ -83,17 +90,17 @@ describe("readBareProject", () => {
   });
 
   const refusal = (rn: string) =>
-    `React Native ${rn} is not supported; rn-xtool supports 0.86.x from 0.86.2, 0.87.x from 0.87.1 and 0.88.x from ` +
-    "0.88.0 (bare). Pin react-native to one of them.";
+    `React Native ${rn} is not supported; rn-xtool supports 0.85.x from 0.85.0, 0.86.x from 0.86.2, 0.87.x from 0.87.1 ` +
+    "and 0.88.x from 0.88.0 (bare). Pin react-native to one of them.";
 
   it("rejects unsupported versions with the supported list", async () => {
-    for (const rn of ["0.86.0", "0.86.1", "0.87.0", "0.85.0", "0.89.0", "0.88.0-rc.1", "0.88.1-rc.1"]) {
+    for (const rn of ["0.86.0", "0.86.1", "0.87.0", "0.84.1", "0.89.0", "0.88.0-rc.1", "0.88.1-rc.1"]) {
       await expect(readBareProject(await tempBare({ rn })), rn).rejects.toThrow(new VersionGateError(refusal(rn)));
     }
   });
 
   it("refuses prereleases of a supported line", async () => {
-    for (const rn of ["0.88.2-rc.1", "0.86.4-rc.0"]) {
+    for (const rn of ["0.88.2-rc.1", "0.86.4-rc.0", "0.85.4-rc.0"]) {
       await expect(readBareProject(await tempBare({ rn })), rn).rejects.toThrow(new VersionGateError(refusal(rn)));
     }
   });
@@ -113,6 +120,7 @@ describe("readBareProject", () => {
 
   it("accepts a newer patch of each line with a warning", async () => {
     for (const [rn, fixture, scripts, warning] of [
+      ["0.85.4", "bare-086", "vendored", newerWarning("0.85.4", "0.85", "0.85.0 and 0.85.3", "0.85.3")],
       ["0.86.4", "bare-086", "vendored", newerWarning("0.86.4", "0.86", "0.86.2 and 0.86.3", "0.86.3")],
       ["0.87.3", "bare-087", "vendored", newerWarning("0.87.3", "0.87", "0.87.1", "0.87.1")],
       ["0.88.2", "bare", "installed", newerWarning("0.88.2", "0.88", "0.88.0 and 0.88.1", "0.88.1")],
@@ -125,8 +133,24 @@ describe("readBareProject", () => {
     }
   });
 
+  const unverifiedWarning = (rn: string, minor: string, verified: string, last: string) =>
+    `⚠ Not among the React Native ${minor} versions this rn-xtool release was verified with: react-native ${rn}. ` +
+    `Verified: ${verified}. The build continues; if it fails or the app crashes at launch, move react-native to ` +
+    `${last} as https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/bare-react-native.md#upgrading-react-native ` +
+    "describes, and report it at https://github.com/WillyAntunez/react-native-xtool/issues.";
+
+  it("accepts an unverified patch between verified ones with a warning", async () => {
+    for (const rn of ["0.85.1", "0.85.2"]) {
+      const log = vi.fn();
+      const p = await readBareProject(await tempBare({ fixture: "bare-086", rn }), { log });
+      expect(p.rnVersion, rn).toBe(rn);
+      expect(p.rnScripts, rn).toBe("vendored");
+      expect(log.mock.calls, rn).toEqual([[unverifiedWarning(rn, "0.85", "0.85.0 and 0.85.3", "0.85.3")]]);
+    }
+  });
+
   it("stays silent on verified versions", async () => {
-    for (const rn of ["0.86.2", "0.86.3", "0.87.1", "0.88.0", "0.88.1"]) {
+    for (const rn of ["0.85.0", "0.85.3", "0.86.2", "0.86.3", "0.87.1", "0.88.0", "0.88.1"]) {
       const log = vi.fn();
       await readBareProject(await tempBare({ rn }), { log });
       expect(log, rn).not.toHaveBeenCalled();
@@ -156,6 +180,10 @@ describe("readBareProject", () => {
     const dir = await tempBare({ rn: "0.86.3", modulesCore: true, expo: true, useExpoModules: true });
     await expect(readBareProject(dir)).rejects.toThrow(
       "React Native 0.86.3 with Expo modules is not supported. Expo SDK 58 needs React Native 0.88.1.",
+    );
+    const rn085 = await tempBare({ fixture: "bare-086", rn: "0.85.0", modulesCore: true, expo: true, useExpoModules: true });
+    await expect(readBareProject(rn085)).rejects.toThrow(
+      new VersionGateError("React Native 0.85.0 with Expo modules is not supported. Expo SDK 58 needs React Native 0.88.1."),
     );
     const noPodfileLine = await tempBare({ rn: "0.86.3", modulesCore: true, expo: true });
     await expect(readBareProject(noPodfileLine)).rejects.toThrow(/with Expo modules is not supported/);
