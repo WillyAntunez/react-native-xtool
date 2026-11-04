@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { execa } from "execa";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   GOLDEN_LIBS,
   PODSPEC_FIXTURES,
@@ -124,8 +124,10 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
     it("scaffold-package-swift.js has the pod→SwiftPM map hunk", () => {
       expect(src("scaffold-package-swift.js")).toContain("const KNOWN_POD_SPM_PACKAGES");
     });
-    it("the scaffolder has the fixes 14–18 hunks", () => {
+    it("the scaffolder has the fixes 14–19 hunks", () => {
       expect(src("read-podspec.js")).toContain("function resolvePackageVersion");
+      expect(src("read-podspec.js")).toContain("function rnPodEnvTernary");
+      expect(src("read-podspec.js")).toContain("env: {...process.env, ...RN_POD_ENV}");
       const f = src("scaffold-package-swift.js");
       expect(f).toContain("RN_XTOOL_SCAFFOLD_REVISION = 3");
       expect(f).toContain("rn-xtool-swift-importer-paths");
@@ -1073,10 +1075,11 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
   });
 });
 
-// Fixes 14–18 (React Native 0.88.0 patch), exercised on the vendored copy, so they never skip.
+// Fixes 14–19 (React Native 0.88.0 patch), exercised on the vendored copy, so they never skip.
 // The podspec fixtures are the SDK 57 pins: worklets 0.10.1, reanimated 4.5.1, screens 4.26.2 and
-// gesture-handler 2.32.0, plus screens 4.30.1, which has no Swift (a clang-only target).
-describe("scaffolder fixes 14–18 (vendor/rn-spm)", () => {
+// gesture-handler 2.32.0, plus screens 4.30.1, which has no Swift (a clang-only target), and
+// worklets 0.8.3 (fix 19's `RCT_HERMES_V1_ENABLED` ternary).
+describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
   const req = createRequire(import.meta.url);
   const load = <T>(f: string) => req(path.join(VENDORED_RN_SPM, f)) as T;
   const IMPORTER = /^\/\/ rn-xtool-swift-importer-paths: (.*)$/m;
@@ -1381,6 +1384,73 @@ describe("scaffolder fixes 14–18 (vendor/rn-spm)", () => {
     // SwiftPM's own map, the whole directory, does not build.
     writeFileSync(map, 'module Foo {\n    umbrella "."\n    export *\n}\n');
     expect(build().stderr).toContain("'missing.h' file not found");
+  });
+
+  it("19: defines HERMES_V1_ENABLED as React Native's CocoaPods setup does, whatever the environment says (worklets 0.8.3)", () => {
+    // `hermes_v1_flag = ENV['RCT_HERMES_V1_ENABLED'] == '1' ? '-DHERMES_V1_ENABLED' : ''`, in OTHER_CFLAGS: without
+    // it, WorkletHermesRuntime.h includes the legacy hermes/inspector-modern headers, which no artifact slot ships.
+    // React Native 0.87+ sets the variable to `1` outright, and rn-xtool always links V1 Hermes: a `0` left in the
+    // shell must not reach the manifest (and from there a persisted patch).
+    try {
+      vi.stubEnv("RCT_HERMES_V1_ENABLED", "0");
+      vi.stubEnv("RCT_NEW_ARCH_ENABLED", "0");
+      const { files } = scaffoldLibraries(VENDORED_RN_SPM, { "react-native-worklets": fixture("RNWorklets-0.8.3") });
+      const pkg = files["react-native-worklets/Package.swift"];
+      expect(pkg).toBeDefined();
+      expect(pkg!.match(/\.define\("HERMES_V1_ENABLED"\)/g)).toHaveLength(2);
+      expect(file("react-native-worklets/Package.swift")).toContain('.define("HERMES_V1_ENABLED")');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each([
+    ["unset", undefined],
+    ["0", "0"],
+    ["empty", ""],
+    ["true", "true"],
+  ])("19: evaluates both ternaries with React Native's value 1 (environment %s), and no other ENV condition", (_, value) => {
+    const body =
+      "  hermes = ENV['RCT_HERMES_V1_ENABLED'] == '1' ? '-DHERMES_V1_ON' : '-DHERMES_V1_OFF'\n" +
+      '  arch = ENV["RCT_NEW_ARCH_ENABLED"] != "0" ? "-DARCH_ON" : "-DARCH_OFF"\n' +
+      "  other = ENV['FOO_ENABLED'] == '1' ? '-DFOO_ON' : '-DFOO_OFF'\n" +
+      '  s.source_files = "ios/**/*.{h,m}"\n' +
+      '  s.pod_target_xcconfig = { "OTHER_CFLAGS" => "$(inherited) #{hermes} #{arch} #{other}" }';
+    const defines = (pkg: string) => [...pkg.matchAll(/\.define\("([A-Z0-9_]+)"/g)].map((m) => m[1]);
+    try {
+      vi.stubEnv("RCT_HERMES_V1_ENABLED", value);
+      vi.stubEnv("RCT_NEW_ARCH_ENABLED", value);
+      vi.stubEnv("FOO_ENABLED", "1");
+      const got = defines(scaffoldOne(lib({ "ios/Foo.h": "", "ios/Foo.m": "" }, body)).pkg);
+      expect(got).toContain("HERMES_V1_ON");
+      expect(got).toContain("ARCH_ON");
+      for (const d of ["HERMES_V1_OFF", "ARCH_OFF", "FOO_ON", "FOO_OFF"]) expect(got).not.toContain(d);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("19: runs `pod ipc spec` with React Native's value 1 for both variables, whatever the environment says", () => {
+    // With the CocoaPods gem on PATH, `pod ipc spec` evaluates the podspec itself: it must see the same values as the
+    // regex path, or worklets loses HERMES_V1_ENABLED there. A stub `pod` prints the values it was given as the spec.
+    const bin = tempDir();
+    writeFileSync(
+      path.join(bin, "pod"),
+      '#!/bin/sh\nprintf \'{"name":"Foo","args":"%s %s","arch":"%s","hermes":"%s"}\\n\' "$1" "$2" "$RCT_NEW_ARCH_ENABLED" "$RCT_HERMES_V1_ENABLED"\n',
+      { mode: 0o755 },
+    );
+    const podspecFile = path.join(lib({}, ""), "Foo.podspec");
+    const { runPodIpcSpec } = load<{ runPodIpcSpec(f: string): Record<string, unknown> | null }>("read-podspec.js");
+    try {
+      vi.stubEnv("PATH", `${bin}${path.delimiter}${process.env["PATH"] ?? ""}`);
+      for (const value of [undefined, "0", "", "true"]) {
+        vi.stubEnv("RCT_NEW_ARCH_ENABLED", value);
+        vi.stubEnv("RCT_HERMES_V1_ENABLED", value);
+        expect(runPodIpcSpec(podspecFile), String(value)).toEqual({ name: "Foo", args: "ipc spec", arch: "1", hermes: "1" });
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("the harness scaffolds a copy, never the library a symlink points at", () => {
