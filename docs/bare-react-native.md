@@ -18,17 +18,20 @@ One floor per minor: each line accepts its floor and every newer patch release o
 | 0.88 | 0.88.0 or newer 0.88.x | 0.88.0 and 0.88.1, on a device | the installed copy (`node_modules/react-native/scripts`) |
 | 0.87 | 0.87.1 or newer 0.87.x | 0.87.1, on a device | [vendored](#vendored-swiftpm-scripts-085-086-087) |
 | 0.86 | 0.86.2 or newer 0.86.x | 0.86.3 on a device; 0.86.2 build-verified only (not run on a device) | [vendored](#vendored-swiftpm-scripts-085-086-087), [older artifacts](#older-artifacts-085-086) |
-| 0.85 | 0.85.0 or newer 0.85.x | 0.85.0 and 0.85.3, build-verified only (not run on a device yet) | [vendored](#vendored-swiftpm-scripts-085-086-087), [older artifacts](#older-artifacts-085-086) |
+| 0.85 | 0.85.0 or newer 0.85.x | 0.85.0 on a device; 0.85.3 build-verified only (not run on a device) | [vendored](#vendored-swiftpm-scripts-085-086-087), [older artifacts](#older-artifacts-085-086) |
 
 As of 2026-10-27, on a physical iPhone, 0.86.3 and 0.87.1 pass `doctor`, `build`, install over Wi‑Fi, Metro and Fast
 Refresh, and the library matrix in [libraries.md](libraries.md) (reanimated/worklets only on 0.86.3). 0.86.2 is
 build-verified only: a throwaway template app downloaded and adapted its artifacts and produced `App.app`. On
 2026-10-28 the 0.88.0 library-matrix app, moved to 0.88.1 as in [Upgrading React Native](#upgrading-react-native),
 launched on a physical iPhone with its libraries (react-native-screens included). On 2026-11-04, 0.85.0 and 0.85.3
-were build-verified only: fresh template apps went through `doctor --project` and `build`, which downloaded and
-adapted their artifacts, passed the precompiled framework check (G4) and produced `App.app`; the 0.85.0 app also
-built with `@react-native-community/cli` 20.0.0 and with react-native-reanimated 4.3.4 and react-native-worklets 0.8.3
-(see [React Native 0.85](#react-native-085)). Neither has been run on a device yet.
+were built: fresh template apps went through `doctor --project` and `build`, which downloaded and adapted their
+artifacts, passed the precompiled framework check (G4) and produced `App.app`; the 0.85.0 app also built with
+`@react-native-community/cli` 20.0.0 and with react-native-reanimated 4.3.4 and react-native-worklets 0.8.3 (see
+[React Native 0.85](#react-native-085)). The same day, on a physical iPhone (iOS 26), that 0.85.0 app
+(`@react-native-community/cli` 20.0.0, reanimated 4.3.4 and worklets 0.8.3) passed `build`, install over Wi‑Fi, the
+first launch (tap Allow, and the app reloaded by itself), Hermes, reanimated animating and Fast Refresh. 0.85.3 has
+not been run on a device.
 
 On 0.86.3 the first build downloads about 1.3 GB of artifacts (about 3 minutes in our test; it depends on the
 connection) and adapts them (about 2 s); later builds reuse the adapted slots (`rn-artifacts` 0.0 s). The library
@@ -137,8 +140,9 @@ layout, not its version, and adapts a 0.85 slot as it adapts a 0.86 one):
 0.85 takes the same route as 0.86. It ships no SwiftPM scripts, so it gets rn-xtool's
 [vendored copy](#vendored-swiftpm-scripts-085-086-087), and its artifacts predate the headers spec, so they are
 [adapted](#older-artifacts-085-086). Nothing in rn-xtool is specific to 0.85 beyond its line in the version table: the
-scripts mode comes from the installed scripts' layout, and the adapter checks the slot's layout. 0.85.0 and 0.85.3 are
-build-verified only; neither has been run on a device yet.
+scripts mode comes from the installed scripts' layout, and the adapter checks the slot's layout. 0.85.0 is verified on
+a device (2026-11-04, see [Supported React Native versions](#supported-react-native-versions)); 0.85.3 is
+build-verified only.
 
 - **Hermes** is 250829098.0.10 for every 0.85.x. It comes from the project's own `hermes-compiler` package, which
   `react-native` depends on: the downloader fetches `hermes-ios` of that version (debug and release). rn-xtool pins no
@@ -153,16 +157,17 @@ build-verified only; neither has been run on a device yet.
   autolinking output was byte-identical to 20.1.0's on the 0.85.0 template. The build checks only that the CLI is
   installed, not its version.
 - **reanimated:** react-native-reanimated 4.3.4 with react-native-worklets 0.8.3 (the newest 4.3.x and 0.8.x) builds
-  on 0.85.0, with `plugins: ['react-native-worklets/plugin']` in `babel.config.js`. Both are scaffolded (they ship no
-  `Package.swift`), and the scaffolded worklets target gets the `HERMES_V1_ENABLED` define that CocoaPods would give it
-  ([scaffolder fix 19](upstream/react-native-scaffolder.md)). reanimated 4.5.1 with worklets 0.10.1 builds on 0.85.0
-  too. See [libraries.md](libraries.md) for the per-version cells.
+  and runs on 0.85.0 (animating on a physical iPhone, 2026-11-04), with `plugins: ['react-native-worklets/plugin']`
+  in `babel.config.js`. Both are scaffolded (they ship no `Package.swift`), and the scaffolded worklets target gets
+  the `HERMES_V1_ENABLED` define that CocoaPods would give it ([scaffolder fix 19](upstream/react-native-scaffolder.md)).
+  reanimated 4.5.1 with worklets 0.10.1 builds on 0.85.0 too (build only, not run on a device). See
+  [libraries.md](libraries.md) for the per-version cells.
 - **Newer patches:** a 0.85.x newer than 0.85.3 builds with the "Newer than" warning, and 0.85.1 and 0.85.2 with the
   "Not among" warning; both name 0.85.3 as the version to move to, which is build-verified only.
 - **Expo modules:** 0.85 with expo-modules-core is refused ("React Native 0.85.0 with Expo modules is not supported.
   Expo SDK 58 needs React Native 0.88.1."), like 0.86 and 0.87.
-- **What is proved:** the template app and the reanimated/worklets pair. Other libraries are untested on 0.85
-  (⏳ in [libraries.md](libraries.md)).
+- **What is proved:** the template app and the reanimated/worklets pair, on a device with 4.3.4 + 0.8.3 on 0.85.0.
+  Other libraries are untested on 0.85 (⏳ in [libraries.md](libraries.md)).
 
 ## Detection
 

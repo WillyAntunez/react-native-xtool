@@ -44,7 +44,8 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   `darwin.artifactbundle.tmp` left by an interrupted SDK install first.
 - Bare React Native 0.85 (0.85.x from 0.85.0) builds through the same route as 0.86: rn-xtool's vendored SwiftPM
   scripts, the prebuilt artifacts downloaded and adapted, and Hermes from the project's `hermes-compiler`
-  (250829098.0.10). 0.85.0 and 0.85.3 are build-verified; they have not been run on a device yet. A project on
+  (250829098.0.10). 0.85.0 is verified on a physical iPhone (`build`, install over Wi‑Fi, the first launch, Hermes,
+  Fast Refresh, and reanimated 4.3.4 with worklets 0.8.3 animating); 0.85.3 is build-verified. A project on
   `@react-native-community/cli` 20.0.0 builds too. react-native-reanimated 4.3.4 with react-native-worklets 0.8.3
   builds on 0.85.0: the scaffolded worklets target now gets the `HERMES_V1_ENABLED` define that CocoaPods gives it
   (also worklets 0.10.x when it is scaffolded again), so it no longer looks for the legacy Hermes inspector headers.
