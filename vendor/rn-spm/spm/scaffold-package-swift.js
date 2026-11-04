@@ -1279,6 +1279,19 @@ function translatePodspecToSpmTarget(
     }
   }
 
+  // CocoaPods compiles a pod's Swift in the Swift 5 language mode unless the
+  // podspec declares swift_version 6 or higher; every SwiftPM tools version
+  // from 6.0 up defaults to Swift 6 (react-native-video 6.19: strict
+  // concurrency errors). A target with Swift sources gets the Swift 5 mode
+  // unless the highest declared major version is 6 or higher.
+  const declaredSwiftMajors = (model.swiftVersions ?? [])
+    .map(v => /^\s*(\d+)/.exec(v))
+    .filter(Boolean)
+    .map(m => Number(m[1]));
+  const swiftLanguageModeV5 =
+    expandedSources.some(isSwiftSource) &&
+    (declaredSwiftMajors.length === 0 || Math.max(...declaredSwiftMajors) < 6);
+
   // A clang-only target's module (see CLANG_MODULE_MAP).
   let clangModuleMap = null;
   if (
@@ -1329,6 +1342,7 @@ function translatePodspecToSpmTarget(
     headerDirShims,
     resources,
     excludePaths,
+    swiftLanguageModeV5,
     warnings,
   };
 }
@@ -1600,6 +1614,10 @@ let rnSpmBridgingHeader = Context.packageDirectory + "/${mixed.bridgingHeader}"
       ? `\n${IMPORTER_PATHS_MARKER}${JSON.stringify(importerPaths)}`
       : '';
 
+  // The Swift 5 language mode (see swiftLanguageModeV5 in translate).
+  const swiftLanguageModesLine =
+    spec.swiftLanguageModeV5 === true ? '    swiftLanguageModes: [.v5],\n' : '';
+
   return `${toolsVersionLine}
 ${SCAFFOLDER_MARKER}
 // AUTO-SCAFFOLDED-VERSION: ${SCAFFOLDER_VERSION}
@@ -1630,7 +1648,7 @@ ${packageDepsBlock}    targets: [
             linkerSettings: [${linkerEntries.join(', ')}]
         ),
     ],
-    cxxLanguageStandard: .cxx20
+${swiftLanguageModesLine}    cxxLanguageStandard: .cxx20
 )
 `;
 }

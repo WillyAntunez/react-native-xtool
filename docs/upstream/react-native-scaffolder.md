@@ -638,6 +638,28 @@ of an npm package that is not installed at all cannot be told from a CocoaPods p
 pod; CocoaPods fails on it too. Found on react-native-vision-camera 4.7.3 without react-native-worklets-core: it
 scaffolds without Frame Processors, as CocoaPods builds it.
 
+## 21. `scripts/spm/*`: scaffolded Swift compiles in the Swift 6 language mode
+
+A mixed scaffold uses `// swift-tools-version: 6.4;(experimentalMultiLang)` (6.5 in `Package@swift-6.5.swift`), and a
+pure-Swift one `6.0`. Every tools version from 6.0 up defaults to the Swift 6 language mode (`-swift-version 6` on the
+compile line), while CocoaPods compiles a pod in Swift 5 unless its podspec declares `swift_version`. react-native-video
+6.19.3 failed with seven strict-concurrency errors:
+
+```
+AudioSessionManager.swift:5:16: error: static property 'shared' is not concurrency-safe because non-'Sendable' type 'AudioSessionManager' may have shared mutable state
+```
+
+react-native-vision-camera 4.7.3 fails the same way (`GlobalReferenceHolder.swift:11:22`, `CameraView.swift:23:40`).
+
+Fix: the reader reads `swift_version` and `swift_versions` (a string or an array, `ios`-scoped too, from the main spec
+and every selected subspec, on both the regex and the `pod ipc spec` path) into `swiftVersions`. A value Ruby would
+interpolate, or an identifier the reader cannot resolve, counts as absent. A target with Swift sources (mixed or pure
+Swift) gets `swiftLanguageModes: [.v5]` at package level, in both manifests, unless the highest declared major version
+is 6 or higher. Not covered: a library that declares Swift 6 but is not Swift 6 clean fails as it does under CocoaPods.
+Found on react-native-video 6.19.3 and react-native-vision-camera 4.7.3: with the Swift 5 mode set by hand, both built
+with warnings only. On the reference app's libraries only react-native-pager-view 9.0.7 (mixed, no `swift_version`)
+changes.
+
 ## Known limitation (deferred): pure-Swift packages importing a mixed Expo module
 
 A Swift module built with a bridging header (every mixed target) makes each Swift importer re-read that
@@ -652,7 +674,7 @@ every generated or scaffolded Swift target that depends on a mixed module the sa
 
 `tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks the
 fixes against fixtures (skipped when the reference app is not present; set `RN_XTOOL_REF_APP` to point at it). It also
-asserts that each hunk is present in the installed RN files. Fixes 14 to 20 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
+asserts that each hunk is present in the installed RN files. Fixes 14 to 21 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
 against podspec fixtures from the SDK 57 pins in `tests/fixtures/podspecs/` (worklets 0.10.1, reanimated 4.5.1,
 screens 4.26.2, gesture-handler 2.32.0), from screens 4.30.1 (the clang-only importer paths and module map) and from
 worklets 0.8.3 (the `RCT_HERMES_V1_ENABLED` ternary). A golden test re-scaffolds the reference app's libraries and compares them

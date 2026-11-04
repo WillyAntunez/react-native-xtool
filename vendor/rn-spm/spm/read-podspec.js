@@ -760,6 +760,11 @@ function regexPodspec(
       }, ({} /*: {[string]: string} */)),
     },
     resources: arrayUnion('resources'),
+    // `swift_version` and `swift_versions` from every layer, literal only.
+    swift_versions: unionOf((t, r) => [
+      ...getArrayField('swift_versions', t, r),
+      ...getArrayField('swift_version', t, r),
+    ]),
     requires_arc: layers.some(l =>
       new RegExp(`${l.recv}\\.requires_arc\\s*=\\s*true`).test(l.text),
     ),
@@ -1306,6 +1311,15 @@ function flattenSubspecs(
     compilerFlags,
     headerSearchPaths: mergeHeaderSearchPaths(),
     resources: mergeArrayField('resources'),
+    // The Swift versions the spec and its selected subspecs declare
+    // (`swift_version` / `swift_versions`). A value Ruby would interpolate is
+    // left out: an unreadable value counts as none, as in CocoaPods.
+    swiftVersions: Array.from(
+      new Set([
+        ...mergeArrayField('swift_versions'),
+        ...mergeArrayField('swift_version'),
+      ]),
+    ).filter(v => !v.includes('#{')),
     requiresArc,
     warnings,
     partial,

@@ -58,5 +58,6 @@ let package = Package(
             linkerSettings: [.linkedFramework("UIKit"), .linkedFramework("Foundation"), .linkedFramework("CoreGraphics")]
         ),
     ],
+    swiftLanguageModes: [.v5],
     cxxLanguageStandard: .cxx20
 )

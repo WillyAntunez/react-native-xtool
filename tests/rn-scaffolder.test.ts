@@ -143,6 +143,10 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
     it("read-podspec.js has the fix 20 hunk", () => {
       expect(src("read-podspec.js")).toContain("dropSubspecs");
     });
+    it("the scaffolder has the fix 21 hunk", () => {
+      expect(src("read-podspec.js")).toContain("swiftVersions");
+      expect(src("scaffold-package-swift.js")).toContain("swiftLanguageModes: [.v5]");
+    });
   });
 
   it("gives the per-app header farm a header-less module map, so Objective-C imports it textually", () => {
@@ -1650,6 +1654,71 @@ describe("scaffolder fixes 20–25 (vendor/rn-spm)", () => {
       expect(got.pod).toBe(depName.split("/")[0]);
       expect(got.npm).toBe(npm);
       if (kind === "mapped") expect(got.entry).toEqual(table.SwiftUIIntrospect);
+    });
+  });
+
+  describe("21: Swift 5 language mode unless the podspec asks for 6", () => {
+    const MODE = "    swiftLanguageModes: [.v5],\n    cxxLanguageStandard: .cxx20\n";
+    const scaffold = (files: Record<string, string>, podBody: string) => {
+      const run = scaffoldLibraries(VENDORED_RN_SPM, { foo: lib(files, podBody) });
+      expect(run.statuses["foo"]).toBe("written");
+      return run.files;
+    };
+    const mixed = (podExtra = "") =>
+      scaffold(
+        { "ios/Video.swift": "import Foundation\n", "ios/RCTVideo.h": "", "ios/RCTVideo.m": '#import "RCTVideo.h"\n' },
+        `  s.source_files = "ios/**/*.{h,m,swift}"${podExtra}`,
+      );
+    const pureSwift = (podExtra = "") => scaffold({ "ios/Foo.swift": "import Foundation\n" }, `  s.source_files = "ios/**/*.swift"${podExtra}`);
+
+    it("puts a mixed target in the Swift 5 language mode (react-native-video's shape)", () => {
+      const files = mixed();
+      for (const manifest of ["Package.swift", "Package@swift-6.5.swift"]) {
+        expect(files[`foo/${manifest}`], manifest).toContain(MODE);
+      }
+    });
+
+    it("a pure-Swift target too", () => {
+      const pkg = pureSwift()["foo/Package.swift"]!;
+      expect(pkg.split("\n")[0]).toBe("// swift-tools-version: 6.0");
+      expect(pkg).toContain(MODE);
+    });
+
+    it.each([`\n  s.swift_version = '6.0'`, `\n  s.swift_versions = ['5.9', '6.0']`, `\n  s.ios.swift_version = '6.0'`])(
+      "keeps Swift 6 when the podspec asks for it:%s",
+      (extra) => {
+        expect(mixed(extra)["foo/Package.swift"]).not.toContain("swiftLanguageModes");
+        expect(pureSwift(extra)["foo/Package.swift"]).not.toContain("swiftLanguageModes");
+      },
+    );
+
+    it("reads a subspec's swift_version", () => {
+      const files = mixed(`\n  s.subspec "core" do |ss|\n    ss.swift_version = "6.0"\n  end`);
+      expect(files["foo/Package.swift"]).not.toContain("swiftLanguageModes");
+    });
+
+    it("reads 5.x as Swift 5", () => {
+      expect(mixed(`\n  s.swift_versions = ['5.0', '5.9']`)["foo/Package.swift"]).toContain(MODE);
+    });
+
+    it.each([`\n  s.swift_version = "#{v}"`, `\n  s.swift_version = SWIFT_VERSION`])(
+      "an interpolated or computed swift_version counts as absent:%s",
+      (extra) => {
+        expect(mixed(extra)["foo/Package.swift"]).toContain(MODE);
+      },
+    );
+
+    it("no language mode for a target without Swift", () => {
+      const files = scaffold({ "ios/Foo.h": "", "ios/Foo.m": '#import "Foo.h"\n' }, '  s.source_files = "ios/**/*.{h,m}"');
+      expect(files["foo/Package.swift"]).not.toContain("swiftLanguageModes");
+    });
+
+    it("reads swift_version and swift_versions from pod ipc spec's JSON", () => {
+      const { flattenSubspecs } = load<{ flattenSubspecs(raw: object): { swiftVersions: string[] } }>("read-podspec.js");
+      const model = withRnRoot("0.86.3", () =>
+        flattenSubspecs({ name: "Foo", swift_versions: ["5.0"], subspecs: [{ name: "core", swift_version: "6.0" }] }),
+      );
+      expect(model.swiftVersions).toEqual(["5.0", "6.0"]);
     });
   });
 });
