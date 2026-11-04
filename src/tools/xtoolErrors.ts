@@ -11,6 +11,7 @@ import { troubleshootingUrl } from "../docs.js";
 
 export type XtoolFailureId =
   | "app-id-limit"
+  | "device-not-registered"
   | "gsa-503"
   | "anisette-deadline"
   | "connect-timeout"
@@ -33,6 +34,16 @@ function appIdLimitMessage(output: string): string {
   );
 }
 
+/**
+ * `xtool dev build --sign` (the Wi‑Fi path) signs for the iPhones already registered on the team;
+ * xtool registers one only when it installs over USB.
+ */
+const DEVICE_NOT_REGISTERED =
+  "Apple has no iPhone registered on your Apple ID's team, so xtool could not sign the app for one. " +
+  "`rn-xtool install --network` signs only for iPhones already registered, and xtool registers an iPhone only " +
+  "when it installs over USB. Connect the iPhone by USB once and run `rn-xtool install` without --network; " +
+  `after that, --network works again. See ${troubleshootingUrl("iphone-not-registered")}`;
+
 /** Where a failure is named: anywhere (no scope), on `rn-xtool auth` (`signIn`), or on `auth login` only. */
 export interface ExplainOptions {
   /** An `xtool auth` run: sign-in failures are named. */
@@ -54,6 +65,11 @@ const OUTPUT_FAILURES: ReadonlyArray<{
   scope?: "signIn" | "login";
 }> = [
   { id: "app-id-limit", pattern: /maximum App ID limit has been reached/i, message: appIdLimitMessage },
+  {
+    id: "device-not-registered",
+    pattern: /no current IOS devices on this team/i,
+    message: DEVICE_NOT_REGISTERED,
+  },
   {
     id: "gsa-503",
     pattern: /GsService2\S*\s+failed:\s+HTTP 503\b/,

@@ -8,6 +8,10 @@ const APP_ID_LIMIT = readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "xtool-errors", "app-id-limit.txt"),
   "utf8",
 );
+const DEVICE_NOT_REGISTERED = readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "xtool-errors", "device-not-registered.txt"),
+  "utf8",
+);
 const APP_ID_LIMIT_MESSAGE = /^Apple refused to register another App ID: a free Apple ID can register 10 App IDs per 7 days, .*#app-id-limit$/;
 
 describe("firstRunChecklist", () => {
@@ -427,6 +431,18 @@ describe("install --network", () => {
       Object.assign(new Error("Command failed with exit code 1"), { stdout: APP_ID_LIMIT, stderr: "", exitCode: 1 }),
     );
     await expect(install("/p", d, { network: true })).rejects.toThrow(APP_ID_LIMIT_MESSAGE);
+    expect(calls.installOverWifi).not.toHaveBeenCalled();
+  });
+  it("says to install over USB once when the team has no registered iPhone", async () => {
+    const { d, calls } = deps();
+    calls.devBuildIpa.mockRejectedValueOnce(
+      Object.assign(new Error("Command failed with exit code 1"), {
+        stdout: DEVICE_NOT_REGISTERED,
+        stderr: "",
+        exitCode: 1,
+      }),
+    );
+    await expect(install("/p", d, { network: true })).rejects.toThrow(/^Apple has no iPhone registered .*#iphone-not-registered$/);
     expect(calls.installOverWifi).not.toHaveBeenCalled();
   });
   it("rethrows an unknown xtool failure over Wi‑Fi as is", async () => {

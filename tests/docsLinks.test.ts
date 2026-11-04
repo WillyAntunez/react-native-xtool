@@ -64,6 +64,7 @@ describe("docs links", () => {
     expect(anchors).toEqual(
       expect.arrayContaining([
         "troubleshooting.md#app-id-limit",
+        "troubleshooting.md#iphone-not-registered",
         "troubleshooting.md#libraries-with-prebuilt-binaries",
         "troubleshooting.md#libraries-that-build-vendored-c-sources",
         "troubleshooting.md#pnpm-and-yarn-pnp",

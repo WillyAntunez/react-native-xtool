@@ -610,6 +610,15 @@ of them a week. A fresh Expo app gets `com.anonymous.<slug>`, so every new test 
   bare project. Then run `rn-xtool build` and `rn-xtool install` again.
 - Or wait until the oldest of those App IDs is 7 days old.
 
+### iPhone not registered
+
+**"Apple has no iPhone registered on your Apple ID's team, so xtool could not sign the app for one."**
+`rn-xtool install --network` prints it when Apple answers "There are no current IOS devices on this team".
+
+Over Wi‑Fi, xtool signs the app for the iPhones already registered on your team, and it registers an iPhone only when
+it installs over USB. A registration can be gone a while after the last USB install. Connect the iPhone by USB once
+and run `rn-xtool install` without `--network`. After that, `rn-xtool install --network` works again.
+
 ## Reporting a problem
 
 Run `rn-xtool doctor --report` in the project folder (`rn-xtool doctor --report --project` for the project only) and

@@ -30,6 +30,10 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 - The free App ID limit on `install` and `run` reads "Apple refused to register another App ID: a free Apple ID can
   register 10 App IDs per 7 days, and each new bundle identifier takes one." and says how to reuse an installed bundle
   identifier. See [troubleshooting.md](docs/troubleshooting.md#app-id-limit).
+- When `rn-xtool install --network` fails because Apple answers "There are no current IOS devices on this team", the
+  error reads "Apple has no iPhone registered on your Apple ID's team, so xtool could not sign the app for one." and
+  says to install over USB once (`rn-xtool install` without --network), which registers the iPhone; after that,
+  --network works again. See [troubleshooting.md](docs/troubleshooting.md#iphone-not-registered).
 - `rn-xtool doctor --report` prints the checks as one block to paste into a GitHub issue. It replaces the home folder,
   Apple ID, Team ID, bundle identifiers, UDIDs, device names, IP and MAC addresses and tokens with placeholders, and
   makes no network request. Read it before you post it. See

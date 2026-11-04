@@ -73,6 +73,21 @@ const appIdLimit = (n: number, days: number): string =>
   `again. Or wait until the oldest of those App IDs is ${days} days old. ` +
   "See https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/troubleshooting.md#app-id-limit";
 
+const DEVICE_NOT_REGISTERED =
+  "Apple has no iPhone registered on your Apple ID's team, so xtool could not sign the app for one. " +
+  "`rn-xtool install --network` signs only for iPhones already registered, and xtool registers an iPhone only " +
+  "when it installs over USB. Connect the iPhone by USB once and run `rn-xtool install` without --network; " +
+  "after that, --network works again. " +
+  "See https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/troubleshooting.md#iphone-not-registered";
+
+describe("explainXtoolOutput: iPhone not registered", () => {
+  it("explains a team with no registered iPhone, on any path", () => {
+    const dump = fixture("device-not-registered");
+    expect(explainXtoolOutput(dump)).toEqual({ id: "device-not-registered", message: DEVICE_NOT_REGISTERED });
+    expect(explainXtoolOutput(dump, { login: true })?.id).toBe("device-not-registered");
+  });
+});
+
 describe("explainXtoolOutput: App ID limit", () => {
   it("explains the free App ID limit", () => {
     const dump = fixture("app-id-limit");
