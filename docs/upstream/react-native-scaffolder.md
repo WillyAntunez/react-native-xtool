@@ -660,6 +660,21 @@ Found on react-native-video 6.19.3 and react-native-vision-camera 4.7.3: with th
 with warnings only. On the reference app's libraries only react-native-pager-view 9.0.7 (mixed, no `swift_version`)
 changes.
 
+## 22. `scripts/spm/scaffold-package-swift.js`: invalid header layout for an umbrella directory
+
+react-native-device-info 15.0.2 gets `publicHeadersPath: "ios"`, and `ios/` holds `RNDeviceInfo/RNDeviceInfo.h`
+(SwiftPM's umbrella-directory layout) next to `RNDeviceInfo.xcodeproj/`. SwiftPM refuses it:
+
+```
+target 'RNDeviceInfo' has invalid header layout: umbrella header found at '…/ios/RNDeviceInfo/RNDeviceInfo.h', but more than one directory exists next to its parent directory: …/ios/RNDeviceInfo.xcodeproj; consider reducing them to one
+```
+
+Fix 2 checks only `<publicHeadersPath>/<SwiftName>.h`. Fix: the `include/<SwiftName>/` shim of fix 2 is also used
+when `<publicHeadersPath>/<SwiftName>/<SwiftName>.h` exists and the public headers directory holds any other
+directory. The shim is fed with every header among the sources, and the basename-collision warning is fix 2's,
+unchanged. A lone `<SwiftName>/` directory is left as it is: SwiftPM accepts it. Found on react-native-device-info
+15.0.2, which built by hand with `publicHeadersPath: "ios/RNDeviceInfo"`.
+
 ## Known limitation (deferred): pure-Swift packages importing a mixed Expo module
 
 A Swift module built with a bridging header (every mixed target) makes each Swift importer re-read that
@@ -674,7 +689,7 @@ every generated or scaffolded Swift target that depends on a mixed module the sa
 
 `tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks the
 fixes against fixtures (skipped when the reference app is not present; set `RN_XTOOL_REF_APP` to point at it). It also
-asserts that each hunk is present in the installed RN files. Fixes 14 to 21 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
+asserts that each hunk is present in the installed RN files. Fixes 14 to 22 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
 against podspec fixtures from the SDK 57 pins in `tests/fixtures/podspecs/` (worklets 0.10.1, reanimated 4.5.1,
 screens 4.26.2, gesture-handler 2.32.0), from screens 4.30.1 (the clang-only importer paths and module map) and from
 worklets 0.8.3 (the `RCT_HERMES_V1_ENABLED` ternary). A golden test re-scaffolds the reference app's libraries and compares them

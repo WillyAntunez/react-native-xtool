@@ -143,6 +143,9 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
     it("read-podspec.js has the fix 20 hunk", () => {
       expect(src("read-podspec.js")).toContain("dropSubspecs");
     });
+    it("scaffold-package-swift.js has the fix 22 hunk", () => {
+      expect(src("scaffold-package-swift.js")).toContain("umbrellaDirNextToSubdirs");
+    });
     it("the scaffolder has the fix 21 hunk", () => {
       expect(src("read-podspec.js")).toContain("swiftVersions");
       expect(src("scaffold-package-swift.js")).toContain("swiftLanguageModes: [.v5]");
@@ -1719,6 +1722,47 @@ describe("scaffolder fixes 20–25 (vendor/rn-spm)", () => {
         flattenSubspecs({ name: "Foo", swift_versions: ["5.0"], subspecs: [{ name: "core", swift_version: "6.0" }] }),
       );
       expect(model.swiftVersions).toEqual(["5.0", "6.0"]);
+    });
+  });
+
+  describe("22: the umbrella-directory layout", () => {
+    // react-native-device-info 15.0.2: ios/RNDeviceInfo/RNDeviceInfo.h next to ios/RNDeviceInfo.xcodeproj.
+    const deviceInfo = (withXcodeproj: boolean) =>
+      lib(
+        {
+          "ios/RNDeviceInfo/RNDeviceInfo.h": "#import <Foundation/Foundation.h>\n",
+          "ios/RNDeviceInfo/RNDeviceInfo.m": '#import "RNDeviceInfo.h"\n#import "DeviceUID.h"\n',
+          "ios/RNDeviceInfo/DeviceUID.h": "#import <Foundation/Foundation.h>\n",
+          ...(withXcodeproj ? { "ios/RNDeviceInfo.xcodeproj/project.pbxproj": "// !$*UTF8*$!\n" } : {}),
+        },
+        '  s.source_files = "ios/**/*.{h,m}"',
+        "RNDeviceInfo",
+        "react-native-device-info",
+      );
+
+    it("shims <ph>/<Name>/<Name>.h next to another directory (react-native-device-info's layout)", () => {
+      const run = scaffoldLibraries(VENDORED_RN_SPM, { "react-native-device-info": deviceInfo(true) });
+      expect(run.statuses["react-native-device-info"]).toBe("written");
+      expect(run.files["react-native-device-info/Package.swift"]).toContain('publicHeadersPath: "include",');
+      expect(run.files["react-native-device-info/include/RNDeviceInfo/RNDeviceInfo.h"]).toContain(
+        '#import "../../ios/RNDeviceInfo/RNDeviceInfo.h"',
+      );
+      expect(run.files["react-native-device-info/include/RNDeviceInfo/DeviceUID.h"]).toContain(
+        '#import "../../ios/RNDeviceInfo/DeviceUID.h"',
+      );
+    });
+
+    it("leaves a lone <Name>/ directory as it is", () => {
+      const run = scaffoldLibraries(VENDORED_RN_SPM, { "react-native-device-info": deviceInfo(false) });
+      expect(run.files["react-native-device-info/Package.swift"]).toContain('publicHeadersPath: "ios",');
+      expect(Object.keys(run.files).filter((k) => k.includes("/include/"))).toEqual([]);
+    });
+
+    it("scaffolds a library whose public headers path is a header file at the package root", () => {
+      const root = lib({ "Foo.h": "", "Foo.m": '#import "Foo.h"\n' }, '  s.source_files = "Foo.m"\n  s.public_header_files = "Foo.h"');
+      const run = scaffoldLibraries(VENDORED_RN_SPM, { foo: root });
+      expect(run.results.find((r) => r.depName === "foo")?.reason).toBeUndefined();
+      expect(run.statuses["foo"]).toBe("written");
     });
   });
 });

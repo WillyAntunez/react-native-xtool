@@ -998,15 +998,26 @@ function translatePodspecToSpmTarget(
   let namespacedShimHeaders /*: Array<string> */ = [];
   // SwiftPM rejects a publicHeadersPath that holds the umbrella header
   // `<SwiftName>.h` next to subdirectories ("invalid header layout: umbrella
-  // header found ... but directories exist next to it"). Fall back to the
-  // generated include/<SwiftName>/ shim, fed with every header among the
-  // sources; the header search paths above keep bare `#import "X.h"` working.
+  // header found ... but directories exist next to it"), and the umbrella
+  // directory layout `<SwiftName>/<SwiftName>.h` next to any other directory
+  // ("more than one directory exists next to its parent directory";
+  // react-native-device-info's ios/RNDeviceInfo/ next to
+  // ios/RNDeviceInfo.xcodeproj/). Fall back to the generated
+  // include/<SwiftName>/ shim, fed with every header among the sources; the
+  // header search paths above keep bare `#import "X.h"` working. A lone
+  // `<SwiftName>/` directory is SwiftPM's own layout and stays as it is.
   if (publicHeadersPath != null) {
     const phDir = path.join(dep.root, publicHeadersPath);
+    // The first glob segment can be a header file at the package root.
+    const phDirs = fs.statSync(phDir).isDirectory()
+      ? fs.readdirSync(phDir, {withFileTypes: true}).filter(e => e.isDirectory())
+      : [];
     const umbrellaNextToSubdirs =
-      fs.existsSync(path.join(phDir, `${swiftName}.h`)) &&
-      fs.readdirSync(phDir, {withFileTypes: true}).some(e => e.isDirectory());
-    if (umbrellaNextToSubdirs) {
+      fs.existsSync(path.join(phDir, `${swiftName}.h`)) && phDirs.length > 0;
+    const umbrellaDirNextToSubdirs =
+      fs.existsSync(path.join(phDir, swiftName, `${swiftName}.h`)) &&
+      phDirs.some(e => e.name !== swiftName);
+    if (umbrellaNextToSubdirs || umbrellaDirNextToSubdirs) {
       // On a basename collision keep the shallowest path (fewest '/'), then
       // the lexicographically first, so the choice is deterministic.
       const byDepth = [...headerFiles].sort(
