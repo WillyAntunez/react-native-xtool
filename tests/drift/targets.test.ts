@@ -150,14 +150,14 @@ describe("createCommand", () => {
 
   it("never falls back to the latest CLI", () => {
     const t: WatchTarget = {
-      id: "bare-0.85",
-      slug: "bare-0.85",
-      line: "bare-0.85",
-      title: "Drift: React Native 0.85 (bare)",
+      id: "bare-0.84",
+      slug: "bare-0.84",
+      line: "bare-0.84",
+      title: "Drift: React Native 0.84 (bare)",
       kind: "bare",
-      minor: "0.85",
-      version: "0.85.3",
+      minor: "0.84",
+      version: "0.84.1",
     };
-    expect(() => createCommand(t, "/w/app")).toThrow("bare-0.85 has no @react-native-community/cli version");
+    expect(() => createCommand(t, "/w/app")).toThrow("bare-0.84 has no @react-native-community/cli version");
   });
 });
