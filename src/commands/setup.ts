@@ -1,6 +1,6 @@
 import { execa } from "execa";
 import { accessSync, constants, existsSync } from "node:fs";
-import { mkdir, readFile, rm, statfs } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, statfs } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { cacheDir } from "../paths.js";
@@ -19,12 +19,94 @@ export interface SetupState {
 export interface SetupDeps {
   probe: (xtoolBin: string) => Promise<SetupState>;
   preflightProbes: Parameters<typeof preflightSdk>[1];
+  spaceProbes: SpaceProbes;
+  actions: Partial<{
+    installSwift: () => Promise<void>;
+    downloadXtool: (bin: string) => Promise<void>;
+    installSdk: (bin: string, xip: string) => Promise<void>;
+  }>;
   log: (line: string) => void;
   /** Message to fail with while Swift's system packages from a previous run are still missing. */
   checkSwiftPackages: () => Promise<string | undefined>;
 }
 
-const MIN_FREE_BYTES = 10 * 1024 ** 3;
+export const GB = 1024 ** 3;
+/** Measured on the dev host (plan facts 7); corrected from Task 10 Step 6 (ruling Q5). */
+export const SETUP_SPACE = { swift: 5 * GB, xtool: 0.2 * GB, sdk: 15 * GB, firstBuild: 4 * GB } as const;
+
+export interface SpaceNeed {
+  label: string;
+  dir: string;
+  bytes: number;
+}
+
+/** install-swift: "Swift toolchain" in ~/.local/share/swiftly; download-xtool: "xtool" in dirname(bin);
+ *  install-sdk: "Darwin SDK" in swiftSdksDir(); with install-swift or install-sdk, also "first build"
+ *  in ~/Library/Caches/ReactNative (React Native artifacts, then the app's .build). login-hint: nothing. */
+export function setupSpaceNeeds(actions: SetupAction[], bin: string): SpaceNeed[] {
+  const home = homedir();
+  const needs: SpaceNeed[] = [];
+  if (actions.includes("install-swift")) {
+    needs.push({ label: "Swift toolchain", dir: path.join(home, ".local", "share", "swiftly"), bytes: SETUP_SPACE.swift });
+  }
+  if (actions.includes("download-xtool")) needs.push({ label: "xtool", dir: path.dirname(bin), bytes: SETUP_SPACE.xtool });
+  if (actions.includes("install-sdk")) {
+    needs.push({ label: "Darwin SDK", dir: swiftSdksDir(), bytes: SETUP_SPACE.sdk });
+  }
+  if (actions.includes("install-swift") || actions.includes("install-sdk")) {
+    needs.push({
+      label: "first build",
+      dir: path.join(home, "Library", "Caches", "ReactNative"),
+      bytes: SETUP_SPACE.firstBuild,
+    });
+  }
+  return needs;
+}
+
+export interface SpaceProbes {
+  /** Free bytes and device id of the filesystem holding `dir`, through its nearest existing ancestor. */
+  filesystemOf: (dir: string) => Promise<{ dev: number; freeBytes: number }>;
+}
+
+/** `dir`, or its nearest ancestor that exists. */
+function nearestExisting(dir: string): string {
+  let at = path.resolve(dir);
+  while (!existsSync(at) && path.dirname(at) !== at) at = path.dirname(at);
+  return at;
+}
+
+async function filesystemOf(dir: string): Promise<{ dev: number; freeBytes: number }> {
+  const at = nearestExisting(dir);
+  const [{ dev }, fs] = await Promise.all([stat(at), statfs(at)]);
+  return { dev, freeBytes: fs.bavail * fs.bsize };
+}
+
+/** `p` with the home folder shown as `~`. */
+function tilde(p: string): string {
+  const home = homedir();
+  if (p === home) return "~";
+  return p.startsWith(home + path.sep) ? `~${p.slice(home.length)}` : p;
+}
+
+/** Sums the needs per filesystem; throws the message below for the first one short. No-op for []. */
+export async function checkSetupSpace(needs: SpaceNeed[], probes: SpaceProbes = { filesystemOf }): Promise<void> {
+  const byFilesystem = new Map<number, { freeBytes: number; needs: SpaceNeed[] }>();
+  for (const need of needs) {
+    const { dev, freeBytes } = await probes.filesystemOf(need.dir);
+    const entry = byFilesystem.get(dev) ?? { freeBytes, needs: [] };
+    entry.needs.push(need);
+    byFilesystem.set(dev, entry);
+  }
+  for (const { freeBytes, needs: there } of byFilesystem.values()) {
+    const sum = there.reduce((total, n) => total + n.bytes, 0);
+    if (freeBytes >= sum) continue;
+    const where = tilde(nearestExisting(there[0]!.dir));
+    const parts = there.map((n) => `${n.label} ${+(n.bytes / GB).toFixed(1)} GB`).join(", ");
+    throw new Error(
+      `Not enough free disk space for setup: the filesystem of ${where} has ${(freeBytes / GB).toFixed(1)} GB free, and setup needs about ${Math.ceil(sum / GB)} GB there (${parts}). Free some space, then run \`rn-xtool setup\` again.`,
+    );
+  }
+}
 
 export function planSetup(state: SetupState): SetupAction[] {
   const actions: SetupAction[] = [];
@@ -45,7 +127,19 @@ export function swiftlyDownloadUrl(arch: string = linuxArch()): string {
   return `https://download.swift.org/swiftly/linux/swiftly-${arch}.tar.gz`;
 }
 
-export const sdkBundle = (): string => path.join(homedir(), ".swiftpm", "swift-sdks", "darwin.artifactbundle");
+/**
+ * Where xtool installs the Darwin SDK: `$XDG_CONFIG_HOME/swiftpm/swift-sdks` when that is set, else
+ * `~/.swiftpm/swift-sdks` (xtool 1.24.0, `DarwinSDK.swiftPMDirectory`). xtool refuses a relative XDG_CONFIG_HOME with its
+ * own error, so that case keeps the default here.
+ */
+export function swiftSdksDir(): string {
+  const config = process.env.XDG_CONFIG_HOME;
+  const swiftpm =
+    config !== undefined && path.isAbsolute(config) ? path.join(config, "swiftpm") : path.join(homedir(), ".swiftpm");
+  return path.join(swiftpm, "swift-sdks");
+}
+
+export const sdkBundle = (): string => path.join(swiftSdksDir(), "darwin.artifactbundle");
 
 export function isExecutable(file: string): boolean {
   try {
@@ -189,27 +283,15 @@ async function installSwift(): Promise<void> {
   if (message) throw new Error(message);
 }
 
-export async function freeBytesForSdk(): Promise<number> {
-  const swiftpm = path.join(homedir(), ".swiftpm");
-  const fs = await statfs(existsSync(swiftpm) ? swiftpm : homedir());
-  return fs.bavail * fs.bsize;
-}
-
-/** Validates the Xcode.xip and free disk space before any heavy step runs. */
+/** Validates the Xcode.xip before any heavy step runs; checkSetupSpace checks the disk space. */
 export async function preflightSdk(
   xip: string | undefined,
-  probes: { exists: (p: string) => boolean; freeBytes: () => Promise<number> } = {
-    exists: existsSync,
-    freeBytes: freeBytesForSdk,
-  },
+  probes: { exists: (p: string) => boolean } = { exists: existsSync },
 ): Promise<void> {
   if (!xip) {
     throw new Error("Darwin SDK is missing: pass --xcode-xip <path to Xcode.xip> to install it");
   }
   if (!probes.exists(xip)) throw new Error(`Xcode xip not found: ${xip}`);
-  if ((await probes.freeBytes()) < MIN_FREE_BYTES) {
-    throw new Error("Need at least 10 GB free in your home filesystem (~/.swiftpm) to install the Darwin SDK");
-  }
 }
 
 async function installSdk(bin: string, xip: string, log: (l: string) => void): Promise<void> {
@@ -240,25 +322,42 @@ export async function setup(
   const pending = await (deps.checkSwiftPackages ?? checkPendingSwiftPackages)();
   if (pending) throw new Error(pending);
   const actions = planSetup(state);
+  // `xtool sdk install` removes it too, but only after the space check would have counted it as used space; with the
+  // SDK installed, nothing else ever removes it.
+  const removeSdkStaging = async (): Promise<void> => {
+    const staging = `${sdkBundle()}.tmp`;
+    if (!existsSync(staging)) return;
+    log(`ℹ Removing ${tilde(staging)}, left by an interrupted Darwin SDK install.`);
+    await rm(staging, { recursive: true, force: true });
+  };
   if (actions.length === 0) {
+    await removeSdkStaging();
     log("✔ Nothing to do: toolchain already set up");
     return;
   }
   if (actions.includes("install-sdk")) await preflightSdk(opts.xcodeXip, deps.preflightProbes);
+  await removeSdkStaging();
+  await checkSetupSpace(setupSpaceNeeds(actions, bin), deps.spaceProbes);
+  const act = {
+    installSwift,
+    downloadXtool: (to: string) => {
+      const sha256 = XTOOL_SHA256[linuxArch()];
+      if (!sha256) log(`⚠ no pinned checksum for xtool on ${linuxArch()}; the download is not verified`);
+      return downloadFile(xtoolDownloadUrl(), to, { mode: 0o755, sha256 });
+    },
+    installSdk: (to: string, xip: string) => installSdk(to, xip, log),
+    ...deps.actions,
+  };
   for (const action of actions) {
     switch (action) {
       case "install-swift":
-        await step(`Swift ${SWIFT_VERSION} via swiftly`, log, installSwift);
+        await step(`Swift ${SWIFT_VERSION} via swiftly`, log, act.installSwift);
         break;
       case "download-xtool":
-        await step(`xtool ${XTOOL_VERSION}`, log, () => {
-          const sha256 = XTOOL_SHA256[linuxArch()];
-          if (!sha256) log(`⚠ no pinned checksum for xtool on ${linuxArch()}; the download is not verified`);
-          return downloadFile(xtoolDownloadUrl(), bin, { mode: 0o755, sha256 });
-        });
+        await step(`xtool ${XTOOL_VERSION}`, log, () => act.downloadXtool(bin));
         break;
       case "install-sdk":
-        await step("Darwin SDK", log, () => installSdk(bin, opts.xcodeXip!, log));
+        await step("Darwin SDK", log, () => act.installSdk(bin, opts.xcodeXip!));
         break;
       case "login-hint":
         log("Run: rn-xtool auth login");
