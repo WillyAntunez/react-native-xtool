@@ -2336,6 +2336,11 @@ type ScaffoldAllOptions = {
   // confirmation prompt for first-time scaffolds. Skipped deps still
   // appear in the returned results array with status='skipped-opt-out'.
   skipDeps?: ReadonlyArray<string>,
+  // npm dep names to scaffold, direct or transitive: the deps the autolinker
+  // reported without a Package.swift. The others get no result entry and are
+  // not touched, so their scaffolds (hand-edited or not) stay as they are.
+  // skipDeps still wins over it.
+  onlyDeps?: ReadonlyArray<string>,
 };
 */
 
@@ -2365,6 +2370,9 @@ function scaffoldAll(
   // scaffolded here — leaving `react-native spm scaffold` unable to clear the
   // autolinker's missing-manifest error.
   const results /*: Array<ScaffoldResult> */ = [];
+  const onlySet /*: ?Set<string> */ =
+    opts.onlyDeps != null ? new Set(opts.onlyDeps) : null;
+  const named = (name /*: string */) => onlySet == null || onlySet.has(name);
   // Index every autolinked dep's podspec name → its npm name, so a dep that
   // depends on a sibling by its pod name (reanimated's `s.dependency
   // "RNWorklets"`) can be wired to the sibling's package (react-native-worklets).
@@ -2381,11 +2389,13 @@ function scaffoldAll(
     autolinkingJsonPath,
     remote,
     onSkipped: (name, root) => {
-      results.push({
-        depName: name,
-        status: 'skipped-no-ios',
-        reason: 'no iOS platform in autolinking.json',
-      });
+      if (named(name)) {
+        results.push({
+          depName: name,
+          status: 'skipped-no-ios',
+          reason: 'no iOS platform in autolinking.json',
+        });
+      }
       for (const found of root != null ? findPodspecs(root) : []) {
         podToNpm.set(path.basename(found, '.podspec'), name);
       }
@@ -2433,6 +2443,9 @@ function scaffoldAll(
   const skipSet /*: Set<string> */ = new Set(opts.skipDeps ?? []);
 
   for (const dep of allDeps) {
+    if (!named(dep.name)) {
+      continue;
+    }
     if (skipSet.has(dep.name)) {
       results.push({
         depName: dep.name,

@@ -1171,7 +1171,7 @@ index 8fcf04b..6dbb951 100644
    const name = field('name');
    const moduleName = field('module_name');
 diff --git a/node_modules/react-native/scripts/spm/scaffold-package-swift.js b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
-index cf7e587..7aadeb2 100644
+index cf7e587..bf8a249 100644
 --- a/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 +++ b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 @@ -54,6 +54,7 @@ const {
@@ -2593,10 +2593,25 @@ index cf7e587..7aadeb2 100644
        continue;
      }
      // $FlowFixMe[incompatible-type] `ios` shape is runtime-validated above
-@@ -1323,6 +2365,14 @@ function scaffoldAll(
+@@ -1294,6 +2336,11 @@ type ScaffoldAllOptions = {
+   // confirmation prompt for first-time scaffolds. Skipped deps still
+   // appear in the returned results array with status='skipped-opt-out'.
+   skipDeps?: ReadonlyArray<string>,
++  // npm dep names to scaffold, direct or transitive: the deps the autolinker
++  // reported without a Package.swift. The others get no result entry and are
++  // not touched, so their scaffolds (hand-edited or not) stay as they are.
++  // skipDeps still wins over it.
++  onlyDeps?: ReadonlyArray<string>,
+ };
+ */
+ 
+@@ -1323,6 +2370,17 @@ function scaffoldAll(
    // scaffolded here — leaving `react-native spm scaffold` unable to clear the
    // autolinker's missing-manifest error.
    const results /*: Array<ScaffoldResult> */ = [];
++  const onlySet /*: ?Set<string> */ =
++    opts.onlyDeps != null ? new Set(opts.onlyDeps) : null;
++  const named = (name /*: string */) => onlySet == null || onlySet.has(name);
 +  // Index every autolinked dep's podspec name → its npm name, so a dep that
 +  // depends on a sibling by its pod name (reanimated's `s.dependency
 +  // "RNWorklets"`) can be wired to the sibling's package (react-native-worklets).
@@ -2608,17 +2623,24 @@ index cf7e587..7aadeb2 100644
    // Outside collectAutolinkedDeps' own try: a malformed remote config
    // (RemoteVersionError) is a misconfiguration to surface, not an expansion
    // failure to degrade past.
-@@ -1330,24 +2380,21 @@ function scaffoldAll(
+@@ -1330,24 +2388,23 @@ function scaffoldAll(
    const allDeps = collectAutolinkedDeps({
      autolinkingJsonPath,
      remote,
 -    onSkipped: name => {
+-      results.push({
+-        depName: name,
+-        status: 'skipped-no-ios',
+-        reason: 'no iOS platform in autolinking.json',
+-      });
 +    onSkipped: (name, root) => {
-       results.push({
-         depName: name,
-         status: 'skipped-no-ios',
-         reason: 'no iOS platform in autolinking.json',
-       });
++      if (named(name)) {
++        results.push({
++          depName: name,
++          status: 'skipped-no-ios',
++          reason: 'no iOS platform in autolinking.json',
++        });
++      }
 +      for (const found of root != null ? findPodspecs(root) : []) {
 +        podToNpm.set(path.basename(found, '.podspec'), name);
 +      }
@@ -2637,7 +2659,17 @@ index cf7e587..7aadeb2 100644
    for (const dep of allDeps) {
      const podspecPath = dep.platforms?.ios?.podspecPath;
      if (typeof podspecPath === 'string' && podspecPath.length > 0) {
-@@ -1404,6 +2451,7 @@ function scaffoldAll(
+@@ -1386,6 +2443,9 @@ function scaffoldAll(
+   const skipSet /*: Set<string> */ = new Set(opts.skipDeps ?? []);
+ 
+   for (const dep of allDeps) {
++    if (!named(dep.name)) {
++      continue;
++    }
+     if (skipSet.has(dep.name)) {
+       results.push({
+         depName: dep.name,
+@@ -1404,6 +2464,7 @@ function scaffoldAll(
  }
  
  module.exports = {

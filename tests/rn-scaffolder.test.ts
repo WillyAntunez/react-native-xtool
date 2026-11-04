@@ -157,6 +157,9 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
       expect(src("read-podspec.js")).toContain("swiftVersions");
       expect(src("scaffold-package-swift.js")).toContain("swiftLanguageModes: [.v5]");
     });
+    it("scaffold-package-swift.js has the fix 25 hunk", () => {
+      expect(src("scaffold-package-swift.js")).toContain("onlyDeps?: ReadonlyArray<string>");
+    });
   });
 
   it("gives the per-app header farm a header-less module map, so Objective-C imports it textually", () => {
@@ -1906,6 +1909,47 @@ describe("scaffolder fixes 20–25 (vendor/rn-spm)", () => {
         }),
       );
       expect(model.swiftConditions).toEqual(["LOCATION", "CORE"]);
+    });
+  });
+
+  describe("25: only the named deps", () => {
+    const SWIFT = { "ios/Foo.swift": "import Foundation\n" };
+    const POD = `  s.source_files = "ios/**/*.swift"`;
+    const twoLibs = (options: Record<string, unknown>) =>
+      scaffoldLibraries(VENDORED_RN_SPM, { a: lib(SWIFT, POD, "A", "a"), b: lib(SWIFT, POD, "B", "b") }, { options });
+
+    it("25: onlyDeps scaffolds only the named deps", () => {
+      const run = twoLibs({ onlyDeps: ["a"], force: false });
+      expect(run.results.map((r) => [r.depName, r.status])).toEqual([["a", "written"]]);
+      expect(existsSync(path.join(run.roots["b"]!, "Package.swift"))).toBe(false);
+    });
+
+    it("25: onlyDeps leaves a named dep's current scaffold alone without force", () => {
+      const run = twoLibs({ onlyDeps: ["a"], force: false });
+      const manifest = path.join(run.roots["a"]!, "Package.swift");
+      const edited = `${readFileSync(manifest, "utf8")}// a hand fix\n`;
+      writeFileSync(manifest, edited);
+      expect(run.rerun({ onlyDeps: ["a"], force: false }).map((r) => [r.depName, r.status])).toEqual([
+        ["a", "skipped-scaffolder-marker"],
+      ]);
+      expect(readFileSync(manifest, "utf8")).toBe(edited);
+    });
+
+    it("25: a dep left out of onlyDeps gets no result, even without iOS; skipDeps still wins", () => {
+      const run = scaffoldLibraries(
+        VENDORED_RN_SPM,
+        { a: lib(SWIFT, POD, "A", "a"), b: lib(SWIFT, POD, "B", "b"), c: lib(SWIFT, POD, "C", "c") },
+        { noIos: ["c"], options: { onlyDeps: ["a", "b"], skipDeps: ["b"] } },
+      );
+      expect(run.results.map((r) => [r.depName, r.status])).toEqual([
+        ["a", "written"],
+        ["b", "skipped-opt-out"],
+      ]);
+    });
+
+    it("25: without onlyDeps every dep, as before", () => {
+      const run = twoLibs({ force: false });
+      expect(run.statuses).toEqual({ a: "written", b: "written" });
     });
   });
 });

@@ -718,6 +718,22 @@ from it the same way. Not covered: react-native-vision-camera 4.7.3 switches its
 location tagging stays compiled out there; CocoaPods enables it by default. On the reference app's libraries nothing
 changes. Found on react-native-vision-camera 4.7.3. Ships with `RN_XTOOL_SCAFFOLD_REVISION` 4.
 
+## 25. `scripts/spm/scaffold-package-swift.js`: `scaffoldAll` cannot scaffold only the deps the autolinker reported
+
+`scaffoldAll` walks every autolinked dep, and `setup-apple-spm.js scaffold` runs it with `force: true` ("Always force a
+re-render so re-running after editing a podspec picks up the new content"). Every scaffold run therefore rewrote every
+library's `Package.swift`, those the autolinker had not reported included. That breaks the promise of the marker every
+scaffold carries, that the file is safe to edit and persist with patch-package: a hand fix to one library was gone as
+soon as another library was installed and scaffolded. `skipDeps` names deps to leave out, but nothing names the only
+deps to scaffold.
+
+Fix: `ScaffoldAllOptions` gains `onlyDeps`, the dual of `skipDeps`. When it is set, only those npm names are scaffolded
+(direct or transitive); the others get no result entry and are not touched. `skipDeps` still wins over it. The caller
+passes the names the autolinker reported without a `Package.swift`, and no `force`: the skip rule still regenerates a
+named dep whose scaffold has an older revision or another cache slot. The podspec-name index of siblings still covers
+every autolinked dep. Found when a scaffold run for react-native-vision-camera 4.7.3 rewrote react-native-device-info
+15.0.2's hand-fixed `Package.swift`. Changes no manifest, so no revision bump.
+
 ## Known limitation (deferred): pure-Swift packages importing a mixed Expo module
 
 A Swift module built with a bridging header (every mixed target) makes each Swift importer re-read that
@@ -732,7 +748,7 @@ every generated or scaffolded Swift target that depends on a mixed module the sa
 
 `tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks the
 fixes against fixtures (skipped when the reference app is not present; set `RN_XTOOL_REF_APP` to point at it). It also
-asserts that each hunk is present in the installed RN files. Fixes 14 to 24 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
+asserts that each hunk is present in the installed RN files. Fixes 14 to 25 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
 against podspec fixtures from the SDK 57 pins in `tests/fixtures/podspecs/` (worklets 0.10.1, reanimated 4.5.1,
 screens 4.26.2, gesture-handler 2.32.0), from screens 4.30.1 (the clang-only importer paths and module map) and from
 worklets 0.8.3 (the `RCT_HERMES_V1_ENABLED` ternary). A golden test re-scaffolds the reference app's libraries and compares them
