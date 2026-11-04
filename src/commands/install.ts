@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
+import { devClientLinkLines } from "../devClientLink.js";
 import {
   identify,
   locateDevice,
@@ -59,6 +60,8 @@ export interface InstallDeps {
     ) => Promise<void>;
     sleep?: (ms: number) => Promise<void>;
   };
+  /** The dev-client lines after `Installed …`: the Metro URL, the deep link and its QR code. */
+  devClientLink?: (root: string, state: { lanIp: string; metroPort: number }) => Promise<string[]>;
   log?: (s: string) => void;
 }
 
@@ -126,12 +129,21 @@ export function scanRefusal(route: LanRoute): string | undefined {
 }
 
 /**
- * What a dev-client user types in the launcher; nothing to type without expo-dev-client. A state
- * written before bare support has neither `kind` nor `hasDevClient`: it is an Expo build, so print it.
+ * How a dev-client user opens the app on Metro: the URL, the deep link and its QR code; nothing without
+ * expo-dev-client. A state written before bare support has neither `kind` nor `hasDevClient`: it may be an Expo
+ * build with the dev client, so print the URL alone, as before.
  */
-function logDevLauncherUrl(state: InstallState, log: (s: string) => void): void {
-  const preBare = state.kind === undefined && state.hasDevClient === undefined;
-  if (state.hasDevClient === true || preBare) log(`Metro URL for the dev launcher: http://${state.lanIp}:${state.metroPort}`);
+async function logDevLauncherLink(
+  root: string,
+  state: InstallState,
+  deps: InstallDeps,
+  log: (s: string) => void,
+): Promise<void> {
+  if (state.hasDevClient === true) {
+    for (const line of await (deps.devClientLink ?? devClientLinkLines)(root, state)) log(line);
+  } else if (state.kind === undefined && state.hasDevClient === undefined) {
+    log(`Metro URL for the dev launcher: http://${state.lanIp}:${state.metroPort}`);
+  }
 }
 
 async function authenticated(
@@ -175,7 +187,7 @@ export async function install(root: string, deps: InstallDeps = {}, opts: Instal
   await (x.writeState ?? writeState)(iosXtool, { ...(state as BuildState), ...installed });
   const id = installedBundleId(auth.teamId, state.bundleIdentifier);
   log(`Installed ${id} on ${devices[0]!.name}`);
-  logDevLauncherUrl(state, log);
+  await logDevLauncherLink(root, state, deps, log);
   log(firstRunChecklist(auth.appleId, { devClient: state.hasDevClient === true, autoReload: state.devSupport === true }));
 }
 
@@ -255,6 +267,6 @@ async function installNetwork(root: string, deps: InstallDeps, opts: InstallOpti
     `Installed ${bundleId}${version ? ` ${version}` : ""} on iPhone ${where.udid} over Wi‑Fi (${where.ip}) — ` +
       `upload ${secs(result.uploadMs)}, install ${secs(result.installMs)}`,
   );
-  logDevLauncherUrl(state, log);
+  await logDevLauncherLink(root, state, deps, log);
   log(firstRunChecklist(auth.appleId, { devClient: state.hasDevClient === true, autoReload: state.devSupport === true }));
 }

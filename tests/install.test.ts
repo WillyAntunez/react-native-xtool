@@ -210,6 +210,65 @@ describe("install", () => {
     expect(logs[1]).toBe("Metro URL for the dev launcher: http://192.168.1.20:8082");
     expect(logs.join("\n")).toContain("7 days");
   });
+  it("prints the dev-client link after the Metro URL", async () => {
+    const run = async (st: object, devClientLink = vi.fn(async () => [
+      "Metro URL for the dev launcher: http://192.168.1.20:8082",
+      "Open this link…",
+    ])) => {
+      const logs: string[] = [];
+      await install("/p", {
+        xtool: {
+          ...base,
+          authStatus: async () => ({ loggedIn: true, teamId: "TEAM", appleId: "a@b.c" }),
+          listDevices: async () => [{ name: "Phone", udid: "u", transport: "usb" }],
+          readState: async () => ({ bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20", ...st }),
+          devRun: async () => {},
+          writeState: async () => {},
+        },
+        devClientLink,
+        log: (s) => logs.push(s),
+      });
+      return { logs, devClientLink };
+    };
+    const dev = await run({ hasDevClient: true });
+    expect(dev.logs[0]).toBe("Installed XTL-TEAM.com.a.b on Phone");
+    expect(dev.logs.slice(1, 3)).toEqual(["Metro URL for the dev launcher: http://192.168.1.20:8082", "Open this link…"]);
+    expect(dev.devClientLink).toHaveBeenCalledWith("/p", expect.objectContaining({ lanIp: "192.168.1.20", metroPort: 8082 }));
+    const old = await run({});
+    expect(old.logs[1]).toBe("Metro URL for the dev launcher: http://192.168.1.20:8082");
+    expect(old.logs[2]).toMatch(/^First-run checklist/);
+    expect(old.devClientLink).not.toHaveBeenCalled();
+  });
+
+  it("prints the dev-client link over Wi‑Fi too", async () => {
+    const logs: string[] = [];
+    const devClientLink = vi.fn(async () => ["Metro URL for the dev launcher: http://192.168.1.20:8082", "Open this link…"]);
+    const app = { CFBundleIdentifier: "XTL-TEAM.com.a.b" };
+    await install(
+      "/p",
+      {
+        xtool: {
+          ...base,
+          authStatus: async () => ({ loggedIn: true, teamId: "TEAM", appleId: "a@b.c" }),
+          readState: async () => ({ bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20", hasDevClient: true }),
+          devBuildIpa: async () => "/p/ios-xtool/xtool/App.ipa",
+        },
+        wifi: {
+          lanRoute: async () => ({ ip: "192.168.1.20", dev: "wlp2s0" }),
+          locate: async () => ({ ip: "192.168.1.10", udid: "u", scanned: false }),
+          loadPairRecord: async () => ({ record: {} as never, source: "cache" as never }),
+          installOverWifi: async () => ({ app, bytes: 1, uploadMs: 1, installMs: 1 }),
+          rememberDevice: async () => {},
+        },
+        devClientLink,
+        log: (s) => logs.push(s),
+      },
+      { network: true },
+    );
+    const at = logs.findIndex((l) => l.startsWith("Installed XTL-TEAM.com.a.b"));
+    expect(logs.slice(at + 1, at + 3)).toEqual(["Metro URL for the dev launcher: http://192.168.1.20:8082", "Open this link…"]);
+  });
+
   it("records installedFingerprint after devRun succeeds", async () => {
     const writeState = vi.fn(async () => {});
     const st = { version: 1, bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "1.2.3.4", builtAt: "t", depsFingerprint: "fp" };

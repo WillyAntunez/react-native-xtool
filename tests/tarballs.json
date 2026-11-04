@@ -58,5 +58,10 @@
     "spec": "react-native-svg@15.16.0",
     "file": "react-native-svg-15.16.0.tgz",
     "integrity": "sha512-uh8yktufYeRU3W9Omi8+SPyLF9BVN4JmLflSgc9oOcKkSKk/S5JUmmTjKZq/L8GHfQUtCvcu/W6X4xhEfBBAjQ=="
+  },
+  {
+    "spec": "toqr@0.1.1",
+    "file": "toqr-0.1.1.tgz",
+    "integrity": "sha512-FWAPzCIHZHnrE/5/w9MPk0kK25hSQSH2IKhYh9PyjS3SG/+IEMvlwIHbhz+oF7xl54I+ueZlVnMjyzdSwLmAwA=="
   }
 ]
