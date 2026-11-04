@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildVars, defaultBundleIdentifier, MissingBundleIdentifierError, readExpoProject } from "../../src/project/index.js";
 import { VersionGateError } from "../../src/project/detect.js";
-import { expoMacrosBinaryError, expoPackageDir, readExpoPins } from "../../src/project/expo.js";
+import { expoIconPath, expoMacrosBinaryError, expoPackageDir, readExpoPins } from "../../src/project/expo.js";
 import { checkPins, expoPinPolicyFor, expoPinsFor, expoPluginFor } from "../../src/versions.js";
 import { EXPO57_PINS, fakeExpo57Modules } from "../support/expo57.js";
 import { EXPO58_PINS, fakeExpo58Modules } from "../support/expo58.js";
@@ -48,6 +48,23 @@ describe("readExpoProject", () => {
     expect(p.version).toBe("1.0.0");
     expect(p.buildNumber).toBe("1");
     expect(p.slug).toBe("app");
+  });
+
+  it("readExpoProject sets appIconSource", async () => {
+    const dir = await tempProject();
+    expect((await readExpoProject(dir)).appIconSource).toBe(path.join(dir, "assets", "icon.png"));
+  });
+
+  it("resolves the icon like expo prebuild", () => {
+    const root = path.join(path.sep, "proj");
+    const at = (f: string) => path.join(root, f);
+    expect(expoIconPath({ icon: "./assets/icon.png" }, root)).toBe(at("assets/icon.png"));
+    expect(expoIconPath({ icon: "./a.png", ios: { icon: "./b.png" } }, root)).toBe(at("b.png"));
+    expect(expoIconPath({ icon: "./a.png", ios: { icon: "" } }, root)).toBe(at("a.png"));
+    expect(expoIconPath({ ios: { icon: { dark: "./d.png", tinted: "./t.png" } } }, root)).toBe(at("d.png"));
+    expect(expoIconPath({ icon: "./a.png", ios: { icon: {} } }, root)).toBe(at("a.png"));
+    expect(expoIconPath({ icon: "https://example.com/i.png" }, root)).toBeUndefined();
+    expect(expoIconPath({}, root)).toBeUndefined();
   });
 
   it("an Expo project uses the installed scripts", async () => {

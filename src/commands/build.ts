@@ -23,6 +23,7 @@ import {
   type EarlyFailure,
 } from "../project/earlyChecks.js";
 import { readProject, RN_CLI_MISSING, type ProjectInfo, type ProjectKind, type ReadProjectOptions } from "../project/index.js";
+import { appIconRecord } from "../generate/appIcon.js";
 import { readState, writeState, type BuildState } from "../state.js";
 import { run } from "../tools/exec.js";
 import { devBuild, xtoolBin } from "../tools/xtool.js";
@@ -228,9 +229,15 @@ export async function build(
   });
   const planned = (name: string): boolean => steps.includes(name);
 
-  if (planned("prebuild") || planned("prebuild --clean")) {
-    await step(clean ? "prebuild --clean" : "prebuild", () => d.prebuild(paths.root, clean));
-  }
+  const prebuilds = planned("prebuild") || planned("prebuild --clean");
+  if (prebuilds) await step(clean ? "prebuild --clean" : "prebuild", () => d.prebuild(paths.root, clean));
+  // The app config icon this prebuild turned into the icon set; without a prebuild, the last one's record stays.
+  // With no record (the user ran expo prebuild, or the state predates it), the current icon is recorded silently,
+  // so a later change warns.
+  const prebuildIcon =
+    prebuilds || (previousState?.prebuildIcon === undefined && project.kind === "expo")
+      ? await appIconRecord(project)
+      : previousState?.prebuildIcon;
   if (planned("clean")) {
     // Bare: the user's ios/ is theirs; only what the pipeline generated goes.
     await step("clean", async () => {
@@ -307,6 +314,7 @@ export async function build(
     rnVersion: project.rnVersion,
     name: project.name,
     slug: project.slug,
+    ...(prebuildIcon && { prebuildIcon }),
     ...(previousState?.deviceIp && { deviceIp: previousState.deviceIp }),
     ...(previousState?.deviceUdid && { deviceUdid: previousState.deviceUdid }),
     // The app on the iPhone keeps its id until the next install; a changed bundle id makes it another app.
@@ -316,7 +324,7 @@ export async function build(
       }),
   };
   await step("generate", async () => {
-    await d.writeIosXtool({ project, paths, frameworks, metroPort, lanIp, log: d.log });
+    await d.writeIosXtool({ project, paths, frameworks, metroPort, lanIp, log: d.log, prebuildIcon });
     await writeState(paths.iosXtool, state);
   });
   await step("xtool-build", () => d.devBuild(d.xtoolBin(config), paths.iosXtool));

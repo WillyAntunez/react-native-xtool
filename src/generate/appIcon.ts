@@ -1,5 +1,6 @@
 import { statSync } from "node:fs";
 import { open, readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join, relative } from "node:path";
 import type { ProjectInfo } from "../project/index.js";
 
@@ -61,6 +62,24 @@ export function pickIconFile(contents: unknown, exists: (filename: string) => bo
   return best?.filename;
 }
 
+/** The app config icon as `build` records it when it runs expo prebuild: its path from the project root and the
+ *  sha256 of its content; no hash when it cannot be read, nothing without an icon in the config. */
+export interface IconRecord {
+  path?: string;
+  sha256?: string;
+}
+
+export async function appIconRecord(project: ProjectInfo): Promise<IconRecord> {
+  const icon = project.appIconSource;
+  if (icon === undefined) return {};
+  const path = relative(project.root, icon);
+  try {
+    return { path, sha256: createHash("sha256").update(await readFile(icon)).digest("hex") };
+  } catch {
+    return { path };
+  }
+}
+
 export interface AppIcon {
   /** The PNG to use as the app icon; absent when the app gets none. */
   source?: string;
@@ -93,12 +112,24 @@ async function readHead(file: string): Promise<Uint8Array> {
  * The app icon from `<iosTargetDir>/Images.xcassets/AppIcon.appiconset`, as expo prebuild writes it (and Xcode for
  * bare apps). Only the PNG header is checked: no image library. A missing or unusable icon never fails the build.
  * `bundleRootNames` are the app resources copied to the bundle root; one named AppIcon.png would clash with the icon.
+ * `prebuildIcon` is the app config icon recorded when `build` last ran expo prebuild.
  */
-export async function findAppIcon(project: ProjectInfo, opts: { bundleRootNames: string[] }): Promise<AppIcon> {
+export async function findAppIcon(
+  project: ProjectInfo,
+  opts: { bundleRootNames: string[]; prebuildIcon?: IconRecord },
+): Promise<AppIcon> {
   const rel = (p: string) => relative(project.root, p);
   const set = join(project.iosTargetDir, "Images.xcassets", "AppIcon.appiconset");
   const add =
     'Add a 1024×1024 PNG to it to give the app an icon (Expo: set "icon" in the app config, then run `rn-xtool build --clean`).';
+  const configIcon = project.appIconSource;
+  if (configIcon?.endsWith(".icon")) {
+    return {
+      lines: [
+        `ℹ No app icon: ${rel(configIcon)} is an Icon Composer icon, which needs Xcode's actool. Set a 1024×1024 PNG as "icon" in the app config, then run \`rn-xtool build --clean\`.`,
+      ],
+    };
+  }
   if (!statSync(set, { throwIfNoEntry: false })?.isDirectory()) {
     return { lines: [`ℹ No app icon: ${rel(set)} does not exist. ${add}`] };
   }
@@ -126,6 +157,17 @@ export async function findAppIcon(project: ProjectInfo, opts: { bundleRootNames:
   }
   const { width: w, height: h } = size;
   const lines: string[] = [];
+  // expo prebuild writes the set once; `build` reruns it only with --clean, so a changed app config icon is not in it.
+  // Compared by content, not mtime: a git checkout of an unchanged icon is no change, another older file is one.
+  const recorded = opts.prebuildIcon;
+  if (configIcon !== undefined && recorded !== undefined) {
+    const now = await appIconRecord(project);
+    if (now.sha256 !== undefined && (now.path !== recorded.path || now.sha256 !== recorded.sha256)) {
+      lines.push(
+        `⚠ The app config icon ${rel(configIcon)} changed since the last expo prebuild wrote ${rel(set)}: run \`rn-xtool build --clean\` to use it.`,
+      );
+    }
+  }
   if (w !== h) lines.push(`⚠ App icon ${rel(file)} is ${w}×${h}, not square: iOS stretches it. Use a 1024×1024 PNG.`);
   if (w < 180 || h < 180) {
     lines.push(

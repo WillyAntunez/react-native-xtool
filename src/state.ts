@@ -31,6 +31,9 @@ export interface BuildState {
   /** The app's name and slug from the project, for `start`'s Bonjour announcement. */
   name?: string;
   slug?: string;
+  /** The app config icon the last `expo prebuild` run by `build` turned into the icon set: its path from the
+   *  project root and the sha256 of its content (absent when the config named no readable icon). */
+  prebuildIcon?: { path?: string; sha256?: string };
 }
 
 const STATE_FILE = ".rn-xtool-state.json";

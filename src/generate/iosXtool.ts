@@ -7,7 +7,7 @@ import { transformInfoPlist } from "../plist.js";
 import { buildVars, type ProjectInfo } from "../project/index.js";
 import { packageRoot } from "../tools/exec.js";
 import { IOS_MIN } from "../versions.js";
-import { APP_ICON_FILE, findAppIcon } from "./appIcon.js";
+import { APP_ICON_FILE, findAppIcon, type IconRecord } from "./appIcon.js";
 import { copyBareTarget } from "./bareSources.js";
 import { expoClangImporterInputs } from "./expoImporter.js";
 import { DEV_SUPPORT_TARGET, renderPackageSwift, type AppTargetInputs } from "./packageSwift.js";
@@ -21,6 +21,8 @@ export interface GenerateContext {
   metroPort: number;
   lanIp: string;
   log?: (s: string) => void;
+  /** The app config icon `build` recorded when it last ran expo prebuild (findAppIcon's stale-icon check). */
+  prebuildIcon?: IconRecord;
 }
 
 const MANIFEST_6_5 = "Package@swift-6.5.swift";
@@ -126,7 +128,7 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
   await mkdir(paths.sources, { recursive: true });
   const { app, resources } = await writeAppSources(ctx, headersDir, resourcesDir);
   // The icon from the app's AppIcon.appiconset; a missing or unusable one is reported and the build goes on.
-  const icon = await findAppIcon(project, { bundleRootNames: resources });
+  const icon = await findAppIcon(project, { bundleRootNames: resources, prebuildIcon: ctx.prebuildIcon });
   for (const line of icon.lines) (ctx.log ?? console.log)(line);
   const iconFile = join(paths.iosXtool, APP_ICON_FILE);
   if (icon.source !== undefined) await copyFile(icon.source, iconFile);

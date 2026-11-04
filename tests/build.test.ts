@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -675,6 +676,59 @@ describe("build keeps the installed id", () => {
     expect(s?.bundleIdentifier).toBe("com.example.other");
     expect(s).not.toHaveProperty("installedBundleId");
     expect(s).toMatchObject({ name: "My App", slug: "my-app" });
+  });
+
+  it("records the app config icon when it runs expo prebuild", async () => {
+    const t = setup({ hasIos: false });
+    const icon = join(t.root, "assets", "icon.png");
+    mkdirSync(dirname(icon), { recursive: true });
+    writeFileSync(icon, "first");
+    const readProject = t.deps.readProject;
+    t.deps.readProject = async (...a) => ({ ...(await readProject(...a)), root: t.root, appIconSource: icon });
+    await build(t.root, {}, t.deps);
+    const dir = join(t.root, "ios-xtool");
+    const recorded = (await readState(dir))?.prebuildIcon;
+    expect(recorded).toEqual({ path: "assets/icon.png", sha256: createHash("sha256").update("first").digest("hex") });
+    expect(t.writeIosXtool.mock.calls[0]?.[0]).toMatchObject({ prebuildIcon: recorded });
+
+    // Without prebuild the record stays, so the edit is reported.
+    writeFileSync(icon, "edited");
+    t.deps.exists = () => true;
+    await build(t.root, {}, t.deps);
+    expect((await readState(dir))?.prebuildIcon).toEqual(recorded);
+    expect(t.writeIosXtool.mock.calls[1]?.[0]).toMatchObject({ prebuildIcon: recorded });
+  });
+
+  it("records the app config icon silently when nothing recorded it", async () => {
+    // The user ran expo prebuild, so build runs none; then a state from before the record existed.
+    const t = setup({ hasIos: true });
+    const icon = join(t.root, "assets", "icon.png");
+    mkdirSync(dirname(icon), { recursive: true });
+    writeFileSync(icon, "first");
+    const readProject = t.deps.readProject;
+    t.deps.readProject = async (...a) => ({ ...(await readProject(...a)), root: t.root, appIconSource: icon });
+    await build(t.root, {}, t.deps);
+    expect(t.calls).not.toContain("prebuild");
+    const dir = join(t.root, "ios-xtool");
+    const first = { path: "assets/icon.png", sha256: createHash("sha256").update("first").digest("hex") };
+    expect((await readState(dir))?.prebuildIcon).toEqual(first);
+    expect(t.writeIosXtool.mock.calls[0]?.[0]).toMatchObject({ prebuildIcon: first });
+
+    // Kept on the next build, so a later edit is reported.
+    writeFileSync(icon, "edited");
+    await build(t.root, {}, t.deps);
+    expect((await readState(dir))?.prebuildIcon).toEqual(first);
+
+    const { prebuildIcon: _, ...older } = (await readState(dir))!;
+    await writeState(dir, older);
+    await build(t.root, {}, t.deps);
+    expect((await readState(dir))?.prebuildIcon).toEqual({ ...first, sha256: createHash("sha256").update("edited").digest("hex") });
+  });
+
+  it("records no app icon for a bare app", async () => {
+    const t = setup({ hasIos: true, project: { kind: "bare" } });
+    await build(t.root, {}, t.deps);
+    expect(await readState(join(t.root, "ios-xtool"))).not.toHaveProperty("prebuildIcon");
   });
 
   it("reads no id it cannot match", async () => {

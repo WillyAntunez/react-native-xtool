@@ -2,7 +2,7 @@ import { chmod, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { findAppIcon, pickIconFile, readPngSize } from "../src/generate/appIcon.js";
+import { appIconRecord, findAppIcon, pickIconFile, readPngSize } from "../src/generate/appIcon.js";
 import type { ProjectInfo } from "../src/project/index.js";
 import { png } from "./support/png.js";
 
@@ -147,6 +147,59 @@ describe("findAppIcon", () => {
         `⚠ App icon ${file} is 120×100, not square: iOS stretches it. Use a 1024×1024 PNG.`,
         `⚠ App icon ${file} is 120×100, smaller than 180×180: it looks blurry on the home screen. Use a 1024×1024 PNG.`,
         `ℹ App icon: ${file} (120×100)`,
+      ],
+    });
+  });
+
+  it("warns when the app config icon changed since build ran expo prebuild", async () => {
+    const p = await project({ "Contents.json": contents("icon.png"), "icon.png": png(1024, 1024) });
+    await mkdir(join(p.root, "assets"));
+    const configIcon = join(p.root, "assets", "icon.png");
+    await writeFile(configIcon, png(1024, 1024));
+    const withSource = { ...p.info, appIconSource: configIcon };
+    const prebuildIcon = await appIconRecord(withSource);
+    expect(prebuildIcon).toEqual({ path: "assets/icon.png", sha256: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    const used = "ℹ App icon: ios/app/Images.xcassets/AppIcon.appiconset/icon.png (1024×1024)";
+    const STALE =
+      "⚠ The app config icon assets/icon.png changed since the last expo prebuild wrote ios/app/Images.xcassets/AppIcon.appiconset: run `rn-xtool build --clean` to use it.";
+    const linesOf = async (info: ProjectInfo, record = prebuildIcon) =>
+      (await findAppIcon(info, { bundleRootNames: [], prebuildIcon: record })).lines;
+
+    // Touched, or rewritten with the same content (a git checkout): no warning.
+    const later = new Date(Date.now() + 60_000);
+    await utimes(configIcon, later, later);
+    expect(await linesOf(withSource)).toEqual([used]);
+    await writeFile(configIcon, png(1024, 1024));
+    expect(await linesOf(withSource)).toEqual([used]);
+
+    // Edited.
+    await writeFile(configIcon, png(1024, 1024, { cgbi: true }));
+    expect(await linesOf(withSource)).toEqual([STALE, used]);
+    // No record: no warning (build records the current icon first when it has none).
+    expect((await findAppIcon(withSource, { bundleRootNames: [] })).lines).toEqual([used]);
+
+    // The config now names another, older file.
+    const other = join(p.root, "assets", "other.png");
+    await writeFile(other, png(1024, 1024));
+    const earlier = new Date("2020-01-01T00:00:00Z");
+    await utimes(other, earlier, earlier);
+    expect(await linesOf({ ...p.info, appIconSource: other })).toEqual([
+      STALE.replace("assets/icon.png", "assets/other.png"),
+      used,
+    ]);
+    // Prebuild ran without an icon in the config, which names one now.
+    expect(await linesOf(withSource, {})).toEqual([STALE, used]);
+    // The config's icon is missing: nothing to use.
+    await rm(configIcon);
+    expect(await linesOf(withSource)).toEqual([used]);
+  });
+
+  it("explains Icon Composer icons", async () => {
+    const p = await project({ "Contents.json": contents("icon.png"), "icon.png": png(1024, 1024) });
+    const info = { ...p.info, appIconSource: join(p.root, "assets", "app.icon") };
+    expect(await findAppIcon(info, { bundleRootNames: [] })).toEqual({
+      lines: [
+        'ℹ No app icon: assets/app.icon is an Icon Composer icon, which needs Xcode\'s actool. Set a 1024×1024 PNG as "icon" in the app config, then run `rn-xtool build --clean`.',
       ],
     });
   });

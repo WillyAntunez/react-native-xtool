@@ -26,6 +26,8 @@ export interface ProjectInfo {
   hasExpoModules: boolean;
   hasExpoConstants: boolean;
   hasDevClient: boolean;
+  /** Expo: the icon file the app config names (absolute), as expo prebuild resolves it; absent for bare. */
+  appIconSource?: string;
   /** bare: `@react-native-community/cli` resolves from the root (RN's autolinking config command and Metro run it). */
   hasRnCli?: boolean;
   bare?: BareTargetContent;
