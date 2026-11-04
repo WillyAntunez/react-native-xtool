@@ -22,7 +22,7 @@ import {
   renderHeadersModuleMap,
   type LinkFn,
 } from "../src/pipeline/rnArtifacts.js";
-import { makeFakeSlot086, makeFakeSlot088 } from "./support/fakeSlots.js";
+import { makeFakeSlot085, makeFakeSlot086, makeFakeSlot088 } from "./support/fakeSlots.js";
 
 const tmp: string[] = [];
 const mkTmp = (prefix: string) => {
@@ -456,6 +456,57 @@ describe("adaptSlot", () => {
     await expect(adaptSlot(src, dest, "0.86.3", { hardLink: failing })).rejects.toThrow(/EACCES/);
     expect(existsSync(dest)).toBe(false);
   });
+
+  it("adapts a 0.85-shaped slot like a 0.86 one", async () => {
+    const src085 = mkTmp("rn-slot-085-");
+    makeFakeSlot085(src085);
+    const dest085 = path.join(mkTmp("rn-adapted-"), "debug");
+    await adaptSlot(src085, dest085, "0.85.0");
+    const { src: src086, dest: dest086 } = adaptCase();
+    await adaptSlot(src086, dest086, "0.86.3");
+
+    const files085 = listFiles(dest085).filter((rel) => rel !== ADAPTED_STAMP);
+    expect(files085).toEqual(listFiles(dest086).filter((rel) => rel !== ADAPTED_STAMP));
+    const umbrellas = SLICES.map((slice) => path.join("React.xcframework", slice, "React.framework", "Headers", "React-umbrella.h"));
+    const contents = (dest: string, src: string, rel: string) => {
+      const at = path.join(dest, rel);
+      // ReactNativeDependencies and hermes-engine are links into their own source slot
+      if (lstatSync(at).isSymbolicLink()) return `-> ${readlinkSync(at).replace(src, "<src>")}`;
+      const text = readFileSync(at);
+      return rel === "artifacts.json" ? text.toString("utf8").replaceAll(dest, "<dest>") : text;
+    };
+    for (const rel of files085) {
+      if (umbrellas.includes(rel)) continue;
+      expect(contents(dest085, src085, rel), rel).toEqual(contents(dest086, src086, rel));
+    }
+    for (const [i, slice] of SLICES.entries()) {
+      const srcUmbrella = path.join(src085, "React.xcframework", slice, "React.framework", "Headers", "React_Core", "React_Core-umbrella.h");
+      expect(readFileSync(path.join(dest085, umbrellas[i]!), "utf8")).toBe(readFileSync(srcUmbrella, "utf8"));
+      expect(readFileSync(path.join(dest085, umbrellas[i]!), "utf8")).toBe('#import "RCTBridge.h"\n#import <React/RCTDefines.h>\n');
+      // The 0.85 shape this test is about: the slot's own map has `React_Core-umbrella.h` and `module * { export * }`;
+      // the adapter writes its own map, as for 0.86.
+      const srcMap = path.join(src085, "React.xcframework", slice, "React.framework", "Modules", "module.modulemap");
+      expect(readFileSync(srcMap, "utf8")).toContain("module * { export * }");
+      const map = path.join(dest085, "React.xcframework", slice, "React.framework", "Modules", "module.modulemap");
+      expect(readFileSync(map, "utf8")).toBe(REACT_MODULE_MAP);
+    }
+    expect(downloader().validateArtifactsCache(dest085)).toBeNull();
+  });
+
+  it("stops on a 0.85-shaped slot with an unknown layout, naming 0.85.0", async () => {
+    const src = mkTmp("rn-slot-085-");
+    makeFakeSlot085(src);
+    const dest = path.join(mkTmp("rn-adapted-"), "debug");
+    const rel = "React.xcframework/ios-arm64/React.framework/Headers/React_Core/React_Core-umbrella.h";
+    rmSync(path.join(src, rel));
+    const run = adaptSlot(src, dest, "0.85.0");
+    await expect(run).rejects.toBeInstanceOf(ArtifactLayoutError);
+    await expect(run).rejects.toThrow(
+      `React Native 0.85.0 artifacts in ${src} have a layout rn-xtool does not recognise: ${rel} is missing. Report it at ` +
+        "https://github.com/WillyAntunez/react-native-xtool/issues with this message.",
+    );
+    expect(existsSync(dest)).toBe(false);
+  });
 });
 
 const RN086_SLOT =
@@ -494,5 +545,33 @@ describe.skipIf(!runRealSlots)("real RN 0.86.3 slot (runs only with RN_XTOOL_REA
     expect(files).toEqual(listFiles(depsTheirs));
     for (const rel of files) expect(readFileSync(path.join(depsOurs, rel)).equals(readFileSync(path.join(depsTheirs, rel))), rel).toBe(true);
     expect(downloader().validateArtifactsCache(dest)).toBeNull();
+  });
+});
+
+const RN085_SLOT =
+  process.env.RN_XTOOL_RN085_SLOT ?? path.join(homedir(), "Library", "Caches", "ReactNative", "spm-artifacts", "0.85.0", "debug");
+const runReal085 =
+  process.env.RN_XTOOL_REAL_SLOTS === "1" &&
+  existsSync(path.join(RN085_SLOT, "artifacts.json")) &&
+  existsSync(path.join(RN086_SLOT, "artifacts.json"));
+
+describe.skipIf(!runReal085)("real RN 0.85.0 slot (runs only with RN_XTOOL_REAL_SLOTS=1, a 0.85.0 and a 0.86.3 slot with artifacts.json)", () => {
+  // Beside each slot, so hard links work (os.tmpdir() may be tmpfs: the binaries would be copied into RAM).
+  const dest085 = path.join(path.dirname(RN085_SLOT), `rn-xtool-test-adapted-${process.pid}`);
+  const dest086 = path.join(path.dirname(RN086_SLOT), `rn-xtool-test-adapted-085-${process.pid}`);
+  afterAll(() => {
+    rmSync(dest085, { recursive: true, force: true });
+    rmSync(dest086, { recursive: true, force: true });
+  });
+
+  it("adapts the real 0.85.0 slot to 0.86.3's module map", { timeout: 300_000 }, async () => {
+    await adaptSlot(RN085_SLOT, dest085, "0.85.0");
+    await adaptSlot(RN086_SLOT, dest086, "0.86.3");
+    const map = (dest: string) =>
+      readFileSync(path.join(dest, "ReactNativeHeaders.xcframework", "ios-arm64", "Headers", "module.modulemap"), "utf8");
+    expect(moduleNames(map(dest085))).toHaveLength(14);
+    expect(moduleNames(map(dest085))).toEqual(moduleNames(map(dest086)));
+    expect(map(dest085)).toBe(map(dest086));
+    expect(downloader().validateArtifactsCache(dest085)).toBeNull();
   });
 });
