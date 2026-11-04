@@ -63,5 +63,10 @@
     "spec": "toqr@0.1.1",
     "file": "toqr-0.1.1.tgz",
     "integrity": "sha512-FWAPzCIHZHnrE/5/w9MPk0kK25hSQSH2IKhYh9PyjS3SG/+IEMvlwIHbhz+oF7xl54I+ueZlVnMjyzdSwLmAwA=="
+  },
+  {
+    "spec": "dnssd-advertise@1.1.6",
+    "file": "dnssd-advertise-1.1.6.tgz",
+    "integrity": "sha512-Ndrrf6BMPalkQPd/zubL+4YghH2J9NspapQ09uDXwYbvOPkP0oaqf5CkcwJ0b50kS2O3ul6yVu+jz+RY62Cejg=="
   }
 ]
