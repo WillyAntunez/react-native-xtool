@@ -3,8 +3,8 @@
  * React Native 0.88.0 (react-native-artifacts-0.88.0-reactnative-core-debug, `ios-arm64` slice; all slices ship the
  * same map). React Native is MIT-licensed, Copyright (c) Meta Platforms, Inc. and affiliates.
  *
- * Older RN artifacts (0.86.x) predate this xcframework; the adapter renders its module map from this table, keeping
- * only the headers the older slot ships. Modules and headers are in the 0.88.0 file's order.
+ * Pre-headers-spec slots (0.85.x, 0.86.x) predate this xcframework; the adapter renders its module map from this
+ * table, keeping only the headers the older slot ships. Modules and headers are in the 0.88.0 file's order.
  */
 export const RN_HEADERS_MODULES: readonly { readonly name: string; readonly headers: readonly string[] }[] = [
   {

@@ -102,13 +102,12 @@ function runPodIpcSpec(podspecPath /*: string */) /*: RawSpec | null */ {
       maxBuffer: 8 * 1024 * 1024,
       // Many RN podspecs gate subspec definitions on `RCT_NEW_ARCH_ENABLED`
       // (e.g. safe-area-context wraps its Fabric `common` + `fabric`
-      // subspecs in `if fabric_enabled`). RN 0.76+ defaults to the new
-      // architecture, so unless the caller has explicitly opted out, set
-      // the env var here so `pod ipc spec` evaluates the full podspec.
-      env: {
-        ...process.env,
-        RCT_NEW_ARCH_ENABLED: process.env.RCT_NEW_ARCH_ENABLED ?? '1',
-      },
+      // subspecs in `if fabric_enabled`), and react-native-worklets gates its
+      // `-DHERMES_V1_ENABLED` flag on `RCT_HERMES_V1_ENABLED`. Give both the
+      // value React Native's CocoaPods setup gives them (`RN_POD_ENV`, which
+      // the regex fallback evaluates with too), whatever the environment
+      // says, so `pod ipc spec` reads the podspec as that setup would.
+      env: {...process.env, ...RN_POD_ENV},
     });
   } catch {
     cleanupPatchedPodspec(patchedPath);
@@ -179,11 +178,35 @@ function cleanupPatchedPodspec(patchedPath /*: ?string */) /*: void */ {
 // This pre-pass resolves the simple cases textually, so the regexes stay
 // untouched: single-line `ident = 'str' | "str" | ["a", "b"]` assignments are
 // collected (first assignment wins; `if`/`ENV[...]` conditions are NOT
-// evaluated), then `#{ident}` inside the text is replaced by a known string
+// evaluated, except the one kind below), then `#{ident}` inside the text is replaced by a known string
 // constant, and a field assigned a bare known identifier (`s.x = ident`) is
 // rewritten to the literal value (`s.x = ident`, `s.ios.x = ident`, and a
 // subspec's `ss.x = ident`). `#{}` is only interpolated inside double-quoted
 // strings, as in Ruby. Unknown interpolations/identifiers are left as they are.
+//
+// One kind of condition is evaluated: a string ternary on an environment
+// variable React Native's CocoaPods setup itself sets for every pod
+// (`ident = ENV['VAR'] == 'v' ? 'a' : 'b'`, also `!=`), with the value that
+// setup gives it: `1` for both. The environment is not read. React Native
+// 0.87+ sets both to `1` outright, and the prebuilt artifacts are V1 Hermes,
+// so a `0` left in the shell could only break the build (and a persisted
+// scaffold). react-native-worklets puts
+// `hermes_v1_flag = ENV['RCT_HERMES_V1_ENABLED'] == '1' ? '-DHERMES_V1_ENABLED'
+// : ''` in OTHER_CFLAGS; without the define it includes the legacy Hermes
+// inspector headers, which the prebuilt artifacts do not ship.
+const RN_POD_ENV /*: {[string]: string} */ = {
+  RCT_NEW_ARCH_ENABLED: '1',
+  RCT_HERMES_V1_ENABLED: '1',
+};
+function rnPodEnvTernary(rhs /*: string */) /*: ?string */ {
+  const m = rhs.match(
+    /^ENV\[\s*(["'])([A-Z0-9_]+)\1\s*\]\s*(==|!=)\s*(["'])([^"']*)\4\s*\?\s*(?:"([^"]*)"|'([^']*)')\s*:\s*(?:"([^"]*)"|'([^']*)')$/,
+  );
+  if (m == null || !Object.hasOwn(RN_POD_ENV, m[2])) return null;
+  const value = RN_POD_ENV[m[2]];
+  const holds = m[3] === '==' ? value === m[5] : value !== m[5];
+  return holds ? m[6] ?? m[7] : m[8] ?? m[9];
+}
 function resolveRubyConstants(content /*: string */) /*: string */ {
   const strings /*: Map<string, string> */ = new Map();
   const arrays /*: Map<string, Array<{value: string, dq: boolean}>> */ =
@@ -196,6 +219,11 @@ function resolveRubyConstants(content /*: string */) /*: string */ {
     const str = rhs.match(/^(?:"([^"]*)"|'([^']*)')$/);
     if (str != null) {
       strings.set(name, str[1] ?? str[2]);
+      continue;
+    }
+    const fromEnv = rnPodEnvTernary(rhs);
+    if (fromEnv != null) {
+      strings.set(name, fromEnv);
       continue;
     }
     const arr = rhs.match(/^\[([^\]]*)\]$/);

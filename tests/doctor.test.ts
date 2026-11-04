@@ -675,8 +675,8 @@ describe("doctor --project", () => {
         ...good,
         project: async () => {
           throw new DetectError(
-            "React Native 0.81.5 is not supported; rn-xtool supports 0.86.x from 0.86.2, 0.87.x from 0.87.1 and 0.88.x " +
-              "from 0.88.0 (bare). Pin react-native to one of them.",
+            "React Native 0.81.5 is not supported; rn-xtool supports 0.85.x from 0.85.0, 0.86.x from 0.86.2, 0.87.x from " +
+              "0.87.1 and 0.88.x from 0.88.0 (bare). Pin react-native to one of them.",
           );
         },
         capabilities: async () => ({ kind: "bare", rnVersion: "0.81.5", podspecs: noPodspecs }),
@@ -792,6 +792,8 @@ describe("doctor --project", () => {
     ["versions", "bare 0.88.1", bare("0.88.1"), "ok", "React Native 0.88.1: the 0.88 line (0.88.0 or newer), verified 0.88.0 and 0.88.1"],
     ["versions", "bare 0.87.1", bare("0.87.1"), "ok", "React Native 0.87.1: the 0.87 line (0.87.1 or newer), verified 0.87.1"],
     ["versions", "bare 0.86.4 (newer)", bare("0.86.4"), "ok", "React Native 0.86.4: the 0.86 line (0.86.2 or newer), verified 0.86.2 and 0.86.3"],
+    ["versions", "bare 0.85.0", bare("0.85.0"), "ok", "React Native 0.85.0: the 0.85 line (0.85.0 or newer), verified 0.85.0 and 0.85.3"],
+    ["versions", "bare 0.85.4 (newer)", bare("0.85.4"), "ok", "React Native 0.85.4: the 0.85 line (0.85.0 or newer), verified 0.85.0 and 0.85.3"],
     ["versions", "bare 0.86.1 (below)", bare("0.86.1"), "fail", "React Native 0.86.1: below the 0.86 floor (0.86.2); move react-native to 0.86.2 or newer"],
     ["rn-scripts", "0.88", { ...rn, scripts: { shape: "0.88", missing: [], recognised: true, mode: "installed" } }, "ok", "react-native's own SwiftPM scripts (0.88 layout)"],
     ["rn-scripts", "none", { ...rn, scripts: { shape: "none", missing: [], recognised: true, mode: "vendored" } }, "ok", "react-native ships no SwiftPM scripts: rn-xtool's vendored copy (React Native 0.88.0)"],

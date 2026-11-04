@@ -8,7 +8,7 @@ facebook/react-native.
 Where the fixes live in rn-xtool: in `patches/react-native+0.88.0.patch` and `patches/react-native+0.88.1.patch`
 (each applied only to an installed react-native of its version; the three patched files are byte-identical in 0.88.0
 and 0.88.1, so the two patches are the same file, and `tests/patches.test.ts` keeps them identical: a fix edits both)
-and, for bare React Native 0.86.2, 0.86.3 and 0.87.1, already applied in the vendored copy of the 0.88.0 scripts in
+and, for bare React Native 0.85.x, 0.86.x and 0.87.x, already applied in the vendored copy of the 0.88.0 scripts in
 `vendor/rn-spm/` ([README](../../vendor/rn-spm/README.md)).
 
 Refreshing for a new React Native 0.88.x: add `patches/react-native+0.88.<x>.patch` for it (refreshed against it, or a
@@ -190,7 +190,7 @@ Fix: a pre-pass `resolveRubyConstants(content)` over the comment-stripped source
 single-line `ident = 'str' | "str" | ["a", "b"]` assignments (first wins), replaces `#{ident}` for
 known string constants, and rewrites `s.<field> = ident` (and `ss.`/`s.ios.` forms) to the literal value. Unknown
 interpolations and identifiers are left untouched; `ENV[...]` and `if` conditions are not
-evaluated. The existing field regexes are unchanged. See the `resolveRubyConstants` hunk in
+evaluated (except fix 19's). The existing field regexes are unchanged. See the `resolveRubyConstants` hunk in
 `patches/react-native+0.88.1.patch`.
 
 ## 4. `scripts/spm/read-podspec.js`: the regex parser is blind to subspec blocks
@@ -579,6 +579,28 @@ reference app's libraries, react-native-screens 4.30.0 gets 72 `ios/gamma` exclu
 `Utils/RNSVGFabricConversions.h`. The regex reader applies that one from the podspec's old-architecture branch, and
 the header is C++, so no importer could build it in Objective-C. Ships with `RN_XTOOL_SCAFFOLD_REVISION` 3.
 
+## 19. `scripts/spm/read-podspec.js`: `ENV['RCT_HERMES_V1_ENABLED']` ternaries are not evaluated
+
+react-native-worklets (0.8.3 and 0.10.1 alike) sets
+`hermes_v1_flag = ENV['RCT_HERMES_V1_ENABLED'] == '1' ? '-DHERMES_V1_ENABLED' : ''` and puts it in `OTHER_CFLAGS`.
+Under CocoaPods the define is always there: React Native's `react_native_pods.rb` sets `RCT_HERMES_V1_ENABLED` to `1`
+unless the user sets `0` (0.85 and 0.86), or sets it to `1` outright (0.87 and 0.88). The regex path left `#{hermes_v1_flag}`
+unresolved, so the define was dropped, and with `HERMES_ENABLE_DEBUGGER=1` (Debug) worklets 0.8.3 compiled its
+legacy-Hermes branch: `WorkletHermesRuntime.h:21:10: fatal error: 'hermes/inspector-modern/chrome/Registration.h'
+file not found` (on React Native 0.85.0 with reanimated 4.3.4; no prebuilt artifact slot ships that header).
+
+Fix: the Ruby constants pass (fix 3) also resolves a single-line string ternary on an environment variable that
+React Native's CocoaPods setup sets for every pod, `ident = ENV['VAR'] == 'v' ? 'a' : 'b'` (or `!=`, either quote
+style), for `RCT_NEW_ARCH_ENABLED` and `RCT_HERMES_V1_ENABLED`. The value is `1` for both, whatever the environment
+says: React Native 0.87 and 0.88 set both to `1` outright, and the prebuilt artifacts are V1 Hermes, so a `0` left in
+the shell could only break the build, and a persisted scaffold with it. The `pod ipc` path, taken when the CocoaPods
+gem is on `PATH`, runs `pod ipc spec` with the same two values in its environment; upstream it set only
+`RCT_NEW_ARCH_ENABLED`, and only when the environment did not. Any other `ENV[...]` condition, and every `if`, is
+still not evaluated. The scaffolded worklets target then gets
+`.define("HERMES_V1_ENABLED")` in its C and C++ settings, and 0.8.3 builds on React Native 0.85.0. worklets 0.10.1
+(the Expo SDK 57 pin) gets the same define in a new scaffold; a scaffold persisted earlier keeps its manifest, since
+`RN_XTOOL_SCAFFOLD_REVISION` stays 3.
+
 ## Known limitation (deferred): pure-Swift packages importing a mixed Expo module
 
 A Swift module built with a bridging header (every mixed target) makes each Swift importer re-read that
@@ -593,8 +615,9 @@ every generated or scaffolded Swift target that depends on a mixed module the sa
 
 `tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks the
 fixes against fixtures (skipped when the reference app is not present; set `RN_XTOOL_REF_APP` to point at it). It also
-asserts that each hunk is present in the installed RN files. Fixes 14 to 18 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
+asserts that each hunk is present in the installed RN files. Fixes 14 to 19 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
 against podspec fixtures from the SDK 57 pins in `tests/fixtures/podspecs/` (worklets 0.10.1, reanimated 4.5.1,
-screens 4.26.2, gesture-handler 2.32.0) and from screens 4.30.1 (the clang-only importer paths and module map). A golden test re-scaffolds the reference app's libraries and compares them
+screens 4.26.2, gesture-handler 2.32.0), from screens 4.30.1 (the clang-only importer paths and module map) and from
+worklets 0.8.3 (the `RCT_HERMES_V1_ENABLED` ternary). A golden test re-scaffolds the reference app's libraries and compares them
 with `tests/fixtures/scaffold-golden/`. Upstream, equivalent tests belong in
 RN's own `__tests__` next to `read-podspec` and `scaffold-package-swift`.

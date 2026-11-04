@@ -24,7 +24,7 @@ export type ExpoPinName =
   | "expo-font";
 export type ExpoPinPolicy = "floor";
 export type RnScripts = "installed" | "vendored";
-/** Where a line's React Native artifacts come from. adapted: pre-headers-spec slots rn-xtool rebuilds (0.86). */
+/** Where a line's React Native artifacts come from. adapted: pre-headers-spec slots rn-xtool rebuilds (0.85, 0.86). */
 export type RnArtifacts = "adapted" | "published";
 
 /** An Expo SDK rn-xtool builds: where its SwiftPM plugin comes from and the package versions it was verified with. */
@@ -104,6 +104,15 @@ export const SUPPORTED_LINES: readonly SupportedLine[] = [
     },
     templates: ["blank-typescript", "default"],
     createExpo: "5.1.5",
+  },
+  {
+    kind: "bare",
+    minor: "0.85",
+    floor: "0.85.0",
+    verified: ["0.85.0", "0.85.3"],
+    scripts: "vendored",
+    artifacts: "adapted",
+    cli: "20.1.0",
   },
   {
     kind: "bare",
@@ -227,7 +236,7 @@ export function rnLineStatus(version: string): { status: RnLineStatus; line?: Ba
   return { status: compareVersions(version, line.floor) < 0 ? "below" : "newer", line };
 }
 
-/** "0.86.x from 0.86.2, 0.87.x from 0.87.1 and 0.88.x from 0.88.0" */
+/** "0.85.x from 0.85.0, 0.86.x from 0.86.2, 0.87.x from 0.87.1 and 0.88.x from 0.88.0" */
 export function supportedRnList(): string {
   const all = bareLines().map((l) => `${l.minor}.x from ${l.floor}`);
   return `${all.slice(0, -1).join(", ")} and ${all[all.length - 1]}`;

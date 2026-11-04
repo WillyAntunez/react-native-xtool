@@ -73,18 +73,17 @@ export function watchTargets(rnVersions: readonly string[]): WatchTarget[] {
 /** The Expo SDKs the weekly exploration looks at (older than every Expo row), from the blank-typescript template. */
 export const EXPLORE_EXPO_SDKS: readonly number[] = [54, 55, 56];
 /** The bare React Native minors the weekly exploration looks at (older than every bare row), at their newest patch. */
-export const EXPLORE_RN_MINORS: readonly string[] = ["0.81", "0.82", "0.83", "0.84", "0.85"];
+export const EXPLORE_RN_MINORS: readonly string[] = ["0.81", "0.82", "0.83", "0.84"];
 /**
  * The @react-native-community/cli each explored minor is created with, from package/template/package.json of
- * @react-native-community/template at the minor's newest patch (0.81.6, 0.82.1, 0.83.10, 0.84.1, 0.85.3), the same
- * source as the bare rows' `cli`. Pinned, never `@latest`: a CLI that drops an old minor would hide the evidence.
+ * @react-native-community/template at the minor's newest patch (0.81.6, 0.82.1, 0.83.10, 0.84.1), the same source
+ * as the bare rows' `cli`. Pinned, never `@latest`: a CLI that drops an old minor would hide the evidence.
  */
 export const EXPLORE_RN_CLI: Readonly<Record<string, string>> = {
   "0.81": "20.0.0",
   "0.82": "20.0.0",
   "0.83": "20.0.0",
   "0.84": "20.1.0",
-  "0.85": "20.1.0",
 };
 /** The create-expo the explored SDKs are created with: the Expo rows' pin. */
 export const EXPLORE_CREATE_EXPO = "5.1.5";

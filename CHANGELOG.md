@@ -42,6 +42,15 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   build) before the first download, per filesystem: "Not enough free disk space for setup: the filesystem of <folder>
   has <free> GB free, and setup needs about <need> GB there (<parts>). ...". It removes a half-written
   `darwin.artifactbundle.tmp` left by an interrupted SDK install first.
+- Bare React Native 0.85 (0.85.x from 0.85.0) builds through the same route as 0.86: rn-xtool's vendored SwiftPM
+  scripts, the prebuilt artifacts downloaded and adapted, and Hermes from the project's `hermes-compiler`
+  (250829098.0.10). 0.85.0 is verified on a physical iPhone (`build`, install over Wi‑Fi, the first launch, Hermes,
+  Fast Refresh, and reanimated 4.3.4 with worklets 0.8.3 animating); 0.85.3 is build-verified. A project on
+  `@react-native-community/cli` 20.0.0 builds too. react-native-reanimated 4.3.4 with react-native-worklets 0.8.3
+  builds on 0.85.0: the scaffolded worklets target now gets the `HERMES_V1_ENABLED` define that CocoaPods gives it
+  (also worklets 0.10.x when it is scaffolded again), so it no longer looks for the legacy Hermes inspector headers.
+  0.85.1 and 0.85.2 build with a warning that says to move to 0.85.3. The daily drift watch checks 0.85, and the
+  weekly exploration covers 0.81–0.84. See [bare-react-native.md](docs/bare-react-native.md#react-native-085).
 
 ### Changed
 - The first-run checklist line about the red screen now reads: "On the first launch iOS asks for Local Network access,

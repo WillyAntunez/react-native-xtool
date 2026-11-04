@@ -120,6 +120,26 @@ export function makeFakeSlot086(dir: string): void {
 }
 
 /**
+ * A pre-headers-spec slot as RN 0.85.x ships it: 0.86's layout, plus each slice's own
+ * React.framework/Modules/module.modulemap with `module * { export * }`, and an umbrella that imports
+ * <React/RCTDefines.h> after other headers (0.86.3 moved that import to the top).
+ */
+export function makeFakeSlot085(dir: string): void {
+  makeFakeSlot086(dir);
+  const react = path.join(dir, "React.xcframework");
+  const umbrella = '#import "RCTBridge.h"\n#import <React/RCTDefines.h>\n';
+  write(path.join(react, "Headers", "React_Core", "React_Core-umbrella.h"), umbrella);
+  for (const { id } of SLICES) {
+    const fw = path.join(react, id, "React.framework");
+    write(path.join(fw, "Headers", "React_Core", "React_Core-umbrella.h"), umbrella);
+    write(
+      path.join(fw, "Modules", "module.modulemap"),
+      'framework module React {\n  umbrella header "React_Core-umbrella.h"\n  export *\n  module * { export * }\n}\n',
+    );
+  }
+}
+
+/**
  * A headers-spec slot as RN 0.87.1+ ships it: flat React.framework headers, ReactNativeHeaders and
  * ReactNativeDependenciesHeaders xcframeworks (headers plus a placeholder static library per slice).
  */

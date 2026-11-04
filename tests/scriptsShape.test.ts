@@ -128,7 +128,7 @@ describe("readScriptsShape", () => {
 
 describe("scriptsCapability", () => {
   it("matches today's table for every supported version", async () => {
-    for (const v of ["0.86.2", "0.86.3", "0.86.4", "0.87.1", "0.87.2", "0.88.0", "0.88.1", "0.88.2"]) {
+    for (const v of ["0.85.0", "0.85.3", "0.85.4", "0.86.2", "0.86.3", "0.86.4", "0.87.1", "0.87.2", "0.88.0", "0.88.1", "0.88.2"]) {
       const rnDir = await rnDirWith(shapeForVersion(v));
       const cap = scriptsCapability(rnDir, v);
       expect(cap.mode, v).toBe(bareLineFor(v)!.scripts);
@@ -142,7 +142,8 @@ describe("scriptsCapability", () => {
     await dropExport(path.join(rnDir, "scripts"), "spm/flavored-frameworks.js", "finalizeArtifactPublication");
     const missing = ["spm/flavored-frameworks.js export finalizeArtifactPublication"];
     expect(scriptsCapability(rnDir, "0.88.1")).toEqual({ shape: "unknown", missing, recognised: false, mode: "installed" });
-    expect(scriptsCapability(rnDir, "0.85.0")).toEqual({ shape: "unknown", missing, recognised: false, mode: undefined });
+    expect(scriptsCapability(rnDir, "0.85.0")).toEqual({ shape: "unknown", missing, recognised: false, mode: "vendored" });
+    expect(scriptsCapability(rnDir, "0.84.1")).toEqual({ shape: "unknown", missing, recognised: false, mode: undefined });
   });
 
   it("a complete shape without a bundled patch of its line is unknown", async () => {

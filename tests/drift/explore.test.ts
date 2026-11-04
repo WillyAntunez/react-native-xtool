@@ -76,9 +76,9 @@ const bare081 = (): WatchTarget => exploreTargets(RN_VERSIONS).find((t) => t.id 
 const expo54 = (): WatchTarget => exploreTargets(RN_VERSIONS).find((t) => t.id === "expo-54/blank-typescript")!;
 
 describe("exploreTargets", () => {
-  it("explores Expo SDK 54–56 and bare 0.81–0.85", () => {
+  it("explores Expo SDK 54–56 and bare 0.81–0.84", () => {
     expect(EXPLORE_EXPO_SDKS).toEqual([54, 55, 56]);
-    expect(EXPLORE_RN_MINORS).toEqual(["0.81", "0.82", "0.83", "0.84", "0.85"]);
+    expect(EXPLORE_RN_MINORS).toEqual(["0.81", "0.82", "0.83", "0.84"]);
     const targets = exploreTargets(RN_VERSIONS);
     expect(targets.map((t) => t.id)).toEqual([
       "expo-54/blank-typescript",
@@ -88,7 +88,6 @@ describe("exploreTargets", () => {
       "bare-0.82",
       "bare-0.83",
       "bare-0.84",
-      "bare-0.85",
     ]);
     expect(targets[0]).toEqual({
       id: "expo-54/blank-typescript",
@@ -105,7 +104,6 @@ describe("exploreTargets", () => {
       ["bare-0.82", "0.82.1", "20.0.0"],
       ["bare-0.83", "0.83.10", "20.0.0"],
       ["bare-0.84", "0.84.1", "20.1.0"],
-      ["bare-0.85", "0.85.3", "20.1.0"],
     ]);
     expect(targets[3]!.title).toBe("Explore: React Native 0.81 (bare)");
     // Every target can be created: pinned tools, never @latest.
@@ -114,13 +112,12 @@ describe("exploreTargets", () => {
 
   it("pins the CLI each minor's template declares", () => {
     // From package/template/package.json of @react-native-community/template at each minor's newest patch
-    // (0.81.6, 0.82.1, 0.83.10, 0.84.1, 0.85.3), the same method as the bare rows' `cli`.
+    // (0.81.6, 0.82.1, 0.83.10, 0.84.1), the same method as the bare rows' `cli`.
     expect(EXPLORE_RN_CLI).toStrictEqual({
       "0.81": "20.0.0",
       "0.82": "20.0.0",
       "0.83": "20.0.0",
       "0.84": "20.1.0",
-      "0.85": "20.1.0",
     });
   });
 
@@ -134,7 +131,7 @@ describe("exploreTargets", () => {
 
   it("leaves a minor npm does not list without a version", () => {
     const bare = exploreTargets([]).filter((t) => t.kind === "bare");
-    expect(bare.map((t) => t.version)).toEqual([undefined, undefined, undefined, undefined, undefined]);
+    expect(bare.map((t) => t.version)).toEqual([undefined, undefined, undefined, undefined]);
   });
 });
 
@@ -213,16 +210,16 @@ describe("exploreTarget", () => {
   it("shows an artifact probe that could not answer as unknown", async () => {
     const dir = await appDir();
     const { run } = fakeRun(async () => {
-      await install(dir, "react-native", "0.85.3");
+      await install(dir, "react-native", "0.81.6");
       return { exitCode: 0, output: "" };
     });
     const row = await exploreTarget(bare081(), dir, {
       run,
       capabilities: async () => ({
         kind: "bare",
-        rnVersion: "0.85.3",
+        rnVersion: "0.81.6",
         scripts: { shape: "0.87", missing: [], recognised: true, mode: "vendored" },
-        artifacts: { status: "unknown", version: "0.85.3", missing: [], detail: "timed out after 10 s" },
+        artifacts: { status: "unknown", version: "0.81.6", missing: [], detail: "timed out after 10 s" },
         podspecs: NO_PODSPECS,
       }),
     });

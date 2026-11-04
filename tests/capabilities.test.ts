@@ -543,7 +543,7 @@ describe("unsupportedReason", () => {
       "React Native 0.81: no SwiftPM scripts, no prebuilt artifacts for 0.81.5; support comes with the translator",
     );
     expect(await reason(await bare("0.89.0", "0.88"))).toBe(
-      "React Native 0.89: newer than the lines this release supports (0.86, 0.87 and 0.88); a new minor is added once it is verified on a device",
+      "React Native 0.89: newer than the lines this release supports (0.85, 0.86, 0.87 and 0.88); a new minor is added once it is verified on a device",
     );
     expect(await reason(await bare("0.86.1", "none"))).toBe(
       "React Native 0.86.1: below the 0.86 floor (0.86.2); move react-native to 0.86.2 or newer",
@@ -585,6 +585,8 @@ describe("unsupportedReason", () => {
 
   it("has no reason for the lines it supports", async () => {
     expect(await reason(await bare("0.88.2", "0.88"))).toBeUndefined();
+    expect(await reason(await bare("0.85.0", "none"))).toBeUndefined();
+    expect(await reason(await bare("0.85.4", "none"))).toBeUndefined();
     expect(await reason(await expo57())).toBeUndefined();
     expect(await reason(await expo58())).toBeUndefined();
     const sdk59 = await tempDir("rn-xtool-caps-expo59-");

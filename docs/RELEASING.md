@@ -47,7 +47,7 @@ runner with no Swift and no Darwin SDK, uses only `GITHUB_TOKEN`, and never comp
 Daily (cron `23 5 * * *`, UTC), for each row of `SUPPORTED_LINES` in `src/versions.ts`, it creates a fresh project
 with the newest published version of the line: `create-expo` 5.1.5 with `blank-typescript@sdk-57`,
 `blank-typescript@sdk-58` and `default@sdk-58`, and `@react-native-community/cli init` (the CLI pinned per line) with
-the newest 0.86.x, 0.87.x and 0.88.x. On each project it runs three checks:
+the newest 0.85.x, 0.86.x, 0.87.x and 0.88.x. On each project it runs three checks:
 
 - **gates**: `rn-xtool doctor --project`, whose exit code decides: the version gates (G1–G3, the bare floors), the
   scripts the build would pick, and whether the React Native artifacts are published;
@@ -78,10 +78,10 @@ The report job keeps one GitHub issue per broken line, labelled `drift` and titl
 ### Running it by hand
 
 - `gh workflow run drift-watch.yml -f mode=daily` (or "Run workflow" in the Actions tab) runs the daily check.
-- `-f drill=<line id>` (`expo-57`, `expo-58`, `bare-0.86`, `bare-0.87` or `bare-0.88`) marks that line red for one
-  daily run, with a `drill` step, to test the issue path end to end: the run opens or updates that line's issue, and
-  the next run without `drill` closes it. Any other value stops the report before it touches an issue. `drill` is
-  ignored with `mode=explore`.
+- `-f drill=<line id>` (`expo-57`, `expo-58`, `bare-0.85`, `bare-0.86`, `bare-0.87` or `bare-0.88`) marks that line
+  red for one daily run, with a `drill` step, to test the issue path end to end: the run opens or updates that line's
+  issue, and the next run without `drill` closes it. Any other value stops the report before it touches an issue.
+  `drill` is ignored with `mode=explore`.
 - `-f mode=explore` runs the weekly exploration.
 - Locally, after `npm run build`: `node scripts/drift-watch.mjs` prints its subcommands. `check --existing` checks a
   project you already have instead of creating one, and `report --dry-run` prints the issue actions without calling
@@ -90,7 +90,7 @@ The report job keeps one GitHub issue per broken line, labelled `drift` and titl
 ### Weekly exploration
 
 Weekly (cron `47 5 * * 1`, Mondays, UTC), report only: the newest Expo SDK 54, 55 and 56 `blank-typescript` templates
-and fresh bare React Native 0.81 to 0.85 projects (the newest patch of each, the CLI pinned per minor) go through
+and fresh bare React Native 0.81 to 0.84 projects (the newest patch of each, the CLI pinned per minor) go through
 the capability detector. The run summary gets an "Older lines (exploration, report only)" table: installed versions,
 scripts, artifacts, Expo plugin, Expo modules, podspec features, and the reason rn-xtool does not support the line.
 It opens no issue and never fails the run. A project that cannot be created, or a job that does not finish, shows as

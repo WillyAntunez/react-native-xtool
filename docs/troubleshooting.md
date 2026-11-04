@@ -368,9 +368,16 @@ same warning.
   Verified: <versions>. The build continues; if it fails or the app crashes at launch, move react-native back to
   <version> as https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/bare-react-native.md#upgrading-react-native
   describes, and report it at https://github.com/WillyAntunez/react-native-xtool/issues."** A bare project is on a
-  release of 0.86.x, 0.87.x or 0.88.x above the floor that this release was not verified with, for example 0.88.2.
+  release of 0.85.x, 0.86.x, 0.87.x or 0.88.x newer than every version of its line this release was verified with,
+  for example 0.88.2 or 0.85.4.
   A hybrid app (bare + Expo modules) does not get this warning: it needs react-native 0.88.1, and on a newer 0.88.x
   G1 stops it.
+- **"⚠ Not among the React Native <minor> versions this rn-xtool release was verified with: react-native <version>.
+  Verified: <versions>. The build continues; if it fails or the app crashes at launch, move react-native to
+  <version> as https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/bare-react-native.md#upgrading-react-native
+  describes, and report it at https://github.com/WillyAntunez/react-native-xtool/issues."** The same case, for a
+  release between two verified versions of the line: 0.85.1 and 0.85.2 sit between the verified 0.85.0 and 0.85.3.
+  The version to move to is the line's last verified one, which is newer than the installed one.
 
 On a newer version the build uses the line's patches: the patch for the installed version when rn-xtool bundles one,
 else the highest bundled patch of the same release line (react-native 0.88.2 gets the 0.88.1 patch; a newer 57.x
@@ -487,7 +494,7 @@ messages and the two hybrid ones at the end, and print the sixth and go on; the 
   describes."** A hybrid
   app (bare React Native with Expo modules) has an older `expo`. Hybrids also get the messages above.
 - **"React Native <version> with Expo modules is not supported. Expo SDK 58 needs React Native 0.88.1."** A hybrid on
-  React Native 0.86 or 0.87; a hybrid on 0.88.0 gets the first message, naming `react-native 0.88.0`.
+  React Native 0.85, 0.86 or 0.87; a hybrid on 0.88.0 gets the first message, naming `react-native 0.88.0`.
 
 ### Moving to the 58.0.21 set
 
@@ -556,7 +563,7 @@ check) and `build` stop with these messages:
 - **"ExpoModulesJSI needs React Native's headers at <dir>, which does not exist. rnArtifactsDir must hold adapted
   0.86.3 slots, as rn-xtool's rn-artifacts step writes them."** At the `jsi` step: `rnArtifactsDir` points at raw
   0.86.3 artifacts. Build once without `rnArtifactsDir` and point it at that project's `ios/build/rn-artifacts/0.86.3`
-  (see [bare-react-native.md](bare-react-native.md#older-artifacts-086)).
+  (see [bare-react-native.md](bare-react-native.md#older-artifacts-085-086)).
 
 **Install SDK 57's reanimated and worklets explicitly.** expo-router declares react-native-reanimated as a `*` peer.
 When the app does not install it, npm installs the latest reanimated and react-native-worklets, and that worklets is
@@ -581,7 +588,8 @@ checks, so it also runs on a machine without Swift or xtool. Run it from the pro
 ℹ information), and exits non-zero when any line fails:
 
 - **versions**: the line that covers the installed versions, for example
-  `React Native 0.88.1: the 0.88 line (0.88.0 or newer), verified 0.88.0 and 0.88.1` or
+  `React Native 0.88.1: the 0.88 line (0.88.0 or newer), verified 0.88.0 and 0.88.1`,
+  `React Native 0.85.0: the 0.85 line (0.85.0 or newer), verified 0.85.0 and 0.85.3` or
   `Expo SDK 58: expo 58.0.21 (verified 58.0.21), react-native 0.88.1 (verified 0.88.1)`. It fails with a reason when
   no line covers the version (below), and adds `; refused by the version gate (see project)` when a version gate (G1,
   a bare floor, a hybrid's gate) refuses the project; the `project` line then holds the gate's message. Expo SDK 59
@@ -590,7 +598,8 @@ checks, so it also runs on a machine without Swift or xtool. Run it from the pro
   `react-native/scripts` and looks for the entry points and options its driver calls (see
   [how-it-works.md](how-it-works.md#vendored-swiftpm-scripts)):
   - `react-native's own SwiftPM scripts (0.88 layout)`: the installed scripts are used (0.88.x).
-  - `react-native ships no SwiftPM scripts: rn-xtool's vendored copy (React Native 0.88.0)` (0.86.x, Expo SDK 57).
+  - `react-native ships no SwiftPM scripts: rn-xtool's vendored copy (React Native 0.88.0)` (0.85.x, 0.86.x, Expo SDK
+    57).
   - `react-native's SwiftPM scripts lack <file> export <name>; ... (0.87 layout): rn-xtool's vendored copy (React
     Native 0.88.0)` (0.87.x).
   - `not recognised (missing: <what>); the version table picks the <mode> scripts — run npm install to reinstall
@@ -639,8 +648,8 @@ promise the vendored copy.
   0.86.1.
 - `React Native <version>: a prerelease; rn-xtool supports releases of the <minor> line from <floor>`, for example
   0.88.2-rc.1.
-- `React Native <minor>: newer than the lines this release supports (0.86, 0.87 and 0.88); a new minor is added once
-  it is verified on a device`.
+- `React Native <minor>: newer than the lines this release supports (0.85, 0.86, 0.87 and 0.88); a new minor is added
+  once it is verified on a device`.
 - `React Native <minor>: <what its scripts are>; support comes with the translator`, for older minors such as 0.81,
   and `Expo SDK <n>: expo ships <its|no> SwiftPM plugin; React Native <minor>: <what its scripts are>; support comes
   with the translator` for Expo SDK 56 and older. `<what its scripts are>` is `no SwiftPM scripts`,
