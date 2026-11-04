@@ -589,6 +589,25 @@ describe("doctor --project", () => {
     expect(unknown.checks.some((c) => c.name === "known-limits")).toBe(false);
   });
 
+  it("--project names orphan patches", async () => {
+    const line =
+      "patches/react-native-device-info+15.0.2.patch is for react-native-device-info, which is not installed; skipped. " +
+      "Delete it if you removed the library.";
+    const r = await doctorWithProbes(
+      { ...good, capabilities: async () => ({ ...expo58Caps, orphanPatches: [`⚠ ${line}`] }) },
+      "/proj",
+      { projectOnly: true },
+    );
+    expect(r.checks.filter((c) => c.name === "patches")).toEqual([{ name: "patches", status: "warn", detail: line }]);
+    expect(r.checks.map((c) => c.name).slice(-2)).toEqual(["podspecs", "patches"]);
+    expect(renderReport(r.checks)).toContain(`⚠ patches — ${line}`);
+    expect(r.ok).toBe(true);
+    const none = await doctorWithProbes({ ...good, capabilities: async () => ({ ...expo58Caps, orphanPatches: [] }) }, "/proj", {
+      projectOnly: true,
+    });
+    expect(none.checks.some((c) => c.name === "patches")).toBe(false);
+  });
+
   it("plain doctor prints no capability lines", async () => {
     const called: string[] = [];
     const r = await doctorWithProbes(

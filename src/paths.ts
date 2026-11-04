@@ -16,6 +16,8 @@ export interface ProjectPaths {
   iosXtool: string;
   /** Per-run staging dir of bundled patches selected for the installed packages. */
   patchesDir: string;
+  /** Per-run staging dir of the project's `patches/` without those for packages that are not installed. */
+  projectPatchesDir: string;
   /** What the driver's scaffold step did for each library (`rn-spm-generate.js --results`). */
   scaffoldResults: string;
   sources: string;
@@ -42,6 +44,7 @@ export function projectPaths(root: string): ProjectPaths {
     generatedIos: join(iosBuild, "generated", "ios"),
     iosXtool,
     patchesDir: join(iosXtool, ".patches"),
+    projectPatchesDir: join(iosXtool, ".project-patches"),
     scaffoldResults: join(iosBuild, "rn-xtool-scaffold-results.json"),
     sources: join(iosXtool, "Sources", "App"),
     frameworks: join(iosXtool, "Frameworks"),

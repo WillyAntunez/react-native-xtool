@@ -10,6 +10,8 @@ import {
   projectPatchesArgv,
   findPatchMismatch,
   genericPatchFailureMessage,
+  orphanPatchLine,
+  orphanPatches,
   outputNamesPackage,
   parsePatchFileName,
   selectBundledPatches,
@@ -669,6 +671,7 @@ describe("applyPatches with project patches", () => {
     const { root } = await bundledProject();
     await mkdir(path.join(root, "patches"));
     await writeFile(path.join(root, "patches", "lib+1.0.0.patch"), "");
+    await installPkg(root, "lib");
     const calls: { args: string[]; cwd: string }[] = [];
     await applyPatches(root, async (_c, args, cwd) => (calls.push({ args, cwd }), { exitCode: 0 }));
     expect(calls).toHaveLength(2);
@@ -682,10 +685,148 @@ describe("applyPatches with project patches", () => {
     const { root } = await bundledProject();
     await mkdir(path.join(root, "patches"));
     await writeFile(path.join(root, "patches", "lib+1.0.0.patch"), "");
+    await installPkg(root, "lib");
     let n = 0;
     await expect(
       applyPatches(root, async () => (++n === 1 ? ok() : { exitCode: 1, all: "bad patch" })),
     ).rejects.toThrow(/project's patches[\s\S]*bad patch/);
+  });
+});
+
+describe("patches for packages that are not installed", () => {
+  const ORPHAN =
+    "⚠ patches/react-native-device-info+15.0.2.patch is for react-native-device-info, which is not installed; skipped. " +
+    "Delete it if you removed the library.";
+  async function project(files: Record<string, string>, installed: string[]) {
+    const { root } = await tempProject();
+    await installPkg(root, "react-native", "0.88.0");
+    for (const pkg of installed) await installPkg(root, pkg);
+    for (const [name, text] of Object.entries(files)) {
+      await mkdir(path.dirname(path.join(root, "patches", name)), { recursive: true });
+      await writeFile(path.join(root, "patches", name), text);
+    }
+    return root;
+  }
+  const record = () => {
+    const calls: { args: string[]; cwd: string }[] = [];
+    const exec = async (_c: string, args: string[], cwd: string) => (calls.push({ args, cwd }), { exitCode: 0 });
+    return { calls, exec };
+  };
+
+  it("skips a patch whose package is not installed, with one warning", async () => {
+    const root = await project({ "a+1.0.0.patch": "a's patch", "react-native-device-info+15.0.2.patch": "gone" }, ["a"]);
+    const { calls, exec } = record();
+    const lines: string[] = [];
+    await applyPatches(root, exec, { rnScripts: "installed", log: (l) => lines.push(l) });
+    expect(calls).toHaveLength(2);
+    expect(calls[1]!.args.slice(1)).toEqual(["--patch-dir", path.join("ios-xtool", ".project-patches"), "--error-on-fail"]);
+    expect(calls[1]!.cwd).toBe(root);
+    const staged = projectPaths(root).projectPatchesDir;
+    expect(readdirSync(staged)).toEqual(["a+1.0.0.patch"]);
+    expect(readFileSync(path.join(staged, "a+1.0.0.patch"), "utf8")).toBe("a's patch");
+    expect(lines).toEqual([ORPHAN]);
+    expect(orphanPatches(root)).toEqual([{ file: "react-native-device-info+15.0.2.patch", pkg: "react-native-device-info" }]);
+  });
+
+  it("stages nothing when no patch is orphaned", async () => {
+    const root = await project({ "a+1.0.0.patch": "", "@scope+b+2.0.0.patch": "" }, ["a", "@scope/b"]);
+    const { calls, exec } = record();
+    const lines: string[] = [];
+    await applyPatches(root, exec, { rnScripts: "installed", log: (l) => lines.push(l) });
+    expect(calls[1]!.args).toEqual(projectPatchesArgv()[1]);
+    expect(existsSync(projectPaths(root).projectPatchesDir)).toBe(false);
+    expect(lines).toEqual([]);
+    expect(orphanPatches(root)).toEqual([]);
+  });
+
+  it("reads a scoped package's orphan", async () => {
+    const root = await project({ "@scope+pkg+1.0.0.patch": "" }, ["pkg"]);
+    expect(orphanPatches(root)).toEqual([{ file: "@scope+pkg+1.0.0.patch", pkg: "@scope/pkg" }]);
+    expect(orphanPatchLine(orphanPatches(root)[0]!)).toBe(
+      "⚠ patches/@scope+pkg+1.0.0.patch is for @scope/pkg, which is not installed; skipped. Delete it if you removed the library.",
+    );
+  });
+
+  it("reads patch-package's nested, sequenced and subfolder names", async () => {
+    const root = await project(
+      {
+        "expo++expo-modules-core+1.0.0.patch": "",
+        "expo++gone+1.0.0.patch": "",
+        "a+1.0.0+001+first.patch": "",
+        "sub/b+1.0.0.patch": "",
+        "notes.txt": "",
+      },
+      ["expo", "expo/node_modules/expo-modules-core", "a"],
+    );
+    expect(orphanPatches(root)).toEqual([
+      { file: "expo++gone+1.0.0.patch", pkg: "expo => gone" },
+      { file: "sub/b+1.0.0.patch", pkg: "sub/b" },
+    ]);
+    const { calls, exec } = record();
+    await applyPatches(root, exec, { rnScripts: "installed", log: () => {} });
+    const staged = projectPaths(root).projectPatchesDir;
+    expect(calls).toHaveLength(2);
+    expect(existsSync(path.join(staged, "expo++expo-modules-core+1.0.0.patch"))).toBe(true);
+    expect(existsSync(path.join(staged, "a+1.0.0+001+first.patch"))).toBe(true);
+    expect(existsSync(path.join(staged, "sub", "b+1.0.0.patch"))).toBe(false);
+    expect(existsSync(path.join(staged, "expo++gone+1.0.0.patch"))).toBe(false);
+  });
+
+  it("does not call a scoped patch in a subfolder an orphan, as patch-package reads the path under patches/", async () => {
+    // patch-package 8.0.1 parses the path relative to the patch dir: patches/@scope/name+1.0.0.patch is for
+    // node_modules/@scope/name.
+    const root = await project({ "@scope/name+1.0.0.patch": "scoped", "gone+1.0.0.patch": "" }, ["@scope/name"]);
+    expect(orphanPatches(root)).toEqual([{ file: "gone+1.0.0.patch", pkg: "gone" }]);
+    const { calls, exec } = record();
+    await applyPatches(root, exec, { rnScripts: "installed", log: () => {} });
+    expect(calls).toHaveLength(2);
+    expect(readFileSync(path.join(projectPaths(root).projectPatchesDir, "@scope", "name+1.0.0.patch"), "utf8")).toBe("scoped");
+  });
+
+  it("names the patch under patches/, not its staged copy, when a staged run fails", async () => {
+    const root = await project({ "a+1.0.0.patch": "", "gone+1.0.0.patch": "" }, ["a"]);
+    const staged = path.join("ios-xtool", ".project-patches");
+    const output = `**ERROR** Failed to apply patch for package a\n  ${staged}/a+1.0.0.patch\n  ${path.join(root, staged, "a+1.0.0.patch")}`;
+    let n = 0;
+    const exec = async () => (++n === 1 ? { exitCode: 0 } : { exitCode: 1, all: output });
+    const err = await applyPatches(root, exec, { rnScripts: "installed", log: () => {} }).then(
+      () => undefined,
+      (e: Error) => e,
+    );
+    expect(err?.message).toContain(`  patches/a+1.0.0.patch\n  ${path.join(root, "patches", "a+1.0.0.patch")}`);
+    expect(err?.message).not.toContain(".project-patches");
+  });
+
+  it("runs no patch-package for the project when every patch is orphaned, and drops an earlier staging", async () => {
+    const root = await project({ "react-native-device-info+15.0.2.patch": "" }, []);
+    const staged = projectPaths(root).projectPatchesDir;
+    await mkdir(staged, { recursive: true });
+    await writeFile(path.join(staged, "old+1.0.0.patch"), "");
+    const { calls, exec } = record();
+    const lines: string[] = [];
+    await applyPatches(root, exec, { rnScripts: "installed", log: (l) => lines.push(l) });
+    expect(calls).toHaveLength(1);
+    expect(lines).toEqual([ORPHAN]);
+    expect(existsSync(path.join(staged, "old+1.0.0.patch"))).toBe(false);
+  });
+
+  it("gives an orphan scaffold patch the orphan line only", async () => {
+    const scaffold = [
+      "diff --git a/node_modules/react-native-device-info/Package.swift b/node_modules/react-native-device-info/Package.swift",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/node_modules/react-native-device-info/Package.swift",
+      "@@ -0,0 +1,3 @@",
+      "+// AUTO-SCAFFOLDED by react-native spm scaffold",
+      "+// rn-xtool-scaffold-revision: 1",
+      "+// Cache slot: 0.86.3/dual-flavor",
+      "",
+    ].join("\n");
+    const root = await project({ "react-native-device-info+15.0.2.patch": scaffold }, []);
+    expect(scaffoldPatchWarnings(root)).toEqual([]);
+    const lines: string[] = [];
+    await applyPatches(root, record().exec, { rnScripts: "installed", log: (l) => lines.push(l) });
+    expect(lines).toEqual([ORPHAN]);
   });
 });
 
@@ -716,6 +857,7 @@ describe("patch-package failure detection", () => {
     await mkdir(path.join(root, "patches"));
     await writeFile(path.join(root, "patches", "a+b+1.0.0.patch"), "x");
     await installPkg(root, "react-native", "0.88.0");
+    await installPkg(root, "a/b");
     let n = 0;
     const exec = async () => ({
       exitCode: 0,
@@ -750,6 +892,10 @@ describe("scaffold patches from another React Native version", () => {
     await writeFile(path.join(root, "patches", "@scope+lib+1.0.0.patch"), scaffoldPatch("0.88.0"));
     await writeFile(path.join(root, "patches", "react-native-svg+15.16.0.patch"), scaffoldPatch("0.87.1"));
     await writeFile(path.join(root, "patches", "hand-made+1.0.0.patch"), scaffoldPatch("0.86.3", null));
+    await installPkg(root, "react-native-screens");
+    await installPkg(root, "@scope/lib");
+    await installPkg(root, "react-native-svg");
+    await installPkg(root, "hand-made");
     const lines: string[] = [];
     await applyPatches(root, async () => ({ exitCode: 0 }), { rnScripts: "vendored", log: (l) => lines.push(l) });
     expect(lines).toEqual([
@@ -771,6 +917,10 @@ describe("scaffold patches from another React Native version", () => {
     await writeFile(path.join(root, "patches", "react-native-svg+15.16.0.patch"), scaffoldPatch("0.87.1", 4));
     // Both stale: the slot warning wins, one line per patch.
     await writeFile(path.join(root, "patches", "react-native-safe-area-context+5.6.0.patch"), scaffoldPatch("0.86.3", 1));
+    await installPkg(root, "react-native-screens");
+    await installPkg(root, "@scope/lib");
+    await installPkg(root, "react-native-svg");
+    await installPkg(root, "react-native-safe-area-context");
     expect(scaffoldPatchWarnings(root)).toEqual([
       "⚠ patches/@scope+lib+1.0.0.patch was written by an older rn-xtool scaffolder (revision 1, now 4); delete it so rn-xtool " +
         "regenerates it (also remove node_modules/@scope/lib and reinstall: that copy still has the old Package.swift)",
@@ -791,6 +941,7 @@ describe("scaffold patches from another React Native version", () => {
     await installPkg(root, "react-native", "0.88.1");
     await mkdir(path.join(root, "patches"));
     await writeFile(path.join(root, "patches", "react-native-svg+15.16.0.patch"), scaffoldPatch("0.88.1", 3));
+    await installPkg(root, "react-native-svg");
     expect(scaffoldPatchWarnings(root)).toEqual([
       "⚠ patches/react-native-svg+15.16.0.patch was written by an older rn-xtool scaffolder (revision 3, now 4); delete it " +
         "so rn-xtool regenerates it (also remove node_modules/react-native-svg and reinstall: that copy still has the old " +
@@ -805,6 +956,8 @@ describe("scaffold patches from another React Native version", () => {
     const legacy = (slot: string) => scaffoldPatch(slot, 1).replace("rn-xtool-scaffold-revision", "expo-xtool-scaffold-revision");
     await writeFile(path.join(root, "patches", "react-native-screens+4.30.0.patch"), legacy("0.88.0"));
     await writeFile(path.join(root, "patches", "react-native-svg+15.16.0.patch"), legacy("0.88.1"));
+    await installPkg(root, "react-native-screens");
+    await installPkg(root, "react-native-svg");
     expect(scaffoldPatchWarnings(root)).toEqual([
       "⚠ patches/react-native-screens+4.30.0.patch was scaffolded for React Native 0.88.0; delete it so rn-xtool regenerates " +
         "it for 0.88.1 (also remove node_modules/react-native-screens and reinstall: that copy still has the old Package.swift)",
@@ -826,6 +979,7 @@ describe("scaffold patches from another React Native version", () => {
     await installPkg(root, "react-native", "0.86.3");
     await mkdir(path.join(root, "patches"));
     await writeFile(path.join(root, "patches", "react-native-screens+4.30.0.patch"), scaffoldPatch("0.86.3"));
+    await installPkg(root, "react-native-screens");
     const lines: string[] = [];
     await applyPatches(root, async () => ({ exitCode: 0 }), { rnScripts: "vendored", log: (l) => lines.push(l) });
     expect(lines).toEqual([]);
@@ -989,6 +1143,7 @@ describe("scaffolded manifests in node_modules older than the scaffolder or the 
       "patches/react-native-svg+15.16.0.patch": newFilesPatch("react-native-svg", { "Package.swift": manifest(4, "0.87.1") }),
     };
     for (const [rel, text] of Object.entries(files)) await put(root, rel, text);
+    for (const pkg of ["react-native-screens", "react-native-svg"]) await installPkg(root, pkg);
     const lines: string[] = [];
     await applyPatches(root, async () => ({ exitCode: 0 }), { ...noBundled, log: (l) => lines.push(l) });
     for (const [rel, text] of Object.entries(files)) expect(read(root, rel), rel).toBe(text);

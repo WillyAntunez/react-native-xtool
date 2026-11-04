@@ -11,6 +11,7 @@ import path from "node:path";
 import { loadConfig } from "../config.js";
 import { projectPaths } from "../paths.js";
 import { rawSlotComplete, rnArtifactsCacheRoot, type Flavor } from "../pipeline/rnArtifactsStep.js";
+import { orphanPatchLine, orphanPatches } from "../pipeline/patches.js";
 import { resolveRnDir, vendoredScriptsRoot } from "../pipeline/rnSpm.js";
 import { bareLines, compareVersions, expoPluginFor, releaseLine, rnLineStatus } from "../versions.js";
 import { DetectError, detectProjectKind } from "./detect.js";
@@ -224,6 +225,8 @@ export interface Capabilities {
    * allowed; detectCapabilities always sets it.
    */
   limits?: EarlyFailure[];
+  /** The `⚠` line for each of the project's patches whose package is not installed; detectCapabilities always sets it. */
+  orphanPatches?: string[];
 }
 
 /** The SwiftPM settings reader the build's plugin discovery uses (vendor/rn-spm/spm/swiftpm-config.js). */
@@ -302,6 +305,7 @@ export async function detectCapabilities(projectRoot: string, opts: ProbeOptions
   const caps: Capabilities = {
     podspecs: podspecFeatures(root),
     limits: allowKnownLimits(earlyFailures(root), config.knownLimits?.allow ?? []),
+    orphanPatches: orphanPatches(root).map(orphanPatchLine),
   };
   if (kind !== undefined) caps.kind = kind;
   if (expoVersion !== undefined) {
