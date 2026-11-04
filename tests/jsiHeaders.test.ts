@@ -98,7 +98,7 @@ describe("writeJsiHeadersXcframework", () => {
     });
   });
 
-  it.skipIf(spawnSync("ar", ["--version"]).status !== 0)("the placeholder archives are valid", async () => {
+  it.skipIf(spawnSync("ar", ["--version"]).status !== 0)("the placeholder archives are valid (needs ar)", async () => {
     const s = setup();
     await writeJsiHeadersXcframework(s.input);
     for (const slice of SLICES) {
@@ -182,7 +182,7 @@ describe("writeJsiHeadersXcframework", () => {
     expect(existsSync(s.stamp)).toBe(true);
   });
 
-  it.skipIf(process.getuid?.() === 0)("a copy failing mid-synthesis keeps the previous tree and its stamp", async () => {
+  it.skipIf(process.getuid?.() === 0)("a copy failing mid-synthesis keeps the previous tree and its stamp (needs a non-root user)", async () => {
     const s = setup();
     expect(await writeJsiHeadersXcframework(s.input)).toBe("written");
     const before = new Map(listFiles(s.xcframework).map((f) => [f, readFileSync(path.join(s.xcframework, f))]));

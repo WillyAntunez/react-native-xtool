@@ -227,7 +227,7 @@ const hasNm = await makeNmRunner()(["--version"]).then(
   () => false,
 );
 
-describe.skipIf(!hasNm)("checkFrameworkSymbols on real Mach-O binaries", () => {
+describe.skipIf(!hasNm)("checkFrameworkSymbols on real Mach-O binaries (needs llvm-nm)", () => {
   const dir = fixture("macho-symbols");
   const mod = fw("fixture-mod", "Mod", path.join(dir, "Mod.framework"));
   const coreV1 = fw("fixture-core", "Core", path.join(dir, "Core-v1", "Core.framework"));

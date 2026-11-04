@@ -1,12 +1,12 @@
-export const XTOOL_VERSION = "1.23.0";
+export const XTOOL_VERSION = "1.24.0";
 /**
  * sha256 of the official xtool AppImage for XTOOL_VERSION, per Linux arch.
- * Provenance: release 1.23.0 of xtool-org/xtool, assets xtool-x86_64.AppImage and xtool-aarch64.AppImage,
- * downloaded 2026-10-23 via `gh release download` and hashed with `sha256sum` (GitHub publishes no checksum).
+ * Provenance: release 1.24.0 of xtool-org/xtool, assets xtool-x86_64.AppImage and xtool-aarch64.AppImage,
+ * downloaded 2026-11-02 via `gh release download` and hashed with `sha256sum` (GitHub publishes no checksum).
  */
 export const XTOOL_SHA256: Record<string, string | undefined> = {
-  x86_64: "270fb6630baeede2cc7c516bfada2de81f99e11c00b5927f59c0cb5129bd56f7",
-  aarch64: "649e8bdc799c9273ca54be1a84e7093e4be970d4780b4b22409517935dc2053b",
+  x86_64: "dbfd9d7216f077c84c171b688c4173c37c23ca76bf7fd185d1a9ae8a53dab59f",
+  aarch64: "4bc0515fed71efb86e82564f358efa0c4c6d76bf1bcfd4c5f256727b53ec59c8",
 };
 export const SWIFT_VERSION = "6.4";
 /** The oldest Node rn-xtool runs on: package.json's engines floor, the highest of its dependencies' (commander 15). */

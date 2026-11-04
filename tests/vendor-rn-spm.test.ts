@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -6,25 +5,24 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { packageRoot } from "../src/tools/exec.js";
+import { RN_INTEGRITY as INTEGRITY, RN_TARBALL as TARBALL } from "./support/rnScaffold.js";
+import { FETCH_HINT } from "./support/tarballs.js";
+import { hasTool, patchTool, tool } from "./support/tools.js";
 
 const ROOT = packageRoot();
 const VENDOR = path.join(ROOT, "vendor", "rn-spm");
-const TARBALL = path.join(ROOT, "tests", ".cache", "react-native-0.88.0.tgz");
-const INTEGRITY =
-  "sha512-v/wee0nYWcammMYBnSat/e3WY/5iaf9YQOMcBrfKT/wPApPPlHp94hgZovBtwhMuthR01yc/8cGn0FpFTE/C4A==";
-const FETCH_CMD = "mkdir -p tests/.cache && npm pack react-native@0.88.0 --pack-destination tests/.cache";
 /** The patch is in patch-package format (a/node_modules/react-native/scripts/...): strip 4 to land in scripts/. */
 const PATCH_STRIP = "-p4";
 const EXTRACT = ["package/scripts/setup-apple-spm.js", "package/scripts/spm", "package/scripts/codegen/templates/Package.swift.spm-template"];
 const NOT_UPSTREAM = new Set(["README.md", "LICENSE", "package.json", "rn-xtool-edits.patch"]);
 
-const has = (cmd: string) => spawnSync(cmd, ["--version"]).status === 0;
+const has = hasTool;
 const skipReason = !existsSync(TARBALL)
-  ? `pristine tarball missing; run: ${FETCH_CMD}`
+  ? `pristine tarball missing; ${FETCH_HINT}`
   : !has("tar") || !has("patch")
     ? "tar and patch are required"
     : null;
-const provenance = skipReason ? it.skip : it;
+const provenance = skipReason ? (title: string, fn: () => void) => it.skip(`${title} (${skipReason})`, fn) : it;
 
 const tmp: string[] = [];
 const mkTmp = (prefix: string) => {
@@ -55,10 +53,10 @@ describe("vendor/rn-spm provenance", () => {
 
   provenance("vendor/rn-spm is react-native 0.88.0 with our patch and rn-xtool-edits.patch applied", () => {
     const dir = mkTmp("vendor-rn-spm-");
-    expect(spawnSync("tar", ["-xzf", TARBALL, "-C", dir, ...EXTRACT]).status).toBe(0);
+    expect(tool("tar", ["-xzf", TARBALL, "-C", dir, ...EXTRACT]).status).toBe(0);
     const scripts = path.join(dir, "package", "scripts");
     const patchOne = (strip: string, file: string) =>
-      spawnSync("patch", [strip, "-F0", "-d", scripts, "-i", file], { encoding: "utf8" });
+      patchTool([strip, "-F0", "-d", scripts, "-i", file]);
     const first = patchOne(PATCH_STRIP, path.join(ROOT, "patches", "react-native+0.88.0.patch"));
     expect(first.status, first.stdout + first.stderr).toBe(0);
     const second = patchOne("-p1", path.join(VENDOR, "rn-xtool-edits.patch"));
@@ -73,7 +71,7 @@ describe("vendor/rn-spm provenance", () => {
   });
 
   provenance("LICENSE is react-native 0.88.0's", () => {
-    const out = spawnSync("tar", ["-xzOf", TARBALL, "package/LICENSE"], { maxBuffer: 1 << 24 });
+    const out = tool("tar", ["-xzOf", TARBALL, "package/LICENSE"], { encoding: "buffer" }) as unknown as { status: number | null; stdout: Buffer };
     expect(out.status).toBe(0);
     expect(readFileSync(path.join(VENDOR, "LICENSE")).equals(out.stdout)).toBe(true);
   });

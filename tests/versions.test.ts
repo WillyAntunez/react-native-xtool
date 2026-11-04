@@ -13,9 +13,26 @@ import {
   rnLineStatus,
   SUPPORTED_LINES,
   supportedRnList,
+  XTOOL_SHA256,
+  XTOOL_VERSION,
 } from "../src/versions.js";
+import { GSA_503_FIXED_IN_XTOOL } from "../src/tools/xtoolErrors.js";
 import { EXPO57_PINS } from "./support/expo57.js";
 import { EXPO58_PINS } from "./support/expo58.js";
+
+describe("xtool pin", () => {
+  it("pins xtool 1.24.0", () => {
+    expect(XTOOL_VERSION).toBe("1.24.0");
+    expect(XTOOL_SHA256.x86_64).toMatch(/^[0-9a-f]{64}$/);
+    expect(XTOOL_SHA256.aarch64).toMatch(/^[0-9a-f]{64}$/);
+    expect(XTOOL_SHA256.x86_64).not.toBe("270fb6630baeede2cc7c516bfada2de81f99e11c00b5927f59c0cb5129bd56f7");
+    expect(XTOOL_SHA256.aarch64).not.toBe("649e8bdc799c9273ca54be1a84e7093e4be970d4780b4b22409517935dc2053b");
+  });
+
+  it("is at least the release that fixed the Apple sign-in 503", () => {
+    expect(compareVersions(XTOOL_VERSION, GSA_503_FIXED_IN_XTOOL)).toBeGreaterThanOrEqual(0);
+  });
+});
 
 describe("supported lines", () => {
   it("holds every supported line in one table", () => {

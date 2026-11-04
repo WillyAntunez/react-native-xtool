@@ -14,6 +14,14 @@ import { prepareRnArtifacts } from "../pipeline/rnArtifactsStep.js";
 import type { ExpoPlugin, RnScripts } from "../versions.js";
 import { runRnSpm } from "../pipeline/rnSpm.js";
 import { checkFrameworkSymbols } from "../pipeline/symbols.js";
+import {
+  allowedLimitText,
+  allowKnownLimits,
+  installFailures,
+  libraryFailures,
+  UnsupportedSetupError,
+  type EarlyFailure,
+} from "../project/earlyChecks.js";
 import { readProject, RN_CLI_MISSING, type ProjectInfo, type ProjectKind, type ReadProjectOptions } from "../project/index.js";
 import { readState, writeState, type BuildState } from "../state.js";
 import { run } from "../tools/exec.js";
@@ -94,6 +102,10 @@ export async function chooseMetroPort(i: MetroPortInput): Promise<{ port: number
 
 export interface BuildDeps {
   loadConfig: (root: string) => Promise<ExpoXtoolConfig>;
+  /** The install layouts rn-xtool refuses before reading the project (pnpm, Yarn PnP, hoisted packages). */
+  installFailures: (root: string) => EarlyFailure[];
+  /** The libraries rn-xtool refuses (a Package.swift the project's patches/ create counts), checked with the installs. */
+  libraryFailures: (root: string) => EarlyFailure[];
   readProject: (root: string, opts?: ReadProjectOptions) => Promise<ProjectInfo>;
   exists: (path: string) => boolean;
   /** Deletes a directory tree (no error when it is missing). */
@@ -129,6 +141,8 @@ export interface BuildDeps {
 
 const realDeps: BuildDeps = {
   loadConfig,
+  installFailures: (root) => installFailures(root),
+  libraryFailures,
   readProject,
   exists: existsSync,
   remove: (path) => rm(path, { recursive: true, force: true }),
@@ -173,6 +187,16 @@ export async function build(
     d.log(`⚠ Ignoring unreadable build state (${e instanceof Error ? e.message : String(e)}); a fresh one will be written.`);
   }
   const config = await d.loadConfig(root);
+  // Known limits the config allows are warnings; the others stop the build.
+  const stopOnKnownLimits = (failures: EarlyFailure[]): void => {
+    const marked = allowKnownLimits(failures, config.knownLimits?.allow ?? []);
+    for (const f of marked) if (f.allowed) d.log(`⚠ known-limits — ${allowedLimitText(f)}`);
+    const refused = marked.filter((f) => !f.allowed);
+    if (refused.length > 0) throw new UnsupportedSetupError(refused);
+  };
+  // Before reading the project or writing anything (prebuild, --clean, patches): these setups would otherwise fail
+  // minutes into rn-spm or SwiftPM. A Package.swift the project's patches/ create counts already, as in doctor.
+  stopOnKnownLimits([...d.installFailures(root), ...d.libraryFailures(root)]);
   const project = await d.readProject(root, { log: d.log });
   // Bare rn-spm runs RN's default autolinking config command, `npx --no-install @react-native-community/cli config`.
   if (project.kind === "bare" && project.hasRnCli === false) throw new Error(RN_CLI_MISSING);

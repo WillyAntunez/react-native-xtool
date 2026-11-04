@@ -184,7 +184,7 @@ describe("fixLibraryManifests", () => {
     ]);
   });
 
-  it.skipIf(process.getuid?.() === 0)("names the file and the remedy when node_modules is read-only", async () => {
+  it.skipIf(process.getuid?.() === 0)("names the file and the remedy when node_modules is read-only (needs a non-root user)", async () => {
     const root = project({ "react-native-worklets": { "Package.swift": BROKEN } });
     chmodSync(join(root, "node_modules", "react-native-worklets", "Package.swift"), 0o444);
     const err = (await fixLibraryManifests(root, () => {}).catch((e: unknown) => e)) as Error;

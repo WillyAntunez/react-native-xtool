@@ -3,13 +3,14 @@
  * patched into the reference app, the vendored copy in `vendor/expo-spm/spm`, or the 58 copy
  * re-derived from the pristine tarball plus the shared patch.
  */
-import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll } from "vitest";
 import { packageRoot } from "../../src/tools/exec.js";
+import { FETCH_HINT } from "./tarballs.js";
+import { hasTool, patchTool, tool } from "./tools.js";
 
 export type Sources = {
   hasSources: boolean;
@@ -68,7 +69,8 @@ const ROOT = packageRoot();
 export const EXPO_TARBALL = path.join(ROOT, "tests", ".cache", "expo-58.0.19.tgz");
 export const EXPO_INTEGRITY =
   "sha512-+MHH9Bu7OFWsAl8Ox44KgqbVIe72xbxzAi3vLPtVf14o5zHE39iCD//uw/4nyBlqZii6cFUZsvtJDbeRo5OhMA==";
-export const EXPO_FETCH_CMD = "mkdir -p tests/.cache && npm pack expo@58.0.19 --pack-destination tests/.cache";
+/** What a test that needs {@link EXPO_TARBALL} skips with when it is not cached. */
+export const EXPO_SKIP_NOTE = ` (needs tests/.cache/expo-58.0.19.tgz; ${FETCH_HINT})`;
 export const EXPO_SHARED_PATCH = path.join(ROOT, "patches", "expo+58.0.21.patch");
 
 const tmp: string[] = [];
@@ -81,7 +83,7 @@ export function mkTmp(prefix: string): string {
   return d;
 }
 
-const has = (cmd: string) => spawnSync(cmd, ["--version"]).status === 0;
+const has = hasTool;
 
 /** `vendor/expo-spm/spm`: the copy rn-xtool runs for SDK 57. */
 export function vendoredSpm(): string {
@@ -98,10 +100,10 @@ export function shared58Spm(): string | undefined {
     shared58 = null;
     if (existsSync(EXPO_TARBALL) && has("tar") && has("patch")) {
       const dir = mkTmp("expo-58-spm-");
-      const untar = spawnSync("tar", ["-xzf", EXPO_TARBALL, "-C", dir, "package/scripts/spm"], { encoding: "utf8" });
+      const untar = tool("tar", ["-xzf", EXPO_TARBALL, "-C", dir, "package/scripts/spm"]);
       if (untar.status !== 0) throw new Error(`tar failed: ${untar.stderr}`);
       const scripts = path.join(dir, "package", "scripts");
-      const patched = spawnSync("patch", ["-p4", "-F0", "-d", scripts, "-i", EXPO_SHARED_PATCH], { encoding: "utf8" });
+      const patched = patchTool(["-p4", "-F0", "-d", scripts, "-i", EXPO_SHARED_PATCH]);
       if (patched.status !== 0) throw new Error(`patch failed: ${patched.stdout}${patched.stderr}`);
       // Its app-target.js loads @expo/config-plugins at require time, which the installed copy finds
       // in the app; here it finds rn-xtool's.

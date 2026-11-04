@@ -2,11 +2,14 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { Command } from "commander";
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { loadConfig } from "./config.js";
+import { ExitError } from "./exitError.js";
 import { auth } from "./commands/auth.js";
 import { build } from "./commands/build.js";
 import { doctor, renderReport } from "./commands/doctor.js";
 import { install } from "./commands/install.js";
+import { doctorReport, NOTHING_SEEN, redact } from "./commands/report.js";
 import { run } from "./commands/run.js";
 import { setup } from "./commands/setup.js";
 import { setupWifi } from "./commands/setupWifi.js";
@@ -19,8 +22,9 @@ function action<A extends unknown[]>(fn: (...args: A) => Promise<void>): (...arg
     try {
       await fn(...args);
     } catch (e) {
-      console.error(`✖ ${e instanceof Error ? e.message : String(e)}`);
-      process.exitCode = 1;
+      const silent = e instanceof ExitError && e.message === "";
+      if (!silent) console.error(`✖ ${e instanceof Error ? e.message : String(e)}`);
+      process.exitCode = e instanceof ExitError ? e.status : 1;
     }
   };
 }
@@ -109,10 +113,22 @@ export function buildProgram(): Command {
     .command("doctor")
     .description("Check the toolchain, login, device and project")
     .option("--project", "check only the project (version gates and capabilities): no toolchain, login or device checks")
+    .option("--report", "print a redacted report to paste into a GitHub issue")
     .action(
-      action(async (opts: { project?: boolean }) => {
+      action(async (opts: { project?: boolean; report?: boolean }) => {
         const cwd = process.cwd();
         const root = opts.project || existsSync(path.join(cwd, "app.json")) ? cwd : undefined;
+        if (opts.report) {
+          // The report is the point, whatever the checks say: it exits 0. A failure prints redacted, like the report.
+          let text: string;
+          try {
+            text = await doctorReport(root, { projectOnly: opts.project === true });
+          } catch (e) {
+            throw new Error(redact(e instanceof Error ? e.message : String(e), { home: homedir(), seen: NOTHING_SEEN }));
+          }
+          console.log(text);
+          return;
+        }
         const report = await doctor(root, undefined, { projectOnly: opts.project === true });
         console.log(renderReport(report.checks));
         if (!report.ok) throw new Error("doctor found problems");

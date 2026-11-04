@@ -1,5 +1,18 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { firstRunChecklist, install } from "../src/commands/install.js";
+
+const APP_ID_LIMIT = readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "xtool-errors", "app-id-limit.txt"),
+  "utf8",
+);
+const DEVICE_NOT_REGISTERED = readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "xtool-errors", "device-not-registered.txt"),
+  "utf8",
+);
+const APP_ID_LIMIT_MESSAGE = /^Apple refused to register another App ID: a free Apple ID can register 10 App IDs per 7 days, .*#app-id-limit$/;
 
 describe("firstRunChecklist", () => {
   it("mentions the 7-day expiry and the Apple ID", () => {
@@ -177,6 +190,47 @@ describe("install", () => {
       }),
     ).rejects.toThrow("nope");
     expect(writeState).not.toHaveBeenCalled();
+  });
+  const usbDeps = (devRun: () => Promise<void>, writeState = vi.fn(async () => {})) => ({
+    xtool: {
+      ...base,
+      authStatus: async () => ({ loggedIn: true, teamId: "T" }),
+      listDevices: async () => [{ name: "P", udid: "u", transport: "usb" }],
+      readState: async () => ({ bundleIdentifier: "a", metroPort: 1, lanIp: "x" }),
+      devRun,
+      writeState,
+    },
+    log: () => {},
+  });
+  it("explains the App ID limit from xtool dev run", async () => {
+    // `xtool dev run` prints install errors on stdout.
+    const writeState = vi.fn(async () => {});
+    const devRun = async () => {
+      throw Object.assign(new Error("Command failed with exit code 1"), {
+        stdout: `Installing...\n${APP_ID_LIMIT}`,
+        stderr: "",
+        exitCode: 1,
+      });
+    };
+    await expect(install("/p", usbDeps(devRun, writeState))).rejects.toThrow(APP_ID_LIMIT_MESSAGE);
+    expect(writeState).not.toHaveBeenCalled();
+  });
+  it("rethrows an unknown xtool failure as is", async () => {
+    const unknown = Object.assign(new Error("Command failed with exit code 1"), { stderr: "Error: something new\n" });
+    const devRun = async () => {
+      throw unknown;
+    };
+    await expect(install("/p", usbDeps(devRun))).rejects.toBe(unknown);
+  });
+  it("does not call an install's connect timeout a sign-in failure", async () => {
+    const timeout = Object.assign(new Error("Command failed with exit code 1"), {
+      stdout: "\nError: HTTPClientError.connectTimeout\n",
+      exitCode: 1,
+    });
+    const devRun = async () => {
+      throw timeout;
+    };
+    await expect(install("/p", usbDeps(devRun))).rejects.toBe(timeout);
   });
 });
 
@@ -370,6 +424,32 @@ describe("install --network", () => {
     d.xtool.readState = async () => undefined as never;
     await expect(install("/p", d, { network: true })).rejects.toThrow("No build found");
     expect(calls.devBuildIpa).not.toHaveBeenCalled();
+  });
+  it("explains it over Wi‑Fi too", async () => {
+    const { d, calls } = deps();
+    calls.devBuildIpa.mockRejectedValueOnce(
+      Object.assign(new Error("Command failed with exit code 1"), { stdout: APP_ID_LIMIT, stderr: "", exitCode: 1 }),
+    );
+    await expect(install("/p", d, { network: true })).rejects.toThrow(APP_ID_LIMIT_MESSAGE);
+    expect(calls.installOverWifi).not.toHaveBeenCalled();
+  });
+  it("says to install over USB once when the team has no registered iPhone", async () => {
+    const { d, calls } = deps();
+    calls.devBuildIpa.mockRejectedValueOnce(
+      Object.assign(new Error("Command failed with exit code 1"), {
+        stdout: DEVICE_NOT_REGISTERED,
+        stderr: "",
+        exitCode: 1,
+      }),
+    );
+    await expect(install("/p", d, { network: true })).rejects.toThrow(/^Apple has no iPhone registered .*#iphone-not-registered$/);
+    expect(calls.installOverWifi).not.toHaveBeenCalled();
+  });
+  it("rethrows an unknown xtool failure over Wi‑Fi as is", async () => {
+    const { d, calls } = deps();
+    const unknown = Object.assign(new Error("Command failed with exit code 1"), { stdout: "Error: something new\n" });
+    calls.devBuildIpa.mockRejectedValueOnce(unknown);
+    await expect(install("/p", d, { network: true })).rejects.toBe(unknown);
   });
 });
 

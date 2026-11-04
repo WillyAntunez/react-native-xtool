@@ -532,6 +532,63 @@ describe("doctor --project", () => {
     expect(r.ok).toBe(true);
   });
 
+  it("--project names each known limit", async () => {
+    const withLimits = async (limits: Capabilities["limits"]) =>
+      doctorWithProbes({ ...good, capabilities: async () => ({ ...expo58Caps, limits }) }, "/proj", { projectOnly: true });
+    const two = await withLimits([
+      { id: "pnpm", allowKey: "pnpm", reason: "installed with pnpm." },
+      { id: "vendored-binaries", allowKey: "lib", reason: "lib 1.0.0 declares vendored_frameworks." },
+    ]);
+    expect(two.checks.map((c) => c.name).slice(-3)).toEqual(["podspecs", "known-limits", "known-limits"]);
+    expect(two.checks.filter((c) => c.name === "known-limits")).toEqual([
+      {
+        name: "known-limits",
+        status: "fail",
+        detail: 'installed with pnpm.\n  To build anyway, add "pnpm" to knownLimits.allow in rn-xtool.config.json.',
+      },
+      {
+        name: "known-limits",
+        status: "fail",
+        detail: 'lib 1.0.0 declares vendored_frameworks.\n  To build anyway, add "lib" to knownLimits.allow in rn-xtool.config.json.',
+      },
+    ]);
+    expect(two.ok).toBe(false);
+
+    const none = await withLimits([]);
+    expect(none.checks.at(-1)).toEqual({
+      name: "known-limits",
+      status: "ok",
+      detail:
+        "none of the setups rn-xtool refuses early (CocoaPods-only libraries with prebuilt binaries or vendored C sources, " +
+        "pnpm, Yarn PnP, hoisted packages)",
+    });
+    expect(none.checks.filter((c) => c.name === "known-limits")).toHaveLength(1);
+    expect(none.ok).toBe(true);
+
+    const allowed = await withLimits([
+      { id: "hoisted", allowKey: "hoisted", reason: "react-native is hoisted.", allowed: true },
+      { id: "vendored-binaries", allowKey: "lib", reason: "lib 1.0.0 declares vendored_frameworks." },
+    ]);
+    expect(allowed.checks.filter((c) => c.name === "known-limits")).toEqual([
+      {
+        name: "known-limits",
+        status: "warn",
+        detail: "react-native is hoisted. (allowed by rn-xtool.config.json knownLimits.allow; the build may fail later)",
+      },
+      expect.objectContaining({ status: "fail" }),
+    ]);
+    expect(renderReport(allowed.checks)).toContain(
+      "⚠ known-limits — react-native is hoisted. (allowed by rn-xtool.config.json knownLimits.allow; the build may fail later)",
+    );
+    expect(allowed.ok).toBe(false);
+    const allAllowed = await withLimits([{ id: "pnpm", allowKey: "pnpm", reason: "installed with pnpm.", allowed: true }]);
+    expect(allAllowed.checks.at(-1)).toMatchObject({ name: "known-limits", status: "warn" });
+    expect(allAllowed.ok).toBe(true);
+
+    const unknown = await withLimits(undefined);
+    expect(unknown.checks.some((c) => c.name === "known-limits")).toBe(false);
+  });
+
   it("plain doctor prints no capability lines", async () => {
     const called: string[] = [];
     const r = await doctorWithProbes(
@@ -549,6 +606,67 @@ describe("doctor --project", () => {
       "node", "swift", "llvm-nm", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
       "project", "project-config", "build-state", "deps", "metro-port",
     ]);
+    expect(r.capabilities).toBeUndefined();
+  });
+
+  it("withCapabilities appends the capability lines", async () => {
+    const r = await doctorWithProbes(good, "/proj", { withCapabilities: true });
+    expect(r.checks.map((c) => c.name)).toEqual([
+      "node", "swift", "llvm-nm", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
+      "project", "project-config", "build-state", "deps", "metro-port",
+      "versions", "rn-scripts", "rn-artifacts", "expo-plugin", "expo-modules", "podspecs",
+    ]);
+    expect(r.capabilities).toBe(expo58Caps);
+    expect(r.ok).toBe(true);
+  });
+
+  it("noLiveProbes leaves the device and Wi‑Fi probes out", async () => {
+    const called: string[] = [];
+    const r = await doctorWithProbes(
+      {
+        ...good,
+        devices: async () => {
+          called.push("devices");
+          return [];
+        },
+        wifi: async () => {
+          called.push("wifi");
+          return {};
+        },
+      },
+      "/proj",
+      { noLiveProbes: true },
+    );
+    expect(called).toEqual([]);
+    expect(r.checks.find((c) => c.name === "device")).toEqual({ name: "device", status: "info", detail: "not checked (report)" });
+    expect(r.checks.find((c) => c.name === "wifi")).toEqual({ name: "wifi", status: "info", detail: "not checked (report)" });
+  });
+
+  it("withCapabilities without a root adds nothing", async () => {
+    const r = await doctorWithProbes(good, undefined, { withCapabilities: true });
+    expect(r.checks.at(-1)?.name).toBe("lan-ip");
+    expect(r.capabilities).toBeUndefined();
+  });
+
+  it("withCapabilities fails the project line when the capability probe throws", async () => {
+    const r = await doctorWithProbes(
+      {
+        ...good,
+        capabilities: async () => {
+          throw new Error("rn-xtool.config.json: bad");
+        },
+      },
+      "/proj",
+      { withCapabilities: true },
+    );
+    expect(r.checks.find((c) => c.name === "project")).toMatchObject({ status: "fail", detail: "rn-xtool.config.json: bad" });
+    expect(r.checks.at(-1)?.name).toBe("metro-port");
+    expect(r.capabilities).toBeUndefined();
+  });
+
+  it("--project keeps what the capability probe found", async () => {
+    const r = await doctorWithProbes(good, "/proj", { projectOnly: true });
+    expect(r.capabilities).toBe(expo58Caps);
   });
 
   it("an unsupported version gets a reason", async () => {
@@ -694,6 +812,7 @@ describe("doctor --project", () => {
     ["rn-artifacts", "published with a note", { ...rn, artifacts: { status: "published", version: "0.88.1", missing: [], detail: "Hermes not checked: hermes-compiler is not installed" } }, "ok", "published for React Native 0.88.1 (Hermes not checked: hermes-compiler is not installed)"],
     ["rn-artifacts", "missing on a supported line", { ...bare("0.88.2"), artifacts: { status: "missing", version: "0.88.2", missing: ["React (debug)", "ReactNativeDependencies (release)"] } }, "fail", "not published for React Native 0.88.2: React (debug), ReactNativeDependencies (release)"],
     ["rn-artifacts", "unknown", { ...rn, artifacts: { status: "unknown", version: "0.88.1", missing: [], detail: "timed out after 10 s" } }, "warn", "not checked: timed out after 10 s"],
+    ["rn-artifacts", "offline", { ...rn, artifacts: { status: "offline", version: "0.88.1", missing: [] } }, "info", "not checked (offline)"],
     ["expo-plugin", "ships", { ...expo(58, "58.0.21", "0.88.1"), expoPlugin: "ships" }, "ok", "expo ships its SwiftPM plugin"],
     ["expo-plugin", "none on SDK 57", { ...expo(57, "57.0.31", "0.86.3"), expoPlugin: "none" }, "ok", "expo ships no SwiftPM plugin: rn-xtool's vendored copy (Expo 58.0.19)"],
     ["expo-plugin", "none on SDK 59", { ...expo(59, "59.0.0", "0.89.0"), expoPlugin: "none" }, "info", "expo ships no SwiftPM plugin"],

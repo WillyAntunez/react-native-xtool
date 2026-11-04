@@ -9,7 +9,7 @@ import { expoMacrosBinaryError, expoPackageDir, readExpoPins } from "../../src/p
 import { checkPins, expoPinPolicyFor, expoPinsFor, expoPluginFor } from "../../src/versions.js";
 import { EXPO57_PINS, fakeExpo57Modules } from "../support/expo57.js";
 import { EXPO58_PINS, fakeExpo58Modules } from "../support/expo58.js";
-import { loadSpm, shared58Spm, vendoredSpm, type Plugin } from "../support/expoSpm.js";
+import { EXPO_SKIP_NOTE, loadSpm, shared58Spm, vendoredSpm, type Plugin } from "../support/expoSpm.js";
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures");
 const fixture = path.join(fixtures, "project");
@@ -588,7 +588,7 @@ describe("Expo SDK 58 gate", () => {
     await expect(readExpoProject(dir)).rejects.toThrow(new Error(`${where}${hoist}`));
   });
 
-  it.skipIf(shared58Spm() === undefined)("checks the expo-modules-macros copy expo 58's plugin uses", async () => {
+  it.skipIf(shared58Spm() === undefined)(`checks the expo-modules-macros copy expo 58's plugin uses${shared58Spm() === undefined ? EXPO_SKIP_NOTE : ""}`, async () => {
     // The installed plugin resolves the macros from core only (paths: [coreModuleRoot]); G3 must agree with it.
     const plugin = loadSpm<Plugin>(shared58Spm()!, "plugin.js");
     const ok = await expo58();

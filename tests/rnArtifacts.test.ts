@@ -130,7 +130,7 @@ describe("RN 0.86 artifact adapter pieces", () => {
     expect(EMPTY_AR_ARCHIVE.toString()).toBe("!<arch>\n");
   });
 
-  it.skipIf(spawnSync("ar", ["--version"]).status !== 0)("ar lists the empty archive without members", () => {
+  it.skipIf(spawnSync("ar", ["--version"]).status !== 0)("ar lists the empty archive without members (needs ar)", () => {
     const file = path.join(mkTmp("rn-ar-"), "libEmpty.a");
     writeFileSync(file, EMPTY_AR_ARCHIVE);
     const r = spawnSync("ar", ["t", file], { encoding: "utf8" });
@@ -174,7 +174,7 @@ const RN088_SLOT =
   process.env.RN_XTOOL_RN088_SLOT ?? path.join(homedir(), "Library", "Caches", "ReactNative", "spm-artifacts", "0.88.0", "debug");
 const RN088_HEADERS = path.join(RN088_SLOT, "ReactNativeHeaders.xcframework", "ios-arm64", "Headers");
 
-describe.skipIf(!existsSync(path.join(RN088_HEADERS, "module.modulemap")))("RN 0.88.0 headers module table", () => {
+describe.skipIf(!existsSync(path.join(RN088_HEADERS, "module.modulemap")))("RN 0.88.0 headers module table (needs the RN 0.88.0 slot's headers or RN_XTOOL_RN088_SLOT)", () => {
   it("the module table renders 0.88.0's own map", () => {
     expect(renderHeadersModuleMap(RN088_HEADERS)).toBe(readFileSync(path.join(RN088_HEADERS, "module.modulemap"), "utf8"));
   });

@@ -1,12 +1,12 @@
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { builtinModules, createRequire } from "node:module";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { packageRoot } from "../src/tools/exec.js";
+import { FETCH_HINT } from "./support/tarballs.js";
+import { hasTool, patchTool, tool } from "./support/tools.js";
 import {
-  EXPO_FETCH_CMD,
   EXPO_INTEGRITY,
   EXPO_SHARED_PATCH,
   EXPO_TARBALL,
@@ -27,13 +27,13 @@ const ROOT = packageRoot();
 const VENDOR = path.join(ROOT, "vendor", "expo-spm");
 const NOT_UPSTREAM = new Set(["README.md", "LICENSE", "package.json", "rn-xtool-edits.patch"]);
 
-const has = (cmd: string) => spawnSync(cmd, ["--version"]).status === 0;
+const has = hasTool;
 const skipReason = !existsSync(EXPO_TARBALL)
-  ? `pristine tarball missing; run: ${EXPO_FETCH_CMD}`
+  ? `pristine tarball missing; ${FETCH_HINT}`
   : !has("tar") || !has("patch")
     ? "tar and patch are required"
     : null;
-const provenance = skipReason ? it.skip : it;
+const provenance = skipReason ? (title: string, fn: () => void) => it.skip(`${title} (${skipReason})`, fn) : it;
 
 function listFiles(dir: string, rel = ""): string[] {
   return readdirSync(path.join(dir, rel), { withFileTypes: true }).flatMap((e) =>
@@ -48,10 +48,10 @@ describe("vendor/expo-spm provenance", () => {
 
   provenance("vendor/expo-spm is expo 58.0.19 with our patch and rn-xtool-edits.patch applied", () => {
     const dir = mkTmp("vendor-expo-spm-");
-    expect(spawnSync("tar", ["-xzf", EXPO_TARBALL, "-C", dir, "package/scripts/spm"]).status).toBe(0);
+    expect(tool("tar", ["-xzf", EXPO_TARBALL, "-C", dir, "package/scripts/spm"]).status).toBe(0);
     const scripts = path.join(dir, "package", "scripts");
     const patchOne = (strip: string, cwd: string, file: string) =>
-      spawnSync("patch", [strip, "-F0", "-d", cwd, "-i", file], { encoding: "utf8" });
+      patchTool([strip, "-F0", "-d", cwd, "-i", file]);
     // patch-package format (a/node_modules/expo/scripts/spm/...): strip 4 to land in scripts/.
     const first = patchOne("-p4", scripts, EXPO_SHARED_PATCH);
     expect(first.status, first.stdout + first.stderr).toBe(0);
@@ -72,7 +72,7 @@ describe("vendor/expo-spm provenance", () => {
   });
 
   provenance("LICENSE is expo 58.0.19's", () => {
-    const out = spawnSync("tar", ["-xzOf", EXPO_TARBALL, "package/LICENSE"], { maxBuffer: 1 << 24 });
+    const out = tool("tar", ["-xzOf", EXPO_TARBALL, "package/LICENSE"], { encoding: "buffer" }) as unknown as { status: number | null; stdout: Buffer };
     expect(out.status).toBe(0);
     expect(readFileSync(path.join(VENDOR, "LICENSE")).equals(out.stdout)).toBe(true);
   });
@@ -624,11 +624,16 @@ describe("vendor/expo-spm edits", () => {
     writeFileSync(path.join(src, "X.xcframework", "._Info.plist"), "AppleDouble");
     writeFileSync(path.join(src, "._X.xcframework"), "AppleDouble");
     const tgz = path.join(mkTmp("vendor-p5-tgz-"), "X.tar.gz");
-    const made = spawnSync(
-      "tar",
-      ["--format=pax", "--pax-option=LIBARCHIVE.xattr.com.apple.provenance=AQ", "-czf", tgz, "-C", src, "._X.xcframework", "X.xcframework"],
-      { encoding: "utf8" },
-    );
+    const made = tool("tar", [
+      "--format=pax",
+      "--pax-option=LIBARCHIVE.xattr.com.apple.provenance=AQ",
+      "-czf",
+      tgz,
+      "-C",
+      src,
+      "._X.xcframework",
+      "X.xcframework",
+    ]);
     expect(made.status, made.stderr).toBe(0);
     const cache = mkTmp("vendor-p5-cache-");
     const xcframework = loadSpm<Flavored>(vendoredSpm(), "flavored-frameworks.js").extractTarball(tgz, "x", "X", cache, "debug");
@@ -637,7 +642,7 @@ describe("vendor/expo-spm edits", () => {
     expect(listFiles(cache).filter((f) => path.basename(f).startsWith("._"))).toEqual([]);
   });
 
-  it.skipIf(skipReason != null)("the 58 copy keeps 58's behaviour", () => {
+  it.skipIf(skipReason != null)(`the 58 copy keeps 58's behaviour${skipReason ? ` (${skipReason})` : ""}`, () => {
     const spm = shared58Spm()!;
     const constants = constantsFixture();
     const c = layoutOf(spm, "EXConstants", constants);
@@ -667,12 +672,12 @@ const has57Autolinking = (() => {
   }
 })();
 
-describe.skipIf(!has57Autolinking)("autolinking 58.0.15 on SDK 57", () => {
+describe.skipIf(!has57Autolinking)("autolinking 58.0.15 on SDK 57 (needs ../app-expo-57)", () => {
   it("autolinking 58.0.15 generates 57's own ExpoModulesProvider", () => {
     const bin57 = path.join(app57Autolinking, "bin", "expo-modules-autolinking.js");
     const bin58 = createRequire(path.join(vendoredSpm(), "cli.js")).resolve("expo-modules-autolinking/bin/expo-modules-autolinking.js");
     const run = (bin: string, args: string[]) => {
-      const r = spawnSync(process.execPath, [bin, ...args], { cwd: EXPO57_APP, encoding: "utf8", maxBuffer: 1 << 26 });
+      const r = tool(process.execPath, [bin, ...args], { cwd: EXPO57_APP });
       expect(r.status, r.stderr).toBe(0);
       return r.stdout;
     };

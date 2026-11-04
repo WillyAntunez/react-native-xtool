@@ -31,6 +31,7 @@ import {
   type AuthStatus,
   type Device,
 } from "../tools/xtool.js";
+import { explainingXtool } from "../tools/xtoolErrors.js";
 
 type InstallState = Pick<BuildState, "bundleIdentifier" | "metroPort" | "lanIp"> & Partial<BuildState>;
 
@@ -158,7 +159,7 @@ export async function install(root: string, deps: InstallDeps = {}, opts: Instal
   const iosXtool = projectPaths(root).iosXtool;
   const state = await (x.readState ?? readState)(iosXtool).catch(() => undefined);
   if (!state) throw new Error("No build found. Run `rn-xtool build` first.");
-  await (x.devRun ?? devRun)(bin, iosXtool);
+  await explainingXtool(() => (x.devRun ?? devRun)(bin, iosXtool));
   // Which iPhone got this build: `run` must not skip the install for a different one.
   const installed: Partial<BuildState> = { installedUdid: devices[0]!.udid };
   if (state.depsFingerprint !== undefined) installed.installedFingerprint = state.depsFingerprint;
@@ -178,7 +179,7 @@ async function installNetwork(root: string, deps: InstallDeps, opts: InstallOpti
   const state = await (x.readState ?? readState)(iosXtool).catch(() => undefined);
   if (!state) throw new Error("No build found. Run `rn-xtool build` first.");
 
-  const ipa = await (x.devBuildIpa ?? devBuildIpa)(bin, iosXtool);
+  const ipa = await explainingXtool(() => (x.devBuildIpa ?? devBuildIpa)(bin, iosXtool));
   const bundleId = installedBundleId(auth.teamId, state.bundleIdentifier);
   const route: LanRoute = config.lanIp
     ? { ip: config.lanIp }

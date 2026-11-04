@@ -37,7 +37,7 @@ describe("planSetup", () => {
 describe("download urls", () => {
   it("builds xtool url without a v prefix", () => {
     expect(xtoolDownloadUrl("x86_64")).toBe(
-      "https://github.com/xtool-org/xtool/releases/download/1.23.0/xtool-x86_64.AppImage",
+      "https://github.com/xtool-org/xtool/releases/download/1.24.0/xtool-x86_64.AppImage",
     );
   });
   it("builds swiftly url", () => {
@@ -85,7 +85,7 @@ describe("setup config handling", () => {
     await setup({ xtoolPath: "/opt/xtool" }, { checkSwiftPackages: noPending, probe, log });
     expect(probe).toHaveBeenCalledWith("/opt/xtool");
     expect(log).toHaveBeenCalledWith("Run: rn-xtool auth login");
-    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("xtool 1.23.0"));
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining("xtool 1.24.0"));
   });
   it("fails when the configured xtoolPath is not executable", async () => {
     const probe = async () => ({ ...all, hasXtool: false });

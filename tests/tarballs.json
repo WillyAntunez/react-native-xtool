@@ -1,0 +1,52 @@
+[
+  {
+    "spec": "expo@58.0.19",
+    "file": "expo-58.0.19.tgz",
+    "integrity": "sha512-+MHH9Bu7OFWsAl8Ox44KgqbVIe72xbxzAi3vLPtVf14o5zHE39iCD//uw/4nyBlqZii6cFUZsvtJDbeRo5OhMA=="
+  },
+  {
+    "spec": "expo@58.0.21",
+    "file": "expo-58.0.21.tgz",
+    "integrity": "sha512-2Q8jp0fKLrDMou4aKWZ5V2cCVfcwOScuV8GBMkogiXIv7bCwwN4CIkUIq5QsX7DHXJxbruXLTXEgrp6J+iF4YA=="
+  },
+  {
+    "spec": "react-native@0.88.0",
+    "file": "react-native-0.88.0.tgz",
+    "integrity": "sha512-v/wee0nYWcammMYBnSat/e3WY/5iaf9YQOMcBrfKT/wPApPPlHp94hgZovBtwhMuthR01yc/8cGn0FpFTE/C4A=="
+  },
+  {
+    "spec": "react-native@0.88.1",
+    "file": "react-native-0.88.1.tgz",
+    "integrity": "sha512-wajWcLZ93GCN7k4Uwh4CS4L2Ah8ohcvkOXnvIYmh4Yvuqho5j3APZ9qozK+nQrHWSgauq4h8D3HN5DKK84SrHA=="
+  },
+  {
+    "spec": "expo-modules-autolinking@58.0.16",
+    "file": "expo-modules-autolinking-58.0.16.tgz",
+    "integrity": "sha512-YglXoBBc3QwqqFfFQD1XVfpxXdF9RkuZOVxWTn5uHPiyvXSMFiVO16GnV+VSd+njKld1EJt7vQucCsDiLp4xVA=="
+  },
+  {
+    "spec": "expo-modules-jsi@57.1.3",
+    "file": "expo-modules-jsi-57.1.3.tgz",
+    "integrity": "sha512-pwVO1gvObX2tpIjfJzGn86yBOmOBhMLxAD81n2SHnfZk6lvbbqQhag64MHEeh29E/8vg23/Dzmf3JTmJSwbQYQ=="
+  },
+  {
+    "spec": "expo-modules-jsi@58.0.21",
+    "file": "expo-modules-jsi-58.0.21.tgz",
+    "integrity": "sha512-6FG3jKt89s+qolbalas+OE5gQjDYu/sfV7HVAFEw3JVtkS1+MVfCvQLxp3RAm85bVNO0vgfnbn5z6A8WSDWalA=="
+  },
+  {
+    "spec": "react-native-gesture-handler@3.4.0",
+    "file": "react-native-gesture-handler-3.4.0.tgz",
+    "integrity": "sha512-jBg4ZWDvegeaZ4OHq9oxVOS/Qa6pV+LhtsUExothyhWxqzG0Lkg7kl2ztemPj/pnJxkq9j/+6wAw3jZGwdssww=="
+  },
+  {
+    "spec": "react-native-screens@4.30.0",
+    "file": "react-native-screens-4.30.0.tgz",
+    "integrity": "sha512-FrZG/Q5gqoDu0SgP4d2Ly0qdio5DR1KdGPEYImhkz7tmrhpML4C39m6RYLGd5TVLHZwcCh8NPvW9rylevjD0uQ=="
+  },
+  {
+    "spec": "react-native-svg@15.16.0",
+    "file": "react-native-svg-15.16.0.tgz",
+    "integrity": "sha512-uh8yktufYeRU3W9Omi8+SPyLF9BVN4JmLflSgc9oOcKkSKk/S5JUmmTjKZq/L8GHfQUtCvcu/W6X4xhEfBBAjQ=="
+  }
+]

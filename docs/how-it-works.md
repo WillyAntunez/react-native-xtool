@@ -11,9 +11,9 @@ step with file locations.
 
 ## What `setup` installs
 
-- Swift 6.4 via swiftly, the xtool 1.23.0 AppImage (needs `libfuse2`: `sudo apt install libfuse2` on Ubuntu) and the
-  Darwin SDK extracted from your `Xcode.xip` (Xcode 27.x). About 15 GB of free disk: Xcode.xip is about 12 GB, the
-  extracted SDK about 7 GB. `setup` is idempotent.
+- Swift 6.4 via swiftly, the xtool 1.24.0 AppImage (needs FUSE 2: `libfuse2t64` on Ubuntu 24.04 and newer, `libfuse2`
+  on older releases) and the Darwin SDK extracted from your `Xcode.xip` (Xcode 27.x). About 15 GB of free disk:
+  Xcode.xip is about 12 GB, the extracted SDK about 7 GB. `setup` is idempotent.
 - Swift's system packages are not installed for you: when some are missing, `setup` prints the exact
   `sudo apt-get update && sudo apt-get -y install ...` line to run before running `setup` again. On Ubuntu 24.04:
   `binutils zip gnupg2 libc6-dev libcurl4-openssl-dev libedit2 libgcc-13-dev libpython3-dev libstdc++-13-dev libxml2-dev
@@ -267,6 +267,14 @@ patch above is what makes that scaffolder work for real-world podspecs.
   to the Expo packages that depend on the library.
 - A persisted patch written by an older scaffolder revision (or for another React Native version) gets a warning at the
   `patches` step naming the file to delete and the library to reinstall; rn-xtool then regenerates it.
+- Before anything is scaffolded, `doctor --project` and `build` check every dependency's podspec. A CocoaPods-only
+  library whose podspec declares prebuilt binaries (`vendored_frameworks`, `vendored_libraries`) cannot be scaffolded
+  yet: the generated `Package.swift` cannot link them. `build` stops on it before it changes anything, with the reason
+  and a link, instead of failing minutes later in the build. Expo modules are left to Expo's plugin, which
+  links their binaries; an Expo module that builds C sources from its `vendor/` folder (expo-sqlite) is refused the
+  same way. A `Package.swift` the library ships or your `patches/` create counts, and `knownLimits.allow` in
+  `rn-xtool.config.json` builds a refused library anyway
+  ([troubleshooting.md](troubleshooting.md#unsupported-setups)).
 
 Which libraries are verified: [libraries.md](libraries.md).
 

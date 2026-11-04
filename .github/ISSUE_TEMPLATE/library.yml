@@ -1,0 +1,42 @@
+name: My library does not build
+description: A React Native or Expo library fails to build or run with rn-xtool
+labels: ["library"]
+body:
+  - type: markdown
+    attributes:
+      value: "Run `rn-xtool doctor --report` in your project folder and paste its whole output below. rn-xtool replaces your home folder, Apple ID, Team ID, bundle identifiers, device names and UDIDs, IP and MAC addresses and tokens with placeholders. Read it before you post: remove anything else you consider private."
+  - type: input
+    id: library
+    attributes:
+      label: Library (npm name)
+      placeholder: "@react-native-async-storage/async-storage"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Library version
+      placeholder: "3.1.1"
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Output of rn-xtool doctor --report
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happens
+      description: The error and the last lines of output. Remove anything private.
+    validations:
+      required: true
+  - type: checkboxes
+    id: reviewed
+    attributes:
+      label: Privacy
+      options:
+        - label: I read the report and the output above and removed anything private.
+          required: true

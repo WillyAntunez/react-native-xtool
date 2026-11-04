@@ -15,7 +15,9 @@ import {
   parseDevices,
   parseIpaPath,
   xtoolBin,
+  xtoolUnrunnableError,
 } from "../src/tools/xtool.js";
+import { capturingStdio } from "./support/stdio.js";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -145,6 +147,12 @@ describe("authStatus", () => {
     const bin = script("echo 'fuse: failed to open /dev/fuse' >&2\nexit 1");
     await expect(authStatus(bin)).rejects.toThrow(/xtool could not run \(exit 1\): fuse: failed to open.*libfuse2/s);
   });
+  it("names the FUSE package of each Ubuntu release", () => {
+    expect(xtoolUnrunnableError(1, "fuse: failed to open /dev/fuse\n").message).toBe(
+      "xtool could not run (exit 1): fuse: failed to open /dev/fuse. On Ubuntu this usually means FUSE 2 is missing: " +
+        "sudo apt install libfuse2t64 on Ubuntu 24.04 and newer, sudo apt install libfuse2 on older releases",
+    );
+  });
   it("throws when the binary cannot be spawned", async () => {
     await expect(authStatus("/nonexistent/xtool")).rejects.toBeDefined();
   });
@@ -178,6 +186,21 @@ describe("devBuild / devRun", () => {
     expect(calls[0]!.args.slice(0, 2)).toEqual(["dev", "build"]);
     expect(calls[0]!.opts?.cwd).toBe("/app/ios-xtool");
     expect(calls[0]!.opts?.env?.["RN_SPM_SWIFT_HEADERS_DIR"]).toBe(SWIFT_HEADERS);
+  });
+
+  it("devRun shows and keeps xtool's output by default, for the failure explanations", async () => {
+    // `xtool dev run` prints an install error on stdout (`print("\nError: …")`), then exits 1.
+    const dir = tmp();
+    const fake = join(dir, "fake-xtool");
+    writeFileSync(fake, "#!/bin/sh\nprintf '\\nError: limit\\n'\necho warn >&2\nexit 1\n");
+    chmodSync(fake, 0o755);
+    const { result, stdout, stderr } = await capturingStdio(() => devRun(fake, dir));
+    const e = (result as PromiseRejectedResult).reason as { stderr?: unknown; stdout?: unknown; message?: string };
+    expect(e.stdout).toBe("\nError: limit");
+    expect(e.stderr).toBe("warn");
+    expect(stdout).toBe("\nError: limit\n");
+    expect(stderr).toBe("warn\n");
+    expect(e.message).toBe(`Command failed with exit code 1: nice -n 15 ${fake} dev run --configuration debug --usb`);
   });
 
   it("devRun passes RN_SPM_SWIFT_HEADERS_DIR to xtool dev run", async () => {

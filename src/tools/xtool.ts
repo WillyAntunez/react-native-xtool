@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import type { ExpoXtoolConfig } from "../config.js";
 import { cacheDir, swiftHeadersEnv } from "../paths.js";
 import { XTOOL_VERSION } from "../versions.js";
-import { run, runTee, toolEnv } from "./exec.js";
+import { run, runKeepingOutput, runTee, toolEnv } from "./exec.js";
 
 export interface AuthStatus {
   loggedIn: boolean;
@@ -37,7 +37,8 @@ export function xtoolBin(config: ExpoXtoolConfig): string {
 export function xtoolUnrunnableError(exitCode: number | undefined, output: string): Error {
   return new Error(
     `xtool could not run (exit ${exitCode ?? "unknown"}): ${output.trim().slice(0, 300)}. ` +
-      "On Ubuntu this usually means libfuse2 is missing: sudo apt install libfuse2",
+      "On Ubuntu this usually means FUSE 2 is missing: " +
+      "sudo apt install libfuse2t64 on Ubuntu 24.04 and newer, sudo apt install libfuse2 on older releases",
   );
 }
 
@@ -155,8 +156,8 @@ export function devEnv(iosXtoolDir: string): NodeJS.ProcessEnv {
   return toolEnv(swiftHeadersEnv(iosXtoolDir));
 }
 
-/** Runs a command to completion; `run` by default, injectable for tests. */
-export type DevRunner = typeof run;
+/** Runs a command to completion (what it resolves with is not used); injectable for tests. */
+export type DevRunner = (...args: Parameters<typeof run>) => Promise<unknown>;
 
 export async function devBuild(bin: string, iosXtoolDir: string, runner: DevRunner = run): Promise<void> {
   await runner(bin, ["dev", "build", "--configuration", "debug"], {
@@ -166,7 +167,11 @@ export async function devBuild(bin: string, iosXtoolDir: string, runner: DevRunn
   });
 }
 
-export async function devRun(bin: string, iosXtoolDir: string, runner: DevRunner = run): Promise<void> {
+/**
+ * `xtool dev run --usb`. Its output is shown and kept: it prints install errors on stdout, and a
+ * known one (the App ID limit) is explained.
+ */
+export async function devRun(bin: string, iosXtoolDir: string, runner: DevRunner = runKeepingOutput): Promise<void> {
   await runner(bin, ["dev", "run", "--configuration", "debug", "--usb"], {
     cwd: iosXtoolDir,
     nice: true,

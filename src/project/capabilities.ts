@@ -2,9 +2,10 @@
  * What a project has, as patterns rather than versions: whether React Native's prebuilt artifacts exist for its
  * version, whether expo ships its SwiftPM plugin, whether Expo modules come precompiled, which podspec features the
  * dependencies use, and the SwiftPM scripts' shape. `doctor --project` and the drift watch's exploration read it.
- * Only `probeArtifacts` reaches the network (bounded HEAD requests), and only when the slots are not cached.
+ * Only `probeArtifacts` reaches the network (bounded HEAD requests), and only when the slots are not cached and it is
+ * not run offline.
  */
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { loadConfig } from "../config.js";
@@ -13,6 +14,8 @@ import { rawSlotComplete, rnArtifactsCacheRoot, type Flavor } from "../pipeline/
 import { resolveRnDir, vendoredScriptsRoot } from "../pipeline/rnSpm.js";
 import { bareLines, compareVersions, expoPluginFor, releaseLine, rnLineStatus } from "../versions.js";
 import { DetectError, detectProjectKind } from "./detect.js";
+import { allowKnownLimits, earlyFailures, type EarlyFailure } from "./earlyChecks.js";
+import { attribute, dependencyDirs, podspecFiles, readJson } from "./podspecs.js";
 import { andList, expoPackageDir, installedExpoMajor, installedExpoVersion } from "./expo.js";
 import { scriptsCapability, type ScriptsCapability } from "./scriptsShape.js";
 import type { ProjectKind } from "./types.js";
@@ -20,12 +23,21 @@ import type { ProjectKind } from "./types.js";
 /** One HEAD request: the HTTP status of `url`. Rejects on a network error or when `signal` aborts. */
 export type HeadProbe = (url: string, signal: AbortSignal) => Promise<number>;
 
+export interface ProbeOptions {
+  cacheRoot?: string;
+  head?: HeadProbe;
+  timeoutMs?: number;
+  /** Read the cache only: no HEAD request is made. */
+  offline?: boolean;
+}
+
 export interface ArtifactsCapability {
   /**
    * cached: both raw slots are complete; local: the config's rnArtifactsDir supplies them (detail: that folder), not
-   * probed; published/missing: what the release repositories answered; unknown: not checked.
+   * probed; published/missing: what the release repositories answered; unknown: not checked; offline: not cached, and
+   * the caller asked for no network request (`doctor --report`).
    */
-  status: "cached" | "local" | "published" | "missing" | "unknown";
+  status: "cached" | "local" | "published" | "missing" | "unknown" | "offline";
   version: string;
   /** "ReactNativeDependencies (release)": artifacts no release repository has. */
   missing: string[];
@@ -96,17 +108,19 @@ function answerFailure(url: string, answer: PromiseSettledResult<number>): strin
  * `rnDir` resolves) are each probed per flavor on every release URL the downloader tries, all at once and within
  * `timeoutMs` in total. An artifact is published when one of its URLs answers 200 (the downloader's own test), and
  * missing when every URL answers 404 or 410. Any other answer (403, 429, 5xx, a redirect left over), a rejection or the
- * timeout leaves the result unknown: a failed probe never reads as missing.
+ * timeout leaves the result unknown: a failed probe never reads as missing. `offline` reads the cache only: without
+ * both slots the result is offline, and nothing is probed.
  */
 export async function probeArtifacts(
   rnDir: string,
   version: string,
-  opts: { cacheRoot?: string; head?: HeadProbe; timeoutMs?: number } = {},
+  opts: ProbeOptions = {},
 ): Promise<ArtifactsCapability> {
   const cacheRoot = opts.cacheRoot ?? rnArtifactsCacheRoot();
   if (FLAVORS.every((flavor) => rawSlotComplete(path.join(cacheRoot, version, flavor)))) {
     return { status: "cached", version, missing: [] };
   }
+  if (opts.offline) return { status: "offline", version, missing: [] };
   const head = opts.head ?? defaultHead;
   const timeoutMs = opts.timeoutMs ?? 10_000;
   const dl = downloader();
@@ -152,9 +166,6 @@ export type PodspecFeature =
   | "vendored_frameworks"
   | "resource_bundles";
 
-/** `<spec>.<name> =` or `<spec>.ios.<name> =`: a pod attribute being set, not a Ruby variable or a `==` test. */
-const attribute = (name: string): RegExp => new RegExp(`\\b[A-Za-z_]\\w*\\.(?:ios\\.)?${name}\\s*=(?!=)`);
-
 /** Each feature as it reads in a podspec's text (comment lines dropped); singular aliases count too. */
 const PODSPEC_FEATURES: readonly [PodspecFeature, RegExp][] = [
   ["subspecs", /\.subspec\b/],
@@ -165,47 +176,9 @@ const PODSPEC_FEATURES: readonly [PodspecFeature, RegExp][] = [
   ["resource_bundles", attribute("resource_bundles?")],
 ];
 
-function readJson(file: string): Record<string, any> | undefined {
-  try {
-    return JSON.parse(readFileSync(file, "utf8")) ?? undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * The directory `pkg` resolves to from `root`, along Node's node_modules lookup paths (a package whose `exports`
- * hides package.json still counts).
- */
-function packageDir(root: string, pkg: string): string | undefined {
-  const lookup = createRequire(path.join(root, "package.json")).resolve.paths(pkg) ?? [];
-  return lookup.map((dir) => path.join(dir, pkg)).find((dir) => existsSync(path.join(dir, "package.json")));
-}
-
-/** The `*.podspec` files directly in `dir`. */
-function podspecsIn(dir: string): string[] {
-  try {
-    return readdirSync(dir)
-      .filter((n) => n.endsWith(".podspec"))
-      .map((n) => path.join(dir, n));
-  } catch {
-    return [];
-  }
-}
-
-/**
- * The podspecs of the package at `dir`, where autolinking looks: the package root (React Native's CLI), `ios/` (Expo
- * modules) and the `podspecPath` an `expo-module.config.json` declares under `apple`, else `ios`. Comment lines are
- * dropped from each text.
- */
+/** The text of each readable podspec of the package at `dir` (`podspecFiles`), comment lines dropped. */
 function podspecTexts(dir: string): string[] {
-  const config = readJson(path.join(dir, "expo-module.config.json"));
-  const declared: unknown = (config?.apple ?? config?.ios)?.podspecPath;
-  const declaredFiles = (Array.isArray(declared) ? declared : [declared])
-    .filter((p): p is string => typeof p === "string")
-    .map((p) => path.join(dir, p));
-  const files = new Set([...podspecsIn(dir), ...podspecsIn(path.join(dir, "ios")), ...declaredFiles]);
-  return [...files].flatMap((file) => {
+  return podspecFiles(dir).flatMap((file) => {
     try {
       return [readFileSync(file, "utf8").replace(/^\s*#.*$/gm, "")];
     } catch {
@@ -214,8 +187,8 @@ function podspecTexts(dir: string): string[] {
   });
 }
 
-/** Not autolinked: react-native's own podspecs describe the core, whose artifacts are reported on their own. */
-const NOT_AUTOLINKED = new Set(["react-native"]);
+/** Kept here too: callers read the dependencies the way the podspec features do. */
+export { dependencyDirs, podspecFiles } from "./podspecs.js";
 
 /**
  * For each tracked feature, the package.json `dependencies` (sorted by name, react-native left out) that resolve from
@@ -223,11 +196,7 @@ const NOT_AUTOLINKED = new Set(["react-native"]);
  */
 export function podspecFeatures(root: string): Record<PodspecFeature, string[]> {
   const result = Object.fromEntries(PODSPEC_FEATURES.map(([f]) => [f, [] as string[]])) as Record<PodspecFeature, string[]>;
-  const deps = readJson(path.join(root, "package.json"))?.dependencies;
-  const names = deps !== null && typeof deps === "object" ? Object.keys(deps).filter((n) => !NOT_AUTOLINKED.has(n)).sort() : [];
-  for (const name of names) {
-    const dir = packageDir(root, name);
-    if (dir === undefined) continue;
+  for (const { name, dir } of dependencyDirs(root)) {
     const texts = podspecTexts(dir);
     for (const [feature, re] of PODSPEC_FEATURES) if (texts.some((t) => re.test(t))) result[feature].push(name);
   }
@@ -250,6 +219,11 @@ export interface Capabilities {
   /** The version of that expo-modules-core; undefined without it. */
   expoModulesCoreVersion?: string;
   podspecs: Record<PodspecFeature, string[]>;
+  /**
+   * The setups rn-xtool refuses before a build (`earlyFailures`), those the config's `knownLimits.allow` names marked
+   * allowed; detectCapabilities always sets it.
+   */
+  limits?: EarlyFailure[];
 }
 
 /** The SwiftPM settings reader the build's plugin discovery uses (vendor/rn-spm/spm/swiftpm-config.js). */
@@ -317,18 +291,18 @@ function installedRn(root: string): { rnDir: string; version: string } | undefin
 
 /**
  * What the project at `projectRoot` has. Reads files only; the artifact probe is the one network call, and it is
- * skipped when both of the version's raw slots are in the cache.
+ * skipped when both of the version's raw slots are in the cache, or with `offline`.
  */
-export async function detectCapabilities(
-  projectRoot: string,
-  opts: { cacheRoot?: string; head?: HeadProbe; timeoutMs?: number } = {},
-): Promise<Capabilities> {
+export async function detectCapabilities(projectRoot: string, opts: ProbeOptions = {}): Promise<Capabilities> {
   const root = path.resolve(projectRoot);
   const config = await loadConfig(root);
   const kind = kindOf(root, config.projectKind);
   const rn = installedRn(root);
   const expoVersion = installedExpoVersion(root);
-  const caps: Capabilities = { podspecs: podspecFeatures(root) };
+  const caps: Capabilities = {
+    podspecs: podspecFeatures(root),
+    limits: allowKnownLimits(earlyFailures(root), config.knownLimits?.allow ?? []),
+  };
   if (kind !== undefined) caps.kind = kind;
   if (expoVersion !== undefined) {
     caps.expoVersion = expoVersion;

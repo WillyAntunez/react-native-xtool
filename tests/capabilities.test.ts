@@ -80,6 +80,24 @@ describe("probeArtifacts", () => {
     expect(head).not.toHaveBeenCalled();
   });
 
+  it("offline, reads the cache only and never probes", async () => {
+    const { rnDir } = await rnRoot("0.88.1");
+    const cacheRoot = await tempDir("rn-xtool-caps-cache-");
+    const head = vi.fn(ok200);
+    expect(await probeArtifacts(rnDir, "0.88.1", { cacheRoot, head, offline: true })).toEqual({
+      status: "offline",
+      version: "0.88.1",
+      missing: [],
+    });
+    for (const flavor of ["debug", "release"]) makeFakeSlot088(path.join(cacheRoot, "0.88.1", flavor));
+    expect(await probeArtifacts(rnDir, "0.88.1", { cacheRoot, head, offline: true })).toEqual({
+      status: "cached",
+      version: "0.88.1",
+      missing: [],
+    });
+    expect(head).not.toHaveBeenCalled();
+  });
+
   it("probes when only one flavor is cached", async () => {
     const { rnDir } = await rnRoot("0.88.1");
     const cacheRoot = await tempDir("rn-xtool-caps-cache-");
@@ -476,6 +494,24 @@ describe("detectCapabilities", () => {
       missing: [],
       detail: "../rn-artifacts",
     });
+  });
+
+  it("carries the early failures", async () => {
+    const dir = await expo58();
+    const pkg = JSON.parse(await readFile(path.join(dir, "package.json"), "utf8"));
+    expect((await detect(dir)).limits).toEqual([]);
+    const name = "@react-native-async-storage/async-storage";
+    pkg.dependencies[name] = "3.1.1";
+    await writeFile(path.join(dir, "package.json"), JSON.stringify(pkg));
+    await writePackage(path.join(dir, "node_modules", name), { name, version: "3.1.1" }, {
+      "AsyncStorage.podspec": 'Pod::Spec.new do |s|\n  s.ios.vendored_frameworks = "apple-frameworks/SharedAsyncStorage.xcframework"\nend\n',
+    });
+    const limits = (await detect(dir)).limits;
+    expect(limits?.map((l) => l.id)).toEqual(["vendored-binaries"]);
+    expect(limits?.[0]?.allowed).toBeUndefined();
+    await writeFile(path.join(dir, "rn-xtool.config.json"), JSON.stringify({ knownLimits: { allow: [name] } }));
+    expect((await detect(dir)).limits?.map((l) => l.allowed)).toEqual([true]);
+    expect(limits?.[0]?.reason).toMatch(/^@react-native-async-storage\/async-storage 3\.1\.1: its podspec \(AsyncStorage\.podspec\)/);
   });
 
   it("leaves the React Native fields out without react-native", async () => {

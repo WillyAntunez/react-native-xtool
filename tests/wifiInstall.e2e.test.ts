@@ -18,7 +18,7 @@ const env = process.env;
 const enabled = env.RN_XTOOL_E2E_WIFI === "1";
 
 describe.skipIf(!enabled)("Wi‑Fi install on a real iPhone", () => {
-  it("installs the signed ipa and finds it with Lookup", async () => {
+  it("installs the signed ipa and finds it with Lookup (needs RN_XTOOL_E2E_WIFI=1 and a real iPhone)", async () => {
     const ip = env.RN_XTOOL_E2E_WIFI_IP;
     const ipaPath = env.RN_XTOOL_E2E_WIFI_IPA;
     const bundleId = env.RN_XTOOL_E2E_WIFI_BUNDLE_ID;

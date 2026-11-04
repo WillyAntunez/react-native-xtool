@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig } from "../src/config.js";
+import { ConfigError, loadConfig } from "../src/config.js";
 import { cacheDir, projectPaths } from "../src/paths.js";
 
 describe("loadConfig", () => {
@@ -32,6 +32,32 @@ describe("loadConfig", () => {
   it("names rn-xtool.config.json when it is not valid JSON", async () => {
     await writeFile(join(dir, "rn-xtool.config.json"), '{ "projectKind": "expo", }\n');
     await expect(loadConfig(dir)).rejects.toThrow(/^rn-xtool\.config\.json: .*JSON/);
+  });
+
+  it("reads knownLimits.allow", async () => {
+    await writeFile(join(dir, "rn-xtool.config.json"), JSON.stringify({ knownLimits: { allow: ["pnpm", "@scope/lib"] } }));
+    expect(await loadConfig(dir)).toEqual({ metroPort: 8081, knownLimits: { allow: ["pnpm", "@scope/lib"] } });
+  });
+
+  it("names a knownLimits of the wrong type", async () => {
+    const cases: [unknown, string][] = [
+      ["pnpm", "knownLimits must be an object with an allow list"],
+      [["pnpm"], "knownLimits must be an object with an allow list"],
+      [null, "knownLimits must be an object with an allow list"],
+      [{ allow: "pnpm" }, "knownLimits.allow must be a list of package names or \"pnpm\", \"pnp\", \"hoisted\""],
+      [{ allow: ["pnpm", 3] }, "knownLimits.allow must be a list of package names or \"pnpm\", \"pnp\", \"hoisted\""],
+      [{ allow: [""] }, "knownLimits.allow must be a list of package names or \"pnpm\", \"pnp\", \"hoisted\""],
+    ];
+    for (const [knownLimits, message] of cases) {
+      await writeFile(join(dir, "rn-xtool.config.json"), JSON.stringify({ knownLimits }));
+      const error = await loadConfig(dir).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ConfigError);
+      expect((error as ConfigError).name).toBe("ConfigError");
+      expect((error as ConfigError).message).toBe(`rn-xtool.config.json: ${message}`);
+    }
+    await rm(join(dir, "rn-xtool.config.json"));
+    await writeFile(join(dir, "rn-xtool.config.js"), "export default { knownLimits: { allow: [1] } };\n");
+    await expect(loadConfig(dir)).rejects.toThrow(/^rn-xtool\.config\.js: knownLimits\.allow must be/);
   });
 
   it("rejects when rn-xtool.config.js exists but fails to load", async () => {

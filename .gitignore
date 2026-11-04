@@ -7,3 +7,4 @@ coverage/
 .superpowers/
 tests/.cache/
 .scan-private.local
+test-results.json

@@ -4,6 +4,8 @@ Start with `rn-xtool doctor`: it checks the toolchain, SDK, login, connected dev
 project, and exits non-zero on problems. `rn-xtool doctor --project` checks only the project
 ([below](#doctor---project)). This page lists the first-run steps on the iPhone and the problems seen so
 far with their fixes. Wi‑Fi install problems have their own list in [wifi-install.md](wifi-install.md#troubleshooting).
+If none of it helps, `rn-xtool doctor --report` prints a report to paste into an issue
+([Reporting a problem](#reporting-a-problem)).
 
 [Back to README](../README.md)
 
@@ -48,6 +50,111 @@ far with their fixes. Wi‑Fi install problems have their own list in [wifi-inst
   `ios-xtool/.rn-xtool-state.json`) if free or serving Metro, so a running Metro keeps matching the installed app;
   otherwise the next free port after the configured one. To choose differently, free the port, or set `metroPort` in
   the config and rebuild + reinstall (the port is baked in; `start` tells you which).
+
+## Setup and xtool
+
+- **"xtool could not run (exit <code>): ... On Ubuntu this usually means FUSE 2 is missing: sudo apt install
+  libfuse2t64 on Ubuntu 24.04 and newer, sudo apt install libfuse2 on older releases":** the xtool AppImage needs FUSE
+  2 to start. Ubuntu 24.04 renamed its package to `libfuse2t64`; older releases call it `libfuse2`. Install the one for
+  your release, then run the command again.
+- **`xtool — not found — run rn-xtool setup` after an rn-xtool update:** rn-xtool pins the xtool version it was
+  tested with (1.24.0 in this release) and keeps one copy per version. After an update that pins a newer xtool, run
+  `rn-xtool setup` once to download it. A copy at another path (`xtoolPath` in `rn-xtool.config.json`) of another
+  version gives a warning, `expected 1.24.0, got <version>`.
+
+## Unsupported setups
+
+Some setups cannot be built by rn-xtool yet. `rn-xtool doctor --project` names the ones below on its `known-limits`
+line ([doctor --project](#doctor---project)), and `rn-xtool build` (also when `run` builds) stops on them before it
+changes anything in the project: no `expo prebuild`, no `--clean`, no patches. Before rn-xtool checked for them,
+these setups failed minutes into the build, deep in the SwiftPM steps, with an error that did not name the cause. The
+checks only read files: they run no code from your project and make no network request.
+
+Each refusal gives the reason, a link to its section below, and on the next line how to build anyway:
+`To build anyway, add "<name>" to knownLimits.allow in rn-xtool.config.json.` When there are several, `build` lists
+them all after `rn-xtool cannot build this project yet:`.
+
+These are only the setups rn-xtool knows it cannot build. Other setups it cannot build are not caught early: they
+still fail during the build, as before.
+
+**Building anyway.** To try a refused setup (for example after you changed the library yourself, or if you think the
+check is wrong), list it in `knownLimits.allow` in `rn-xtool.config.json`: the package name for a library, or
+`"pnpm"`, `"pnp"` or `"hoisted"` for the install refusals.
+
+```json
+{ "knownLimits": { "allow": ["@react-native-async-storage/async-storage", "pnpm"] } }
+```
+
+The refusal then becomes a warning, in `doctor --project` and in `build`, and the build goes on:
+
+```text
+⚠ known-limits — <reason> (allowed by rn-xtool.config.json knownLimits.allow; the build may fail later)
+```
+
+The build may still fail later, at the point where it failed before rn-xtool had these checks. An entry that names no
+current refusal is ignored. A `knownLimits` of the wrong shape is an error in every command:
+`rn-xtool.config.json: knownLimits must be an object with an allow list` or
+`rn-xtool.config.json: knownLimits.allow must be a list of package names or "pnpm", "pnp", "hoisted"`.
+
+### Libraries with prebuilt binaries
+
+`<package> <version>: its podspec (<podspec>) declares vendored_frameworks and the package ships no Package.swift, so
+rn-xtool would have to scaffold it, and it cannot link prebuilt binaries yet.` (or `vendored_libraries`, or both)
+
+The library has no `Package.swift`, so rn-xtool would generate one from its podspec, as it does for every
+CocoaPods-only library. But the podspec ships precompiled binaries (an `.xcframework` or a static library), and the
+generated `Package.swift` cannot link them yet. @react-native-async-storage/async-storage 3.x is the known case
+([libraries.md](libraries.md)). Expo modules are not affected: Expo's own SwiftPM plugin links their binaries.
+
+What to do:
+
+- Use a version of the library without prebuilt binaries. For async-storage that is 2.x, whose iOS side is plain
+  Objective-C (not tested on a device yet).
+- If the app does not need the library on iOS, take it out of iOS autolinking (`ios: null` under its `platforms` in
+  `react-native.config.js`, or `expo.autolinking.exclude`): the check then skips it.
+- A `Package.swift` of the library's own, or one your project's `patches/` create (also a generated one you edited
+  to add a `.binaryTarget`), is accepted: the check passes.
+- Binaries declared only in a test spec or under a Ruby condition (`if`, `unless`) do not count.
+
+### Libraries that build vendored C sources
+
+`<package> <version>: its podspec (<podspec>) builds C sources from vendor/ (<files>) and the package ships no
+Package.swift; rn-xtool cannot build vendored C sources yet.`
+
+The library is an Expo module whose podspec compiles C sources from its `vendor/` folder (expo-sqlite, which builds
+SQLite and SQLCipher that way). It has no `Package.swift`, and the package ships no precompiled copy of it, so Expo's
+SwiftPM plugin would have to compile those sources, which it cannot do yet. There is no fix in rn-xtool yet: remove
+the library, or take it out of iOS autolinking (`expo.autolinking.exclude`) if the app does not need it on iOS.
+`expo-sqlite/kv-store` comes from the same package, so it is not a way around it. An Expo module that ships a
+precompiled copy, or has a `Package.swift` of its own or from your project's `patches/`, passes.
+
+### pnpm and Yarn PnP
+
+`This project was installed with pnpm (pnpm-lock.yaml and a node_modules/.pnpm store); rn-xtool needs the flat
+node_modules that npm or Yarn classic installs. Remove node_modules and install with npm.`
+
+`This project uses Yarn Plug'n'Play (.pnp.cjs); rn-xtool needs a node_modules folder. Add nodeLinker: node-modules to
+.yarnrc.yml and run yarn install.`
+
+rn-xtool patches packages in place with patch-package and reads them at fixed paths in `node_modules`, which pnpm's
+linked store and Yarn's Plug'n'Play do not provide. Do what the message says:
+
+- pnpm: `rm -rf node_modules && npm install`. A pnpm install with `node-linker=hoisted` (a flat `node_modules`) is not
+  refused.
+- Yarn Plug'n'Play: add `nodeLinker: node-modules` to `.yarnrc.yml`, then `yarn install`.
+
+Only the project folder itself is checked: a pnpm lockfile in a parent folder does not count.
+
+### Packages hoisted to a parent folder
+
+`react-native is installed in ../node_modules/react-native, outside this project: a workspace hoisted it to a parent
+folder, and rn-xtool patches and builds only the project's own node_modules/react-native. Install the app outside the
+workspace, or keep react-native in the app's node_modules (for example with nohoist).` (the same for `expo`)
+
+In a monorepo, the package manager can install react-native or expo once in the workspace's `node_modules` instead of
+the app's. rn-xtool patches and builds the copy in the app's own `node_modules`, so it would miss that one. Install
+the app outside the workspace, or keep react-native and expo in the app's `node_modules` (for example with Yarn
+classic's `nohoist`). Only parent folders' `node_modules` are checked, not Node's global folders.
 
 ## Build and patches
 
@@ -416,6 +523,12 @@ checks, so it also runs on a machine without Swift or xtool. Run it from the pro
 - **podspecs** (information only): the podspec features the dependencies use that rn-xtool tracks (`subspecs`,
   `compiler_flags`, `header_dir`, `header_mappings_dir`, `vendored_frameworks`, `resource_bundles`), each with the
   packages that use it, or `no tracked podspec features in the dependencies`.
+- **known-limits**: the setups rn-xtool refuses before a build ([Unsupported setups](#unsupported-setups)). With none,
+  it reads `none of the setups rn-xtool refuses early (CocoaPods-only libraries with prebuilt binaries or vendored C
+  sources, pnpm, Yarn PnP, hoisted packages)`. Otherwise there is one ✖ line per refusal, with its reason and a link
+  to its section, followed by `To build anyway, add "<name>" to knownLimits.allow in rn-xtool.config.json.` on the
+  next line, and `doctor --project` exits non-zero. A refusal that `knownLimits.allow` lets through is a ⚠ warning
+  instead, ending with `(allowed by rn-xtool.config.json knownLimits.allow; the build may fail later)`.
 
 The rn-scripts, rn-artifacts, expo-plugin and expo-modules lines are left out when the project has no react-native or
 no expo. On a version no line covers, the rn-scripts and rn-artifacts lines are information only, and they do not
@@ -452,3 +565,95 @@ capability line is printed. Every command names the file the same way.
 
 Bare React Native build errors (`Cannot resolve build setting`, `unsupported source type in the app target`) are
 explained in [bare-react-native.md](bare-react-native.md).
+
+### Apple sign-in errors
+
+`rn-xtool auth login` (and `auth status` and `auth logout`) runs xtool's sign-in. When xtool fails with one of these
+known errors, rn-xtool prints what happened, whose side it is on and what to do, instead of xtool's raw error:
+
+- **"Apple's sign-in service answered HTTP 503 (Service Temporarily Unavailable): Apple refused the request before it
+  checked your Apple ID, so this is on Apple's side, not your project or your password."** xtool's output names
+  `GsService2` and `HTTP 503`. xtool 1.24.0 fixed one cause of it: `rn-xtool doctor` shows whether your xtool is the
+  version rn-xtool pins, and `rn-xtool setup` installs it. Then try again later.
+  ([xtool issue #404](https://github.com/xtool-org/xtool/issues/404))
+- **"The anisette server xtool signs in through did not answer in time (HTTPClientError.deadlineExceeded)."** xtool
+  signs in through an anisette server, which supplies the device information Apple's sign-in expects. That server
+  did not answer; it has been down before and came back on its own. Try again later.
+  ([xtool issue #401](https://github.com/xtool-org/xtool/issues/401))
+- **"A connection xtool needs to sign in timed out (HTTPClientError.connectTimeout)"**: Apple's sign-in server
+  (gsa.apple.com) stalls now and then on some networks, and an unreachable anisette server fails the same way. Run
+  the command again; a new sign-in may ask for a new verification code.
+  ([xtool issue #414](https://github.com/xtool-org/xtool/issues/414) and
+  [#401](https://github.com/xtool-org/xtool/issues/401))
+- **"Sign-in was interrupted. If the verification code never arrived on your trusted devices, that is a known problem
+  between xtool and Apple's sign-in, not your project."** You pressed Ctrl+C at xtool's `Code:` prompt. It went away
+  for others after they turned off Advanced Data Protection for the Apple ID (on the iPhone: Settings → your name →
+  iCloud → Advanced Data Protection); then run `rn-xtool auth login` again. rn-xtool exits with status 130. A Ctrl+C
+  at any other step of `auth login` ends as xtool ends it, with `Cancelled.`, and also exits with status 130.
+  ([xtool issue #407](https://github.com/xtool-org/xtool/issues/407))
+
+Any other sign-in error is shown as xtool prints it. rn-xtool recognises these errors by xtool's current texts: if a
+new xtool release words one differently, it is shown as xtool prints it too. These explanations are given only on
+`rn-xtool auth`: the same timeout during an install has another cause, so `install` shows it as xtool prints it.
+
+### App ID limit
+
+**"Apple refused to register another App ID: a free Apple ID can register 10 App IDs per 7 days, and each new bundle
+identifier takes one."** `rn-xtool install` (over USB or `--network`) and `rn-xtool run` print it when Apple refuses
+to register the app. The numbers come from Apple's own answer.
+
+Each new bundle identifier you install registers a new App ID with Apple, and a free Apple ID can register only a few
+of them a week. A fresh Expo app gets `com.anonymous.<slug>`, so every new test app takes one. What to do:
+
+- Reuse a bundle identifier that is already installed on your iPhone, without the `XTL-<Team ID>.` prefix xtool adds:
+  set it as `ios.bundleIdentifier` in the Expo app config, or as `PRODUCT_BUNDLE_IDENTIFIER` of the app target in a
+  bare project. Then run `rn-xtool build` and `rn-xtool install` again.
+- Or wait until the oldest of those App IDs is 7 days old.
+
+### iPhone not registered
+
+**"Apple has no iPhone registered on your Apple ID's team, so xtool could not sign the app for one."**
+`rn-xtool install --network` prints it when Apple answers "There are no current IOS devices on this team".
+
+Over Wi‑Fi, xtool signs the app for the iPhones already registered on your team, and it registers an iPhone only when
+it installs over USB. A registration can be gone a while after the last USB install. Connect the iPhone by USB once
+and run `rn-xtool install` without `--network`. After that, `rn-xtool install --network` works again.
+
+## Reporting a problem
+
+Run `rn-xtool doctor --report` in the project folder (`rn-xtool doctor --report --project` for the project only) and
+paste its whole output into a [new issue](https://github.com/WillyAntunez/react-native-xtool/issues/new/choose). It
+prints one block with rn-xtool's, Node's, Swift's and xtool's versions, the OS and architecture, the project's kind
+and versions, and every `doctor` line, the `doctor --project` lines included. It exits 0 whatever the checks say.
+
+It replaces private values with placeholders:
+
+| Value | Shown as |
+| --- | --- |
+| your home folder (and other users' folders, including a WSL Windows home) | `~` |
+| a user folder on an external drive | `/media/<user>`, `/run/media/<user>` |
+| your Apple ID, other e-mail addresses | `<apple-id>`, `<email>` |
+| your Team ID | `<team-id>` |
+| bundle identifiers, the `XTL-<Team ID>.` prefix included | `<bundle id>` |
+| UDIDs | `<udid>` |
+| device names | `<device>` |
+| IP addresses | `<ip>` |
+| MAC addresses, also inside network interface names such as `enx…` | `<mac>` |
+| tokens and passwords | `<token>` |
+
+It makes no network request, to the internet or on your local network, and does not contact the iPhone: the
+artifacts line reads the cache only and says `not checked (offline)` otherwise, and the device and Wi‑Fi lines read
+`not checked (report)`.
+Anything your project's config prints while the report is built is left out.
+
+The report ends with:
+
+> Read the report before you post it: rn-xtool replaced your home folder, Apple ID, Team ID, bundle identifiers,
+> device names and UDIDs, IP and MAC addresses and tokens with placeholders. Remove anything else you consider private.
+
+Do that before you post: the placeholders cover the values above, not every private word, such as a folder or
+project name.
+
+The issue templates ask for the report: **Bug report** when rn-xtool fails or does something unexpected (the command
+you ran, what you expected and what happened), and **My library does not build** for a library (its npm name and
+version). Both end with a checkbox that you read the report and removed anything private.

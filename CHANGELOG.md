@@ -5,6 +5,50 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 
 ## [Unreleased]
 
+### Upgrading from 0.1.0-alpha.4
+- Run `rn-xtool setup` once to download xtool 1.24.0. Until then `rn-xtool doctor` reports
+  `xtool — not found — run rn-xtool setup`.
+- A project with one of the setups below that rn-xtool refuses early now stops at the start of `build`, before it
+  changes anything, instead of failing later in the build. To build it anyway, as before, add its name to
+  `"knownLimits": { "allow": [...] }` in `rn-xtool.config.json`.
+
+### Added
+- `rn-xtool doctor --project` and `rn-xtool build` refuse early, with the reason and a link to
+  [troubleshooting.md](docs/troubleshooting.md#unsupported-setups), the setups rn-xtool knows it cannot build yet:
+  CocoaPods-only libraries whose podspec ships prebuilt binaries (async-storage 3.x; Expo modules are not affected),
+  Expo modules that build vendored C sources (expo-sqlite), pnpm and Yarn Plug'n'Play installs, and react-native or
+  expo hoisted to a parent folder. Before, these failed minutes into the build. `doctor --project` has a new
+  `known-limits` line. `"knownLimits": { "allow": [...] }` in `rn-xtool.config.json` (a package name, or `"pnpm"`,
+  `"pnp"` or `"hoisted"`) turns a refusal into a warning, "⚠ known-limits — <reason> (allowed by rn-xtool.config.json
+  knownLimits.allow; the build may fail later)". The checks read files only. Other unsupported setups still fail
+  during the build.
+- Known Apple sign-in failures on `rn-xtool auth` are explained instead of shown raw: an HTTP 503 from Apple's sign-in
+  service, an anisette server that did not answer in time, and a connection timeout. A Ctrl+C at xtool's `Code:`
+  prompt, for a verification code that never arrived, prints "Sign-in was interrupted. ..." with the known
+  workaround, and exits with status 130. Other sign-in errors are shown as xtool prints them. See
+  [troubleshooting.md](docs/troubleshooting.md#apple-sign-in-errors).
+- The free App ID limit on `install` and `run` reads "Apple refused to register another App ID: a free Apple ID can
+  register 10 App IDs per 7 days, and each new bundle identifier takes one." and says how to reuse an installed bundle
+  identifier. See [troubleshooting.md](docs/troubleshooting.md#app-id-limit).
+- When `rn-xtool install --network` fails because Apple answers "There are no current IOS devices on this team", the
+  error reads "Apple has no iPhone registered on your Apple ID's team, so xtool could not sign the app for one." and
+  says to install over USB once (`rn-xtool install` without --network), which registers the iPhone; after that,
+  --network works again. See [troubleshooting.md](docs/troubleshooting.md#iphone-not-registered).
+- `rn-xtool doctor --report` prints the checks as one block to paste into a GitHub issue. It replaces the home folder,
+  Apple ID, Team ID, bundle identifiers, UDIDs, device names, IP and MAC addresses and tokens with placeholders, and
+  makes no network request. Read it before you post it. See
+  [troubleshooting.md](docs/troubleshooting.md#reporting-a-problem).
+- Issue templates for a bug and for a library that does not build; both ask for the `doctor --report` output.
+- CI (`.github/workflows/ci.yml`) runs lint, the private-names scan and the tests on every pull request to `main` and
+  every push to `main`, and lists the skipped tests by name in the run summary. The tests read the patched upstream
+  React Native and Expo files from pinned npm tarballs (`node scripts/fetch-test-tarballs.mjs`) instead of the
+  reference app.
+
+### Changed
+- xtool 1.24.0 (was 1.23.0). Its release notes say it fixes another source of HTTP 503 errors.
+- When the xtool AppImage cannot run, the hint names the FUSE package of each Ubuntu release: "sudo apt install
+  libfuse2t64 on Ubuntu 24.04 and newer, sudo apt install libfuse2 on older releases".
+
 ## [0.1.0-alpha.4] - 2026-11-02
 
 ### Upgrading from 0.1.0-alpha.3
