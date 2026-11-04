@@ -675,6 +675,32 @@ directory. The shim is fed with every header among the sources, and the basename
 unchanged. A lone `<SwiftName>/` directory is left as it is: SwiftPM accepts it. Found on react-native-device-info
 15.0.2, which built by hand with `publicHeadersPath: "ios/RNDeviceInfo"`.
 
+## 23. `scripts/spm/spm-utils.js`: a bare include of a library's codegen header does not resolve
+
+@react-native-community/netinfo 11.5.2's `ios/RNCNetInfo.mm` does `#import "RNCNetInfoSpec.h"` under
+`RCT_NEW_ARCH_ENABLED`, which the scaffold defines. Codegen writes
+`build/generated/ios/ReactCodegen/RNCNetInfoSpec/RNCNetInfoSpec.h`, and the per-app header farm (`ReactAppHeaders`,
+fix 12) vends it only as `<RNCNetInfoSpec/RNCNetInfoSpec.h>`, the spelling react-native-localize and
+react-native-webview use. CocoaPods' header search paths make the bare spelling work too; SwiftPM failed:
+
+```
+ios/RNCNetInfo.mm:12:9: fatal error: 'RNCNetInfoSpec.h' file not found
+```
+
+Fix: `buildPerAppHeaderTree` writes a forwarder `X.h` at the root of the farm for each codegen directory
+`ReactCodegen/X` that holds `X/X.h` (every library with `codegenConfig.name` X gets one), with the scaffolder banner
+and `#import <X/X.h>`. A header the farm already has at its root is left as it is. When a library's own header in the
+farm is named `X.h` too (`<SwiftName>/X.h`), no forwarder is written, so it cannot shadow that header on a search path,
+and the build log says so: `WARNING: merged headers: no bare "X.h" forwarder to <X/X.h>: <SwiftName>/X.h has that name
+and keeps it`. Every library that depends on React core already has the farm on its header search path, so the
+scaffolded manifests do not change, and the forwarder, rebuilt with the farm on every run, holds no path at all.
+
+A search path in the manifest was tried first: `Context.packageDirectory + "/../../../ios/ReactCodegen/X"`, relative
+to the `libs/<SwiftName>` symlink the autolinker references the package through. SwiftPM does evaluate
+`Context.packageDirectory` as the symlink path, but the compiler resolves `..` after following the symlink, from the
+library's real directory in `node_modules`, so the path missed the codegen directory and the include still failed.
+Found on @react-native-community/netinfo 11.5.2, which built by hand with an absolute `-I` to the codegen directory.
+
 ## Known limitation (deferred): pure-Swift packages importing a mixed Expo module
 
 A Swift module built with a bridging header (every mixed target) makes each Swift importer re-read that
@@ -689,7 +715,7 @@ every generated or scaffolded Swift target that depends on a mixed module the sa
 
 `tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks the
 fixes against fixtures (skipped when the reference app is not present; set `RN_XTOOL_REF_APP` to point at it). It also
-asserts that each hunk is present in the installed RN files. Fixes 14 to 22 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
+asserts that each hunk is present in the installed RN files. Fixes 14 to 23 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
 against podspec fixtures from the SDK 57 pins in `tests/fixtures/podspecs/` (worklets 0.10.1, reanimated 4.5.1,
 screens 4.26.2, gesture-handler 2.32.0), from screens 4.30.1 (the clang-only importer paths and module map) and from
 worklets 0.8.3 (the `RCT_HERMES_V1_ENABLED` ternary). A golden test re-scaffolds the reference app's libraries and compares them

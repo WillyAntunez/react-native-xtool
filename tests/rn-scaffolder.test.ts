@@ -146,6 +146,9 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
     it("scaffold-package-swift.js has the fix 22 hunk", () => {
       expect(src("scaffold-package-swift.js")).toContain("umbrellaDirNextToSubdirs");
     });
+    it("spm-utils.js has the fix 23 hunk", () => {
+      expect(src("spm-utils.js")).toContain("function writeCodegenForwarders");
+    });
     it("the scaffolder has the fix 21 hunk", () => {
       expect(src("read-podspec.js")).toContain("swiftVersions");
       expect(src("scaffold-package-swift.js")).toContain("swiftLanguageModes: [.v5]");
@@ -1763,6 +1766,85 @@ describe("scaffolder fixes 20–25 (vendor/rn-spm)", () => {
       const run = scaffoldLibraries(VENDORED_RN_SPM, { foo: root });
       expect(run.results.find((r) => r.depName === "foo")?.reason).toBeUndefined();
       expect(run.statuses["foo"]).toBe("written");
+    });
+  });
+
+  describe("23: the codegen header's bare spelling (per-app header tree)", () => {
+    // @react-native-community/netinfo 11.5.2: ios/RNCNetInfo.mm does `#import "RNCNetInfoSpec.h"`, and codegen writes
+    // build/generated/ios/ReactCodegen/RNCNetInfoSpec/RNCNetInfoSpec.h.
+    const buildTree = (codegen: Record<string, string>) => {
+      const appRoot = tempDir();
+      for (const [f, text] of Object.entries(codegen)) {
+        const file = path.join(appRoot, "build", "generated", "ios", "ReactCodegen", f);
+        mkdirSync(path.dirname(file), { recursive: true });
+        writeFileSync(file, text);
+      }
+      const { buildPerAppHeaderTree } = load<{ buildPerAppHeaderTree(root: string): { path: string } }>("spm-utils.js");
+      return { appRoot, farm: buildPerAppHeaderTree(appRoot).path };
+    };
+    const SPEC = "#pragma once\n#define RNC_NET_INFO_SPEC 1\n";
+
+    it("forwards the bare codegen header from the root of the tree (netinfo's shape)", () => {
+      const { farm } = buildTree({ "RNCNetInfoSpec/RNCNetInfoSpec.h": SPEC, "RNCNetInfoSpec/RNCNetInfoSpec-generated.mm": "" });
+      expect(readFileSync(path.join(farm, "RNCNetInfoSpec", "RNCNetInfoSpec.h"), "utf8")).toBe(SPEC);
+      expect(readFileSync(path.join(farm, "RNCNetInfoSpec.h"), "utf8")).toBe(
+        "// AUTO-SCAFFOLDED by react-native spm scaffold — the bare \"RNCNetInfoSpec.h\" spelling\n" +
+          "// CocoaPods' header search paths resolve to the codegen header.\n" +
+          "#import <RNCNetInfoSpec/RNCNetInfoSpec.h>\n",
+      );
+    });
+
+    it("the forwarder holds no absolute path", () => {
+      const { appRoot, farm } = buildTree({ "RNCNetInfoSpec/RNCNetInfoSpec.h": SPEC });
+      const text = readFileSync(path.join(farm, "RNCNetInfoSpec.h"), "utf8");
+      expect(text).not.toContain(appRoot);
+      expect(text).not.toMatch(/["<]\//);
+      expect(text).not.toContain("..");
+    });
+
+    it("nothing for a codegen directory without its own header, and never over a header the tree already has", () => {
+      const { farm } = buildTree({
+        "react/renderer/components/rnfoo/Props.h": "",
+        "rnfoo/rnfoo.h": "",
+        "rnfooJSI.h": "",
+        "Taken/Taken.h": "",
+        "Taken.h": "// the codegen root's own\n",
+      });
+      expect(existsSync(path.join(farm, "react.h"))).toBe(false);
+      expect(existsSync(path.join(farm, "rnfoo.h"))).toBe(true);
+      expect(readFileSync(path.join(farm, "Taken.h"), "utf8")).toBe("// the codegen root's own\n");
+    });
+
+    it("no forwarder when a library's own header has the name, with a warning", () => {
+      const appRoot = tempDir();
+      const put = (rel: string, text: string) => {
+        mkdirSync(path.dirname(path.join(appRoot, rel)), { recursive: true });
+        writeFileSync(path.join(appRoot, rel), text);
+      };
+      put("build/generated/ios/ReactCodegen/FooSpec/FooSpec.h", SPEC);
+      put("build/generated/ios/ReactCodegen/BarSpec/BarSpec.h", SPEC);
+      put("build/generated/autolinking/headers/Foo/FooSpec.h", "// Foo's own\n");
+      const logs: string[] = [];
+      const { buildPerAppHeaderTree } = load<{ buildPerAppHeaderTree(root: string, l: object): { path: string } }>("spm-utils.js");
+      const farm = buildPerAppHeaderTree(appRoot, { log: (m: string) => logs.push(m) }).path;
+      expect(existsSync(path.join(farm, "FooSpec.h"))).toBe(false);
+      expect(readFileSync(path.join(farm, "Foo", "FooSpec.h"), "utf8")).toBe("// Foo's own\n");
+      expect(existsSync(path.join(farm, "BarSpec.h"))).toBe(true);
+      expect(logs).toContain(
+        'WARNING: merged headers: no bare "FooSpec.h" forwarder to <FooSpec/FooSpec.h>: Foo/FooSpec.h has that name and keeps it',
+      );
+    });
+
+    const clang = [path.join(homedir(), ".local/share/swiftly/bin/clang"), "clang"].find((c) => hasTool(c));
+    it.skipIf(clang === undefined)("clang finds the bare include through the tree root (needs clang)", () => {
+      const { farm } = buildTree({ "RNCNetInfoSpec/RNCNetInfoSpec.h": SPEC });
+      const src = path.join(tempDir(), "RNCNetInfo.m");
+      writeFileSync(src, '#import "RNCNetInfoSpec.h"\nint spec = RNC_NET_INFO_SPEC;\n');
+      const compile = () => tool(clang!, ["-fsyntax-only", "-x", "objective-c", "-I", farm, src]);
+      const ok = compile();
+      expect(ok.status, ok.stderr).toBe(0);
+      rmSync(path.join(farm, "RNCNetInfoSpec.h"));
+      expect(compile().stderr).toContain("'RNCNetInfoSpec.h' file not found");
     });
   });
 });

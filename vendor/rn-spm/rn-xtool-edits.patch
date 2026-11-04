@@ -180,7 +180,7 @@
      if (m != null) {
 --- a/spm/spm-utils.js
 +++ b/spm/spm-utils.js
-@@ -641,8 +641,8 @@
+@@ -708,8 +708,8 @@
    logger /*: {log: (msg: string) => void} */ = {log() {}},
  ) /*: void */ {
    const spmTemplate = path.join(
