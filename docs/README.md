@@ -9,9 +9,9 @@ Wi‑Fi installs, troubleshooting, library compatibility, and the research and d
   scripts are chosen, the Expo SDK 58 and 57 version floors and the precompiled framework check (G4), Expo SDK 57
   through the vendored Expo SwiftPM plugin, the first-launch reload helper, dev-client discovery, mixed-language
   manifests, CocoaPods-only libraries and reference timings.
-- [bare-react-native.md](bare-react-native.md): bare React Native projects (0.86.x from 0.86.2, 0.87.x from 0.87.1,
-  0.88.x from 0.88.0) and 0.88.1 hybrids with Expo modules: supported versions, detection, what is read from the
-  Xcode project, sources, resources, Metro, limits.
+- [bare-react-native.md](bare-react-native.md): bare React Native projects (0.85.x from 0.85.0, 0.86.x from 0.86.2,
+  0.87.x from 0.87.1, 0.88.x from 0.88.0) and 0.88.1 hybrids with Expo modules: supported versions, detection, what is
+  read from the Xcode project, sources, resources, Metro, limits.
 - [wifi-install.md](wifi-install.md): installing over Wi‑Fi without the cable, WSL2 pair records, Wi‑Fi troubleshooting.
 - [troubleshooting.md](troubleshooting.md): first-run checklist on the iPhone and fixes for common build, Metro and
   signing problems, opening a dev-client app on Metro, the app icon, the Expo SDK 58 and 57 version messages, the

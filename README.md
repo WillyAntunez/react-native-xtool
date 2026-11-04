@@ -20,15 +20,16 @@ Demo video coming soon.
 | Expo SDK 58 (expo 58.0.21 or newer 58.x, react-native 0.88.1) | ✅ [details](docs/how-it-works.md#expo-sdk-58) |
 | Expo SDK 57 (expo 57.0.31 or newer 57.x, react-native 0.86.3) | ✅ [details](docs/how-it-works.md#expo-sdk-57) |
 | Bare React Native 0.88.x from 0.88.0 (`@react-native-community/cli init`) | ✅ [details](docs/bare-react-native.md) |
-| Bare React Native 0.86.x from 0.86.2, 0.87.x from 0.87.1 (0.86.2 build-verified only) | ✅ [details](docs/bare-react-native.md#supported-react-native-versions) |
+| Bare React Native 0.85.x from 0.85.0, 0.86.x from 0.86.2, 0.87.x from 0.87.1 (0.85.0, 0.85.3 and 0.86.2 build-verified only) | ✅ [details](docs/bare-react-native.md#supported-react-native-versions) |
 | Bare React Native + Expo modules (hybrid), React Native 0.88.1 | ✅ [details](docs/bare-react-native.md#hybrid-bare--expo-modules) |
-| Expo SDK 54–56, React Native 0.85 and older, 0.86.0, 0.86.1, 0.87.0 | ⏳ not yet (Expo SDK 53 and older are refused as well) |
+| Expo SDK 54–56, React Native 0.84 and older, 0.86.0, 0.86.1, 0.87.0 | ⏳ not yet (Expo SDK 53 and older are refused as well) |
 | iOS simulator | ❌ macOS only |
 | Production / App Store builds | ❌ use EAS |
 | macOS or Windows as the host | ❌ (WSL2 on x86_64 should work as Linux; not tested yet, reports welcome) |
 
-Bare React Native versions: 0.86.x from 0.86.2, 0.87.x from 0.87.1 and 0.88.x from 0.88.0 (0.88.1, 0.88.0, 0.87.1
-and 0.86.3 are verified on a device; 0.86.2 only builds, it has not been run on a device), see
+Bare React Native versions: 0.85.x from 0.85.0, 0.86.x from 0.86.2, 0.87.x from 0.87.1 and 0.88.x from 0.88.0
+(0.88.1, 0.88.0, 0.87.1 and 0.86.3 are verified on a device; 0.85.0, 0.85.3 and 0.86.2 only build, they have not been
+run on a device), see
 [Supported React Native versions](docs/bare-react-native.md#supported-react-native-versions). A newer patch of one of
 these lines builds with a warning naming the verified versions. An older version, a prerelease or another minor stops
 with one error naming these floors. Expo SDK 57 and 58 work the same way: newer patches of the SDK's packages build

@@ -8,7 +8,7 @@ facebook/react-native.
 Where the fixes live in rn-xtool: in `patches/react-native+0.88.0.patch` and `patches/react-native+0.88.1.patch`
 (each applied only to an installed react-native of its version; the three patched files are byte-identical in 0.88.0
 and 0.88.1, so the two patches are the same file, and `tests/patches.test.ts` keeps them identical: a fix edits both)
-and, for bare React Native 0.86.2, 0.86.3 and 0.87.1, already applied in the vendored copy of the 0.88.0 scripts in
+and, for bare React Native 0.85.x, 0.86.x and 0.87.x, already applied in the vendored copy of the 0.88.0 scripts in
 `vendor/rn-spm/` ([README](../../vendor/rn-spm/README.md)).
 
 Refreshing for a new React Native 0.88.x: add `patches/react-native+0.88.<x>.patch` for it (refreshed against it, or a
