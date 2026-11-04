@@ -187,7 +187,9 @@ into `_`.
 
 The Resources phase is copied to `ios-xtool/Resources` (by file name; `*.lproj/` and `*.bundle/` stay whole) and listed
 in `xtool.yml`, so they land at the app bundle root. Storyboards, asset catalogs and `.xib` files need Xcode's tools, so
-they are skipped with an `ℹ` line: no launch screen from a storyboard and no app icon from `Images.xcassets`.
+they are skipped with an `ℹ` line: no launch screen from a storyboard. The app icon is the exception: `build` takes one
+PNG from `Images.xcassets/AppIcon.appiconset` (the template's set lists sizes without files, so add a 1024×1024 PNG;
+see [troubleshooting.md](troubleshooting.md#app-icon-and-launch-screen)).
 
 ## Metro
 
@@ -228,7 +230,8 @@ its `Package.swift` fix for Linux needs no patch, rn-xtool applies it on every b
 ## Limits
 
 - One application target and one `.xcodeproj` per project.
-- `.xcconfig` files, entitlements, capabilities and script phases are not read; no asset catalogs or storyboards.
+- `.xcconfig` files, entitlements, capabilities and script phases are not read; no asset catalogs or storyboards,
+  except the app icon, which is taken from `AppIcon.appiconset`.
 - Only the React Native lines in [the table above](#supported-react-native-versions), from their floor, are supported.
 
 Implementation notes: the "Bare React Native notes" section of [recipe.md](recipe.md#bare-react-native-notes) and the

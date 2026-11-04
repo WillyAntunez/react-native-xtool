@@ -45,7 +45,8 @@ what does not work yet (library resource bundles, vendored binaries, Xcode-only 
 
 ## Before you start
 
-- Linux x86_64 (arm64 should work, untested). Node 22.12+. About 15 GB of free disk.
+- Linux x86_64 (arm64 should work, untested). Node 22.12+. About 25 GB of free disk for setup and the first build
+  (Swift toolchain, Darwin SDK, React Native artifacts), plus the Xcode.xip.
 - `Xcode.xip` (Xcode 27.x, about 12 GB), downloaded yourself from developer.apple.com with an Apple ID.
 - An Apple ID. Free accounts: signatures last 7 days, 3 apps at a time, no push notifications or special entitlements
   (a paid developer account lifts these).
@@ -119,8 +120,8 @@ compares them with the last successful build and install ([details](docs/how-it-
 | `auth [args...]` | Runs `xtool auth <args>` (`auth login`, `auth logout`); with no arguments, `xtool auth status`. |
 | `doctor [--project] [--report]` | Checks toolchain, SDK, login, connected device, Wi‑Fi install readiness and project. Exits non-zero on problems. `--project` checks only the project in the current folder: its version gates, what rn-xtool finds in it and the setups it cannot build yet. `--report` prints the same checks as one block to paste into a GitHub issue, with your home folder, Apple ID, Team ID, bundle identifiers, UDIDs, device names, IP and MAC addresses replaced by placeholders, and makes no network request ([details](docs/troubleshooting.md#reporting-a-problem)). |
 | `build [--clean]` | Prebuild if `ios/` is missing (Expo only), patches, RN/Expo SwiftPM pipeline, ExpoModulesJSI (Expo modules only), generates `ios-xtool/`, `xtool dev build`. `--clean` re-runs `expo prebuild --clean` for Expo; for bare it removes `ios/build` and `ios-xtool` and leaves the rest of `ios/` alone. |
-| `install [--network [ip] [--udid <udid>] [--pair-record <file>]]` | Signs and installs the app on the USB-connected iPhone (over Wi‑Fi without the cable with `--network`, see [docs/wifi-install.md](docs/wifi-install.md)), then prints the Metro URL (Expo apps with `expo-dev-client` only) and the first-run checklist. |
-| `start [--clear]` | Starts Metro (`npx expo start`; `npx react-native start` for bare) on the port and LAN IP the app was built for. Tells you to rebuild if either changed; clears the Metro cache when dependencies changed (or with `--clear`). |
+| `install [--network [ip] [--udid <udid>] [--pair-record <file>]]` | Signs and installs the app on the USB-connected iPhone (over Wi‑Fi without the cable with `--network`, see [docs/wifi-install.md](docs/wifi-install.md)), then prints, for apps with expo-dev-client, the Metro URL with a link and QR code that open the app on it, and the first-run checklist. |
+| `start [--clear]` | Starts Metro (`npx expo start`; `npx react-native start` for bare) on the port and LAN IP the app was built for. Tells you to rebuild if either changed; clears the Metro cache when dependencies changed (or with `--clear`). With expo-dev-client it announces Metro to the dev launcher under the installed app's bundle id. |
 | `run [--clean] [--force] [--network [ip]]` | `build` and `install` when dependencies changed (or with `--force`), then `start`. `--network` installs over Wi‑Fi. |
 
 ## Configuration
@@ -147,10 +148,14 @@ CommonJS (`module.exports = {...}`) unless your project is ESM. Both are merged,
 
 - The Metro port and LAN IP are baked into the app: if either changes, rebuild and reinstall (`run` does it for you).
 - The installed bundle ID is `XTL-<TEAM_ID>.<bundleIdentifier>` because xtool renames it.
-- `expo-dev-client`: the launcher's and dev menu's icons are missing (no `actool` on Linux for their asset catalogs);
-  with Metro off port 8081, type the URL `install` prints (`http://<lanIp>:<metroPort>`) in the launcher.
+- `expo-dev-client`: the launcher's and dev menu's icons are missing (no `actool` on Linux); the app opens Metro by
+  itself from its second launch, and the link and QR code from `install` cover the first one
+  ([details](docs/troubleshooting.md#dev-client)).
+- The app icon comes from the `AppIcon` set as one PNG; dark, tinted and Icon Composer icons and custom splash screens
+  are not supported (no asset catalog compiler on Linux;
+  [details](docs/troubleshooting.md#app-icon-and-launch-screen)).
 - Bare projects: one app target and one `.xcodeproj`, always built for iOS 16.4; `.xcconfig` files, entitlements,
-  capabilities, script phases, storyboards, asset catalogs and `.xib` files are not used ([details](docs/bare-react-native.md#limits)).
+  capabilities, script phases, storyboards, asset catalogs (except the app icon) and `.xib` files are not used ([details](docs/bare-react-native.md#limits)).
 - Metal shaders are not compiled on Linux: react-native-svg's Metal filters are unavailable.
 - `doctor --project` and `build` refuse early, with the reason and a link, the setups rn-xtool knows it cannot build
   yet: CocoaPods-only libraries with prebuilt binaries (async-storage 3.x), Expo modules that build vendored C sources

@@ -5,6 +5,54 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 
 ## [Unreleased]
 
+### Upgrading from 0.1.0-alpha.5
+- Run `rn-xtool build` and `rn-xtool install` to get the app icon and, for apps without expo-dev-client, the reload
+  after Allow.
+- If the home screen keeps a blank icon, delete the app from the iPhone and install it again, or restart the phone:
+  iOS caches app icons.
+- With expo-dev-client, run `rn-xtool install` once, so that `rn-xtool start` can announce Metro under the installed
+  app's bundle id. Until then `start` prints "ℹ No installed bundle id recorded: run `rn-xtool install` once so
+  `start` can announce Metro under the app's real id (Expo SDK 58's dev launcher hides other servers)."
+
+### Added
+- The red screen "No script URL provided" on the first launch clears by itself after Allow. Debug builds of apps
+  without expo-dev-client (Expo and bare) get a small helper that waits for Metro after the red screen and reloads the
+  app once it answers: at most once per failure, only in the foreground, for up to 5 minutes. An app opened before
+  `rn-xtool start` also reloads once Metro runs. See
+  [troubleshooting.md](docs/troubleshooting.md#the-app-does-not-start-or-cannot-reach-metro).
+- When Local Network access is denied (Don't Allow), the app shows one alert, "Local Network access is off", with an
+  Open Settings button.
+- Apps with expo-dev-client open their Metro server by themselves from the second launch: `build` sets the dev
+  launcher's default URL (`DEV_CLIENT_DEFAULT_LAUNCHER_URL`, unless the app sets one) and adds `_expo._tcp` to
+  `NSBonjourServices`, which a bare app with the dev client lacked.
+- `rn-xtool install` prints, for apps with expo-dev-client, a link and a QR code that open the app on its Metro server,
+  for the first launch. The QR code is drawn with the project's own `toqr`; without it, the link is printed alone. See
+  [troubleshooting.md](docs/troubleshooting.md#dev-client).
+- With expo-dev-client, `rn-xtool start` announces Metro to the dev launcher under the installed app's bundle id
+  (`XTL-<Team ID>.<bundle id>`), in place of Expo's announcement, so Expo SDK 58's launcher lists the server with its
+  "Match bundle identifier" filter on. It uses the project's own `dnssd-advertise` and prints "ℹ Announcing Metro to
+  the dev launcher as <id>."; when it cannot announce, Expo's announcement stays. `CI=1` or `EXPO_UNSTABLE_BONJOUR=0`
+  in the environment turns it off, as for Expo CLI (the project's `.env` files are not read for this).
+- The app gets its icon on the home screen: `build` takes the PNG from `Images.xcassets/AppIcon.appiconset` (Expo and
+  bare) and prints "ℹ App icon: <path> (<width>×<height>)", or an `ℹ` line saying why there is none. For Expo, when the
+  app config's icon changed since the last expo prebuild, it says to run `rn-xtool build --clean`. Dark, tinted and
+  Icon Composer icons and custom splash screens are not supported. See
+  [troubleshooting.md](docs/troubleshooting.md#app-icon-and-launch-screen).
+- `rn-xtool setup` checks the free space for everything it will install (Swift toolchain, xtool, Darwin SDK, the first
+  build) before the first download, per filesystem: "Not enough free disk space for setup: the filesystem of <folder>
+  has <free> GB free, and setup needs about <need> GB there (<parts>). ...". It removes a half-written
+  `darwin.artifactbundle.tmp` left by an interrupted SDK install first.
+
+### Changed
+- The first-run checklist line about the red screen now reads: "On the first launch iOS asks for Local Network access,
+  and the red screen "No script URL provided" may show behind it: tap Allow, and the app reloads by itself." For apps
+  with expo-dev-client: "On the first launch the dev launcher asks for Local Network access: tap Allow, then open the
+  link or QR code above, or enter the Metro URL above in the launcher." An app last built by 0.1.0-alpha.5 has no
+  helper: until `rn-xtool build` runs again, `install` keeps the line "tap Allow, then Reload".
+- The README asks for about 25 GB of free disk for setup and the first build, plus the Xcode.xip (was about 15 GB).
+- The SDK-only check "Need at least 10 GB free in your home filesystem (~/.swiftpm) to install the Darwin SDK" is
+  replaced by the setup-wide check above.
+
 ## [0.1.0-alpha.5] - 2026-11-04
 
 ### Upgrading from 0.1.0-alpha.4

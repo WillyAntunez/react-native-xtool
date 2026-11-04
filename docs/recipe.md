@@ -11,8 +11,9 @@ for [Expo SDK 57](#expo-sdk-57-notes) and [bare React Native](#bare-react-native
   a static xcframework built on Linux). `parseXCFrameworks` picks the `ios` slice regardless of host.
 - **xtool 1.24.0** AppImage, used unmodified (pinned in `src/versions.ts`).
 - **Darwin SDK** (iPhoneOS 27.1) extracted from the user's `Xcode.xip` into
-  `~/.swiftpm/swift-sdks/darwin.artifactbundle` (about 7 GB). Sanity check: `xtool dev build` on
-  `Examples/DemoSimple` builds in about 6.5 s.
+  `~/.swiftpm/swift-sdks/darwin.artifactbundle` (about 7 GB), or into
+  `$XDG_CONFIG_HOME/swiftpm/swift-sdks/darwin.artifactbundle` when `XDG_CONFIG_HOME` is set, as xtool does. Sanity
+  check: `xtool dev build` on `Examples/DemoSimple` builds in about 6.5 s.
 - Install logic: `src/commands/setup.ts`; downloads in `src/tools/download.ts`; xtool wrapper in `src/tools/xtool.ts`.
 - xtool uses `--build-system native` for cross hosts because swiftbuild 6.4 fails with "unable to find platform for
   iphoneos"; it works around this with `XCODE_EXTRA_PLATFORM_FOLDERS` and `toolset-swb.json`.
