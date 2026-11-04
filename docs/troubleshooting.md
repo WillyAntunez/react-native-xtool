@@ -269,37 +269,37 @@ classic's `nohoist`). Only parent folders' `node_modules` are checked, not Node'
   `app.json`, run `rn-xtool build --clean` (or `run --clean`), which re-runs `expo prebuild --clean`.
 - **A committed project patch no longer applies** (after a library upgrade): delete it from `patches/` and let
   `rn-xtool build` re-scaffold it.
-- **"⚠ patches/<name> was written by an older rn-xtool scaffolder (revision <n>, now 3); delete it so rn-xtool
+- **"⚠ patches/<name> was written by an older rn-xtool scaffolder (revision <n>, now 4); delete it so rn-xtool
   regenerates it (also remove node_modules/<package> and reinstall: that copy still has the old Package.swift)":** the
   `patches` step found a persisted scaffold patch from an older scaffolder. Revision 1 patches lack the Swift importer
-  paths of mixed libraries, and revision 2 patches lack those of clang-only libraries and their module map (fixes 17
-  and 18 in [upstream/react-native-scaffolder.md](upstream/react-native-scaffolder.md)). Without them, Swift code that
-  imports a scaffolded library (the app, or expo-router importing react-native-screens) can fail with
-  `'RNSReactBaseView.h' file not found` (a mixed library, such as react-native-screens 4.26) or
+  paths of mixed libraries, revision 2 patches lack those of clang-only libraries and their module map, and revision 3
+  patches lack fixes 20–22 and 24 (fixes 17 to 24 in [the scaffolder fixes](upstream/react-native-scaffolder.md)).
+  Without them, Swift code that imports a scaffolded library (the app, or expo-router importing react-native-screens)
+  can fail with `'RNSReactBaseView.h' file not found` (a mixed library, such as react-native-screens 4.26) or
   `'RNSDefines.h' file not found` (a clang-only one, such as react-native-screens 4.30). Do what the warning says:
-  delete the patch, remove the library from `node_modules` and reinstall it, then build; rn-xtool scaffolds it again
-  and persists the new patch.
+  delete the patch, remove the library from `node_modules` and reinstall it, then build; rn-xtool scaffolds it again and
+  persists the new patch.
 - **"⚠ patches/<name> was scaffolded for React Native <version>; delete it so rn-xtool regenerates it for <installed>
   (also remove node_modules/<package> and reinstall: that copy still has the old Package.swift)":** the persisted
   scaffold patch was made for another React Native version, for example after moving a project from 0.88.0 to 0.88.1.
   Do the same as for the revision warning above. Both warnings also read patches with the marker's name before the
   rename, `expo-xtool-scaffold-revision` (apps scaffolded before 0.1.0-alpha.1).
 - **"ℹ node_modules/<package>/Package.swift was scaffolded with revision <n> for React Native <version>, older than
-  patches/<name> (revision 3, React Native <installed>): rn-xtool replaced it with the persisted one":** a teammate
+  patches/<name> (revision 4, React Native <installed>): rn-xtool replaced it with the persisted one":** a teammate
   committed a regenerated scaffold patch, and your `node_modules` still had the copy an older patch wrote
   (patch-package does not replace a file that exists). rn-xtool owns these generated files, so the `patches` step
   removes the files the current patch creates and patch-package writes them again; the line is printed once
   patch-package has done so. Nothing to do; files the older scaffold wrote and the current one does not stay in place.
   This happens only when the patch holds nothing but scaffolded new files.
 - **"⚠ node_modules/<package>/Package.swift was scaffolded with revision <n> for React Native <version>, older than
-  patches/<name> (revision 3, React Native <installed>), and that patch also changes the library's own files, so
+  patches/<name> (revision 4, React Native <installed>), and that patch also changes the library's own files, so
   rn-xtool does not replace it: run rm -rf node_modules/<package> && npm install, then build again":** the same case,
   but the persisted patch also holds your own fix to the library. rn-xtool persists a scaffold with
   `patch-package <package>`, which writes everything that differs from the published package into one patch.
   Removing only the scaffold files would leave a patch that patch-package can apply neither forward nor backward, so
   rn-xtool changes nothing and the build goes on with the older manifest. Run the command: the reinstall gives the
   published package, and the next build applies the whole patch.
-- **"ℹ node_modules/<package>/Package.swift was scaffolded by an older rn-xtool scaffolder (revision <n>, now 3)" (or
+- **"ℹ node_modules/<package>/Package.swift was scaffolded by an older rn-xtool scaffolder (revision <n>, now 4)" (or
   "was scaffolded for React Native <version>, not <installed>"), followed by "rn-xtool removed it so the rn-spm step
   scaffolds it again":** a library has no persisted patch, and the manifest rn-xtool generated for it is out of date,
   for example after you deleted a stale patch but kept the package installed. The `rn-spm` step scaffolds it again

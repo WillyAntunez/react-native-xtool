@@ -121,8 +121,11 @@ const SCAFFOLDER_VERSION_LINE_RE = /^\/\/ AUTO-SCAFFOLDED-VERSION: (\d+)$/m;
 // evaluated, header_mappings_dir under header_dir, and the Swift importer
 // paths marker (IMPORTER_PATHS_MARKER). Revision 3: that marker on clang-only
 // targets too, and their module map without the headers they leave out
-// (CLANG_MODULE_MAP).
-const RN_XTOOL_SCAFFOLD_REVISION = 3;
+// (CLANG_MODULE_MAP). Revision 4 (fixes 20–24): dependencies on packages that
+// are not linked for iOS left out, with the subspecs that declare them; the
+// Swift 5 language mode; the umbrella-directory shim; the codegen header's
+// bare spelling; and Swift compilation conditions.
+const RN_XTOOL_SCAFFOLD_REVISION = 4;
 const RN_XTOOL_SCAFFOLD_REVISION_RE = /^\/\/ rn-xtool-scaffold-revision: (\d+)$/m;
 
 // An importer (Swift, or a Clang module) builds the target's module from its

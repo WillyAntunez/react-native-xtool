@@ -129,7 +129,7 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
       expect(src("read-podspec.js")).toContain("function rnPodEnvTernary");
       expect(src("read-podspec.js")).toContain("env: {...process.env, ...RN_POD_ENV}");
       const f = src("scaffold-package-swift.js");
-      expect(f).toContain("RN_XTOOL_SCAFFOLD_REVISION = 3");
+      expect(f).toContain("RN_XTOOL_SCAFFOLD_REVISION = 4");
       expect(f).toContain("rn-xtool-swift-importer-paths");
       expect(f).toContain("function importsOwnSwiftHeader");
       expect(f).toContain("function clangModuleExcludes");
@@ -1048,7 +1048,7 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
 
       it("emits the rn-xtool-scaffold-revision marker next to AUTO-SCAFFOLDED-VERSION", () => {
         const pkg = readFileSync(path.join(fresh(), "Package.swift"), "utf8");
-        expect(pkg).toMatch(/^\/\/ AUTO-SCAFFOLDED-VERSION: \d+\n\/\/ rn-xtool-scaffold-revision: 3$/m);
+        expect(pkg).toMatch(/^\/\/ AUTO-SCAFFOLDED-VERSION: \d+\n\/\/ rn-xtool-scaffold-revision: 4$/m);
       });
 
       it("keeps a scaffold that carries the current marker", () => {
@@ -1061,14 +1061,14 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
         writeFileSync(file, readFileSync(file, "utf8").replace(/^\/\/ rn-xtool-scaffold-revision: \d+\n/m, "").replace("exact:", "from:"));
         expect(scaffoldAgain(root)).toBe("written");
         const pkg = readFileSync(file, "utf8");
-        expect(pkg).toContain("rn-xtool-scaffold-revision: 3");
+        expect(pkg).toContain("rn-xtool-scaffold-revision: 4");
         expect(pkg).toContain('exact: "1.5.0"');
       });
 
       it("regenerates a scaffold whose marker is lower than the current revision", () => {
         const root = fresh();
         const file = path.join(root, "Package.swift");
-        writeFileSync(file, readFileSync(file, "utf8").replace("revision: 3", "revision: 2"));
+        writeFileSync(file, readFileSync(file, "utf8").replace("revision: 4", "revision: 3"));
         expect(scaffoldAgain(root)).toBe("written");
       });
     });
@@ -1153,7 +1153,7 @@ describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
       // Mixed (pager-view) or clang-only, each of these targets searches beyond its public headers path, so each
       // manifest records its importer paths right after the revision line.
       for (const k of manifests) {
-        expect(now.files[k], k).toMatch(/^\/\/ rn-xtool-scaffold-revision: 3\n\/\/ rn-xtool-swift-importer-paths: \[.+\]$/m);
+        expect(now.files[k], k).toMatch(/^\/\/ rn-xtool-scaffold-revision: 4\n\/\/ rn-xtool-swift-importer-paths: \[.+\]$/m);
       }
       expect(now.files).toEqual(golden.files);
     },
@@ -1254,7 +1254,7 @@ describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
   it("17: records the Swift importer paths", () => {
     for (const manifest of ["Package.swift", "Package@swift-6.5.swift"]) {
       const pkg = file(`react-native-screens/${manifest}`);
-      expect(pkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 3\n\/\/ rn-xtool-swift-importer-paths: \[.*\]$/m);
+      expect(pkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 4\n\/\/ rn-xtool-swift-importer-paths: \[.*\]$/m);
       const paths = JSON.parse(pkg.match(IMPORTER)![1]!) as string[];
       expect(paths).toContain(".");
       expect(paths).toContain("ios/bridging");
@@ -1269,7 +1269,7 @@ describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
     expect(pkg.split("\n")[0]).toBe("// swift-tools-version: 6.0");
     expect(files["react-native-screens/Package@swift-6.5.swift"]).toBeUndefined();
     expect(pkg).toContain('publicHeadersPath: "ios",');
-    expect(pkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 3\n\/\/ rn-xtool-swift-importer-paths: \[.*\]$/m);
+    expect(pkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 4\n\/\/ rn-xtool-swift-importer-paths: \[.*\]$/m);
     const paths = JSON.parse(pkg.match(IMPORTER)![1]!) as string[];
     expect(paths).toContain("ios/utils");
     expect(paths).toEqual(searchPaths(pkg));

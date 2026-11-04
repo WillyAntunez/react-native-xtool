@@ -598,8 +598,8 @@ gem is on `PATH`, runs `pod ipc spec` with the same two values in its environmen
 `RCT_NEW_ARCH_ENABLED`, and only when the environment did not. Any other `ENV[...]` condition, and every `if`, is
 still not evaluated. The scaffolded worklets target then gets
 `.define("HERMES_V1_ENABLED")` in its C and C++ settings, and 0.8.3 builds on React Native 0.85.0. worklets 0.10.1
-(the Expo SDK 57 pin) gets the same define in a new scaffold; a scaffold persisted earlier keeps its manifest, since
-`RN_XTOOL_SCAFFOLD_REVISION` stays 3.
+(the Expo SDK 57 pin) gets the same define in a new scaffold; a scaffold persisted earlier keeps its manifest
+until `RN_XTOOL_SCAFFOLD_REVISION` 4 (fixes 20 to 24) marks it as older.
 
 ## 20. `scripts/spm/*`: a dependency on a package that is not installed stops the scaffold
 
@@ -636,7 +636,7 @@ A sibling that is not linked for iOS is left out, as CocoaPods leaves it out:
 The model keeps each selected subspec's own dependencies (`subspecDependencies`) for this. Not covered: a pod-style name
 of an npm package that is not installed at all cannot be told from a CocoaPods pod, and is warned about as an unmapped
 pod; CocoaPods fails on it too. Found on react-native-vision-camera 4.7.3 without react-native-worklets-core: it
-scaffolds without Frame Processors, as CocoaPods builds it.
+scaffolds without Frame Processors, as CocoaPods builds it. Ships with `RN_XTOOL_SCAFFOLD_REVISION` 4.
 
 ## 21. `scripts/spm/*`: scaffolded Swift compiles in the Swift 6 language mode
 
@@ -658,7 +658,7 @@ Swift) gets `swiftLanguageModes: [.v5]` at package level, in both manifests, unl
 is 6 or higher. Not covered: a library that declares Swift 6 but is not Swift 6 clean fails as it does under CocoaPods.
 Found on react-native-video 6.19.3 and react-native-vision-camera 4.7.3: with the Swift 5 mode set by hand, both built
 with warnings only. On the reference app's libraries only react-native-pager-view 9.0.7 (mixed, no `swift_version`)
-changes.
+changes. Ships with `RN_XTOOL_SCAFFOLD_REVISION` 4.
 
 ## 22. `scripts/spm/scaffold-package-swift.js`: invalid header layout for an umbrella directory
 
@@ -673,7 +673,7 @@ Fix 2 checks only `<publicHeadersPath>/<SwiftName>.h`. Fix: the `include/<SwiftN
 when `<publicHeadersPath>/<SwiftName>/<SwiftName>.h` exists and the public headers directory holds any other
 directory. The shim is fed with every header among the sources, and the basename-collision warning is fix 2's,
 unchanged. A lone `<SwiftName>/` directory is left as it is: SwiftPM accepts it. Found on react-native-device-info
-15.0.2, which built by hand with `publicHeadersPath: "ios/RNDeviceInfo"`.
+15.0.2, which built by hand with `publicHeadersPath: "ios/RNDeviceInfo"`. Ships with `RN_XTOOL_SCAFFOLD_REVISION` 4.
 
 ## 23. `scripts/spm/spm-utils.js`: a bare include of a library's codegen header does not resolve
 
@@ -700,6 +700,7 @@ to the `libs/<SwiftName>` symlink the autolinker references the package through.
 `Context.packageDirectory` as the symlink path, but the compiler resolves `..` after following the symlink, from the
 library's real directory in `node_modules`, so the path missed the codegen directory and the include still failed.
 Found on @react-native-community/netinfo 11.5.2, which built by hand with an absolute `-I` to the codegen directory.
+Ships with `RN_XTOOL_SCAFFOLD_REVISION` 4, though it changes no manifest.
 
 ## 24. `scripts/spm/*`: Swift compilation conditions are not carried
 
@@ -715,7 +716,7 @@ carried too, though CocoaPods applies that hash to the app target and not to the
 from it the same way. Not covered: react-native-vision-camera 4.7.3 switches its location tagging with a Ruby ternary
 (`"$(inherited) #{enableLocation ? "VISION_CAMERA_ENABLE_LOCATION" : ""}"`), which the regex reader cannot evaluate, so
 location tagging stays compiled out there; CocoaPods enables it by default. On the reference app's libraries nothing
-changes. Found on react-native-vision-camera 4.7.3.
+changes. Found on react-native-vision-camera 4.7.3. Ships with `RN_XTOOL_SCAFFOLD_REVISION` 4.
 
 ## Known limitation (deferred): pure-Swift packages importing a mixed Expo module
 
