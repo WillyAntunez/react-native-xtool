@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import * as plist from "plist";
 import type { RuntimeFramework } from "../frameworks.js";
@@ -7,6 +7,7 @@ import { transformInfoPlist } from "../plist.js";
 import { buildVars, type ProjectInfo } from "../project/index.js";
 import { packageRoot } from "../tools/exec.js";
 import { IOS_MIN } from "../versions.js";
+import { APP_ICON_FILE, findAppIcon } from "./appIcon.js";
 import { copyBareTarget } from "./bareSources.js";
 import { expoClangImporterInputs } from "./expoImporter.js";
 import { DEV_SUPPORT_TARGET, renderPackageSwift, type AppTargetInputs } from "./packageSwift.js";
@@ -124,6 +125,12 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
   await rm(resourcesDir, { recursive: true, force: true });
   await mkdir(paths.sources, { recursive: true });
   const { app, resources } = await writeAppSources(ctx, headersDir, resourcesDir);
+  // The icon from the app's AppIcon.appiconset; a missing or unusable one is reported and the build goes on.
+  const icon = await findAppIcon(project, { bundleRootNames: resources });
+  for (const line of icon.lines) (ctx.log ?? console.log)(line);
+  const iconFile = join(paths.iosXtool, APP_ICON_FILE);
+  if (icon.source !== undefined) await copyFile(icon.source, iconFile);
+  else await rm(iconFile, { force: true });
   // The auto-reload helper, for apps without expo-dev-client only; removed when a project gains the dev client.
   const devSupportDir = join(paths.iosXtool, "Sources", DEV_SUPPORT_TARGET);
   await rm(devSupportDir, { recursive: true, force: true });
@@ -165,6 +172,7 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
         ...(project.hasExpoConstants ? DEFAULT_RESOURCES : BASE_RESOURCES),
         ...resources.map((r) => `Resources/${r}`),
       ],
+      iconPath: icon.source !== undefined ? APP_ICON_FILE : undefined,
     }),
   );
   const { manifest, manifest65 } = renderPackageSwift({
