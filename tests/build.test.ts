@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -550,6 +551,16 @@ describe("build", () => {
     await build(e.root, {}, e.deps);
     expect(await readState(join(e.root, "ios-xtool"))).toMatchObject({ kind: "expo", hasDevClient: false });
   });
+  it("records the auto-reload helper in the state only when it generates it", async () => {
+    for (const kind of ["expo", "bare"] as const) {
+      const t = setup({ project: { kind } });
+      await build(t.root, {}, t.deps);
+      expect(await readState(join(t.root, "ios-xtool"))).toMatchObject({ devSupport: true });
+      const d = setup({ project: { kind, hasDevClient: true } });
+      await build(d.root, {}, d.deps);
+      expect(await readState(join(d.root, "ios-xtool"))).not.toHaveProperty("devSupport");
+    }
+  });
   it("picks another port when the configured one is busy", async () => {
     const t = setup({ isPortFree: async () => false });
     t.deps.findFreePort = async (s) => s + 3;
@@ -645,6 +656,96 @@ describe("build keeps the Wi‑Fi device", () => {
     await build(t.root, {}, t.deps);
     const s = await readState(dir);
     expect([s?.deviceIp, s?.deviceUdid]).toEqual(["192.168.1.10", "U"]);
+  });
+});
+
+describe("build keeps the installed id", () => {
+  it("keeps a matching installed id across builds", async () => {
+    const t = setup({ project: { name: "My App", slug: "my-app" } });
+    const dir = join(t.root, "ios-xtool");
+    const previous = { version: 1 as const, metroPort: 8081, lanIp: "x", builtAt: "t", installedBundleId: "XTL-TEAMID0000.com.example.app" };
+    await writeState(dir, { ...previous, bundleIdentifier: "com.example.app" });
+    await build(t.root, {}, t.deps);
+    expect(await readState(dir)).toMatchObject({ installedBundleId: "XTL-TEAMID0000.com.example.app", name: "My App", slug: "my-app" });
+
+    const changed = setup({ project: { bundleIdentifier: "com.example.other", name: "My App", slug: "my-app" } });
+    const changedDir = join(changed.root, "ios-xtool");
+    await writeState(changedDir, { ...previous, bundleIdentifier: "com.example.app" });
+    await build(changed.root, {}, changed.deps);
+    const s = await readState(changedDir);
+    expect(s?.bundleIdentifier).toBe("com.example.other");
+    expect(s).not.toHaveProperty("installedBundleId");
+    expect(s).toMatchObject({ name: "My App", slug: "my-app" });
+  });
+
+  it("records the app config icon when it runs expo prebuild", async () => {
+    const t = setup({ hasIos: false });
+    const icon = join(t.root, "assets", "icon.png");
+    mkdirSync(dirname(icon), { recursive: true });
+    writeFileSync(icon, "first");
+    const readProject = t.deps.readProject;
+    t.deps.readProject = async (...a) => ({ ...(await readProject(...a)), root: t.root, appIconSource: icon });
+    await build(t.root, {}, t.deps);
+    const dir = join(t.root, "ios-xtool");
+    const recorded = (await readState(dir))?.prebuildIcon;
+    expect(recorded).toEqual({ path: "assets/icon.png", sha256: createHash("sha256").update("first").digest("hex") });
+    expect(t.writeIosXtool.mock.calls[0]?.[0]).toMatchObject({ prebuildIcon: recorded });
+
+    // Without prebuild the record stays, so the edit is reported.
+    writeFileSync(icon, "edited");
+    t.deps.exists = () => true;
+    await build(t.root, {}, t.deps);
+    expect((await readState(dir))?.prebuildIcon).toEqual(recorded);
+    expect(t.writeIosXtool.mock.calls[1]?.[0]).toMatchObject({ prebuildIcon: recorded });
+  });
+
+  it("records the app config icon silently when nothing recorded it", async () => {
+    // The user ran expo prebuild, so build runs none; then a state from before the record existed.
+    const t = setup({ hasIos: true });
+    const icon = join(t.root, "assets", "icon.png");
+    mkdirSync(dirname(icon), { recursive: true });
+    writeFileSync(icon, "first");
+    const readProject = t.deps.readProject;
+    t.deps.readProject = async (...a) => ({ ...(await readProject(...a)), root: t.root, appIconSource: icon });
+    await build(t.root, {}, t.deps);
+    expect(t.calls).not.toContain("prebuild");
+    const dir = join(t.root, "ios-xtool");
+    const first = { path: "assets/icon.png", sha256: createHash("sha256").update("first").digest("hex") };
+    expect((await readState(dir))?.prebuildIcon).toEqual(first);
+    expect(t.writeIosXtool.mock.calls[0]?.[0]).toMatchObject({ prebuildIcon: first });
+
+    // Kept on the next build, so a later edit is reported.
+    writeFileSync(icon, "edited");
+    await build(t.root, {}, t.deps);
+    expect((await readState(dir))?.prebuildIcon).toEqual(first);
+
+    const { prebuildIcon: _, ...older } = (await readState(dir))!;
+    await writeState(dir, older);
+    await build(t.root, {}, t.deps);
+    expect((await readState(dir))?.prebuildIcon).toEqual({ ...first, sha256: createHash("sha256").update("edited").digest("hex") });
+  });
+
+  it("records no app icon for a bare app", async () => {
+    const t = setup({ hasIos: true, project: { kind: "bare" } });
+    await build(t.root, {}, t.deps);
+    expect(await readState(join(t.root, "ios-xtool"))).not.toHaveProperty("prebuildIcon");
+  });
+
+  it("reads no id it cannot match", async () => {
+    const cases: [string, string][] = [
+      ["XTL-TEAMID0000.com.example.app", "example.app"],
+      ["XTL-TEAMID0000.com.example.app", "app"],
+      ["com.example.app", "com.example.app"],
+      ["XTL-TEAMID0000.comXexample.app", "com.example.app"],
+      ["XTL-.com.example.app", "com.example.app"],
+    ];
+    for (const [installedBundleId, bundleIdentifier] of cases) {
+      const t = setup({ project: { bundleIdentifier } });
+      const dir = join(t.root, "ios-xtool");
+      await writeState(dir, { version: 1, metroPort: 8081, lanIp: "x", builtAt: "t", bundleIdentifier, installedBundleId });
+      await build(t.root, {}, t.deps);
+      expect(await readState(dir), installedBundleId).not.toHaveProperty("installedBundleId");
+    }
   });
 });
 

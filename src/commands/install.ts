@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import { loadConfig, type ExpoXtoolConfig } from "../config.js";
+import { devClientLinkLines } from "../devClientLink.js";
 import {
   identify,
   locateDevice,
@@ -55,10 +56,18 @@ export interface InstallDeps {
     installOverWifi?: (o: WifiInstallOptions) => Promise<WifiInstallResult>;
     rememberDevice?: (
       iosXtoolDir: string,
-      device: { deviceIp: string; deviceUdid: string; installedUdid?: string; installedFingerprint?: string },
+      device: {
+        deviceIp: string;
+        deviceUdid: string;
+        installedUdid?: string;
+        installedFingerprint?: string;
+        installedBundleId?: string;
+      },
     ) => Promise<void>;
     sleep?: (ms: number) => Promise<void>;
   };
+  /** The dev-client lines after `Installed …`: the Metro URL, the deep link and its QR code. */
+  devClientLink?: (root: string, state: { lanIp: string; metroPort: number }) => Promise<string[]>;
   log?: (s: string) => void;
 }
 
@@ -70,13 +79,22 @@ export interface InstallOptions {
   pairRecord?: string;
 }
 
-export function firstRunChecklist(appleId: string | undefined): string {
+/** devClient: the app opens the dev launcher. autoReload: the build has the RNXtoolDevSupport helper (an app built by
+ *  an older rn-xtool has none and still needs a Reload). */
+export function firstRunChecklist(
+  appleId: string | undefined,
+  opts: { devClient?: boolean; autoReload?: boolean } = {},
+): string {
   return [
     "First-run checklist:",
     "  - Enable Developer Mode: Settings → Privacy & Security → Developer Mode (the phone reboots).",
     `  - Trust the developer certificate: Settings → General → VPN & Device Management → Apple Development: ${appleId ?? "<your Apple ID>"} → Trust.`,
     "  - Allow Local Network access when iOS asks (needed to reach Metro).",
-    '  - On the first launch iOS asks for Local Network access and "No script URL provided" shows behind it: tap Allow, then Reload.',
+    opts.devClient
+      ? "  - On the first launch the dev launcher asks for Local Network access: tap Allow, then open the link or QR code above, or enter the Metro URL above in the launcher."
+      : opts.autoReload
+        ? '  - On the first launch iOS asks for Local Network access, and the red screen "No script URL provided" may show behind it: tap Allow, and the app reloads by itself.'
+        : '  - On the first launch iOS asks for Local Network access and "No script URL provided" shows behind it: tap Allow, then Reload.',
     "  - With a free Apple ID the signature expires in 7 days; reinstall the app with `rn-xtool install`.",
   ].join("\n");
 }
@@ -117,12 +135,21 @@ export function scanRefusal(route: LanRoute): string | undefined {
 }
 
 /**
- * What a dev-client user types in the launcher; nothing to type without expo-dev-client. A state
- * written before bare support has neither `kind` nor `hasDevClient`: it is an Expo build, so print it.
+ * How a dev-client user opens the app on Metro: the URL, the deep link and its QR code; nothing without
+ * expo-dev-client. A state written before bare support has neither `kind` nor `hasDevClient`: it may be an Expo
+ * build with the dev client, so print the URL alone, as before.
  */
-function logDevLauncherUrl(state: InstallState, log: (s: string) => void): void {
-  const preBare = state.kind === undefined && state.hasDevClient === undefined;
-  if (state.hasDevClient === true || preBare) log(`Metro URL for the dev launcher: http://${state.lanIp}:${state.metroPort}`);
+async function logDevLauncherLink(
+  root: string,
+  state: InstallState,
+  deps: InstallDeps,
+  log: (s: string) => void,
+): Promise<void> {
+  if (state.hasDevClient === true) {
+    for (const line of await (deps.devClientLink ?? devClientLinkLines)(root, state)) log(line);
+  } else if (state.kind === undefined && state.hasDevClient === undefined) {
+    log(`Metro URL for the dev launcher: http://${state.lanIp}:${state.metroPort}`);
+  }
 }
 
 async function authenticated(
@@ -160,14 +187,16 @@ export async function install(root: string, deps: InstallDeps = {}, opts: Instal
   const state = await (x.readState ?? readState)(iosXtool).catch(() => undefined);
   if (!state) throw new Error("No build found. Run `rn-xtool build` first.");
   await explainingXtool(() => (x.devRun ?? devRun)(bin, iosXtool));
-  // Which iPhone got this build: `run` must not skip the install for a different one.
+  const id = installedBundleId(auth.teamId, state.bundleIdentifier);
+  // Which iPhone got this build: `run` must not skip the install for a different one. The id is the one xtool signs
+  // with for an Apple ID login (`start` announces Metro under it).
   const installed: Partial<BuildState> = { installedUdid: devices[0]!.udid };
   if (state.depsFingerprint !== undefined) installed.installedFingerprint = state.depsFingerprint;
+  installed.installedBundleId = id;
   await (x.writeState ?? writeState)(iosXtool, { ...(state as BuildState), ...installed });
-  const id = installedBundleId(auth.teamId, state.bundleIdentifier);
   log(`Installed ${id} on ${devices[0]!.name}`);
-  logDevLauncherUrl(state, log);
-  log(firstRunChecklist(auth.appleId));
+  await logDevLauncherLink(root, state, deps, log);
+  log(firstRunChecklist(auth.appleId, { devClient: state.hasDevClient === true, autoReload: state.devSupport === true }));
 }
 
 async function installNetwork(root: string, deps: InstallDeps, opts: InstallOptions): Promise<void> {
@@ -237,6 +266,8 @@ async function installNetwork(root: string, deps: InstallDeps, opts: InstallOpti
     deviceUdid: where.udid,
     installedUdid: where.udid,
     ...(state.depsFingerprint !== undefined && { installedFingerprint: state.depsFingerprint }),
+    // The id the iPhone reports for the uploaded app: the real signed one, whatever the login kind.
+    ...(typeof result.app.CFBundleIdentifier === "string" && { installedBundleId: result.app.CFBundleIdentifier }),
   };
   await (w.rememberDevice ?? rememberDevice)(iosXtool, installed).catch((e: unknown) =>
     log(`⚠ Could not save the iPhone's address in the build state: ${message(e)}`),
@@ -246,6 +277,6 @@ async function installNetwork(root: string, deps: InstallDeps, opts: InstallOpti
     `Installed ${bundleId}${version ? ` ${version}` : ""} on iPhone ${where.udid} over Wi‑Fi (${where.ip}) — ` +
       `upload ${secs(result.uploadMs)}, install ${secs(result.installMs)}`,
   );
-  logDevLauncherUrl(state, log);
-  log(firstRunChecklist(auth.appleId));
+  await logDevLauncherLink(root, state, deps, log);
+  log(firstRunChecklist(auth.appleId, { devClient: state.hasDevClient === true, autoReload: state.devSupport === true }));
 }

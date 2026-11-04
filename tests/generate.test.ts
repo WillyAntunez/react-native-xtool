@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { renderPackageSwift } from "../src/generate/packageSwift.js";
 import { renderXtoolYml } from "../src/generate/xtoolYml.js";
-import { sceneDelegateClassNames, writeIosXtool } from "../src/generate/iosXtool.js";
+import { devSupportTemplatesDir, sceneDelegateClassNames, writeIosXtool } from "../src/generate/iosXtool.js";
 import { expoClangImporterInputs, type ClangImporterInputs } from "../src/generate/expoImporter.js";
 import { IMPORTER_MARKER, scaffoldedImporterPaths } from "../src/generate/scaffoldImporter.js";
 import { PODSPEC_FIXTURES, VENDORED_RN_SPM, scaffoldLibraries } from "./support/rnScaffold.js";
@@ -12,6 +12,8 @@ import { projectPaths, swiftHeadersDir } from "../src/paths.js";
 import { openPbxproj, readTargetContent } from "../src/project/pbxproj.js";
 import type { ProjectInfo } from "../src/project/index.js";
 import type { RuntimeFramework } from "../src/frameworks.js";
+import { parse as parseYaml } from "yaml";
+import { png } from "./support/png.js";
 
 const tmps: string[] = [];
 afterEach(async () => {
@@ -91,6 +93,41 @@ describe("renderPackageSwift", () => {
     });
     expect(o.manifest).toBe(snapshot);
     expect(o.manifest65).toBeUndefined();
+  });
+
+  describe("the dev-support target", () => {
+    const BLOCK = `        .target(
+            name: "RNXtoolDevSupport",
+            path: "Sources/RNXtoolDevSupport",
+            cSettings: [
+                .define("DEBUG", to: "1", .when(configuration: .debug)),
+                .unsafeFlags(["-fobjc-arc"]),
+            ],
+            linkerSettings: [
+                .linkedFramework("Network"),
+                .linkedFramework("UIKit"),
+            ]
+        ),
+`;
+    const count = (text: string, part: string) => text.split(part).length - 1;
+    it("renders the dev-support target", () => {
+      const { manifest } = renderPackageSwift({ iosDir: "/p/ios", frameworks, iosMin: "16.4", expo: expoInputs(), app: noApp, devSupport: true });
+      expect(count(manifest, BLOCK)).toBe(1);
+      // Right after the App target's closing `),`.
+      expect(manifest).toContain(`            ]\n        ),\n${BLOCK}    ],\n`);
+      const deps = manifest.slice(manifest.indexOf("dependencies: [", manifest.indexOf("targets: [")));
+      expect(deps.slice(0, deps.indexOf("            ],"))).toMatch(/\n {16}"RNXtoolDevSupport",\n$/);
+      const mixed = renderPackageSwift({
+        iosDir: "/p/ios", frameworks, iosMin: "16.4", app: { ...noApp, mixed: true }, devSupport: true,
+      });
+      expect(count(mixed.manifest, BLOCK)).toBe(1);
+      expect(count(mixed.manifest65!, BLOCK)).toBe(1);
+    });
+    it("leaves the manifest unchanged without it", () => {
+      const input = { iosDir: "/p/ios", frameworks, iosMin: "16.4", expo: expoInputs(), app: noApp };
+      expect(renderPackageSwift({ ...input, devSupport: false }).manifest).toBe(renderPackageSwift(input).manifest);
+      expect(renderPackageSwift(input).manifest).not.toContain("RNXtoolDevSupport");
+    });
   });
 
   it("gives the App's Swift the scaffolded importer paths, after the Expo and bridging flags", () => {
@@ -254,7 +291,7 @@ describe("writeIosXtool", () => {
       iosTargetName: "app", iosTargetDir: target, infoPlistPath: join(target, "Info.plist"),
       hasExpoModules: true, hasExpoConstants: true, hasDevClient: false,
     };
-    const ctx = { project, paths, frameworks, metroPort: 8081, lanIp: "192.168.1.5" };
+    const ctx = { project, paths, frameworks, metroPort: 8081, lanIp: "192.168.1.5", log: () => {} };
     await writeIosXtool(ctx);
     await writeFile(join(paths.iosXtool, "Package@swift-6.5.swift"), "// stale\n");
     await writeIosXtool(ctx);
@@ -294,8 +331,56 @@ describe("writeIosXtool", () => {
       hasExpoModules: true, hasExpoConstants: true, hasDevClient: false,
     };
     const paths = projectPaths(root);
-    return { source, target, paths, ctx: { project, paths, frameworks, metroPort: 8081, lanIp: "192.168.1.5" } };
+    return {
+      source, target, paths,
+      ctx: { project, paths, frameworks, metroPort: 8081, lanIp: "192.168.1.5", log: () => {} },
+    };
   }
+
+  /** The helper's files as `writeIosXtool` stages them, relative to its folder. */
+  const HELPER_FILES = ["RNXAutoReload.m", "RNXAutoReloadPolicy.c", join("include", "RNXtoolDevSupport.h")];
+  const helperDir = (paths: { iosXtool: string }) => join(paths.iosXtool, "Sources", "RNXtoolDevSupport");
+  const exists = (p: string) => lstat(p).then(() => true, () => false);
+
+  it("writes the helper for an app without the dev client", async () => {
+    const { paths, ctx } = await expoProject("ios-target");
+    await writeIosXtool(ctx);
+    for (const file of HELPER_FILES) {
+      expect(await readFile(join(helperDir(paths), file)), file).toEqual(
+        await readFile(join(devSupportTemplatesDir(), file)),
+      );
+    }
+    expect((await readdir(helperDir(paths), { recursive: true })).sort()).toEqual(
+      ["RNXAutoReload.m", "RNXAutoReloadPolicy.c", "include", join("include", "RNXtoolDevSupport.h")],
+    );
+    expect(await readFile(join(paths.iosXtool, "Package.swift"), "utf8")).toContain('name: "RNXtoolDevSupport"');
+    expect((await readdir(paths.sources)).sort()).toEqual(
+      ["AppDelegate.swift", "ExpoModulesProvider.swift", "SceneDelegate.swift"],
+    );
+  });
+
+  it("leaves the helper out of dev-client builds", async () => {
+    const expo = await expoProject("ios-target");
+    const bare = await bareProject();
+    for (const { paths, ctx } of [expo, bare]) {
+      await writeIosXtool(ctx);
+      expect(await exists(join(helperDir(paths), "RNXAutoReload.m"))).toBe(true);
+      await writeIosXtool({ ...ctx, project: { ...ctx.project, hasDevClient: true } });
+      expect(await exists(helperDir(paths))).toBe(false);
+      expect(await readFile(join(paths.iosXtool, "Package.swift"), "utf8")).not.toContain("RNXtoolDevSupport");
+    }
+  });
+
+  it("sets the launcher keys for dev-client projects only", async () => {
+    const { paths, ctx } = await expoProject("ios-target");
+    const info = async () => readFile(join(paths.iosXtool, "Info.plist"), "utf8");
+    await writeIosXtool({ ...ctx, project: { ...ctx.project, hasDevClient: true }, lanIp: "192.168.1.5", metroPort: 8083 });
+    expect(await info()).toContain("<string>http://192.168.1.5:8083</string>");
+    expect(await info()).toContain("<string>_expo._tcp</string>");
+    await writeIosXtool({ ...ctx, project: { ...ctx.project, hasDevClient: false }, lanIp: "192.168.1.5", metroPort: 8083 });
+    expect(await info()).not.toContain("http://192.168.1.5:8083");
+    expect(await info()).not.toContain("_expo._tcp");
+  });
 
   it("copies AppDelegate only for an SDK 57 shell", async () => {
     const { source, paths, ctx } = await expoProject("expo-57/ios/Spike57", { sdkVersion: 57 });
@@ -433,7 +518,8 @@ describe("writeIosXtool", () => {
     expect(skipped[0]).toContain("HelloWorld/Images.xcassets");
     expect(skipped[0]).toContain("HelloWorld/Base.lproj/Intro.storyboard");
     expect(logs.filter((l) => l.includes("OTHER_CFLAGS"))).toHaveLength(2);
-    expect(logs).toHaveLength(4);
+    expect(logs.filter((l) => l.startsWith("ℹ No app icon:"))).toHaveLength(2);
+    expect(logs).toHaveLength(6);
   });
 
   it("writes a Swift-only bare target with the 6.0 manifest and drops a stale 6.5 one", async () => {
@@ -466,7 +552,87 @@ describe("writeIosXtool", () => {
     expect(pkg.split("\n")[0]).toBe("// swift-tools-version: 6.0");
     expect(pkg).not.toContain("resources:");
     expect(pkg).not.toContain("-import-objc-header");
-    expect(logs).toEqual([expect.stringContaining("LaunchScreen.storyboard")]);
+    expect(logs).toEqual([
+      expect.stringContaining("LaunchScreen.storyboard"),
+      'ℹ No app icon: ios/HelloWorld/Images.xcassets/AppIcon.appiconset does not exist. Add a 1024×1024 PNG to it to give the app an icon (Expo: set "icon" in the app config, then run `rn-xtool build --clean`).',
+    ]);
+  });
+
+  /** Puts `bytes` into `<target>/Images.xcassets/AppIcon.appiconset` as its only, 1024 entry. */
+  async function addIconSet(target: string, bytes: Uint8Array): Promise<string> {
+    const set = join(target, "Images.xcassets", "AppIcon.appiconset");
+    await mkdir(set, { recursive: true });
+    const filename = "App-Icon-1024x1024@1x.png";
+    await writeFile(
+      join(set, "Contents.json"),
+      JSON.stringify({ images: [{ filename, idiom: "universal", platform: "ios", size: "1024x1024" }] }),
+    );
+    await writeFile(join(set, filename), bytes);
+    return join(set, filename);
+  }
+
+  it("pins xtool.yml with iconPath", async () => {
+    const { target, paths, ctx } = await expoProject("ios-target");
+    const icon = png(1024, 1024);
+    await addIconSet(target, icon);
+    await writeIosXtool(ctx);
+    expect(new Uint8Array(await readFile(join(paths.iosXtool, "AppIcon.png")))).toEqual(new Uint8Array(icon));
+    const yml = await readFile(join(paths.iosXtool, "xtool.yml"), "utf8");
+    expect(yml).toBe(
+      [
+        "version: 1",
+        "bundleID: com.example.app",
+        "product: App",
+        "infoPath: Info.plist",
+        "iconPath: AppIcon.png",
+        "skipLSP: true",
+        "resources:",
+        "  - Frameworks",
+        "  - ip.txt",
+        "  - EXConstants.bundle",
+        "",
+      ].join("\n"),
+    );
+    expect(parseYaml(yml)).toMatchObject({ iconPath: "AppIcon.png" });
+  });
+
+  it("removes a stale icon", async () => {
+    const { target, paths, ctx } = await expoProject("ios-target");
+    await addIconSet(target, png(1024, 1024));
+    await writeIosXtool(ctx);
+    expect(await exists(join(paths.iosXtool, "AppIcon.png"))).toBe(true);
+    await rm(join(target, "Images.xcassets"), { recursive: true });
+    await writeIosXtool(ctx);
+    expect(await exists(join(paths.iosXtool, "AppIcon.png"))).toBe(false);
+    expect(await readFile(join(paths.iosXtool, "xtool.yml"), "utf8")).not.toContain("iconPath");
+  });
+
+  it("gives a bare app its icon", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xt7-icon-"));
+    tmps.push(root);
+    const ios = join(root, "ios");
+    await cp(new URL("./fixtures/bare-087/ios", import.meta.url).pathname, ios, { recursive: true });
+    const app = join(ios, "HelloWorld");
+    const icon = png(1024, 1024);
+    await addIconSet(app, icon);
+    const paths = projectPaths(root);
+    const logs: string[] = [];
+    await writeIosXtool({
+      project: {
+        kind: "bare", root, name: "HelloWorld", slug: "HelloWorld", version: "1.0", buildNumber: "1",
+        bundleIdentifier: "org.reactjs.native.example.HelloWorld", moduleName: "HelloWorld", rnVersion: "0.87.1",
+        rnScripts: "installed", expoPlugin: "installed",
+        iosTargetName: "HelloWorld", iosTargetDir: app, infoPlistPath: join(app, "Info.plist"),
+        hasExpoModules: false, hasExpoConstants: false, hasDevClient: false,
+        bare: readTargetContent(openPbxproj(ios), ios),
+      },
+      paths, frameworks, metroPort: 8081, lanIp: "192.168.1.5", log: (s: string) => logs.push(s),
+    });
+    expect(new Uint8Array(await readFile(join(paths.iosXtool, "AppIcon.png")))).toEqual(new Uint8Array(icon));
+    expect(await readFile(join(paths.iosXtool, "xtool.yml"), "utf8")).toContain("infoPath: Info.plist\niconPath: AppIcon.png\n");
+    expect(logs).toContain("ℹ App icon: ios/HelloWorld/Images.xcassets/AppIcon.appiconset/App-Icon-1024x1024@1x.png (1024×1024)");
+    const skipped = logs.find((l) => l.startsWith("ℹ Skipped app resources"));
+    expect(skipped).toContain("HelloWorld/Images.xcassets");
   });
 
   it("links ExpoModulesProvider and the Expo inputs for a bare project with Expo modules", async () => {
@@ -558,7 +724,7 @@ describe("writeIosXtool", () => {
         iosTargetName: "app", iosTargetDir: target, infoPlistPath: join(target, "Info.plist"),
         hasExpoModules: true, hasExpoConstants: true, hasDevClient: false,
       },
-      paths, frameworks, metroPort: 8081, lanIp: "192.168.1.5",
+      paths, frameworks, metroPort: 8081, lanIp: "192.168.1.5", log: () => {},
     });
     expect(await readdir(paths.iosXtool)).not.toContain("Resources");
     expect(await readFile(join(paths.iosXtool, "xtool.yml"), "utf8")).not.toContain("Resources/");
@@ -585,7 +751,7 @@ describe("writeIosXtool", () => {
         iosTargetName: "app", iosTargetDir: target, infoPlistPath: join(target, "Info.plist"),
         hasExpoModules: true, hasExpoConstants: true, hasDevClient: false,
       },
-      paths, frameworks, metroPort: 8082, lanIp: "192.168.1.100",
+      paths, frameworks, metroPort: 8082, lanIp: "192.168.1.100", log: () => {},
     });
     expect(await readFile(join(paths.iosXtool, "ip.txt"), "utf8")).toBe("192.168.1.100\n");
   });

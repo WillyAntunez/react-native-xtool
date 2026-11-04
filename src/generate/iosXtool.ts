@@ -1,14 +1,16 @@
-import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import * as plist from "plist";
 import type { RuntimeFramework } from "../frameworks.js";
 import { swiftHeadersDir, type ProjectPaths } from "../paths.js";
 import { transformInfoPlist } from "../plist.js";
 import { buildVars, type ProjectInfo } from "../project/index.js";
+import { packageRoot } from "../tools/exec.js";
 import { IOS_MIN } from "../versions.js";
+import { APP_ICON_FILE, findAppIcon, type IconRecord } from "./appIcon.js";
 import { copyBareTarget } from "./bareSources.js";
 import { expoClangImporterInputs } from "./expoImporter.js";
-import { renderPackageSwift, type AppTargetInputs } from "./packageSwift.js";
+import { DEV_SUPPORT_TARGET, renderPackageSwift, type AppTargetInputs } from "./packageSwift.js";
 import { scaffoldedImporterPaths } from "./scaffoldImporter.js";
 import { BASE_RESOURCES, DEFAULT_RESOURCES, renderXtoolYml } from "./xtoolYml.js";
 
@@ -19,9 +21,21 @@ export interface GenerateContext {
   metroPort: number;
   lanIp: string;
   log?: (s: string) => void;
+  /** The app config icon `build` recorded when it last ran expo prebuild (findAppIcon's stale-icon check). */
+  prebuildIcon?: IconRecord;
 }
 
 const MANIFEST_6_5 = "Package@swift-6.5.swift";
+
+/** The app gets the auto-reload helper target: apps without expo-dev-client only. */
+export function hasDevSupport(project: Pick<ProjectInfo, "hasDevClient">): boolean {
+  return !project.hasDevClient;
+}
+
+/** The auto-reload helper's sources, copied byte for byte into ios-xtool/Sources/RNXtoolDevSupport. */
+export function devSupportTemplatesDir(): string {
+  return join(packageRoot(), "templates", "dev-support");
+}
 
 /** The file's text, or undefined when it does not exist. */
 async function readOptional(path: string): Promise<string | undefined> {
@@ -113,6 +127,17 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
   await rm(resourcesDir, { recursive: true, force: true });
   await mkdir(paths.sources, { recursive: true });
   const { app, resources } = await writeAppSources(ctx, headersDir, resourcesDir);
+  // The icon from the app's AppIcon.appiconset; a missing or unusable one is reported and the build goes on.
+  const icon = await findAppIcon(project, { bundleRootNames: resources, prebuildIcon: ctx.prebuildIcon });
+  for (const line of icon.lines) (ctx.log ?? console.log)(line);
+  const iconFile = join(paths.iosXtool, APP_ICON_FILE);
+  if (icon.source !== undefined) await copyFile(icon.source, iconFile);
+  else await rm(iconFile, { force: true });
+  // The auto-reload helper, for apps without expo-dev-client only; removed when a project gains the dev client.
+  const devSupportDir = join(paths.iosXtool, "Sources", DEV_SUPPORT_TARGET);
+  await rm(devSupportDir, { recursive: true, force: true });
+  const devSupport = hasDevSupport(project);
+  if (devSupport) await cp(devSupportTemplatesDir(), devSupportDir, { recursive: true });
 
   if (project.hasExpoModules) {
     const linkPath = join(paths.sources, "ExpoModulesProvider.swift");
@@ -127,11 +152,18 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
   const template = await readRequired(project.infoPlistPath, "Info.plist");
   await writeFile(
     join(paths.iosXtool, "Info.plist"),
-    transformInfoPlist(template, { vars: buildVars(project), metroPort: ctx.metroPort }),
+    transformInfoPlist(template, {
+      vars: buildVars(project),
+      metroPort: ctx.metroPort,
+      devClientUrl: project.hasDevClient ? `http://${ctx.lanIp}:${ctx.metroPort}` : undefined,
+    }),
   );
-  // Bare RN reads only the packager host from ip.txt (RCTBundleURLProvider.guessPackagerHost) and
-  // takes the port from the compile-time RCT_METRO_PORT, 8081 in the prebuilt React framework; a
-  // host with a colon is used verbatim. The RCTMetroPort Info.plist key is read by Expo's dev launcher only.
+  // React Native reads the packager host from ip.txt (RCTBundleURLProvider.guessPackagerHost) and uses a host with a
+  // colon verbatim; otherwise it adds the compile-time RCT_METRO_PORT, 8081 in the prebuilt React framework. Bare: ip.txt
+  // holds host:port. Expo: ip.txt holds the host only, and in Debug without the dev launcher Expo's
+  // ExpoReactNativeFactory (adoptInfoPlistMetroPort) sets RCTBundleURLProvider's jsLocation to <ip.txt>:<RCTMetroPort>.
+  // The RNXtoolDevSupport helper reads the same pair. expo-dev-launcher reads neither: it finds Metro over Bonjour, from
+  // DEV_CLIENT_DEFAULT_LAUNCHER_URL or from a deep link.
   const packagerHost = project.kind === "bare" ? `${ctx.lanIp}:${ctx.metroPort}` : ctx.lanIp;
   await writeFile(join(paths.iosXtool, "ip.txt"), `${packagerHost}\n`);
   await writeFile(
@@ -142,6 +174,7 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
         ...(project.hasExpoConstants ? DEFAULT_RESOURCES : BASE_RESOURCES),
         ...resources.map((r) => `Resources/${r}`),
       ],
+      iconPath: icon.source !== undefined ? APP_ICON_FILE : undefined,
     }),
   );
   const { manifest, manifest65 } = renderPackageSwift({
@@ -156,6 +189,7 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
         }
       : undefined,
     app: { ...app, importerPaths: await scaffoldedImporterPaths(paths.autolinking) },
+    devSupport,
   });
   await writeFile(join(paths.iosXtool, "Package.swift"), manifest);
   if (manifest65 !== undefined) await writeFile(join(paths.iosXtool, MANIFEST_6_5), manifest65);

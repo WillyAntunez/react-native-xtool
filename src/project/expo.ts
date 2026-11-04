@@ -353,6 +353,20 @@ async function resolveBundleIdentifier(
   return suggestion;
 }
 
+/** Expo's getIcons (prebuild-config withIosIcons.js:100-133, 150): a non-empty string ios.icon; else an ios.icon
+ *  object's light || dark || tinted; else icon. Resolved against root. Undefined for none or an http(s) URL. */
+export function expoIconPath(exp: { icon?: unknown; ios?: { icon?: unknown } }, root: string): string | undefined {
+  const ios = exp.ios?.icon;
+  let icon: unknown = exp.icon;
+  if (typeof ios === "string" && ios !== "") icon = ios;
+  else if (ios !== null && typeof ios === "object") {
+    const { light, dark, tinted } = ios as { light?: unknown; dark?: unknown; tinted?: unknown };
+    icon = light || dark || tinted || exp.icon;
+  }
+  if (typeof icon !== "string" || icon === "" || /^https?:\/\//i.test(icon)) return undefined;
+  return path.resolve(root, icon);
+}
+
 export async function readExpoProject(root: string, opts: ReadProjectOptions = {}): Promise<ProjectInfo> {
   const config = getConfig(root, { skipSDKVersionRequirement: true });
   const { exp } = config;
@@ -390,6 +404,7 @@ export async function readExpoProject(root: string, opts: ReadProjectOptions = {
     hasExpoModules: true,
     hasExpoConstants: isInstalled(root, "expo-constants"),
     hasDevClient: isInstalled(root, "expo-dev-client"),
+    appIconSource: expoIconPath(exp, root),
   };
 }
 

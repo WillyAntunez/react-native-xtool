@@ -1,10 +1,11 @@
-import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { run as runCommand } from "../src/commands/run.js";
 import { depsFingerprint } from "../src/deps.js";
+import { announceDevServer } from "../src/devServerAnnounce.js";
 import {
   ipMismatchMessage,
   metroCommand,
@@ -25,6 +26,12 @@ const state = {
   installedFingerprint: "fp",
 };
 
+const nic = (address: string, internal = false) => ({
+  address, netmask: "255.255.255.0", family: "IPv4" as const, mac: "00:00:00:00:00:00", internal, cidr: null,
+});
+/** The build's LAN IP on enp4s0, next to a Docker veth. */
+const INTERFACES = { lo: [nic("127.0.0.1", true)], enp4s0: [nic("192.168.1.5")], veth23: [nic("172.17.0.1")] };
+
 function makeDeps(over: Partial<StartDeps> = {}) {
   const exec = vi.fn(async () => {});
   const log = vi.fn();
@@ -37,6 +44,12 @@ function makeDeps(over: Partial<StartDeps> = {}) {
     detectLanIp: async () => "192.168.1.5",
     depsFingerprint: async () => "fp",
     run: exec,
+    announce: vi.fn(async () => async () => {}),
+    networkInterfaces: () => INTERFACES,
+    onExit: () => () => {},
+    onSignal: () => () => {},
+    exit: vi.fn(),
+    env: {},
     log,
     ...over,
   };
@@ -156,6 +169,341 @@ describe("start", () => {
     });
     await start("/p", {}, deps);
     expect(exec).toHaveBeenCalledWith("npx", ["react-native", "start", "--port", "8081", "--reset-cache"], { cwd: "/p" });
+  });
+});
+
+describe("start and the dev launcher announcement", () => {
+  const ID = "XTL-TEAMID0000.com.example.app";
+  const NO_ID =
+    "ℹ No installed bundle id recorded: run `rn-xtool install` once so `start` can announce Metro under the app's real id (Expo SDK 58's dev launcher hides other servers).";
+  const devState = (over: object = {}) => ({ ...state, hasDevClient: true, installedBundleId: ID, name: "My App", slug: "my-app", ...over });
+  const announcing = (over: Partial<StartDeps> & { st?: object } = {}) => {
+    const order: string[] = [];
+    const stop = vi.fn(async () => void order.push("stop"));
+    const announce = vi.fn(async (_i: Parameters<StartDeps["announce"]>[0]) => {
+      order.push("announce");
+      return stop;
+    });
+    const made = makeDeps({
+      readState: async () => devState(over.st),
+      announce,
+      run: vi.fn(async () => void order.push("run")),
+      ...over,
+    });
+    return { ...made, announce, stop, order };
+  };
+  const envOf = (exec: { mock: { calls: unknown[][] } }) => (exec.mock.calls[0]?.[2] as { env?: NodeJS.ProcessEnv }).env;
+
+  it("announces the installed id", async () => {
+    const { deps, announce, stop, order, log } = announcing();
+    await start("/p", {}, deps);
+    expect(announce).toHaveBeenCalledOnce();
+    expect(announce.mock.calls[0]![0]).toMatchObject({
+      root: "/p",
+      name: "My App",
+      slug: "my-app",
+      port: 8081,
+      iosBundleIdentifier: ID,
+    });
+    expect(order).toEqual(["announce", "run", "stop"]);
+    expect(log).toHaveBeenCalledWith(`ℹ Announcing Metro to the dev launcher as ${ID}.`);
+    const run = deps.run as unknown as { mock: { calls: unknown[][] } };
+    expect(run.mock.calls[0]?.[2]).toMatchObject({ cwd: "/p" });
+    expect(envOf(run)?.EXPO_UNSTABLE_BONJOUR).toBe("0");
+    expect(stop).toHaveBeenCalledOnce();
+
+    const failing = announcing({ run: vi.fn(async () => { throw new Error("metro died"); }) });
+    await expect(start("/p", {}, failing.deps)).rejects.toThrow("metro died");
+    expect(failing.stop).toHaveBeenCalledOnce();
+  });
+
+  it("keeps Metro's result when stop returns no promise or throws", async () => {
+    const stops = [
+      () => undefined,
+      () => {
+        throw new Error("socket closed");
+      },
+    ];
+    for (const stop of stops) {
+      const announce = vi.fn(async () => stop as unknown as () => Promise<void>);
+      await expect(start("/p", {}, announcing({ announce }).deps)).resolves.toBeUndefined();
+      const failing = announcing({ announce, run: vi.fn(async () => { throw new Error("metro died"); }) });
+      await expect(start("/p", {}, failing.deps)).rejects.toThrow("metro died");
+    }
+  });
+
+  describe("stopping the announcement", () => {
+    afterEach(() => void vi.useRealTimers());
+    const never = () => new Promise<void>(() => {});
+    /** Whether `p` settled after the fake clock moved `ms` ahead. */
+    const settledAfter = async (p: Promise<unknown>, ms: number) => {
+      let settled = false;
+      p.then(() => (settled = true), () => (settled = true));
+      await vi.advanceTimersByTimeAsync(ms);
+      return settled;
+    };
+
+    it("waits at most a second for a stop that never settles", async () => {
+      vi.useFakeTimers();
+      const stop = vi.fn(never);
+      const announce = vi.fn(async () => stop);
+      const ended = start("/p", {}, announcing({ announce }).deps);
+      expect(await settledAfter(ended, 999)).toBe(false);
+      expect(await settledAfter(ended, 1)).toBe(true);
+      await expect(ended).resolves.toBeUndefined();
+      expect(stop).toHaveBeenCalledOnce();
+
+      const failing = start("/p", {}, announcing({ announce, run: vi.fn(async () => { throw new Error("metro died"); }) }).deps);
+      failing.catch(() => {});
+      expect(await settledAfter(failing, 1000)).toBe(true);
+      await expect(failing).rejects.toThrow("metro died");
+    });
+
+    it("does not wait for a stop that settles", async () => {
+      vi.useFakeTimers();
+      const { deps, stop } = announcing();
+      expect(await settledAfter(start("/p", {}, deps), 0)).toBe(true);
+      expect(stop).toHaveBeenCalledOnce();
+    });
+
+    /** A start whose Metro never ends on its own (the signal went to rn-xtool only). */
+    const signalled = (stop: () => Promise<void>) => {
+      let onSignal: ((s: "SIGINT" | "SIGTERM") => void) | undefined;
+      const removeSignal = vi.fn();
+      const exit = vi.fn();
+      const made = announcing({
+        announce: vi.fn(async () => stop),
+        run: vi.fn(never),
+        onSignal: (fn) => {
+          onSignal = fn;
+          return removeSignal;
+        },
+        exit,
+      });
+      void start("/p", {}, made.deps);
+      return { exit, removeSignal, signal: (s: "SIGINT" | "SIGTERM") => onSignal!(s) };
+    };
+
+    it("sends the goodbye on Ctrl+C or a kill, then exits with the signal's status", async () => {
+      vi.useFakeTimers();
+      let goodbye: () => void = () => {};
+      const stop = vi.fn(() => new Promise<void>((r) => (goodbye = r)));
+      const s = signalled(stop);
+      await vi.advanceTimersByTimeAsync(0);
+      s.signal("SIGINT");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(stop).toHaveBeenCalledOnce();
+      expect(s.exit).not.toHaveBeenCalled();
+      goodbye();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(s.exit).toHaveBeenCalledWith(130);
+
+      const t = signalled(vi.fn(never));
+      await vi.advanceTimersByTimeAsync(0);
+      t.signal("SIGTERM");
+      await vi.advanceTimersByTimeAsync(999);
+      expect(t.exit).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(t.exit).toHaveBeenCalledWith(143);
+    });
+
+    it("listens for signals and process exit only while Metro runs", async () => {
+      const order: string[] = [];
+      let exitHook: (() => void) | undefined;
+      const stop = vi.fn(async () => void order.push("stop"));
+      const { deps } = announcing({
+        announce: vi.fn(async () => stop),
+        run: vi.fn(async () => {
+          order.push("run");
+          exitHook!();
+        }),
+        onExit: (fn) => {
+          order.push("onExit");
+          exitHook = fn;
+          return () => void order.push("removeExit");
+        },
+        onSignal: () => {
+          order.push("onSignal");
+          return () => void order.push("removeSignal");
+        },
+      });
+      await start("/p", {}, deps);
+      expect(order).toEqual(["onExit", "onSignal", "run", "stop", "removeSignal", "removeExit"]);
+      expect(stop).toHaveBeenCalledOnce();
+
+      const plain = announcing({ st: { hasDevClient: false }, onExit: vi.fn(), onSignal: vi.fn() });
+      await start("/p", {}, plain.deps);
+      expect(plain.deps.onExit).not.toHaveBeenCalled();
+      expect(plain.deps.onSignal).not.toHaveBeenCalled();
+    });
+  });
+
+  it("names the app after its slug, then app, when the state has no name", async () => {
+    const { deps, announce } = announcing({ st: { name: undefined } });
+    await start("/p", {}, deps);
+    expect(announce.mock.calls[0]![0]).toMatchObject({ name: "my-app", slug: "my-app" });
+    const none = announcing({ st: { name: undefined, slug: undefined } });
+    await start("/p", {}, none.deps);
+    expect(none.announce.mock.calls[0]![0]).toMatchObject({ name: "app", slug: "app" });
+  });
+
+  it("keeps Expo's announcement when ours cannot start", async () => {
+    const failures = [
+      vi.fn(() => {
+        throw new Error("dnssd-advertise is not installed");
+      }),
+      vi.fn(async () => {
+        throw new Error("dnssd-advertise is not installed");
+      }),
+    ];
+    for (const announce of failures) {
+      const { deps, log } = announcing({ announce });
+      await start("/p", {}, deps);
+      expect(log).toHaveBeenCalledWith(
+        'ℹ Could not announce Metro for the dev launcher (dnssd-advertise is not installed); Expo announces it under the app config\'s bundle id, which Expo SDK 58\'s dev launcher hides unless "Match bundle identifier" is off in its Settings.',
+      );
+      const run = deps.run as unknown as { mock: { calls: unknown[][] } };
+      expect(run.mock.calls[0]?.[2]).toEqual({ cwd: "/p" });
+    }
+  });
+
+  it("keeps Expo's announcement when the project's dnssd-advertise has another API", async () => {
+    const root = mkdtempSync(join(tmpdir(), "start-dnssd-"));
+    const lib = join(root, "node_modules", "dnssd-advertise");
+    mkdirSync(lib, { recursive: true });
+    writeFileSync(join(lib, "package.json"), JSON.stringify({ name: "dnssd-advertise", version: "2.0.0", main: "index.js" }));
+    writeFileSync(join(lib, "index.js"), "exports.advertise = async () => async () => {};");
+    const { deps, log } = announcing({ announce: announceDevServer });
+    await start(root, {}, deps);
+    expect(log).toHaveBeenCalledWith(
+      `ℹ Could not announce Metro for the dev launcher (dnssd-advertise's advertise() did not return a stop function); Expo announces it under the app config's bundle id, which Expo SDK 58's dev launcher hides unless "Match bundle identifier" is off in its Settings.`,
+    );
+    const run = deps.run as unknown as { mock: { calls: unknown[][] } };
+    expect(run.mock.calls[0]?.[2]).toEqual({ cwd: root });
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("announces nothing when the user turned Bonjour off, and says which variable did", async () => {
+    const cases: [NodeJS.ProcessEnv, string][] = [
+      [{ EXPO_UNSTABLE_BONJOUR: "0" }, "EXPO_UNSTABLE_BONJOUR=0"],
+      [{ EXPO_UNSTABLE_BONJOUR: "false" }, "EXPO_UNSTABLE_BONJOUR=false"],
+      [{ CI: "true" }, "CI=true"],
+      [{ CI: "1" }, "CI=1"],
+    ];
+    for (const [env, named] of cases) {
+      for (const st of [{}, { kind: "bare" }, { installedBundleId: undefined }]) {
+        const { deps, announce, log } = announcing({ st, env });
+        await start("/p", {}, deps);
+        expect(announce, JSON.stringify(env)).not.toHaveBeenCalled();
+        expect(log).not.toHaveBeenCalledWith(NO_ID);
+        expect(log.mock.calls.filter(([l]) => String(l).startsWith("ℹ"))).toEqual([
+          [
+            `ℹ Metro is not announced to the dev launcher: ${named} in the environment turns Bonjour off, as in Expo CLI. Open the app with the link \`rn-xtool install\` printed.`,
+          ],
+        ]);
+        const run = deps.run as unknown as { mock: { calls: unknown[][] } };
+        expect(run.mock.calls[0]?.[2]).toEqual({ cwd: "/p" });
+      }
+    }
+  });
+
+  it("says so when a bare app's Metro is not announced", async () => {
+    const announce = vi.fn(async () => {
+      throw new Error("dnssd-advertise is not installed in the project");
+    });
+    const { deps, log } = announcing({ st: { kind: "bare" }, announce });
+    await start("/p", {}, deps);
+    expect(log).toHaveBeenCalledWith(
+      "ℹ Could not announce Metro for the dev launcher (dnssd-advertise is not installed in the project); `react-native start` does not announce it, so the launcher will not list it. Open the app with the link `rn-xtool install` printed.",
+    );
+    expect(log.mock.calls.flat().join("\n")).not.toContain("Expo announces it");
+  });
+
+  /** An announce whose dnssd-advertise reports `now` while announcing and `later` once Metro runs. */
+  const reporting = (now: Error[], later: Error[] = []) => {
+    let onError: ((e: unknown) => void) | undefined;
+    const stop = vi.fn(async () => {});
+    const announce = vi.fn(async (i: Parameters<StartDeps["announce"]>[0]) => {
+      onError = i.onError;
+      for (const e of now) i.onError?.(e);
+      return stop;
+    });
+    const run = vi.fn(async () => {
+      for (const e of later) onError?.(e);
+    });
+    return { announce, run, stop };
+  };
+  const setup = (name: string) => new Error(`mDNS interface "${name}" failed initial setup after 2 attempts`);
+  const warningsOf = (log: { mock: { calls: unknown[][] } }) =>
+    log.mock.calls.map((c) => c[0] as string).filter((l) => l.startsWith("⚠"));
+  const LATER =
+    '⚠ The Metro announcement for the dev launcher failed (mDNS interface "enp4s0" failed initial setup after 2 attempts). Open the app with the link `rn-xtool install` printed, or turn off "Match bundle identifier" in the launcher\'s Settings.';
+
+  it("ignores errors on other network interfaces (a Docker veth)", async () => {
+    const r = reporting([setup("veth23")], [setup("veth23")]);
+    const { deps, log } = announcing({ announce: r.announce, run: r.run });
+    await start("/p", {}, deps);
+    expect(warningsOf(log)).toEqual([]);
+    expect(log).toHaveBeenCalledWith(`ℹ Announcing Metro to the dev launcher as ${ID}.`);
+    expect(envOf(r.run)?.EXPO_UNSTABLE_BONJOUR).toBe("0");
+  });
+
+  it("keeps ours and warns once when the LAN interface fails while announcing", async () => {
+    const r = reporting([setup("enp4s0"), setup("enp4s0")], [setup("enp4s0")]);
+    const { deps, log } = announcing({ announce: r.announce, run: r.run });
+    await start("/p", {}, deps);
+    expect(warningsOf(log)).toEqual([LATER]);
+    expect(log).toHaveBeenCalledWith(`ℹ Announcing Metro to the dev launcher as ${ID}.`);
+    expect(envOf(r.run)?.EXPO_UNSTABLE_BONJOUR).toBe("0");
+    expect(r.stop).toHaveBeenCalledOnce();
+  });
+
+  it("ignores errors that name no interface (a Docker bridge's send errors)", async () => {
+    const send = () => Object.assign(new Error("send EHOSTUNREACH 224.0.0.251:5353"), { address: "224.0.0.251" });
+    const r = reporting([send()], [send(), send(), send()]);
+    const { deps, log } = announcing({ announce: r.announce, run: r.run });
+    await start("/p", {}, deps);
+    expect(warningsOf(log)).toEqual([]);
+  });
+
+  it("warns once when the announcement fails on the LAN interface later", async () => {
+    const r = reporting([], [setup("veth23"), setup("enp4s0"), setup("enp4s0")]);
+    const { deps, log } = announcing({ announce: r.announce, run: r.run });
+    await start("/p", {}, deps);
+    expect(warningsOf(log)).toEqual([LATER]);
+  });
+
+  it("without an installed id, keeps Expo's announcement", async () => {
+    const { deps, announce, log } = announcing({ st: { installedBundleId: undefined } });
+    await start("/p", {}, deps);
+    expect(log).toHaveBeenCalledWith(NO_ID);
+    expect(announce).not.toHaveBeenCalled();
+    const run = deps.run as unknown as { mock: { calls: unknown[][] } };
+    expect(run.mock.calls[0]?.[2]).toEqual({ cwd: "/p" });
+  });
+
+  it("no announcement without the dev client", async () => {
+    for (const st of [{ hasDevClient: false }, { hasDevClient: undefined }]) {
+      const { deps, announce, log } = announcing({ st, env: { CI: "1" } });
+      await start("/p", {}, deps);
+      expect(announce).not.toHaveBeenCalled();
+      expect(log).not.toHaveBeenCalledWith(NO_ID);
+      expect(log.mock.calls.flat().join("\n")).not.toContain("is not announced");
+      const run = deps.run as unknown as { mock: { calls: unknown[][] } };
+      expect(run.mock.calls[0]?.[2]).toEqual({ cwd: "/p" });
+    }
+    const running = announcing({ isPortFree: async () => false, isMetroRunning: async () => true });
+    await start("/p", {}, running.deps);
+    expect(running.announce).not.toHaveBeenCalled();
+  });
+
+  it("a bare dev-client app gets the announcement without the env var", async () => {
+    const { deps, announce, stop } = announcing({ st: { kind: "bare" } });
+    await start("/p", {}, deps);
+    expect(announce).toHaveBeenCalledOnce();
+    const run = deps.run as unknown as { mock: { calls: unknown[][] } };
+    expect(run.mock.calls[0]?.[2]).toEqual({ cwd: "/p" });
+    expect(stop).toHaveBeenCalledOnce();
   });
 });
 

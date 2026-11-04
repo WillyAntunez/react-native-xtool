@@ -9,17 +9,19 @@ work as Linux but is untested so far. arm64 Linux is untested (the xtool checksu
    run. CI does not compile for iOS or touch a device, so the clean-machine check below still applies.
 2. `npm ci && npm test && npm run lint` are green locally too (with `node scripts/fetch-test-tarballs.mjs` run first).
 3. `CHANGELOG.md` has the release under a new version heading (move the `Unreleased` entries there, with the date).
-4. `npm pack --dry-run` lists only `bin/`, `dist/`, `patches/`, `scripts/`, `shims/`, `vendor/` (the vendored
-   SwiftPM scripts and Expo plugin, needed at runtime), `README.md`, `CHANGELOG.md`, `LICENSE` and `package.json`. No
-   `tests/`, `docs/`, `src/` or `.superpowers/`.
+4. `npm pack --dry-run` lists only `bin/`, `dist/`, `patches/`, `scripts/`, `shims/`, `templates/` (the first-launch
+   helper's sources, copied into the app), `vendor/` (the vendored SwiftPM scripts and Expo plugin, needed at
+   runtime), `README.md`, `CHANGELOG.md`, `LICENSE` and `package.json`. No `tests/`, `docs/`, `src/` or `.superpowers/`.
 5. On a clean machine (or a fresh WSL2 distro) install the packed tarball and run `rn-xtool doctor`:
    `npm pack && npm i -g ./react-native-xtool-<version>.tgz && rn-xtool doctor`.
-6. Repo-public checklist:
+6. On a device, a fresh install of a reference app without the dev client shows its icon on the home screen and
+   loads after Allow without Reload.
+7. Repo-public checklist:
    - `LICENSE` is present and `package.json` says `MIT`.
    - No private names or paths: `npm run scan:private` (scans tracked files via `scripts/scan-private.sh`) must
      report clean.
      The full check needs the maintainer's local, untracked `.scan-private.local` (private patterns, one per line); without it only generic patterns run.
-7. When `XTOOL_VERSION` changes, update `XTOOL_SHA256` in `src/versions.ts` for both architectures from the official
+8. When `XTOOL_VERSION` changes, update `XTOOL_SHA256` in `src/versions.ts` for both architectures from the official
    release assets (`gh release download <version> -R xtool-org/xtool -p 'xtool-*.AppImage'`, then `sha256sum`).
 
 ## Release

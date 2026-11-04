@@ -15,9 +15,9 @@ If none of it helps, `rn-xtool doctor --report` prints a report to paste into an
 
 1. Enable Developer Mode (Settings > Privacy & Security > Developer Mode); the phone reboots.
 2. Trust the certificate: Settings > General > VPN & Device Management > your Apple ID > Trust.
-3. Open the app by hand, and allow Local Network access when asked. On the first launch after an install, the red
-   screen "No script URL provided" shows behind that prompt: the app looked for Metro before access was allowed. Tap
-   Allow, then Reload.
+3. Open the app by hand, and allow Local Network access when asked. The red screen "No script URL provided" may show
+   behind that prompt: after Allow, the app reloads by itself. A dev-client app shows the launcher's own Local Network
+   screen instead; then open the link or QR code `install` printed ([Dev client](#dev-client)).
 4. Keep the phone and the computer on the same Wi‑Fi network with `rn-xtool start` running.
 
 ## The app does not start or cannot reach Metro
@@ -25,9 +25,21 @@ If none of it helps, `rn-xtool doctor --report` prints a report to paste into an
 - **Black screen on launch:** Info.plist had an unresolved `$(VAR)` (for example
   `$(PRODUCT_MODULE_NAME).SceneDelegate`). rn-xtool resolves them; if you see this, rebuild with `build --clean` and
   report it.
-- **Red screen "No script URL provided":** the app cannot reach Metro. On the first launch after an install this is
-  expected behind iOS's Local Network prompt: tap Allow, then Reload. Otherwise check that `start` is running, that the
-  phone is on the same Wi‑Fi, that Local Network is allowed, and the firewall (below).
+- **Red screen "No script URL provided":** the app could not reach Metro. On the first launch it shows behind iOS's
+  Local Network prompt and clears by itself after Allow. An app opened before `rn-xtool start` also reloads by itself
+  once Metro runs, for up to 5 minutes after the red screen first appeared. If you tapped Don't Allow, the app shows
+  "Local Network access is off" once, with an Open Settings button: turn Local Network on for the app (Settings →
+  Privacy & Security → Local Network) and come back. If the red screen stays: check that `start` is running, that the
+  phone is on the same Wi‑Fi, that Local Network is on for the app, and the firewall (below); then tap Reload.
+
+  This applies to apps without `expo-dev-client` (Expo and bare): `build` adds a small helper to their debug build
+  that waits for Metro after the red screen and reloads the app once it answers
+  ([how it works](how-it-works.md#first-launch)). It reloads at most once per failure, so a bundling error with Metro
+  up never reloads in a loop. If another program answers on Metro's port, the app reloads once and then shows the red
+  screen again. The alert's text: "This debug build loads its JavaScript from Metro on your computer, which needs Local
+  Network access. Turn it on for this app in Settings (Privacy & Security → Local Network), then come back. If the red
+  screen stays, tap Reload." It shows only while the app is in front, not while iOS's prompt is up, after 3 seconds
+  without access. If it does not show, turn Local Network on in Settings anyway.
 - **"No script URL" with a VPN on:** rn-xtool bakes in the IP of your default route; a VPN can make that a tunnel
   address (`tun0`, `wg0`, `tailscale0`) the phone cannot reach. `build` and `doctor` warn about it; set `lanIp` in
   `rn-xtool.config.json` to your Wi‑Fi address and rebuild.
@@ -51,6 +63,79 @@ If none of it helps, `rn-xtool doctor --report` prints a report to paste into an
   otherwise the next free port after the configured one. To choose differently, free the port, or set `metroPort` in
   the config and rebuild + reinstall (the port is baked in; `start` tells you which).
 
+## Dev client
+
+These sections are about apps with `expo-dev-client` (Expo, or bare with the dev client). Its launcher does not use the
+Metro address baked into the app: it opens a URL, or lists the Metro servers it finds on the network.
+
+### Opening the project in the dev client
+
+- `build` writes `http://<lanIp>:<metroPort>` into the app's Info.plist as the launcher's default URL
+  (`DEV_CLIENT_DEFAULT_LAUNCHER_URL`), unless the app's Info.plist already has one (Expo: `defaultLaunchURL` in the
+  `expo-dev-client` plugin's options). From the second launch, the app opens the project by itself.
+- On the first launch the launcher asks for Local Network access and skips the default URL. Open the link or QR code
+  `install` printed:
+
+  ```text
+  Metro URL for the dev launcher: http://<lanIp>:<metroPort>
+  Scan this QR code with the iPhone camera to open the app on that Metro server:
+  <QR code>
+  Or open this link on the iPhone: <scheme>://expo-development-client/?url=http%3A%2F%2F<lanIp>%3A<metroPort>
+  ```
+
+  The QR code is drawn with the project's own `toqr` (Expo projects have it). Without it, when the output is not a
+  terminal, or when the terminal is too narrow, `install` prints only the link:
+  `Open this link on the iPhone to open the app on that Metro server: <link>`. The scheme is the app's URL scheme from
+  `ios-xtool/Info.plist`. Without one, `install` prints
+  `ℹ ios-xtool/Info.plist has no URL scheme, so there is no link to open the dev client: enter http://<lanIp>:<metroPort> in the dev launcher.`
+- In Expo apps, `expo start` (run by `rn-xtool start`) prints its own QR code for the dev client too, in a terminal.
+- When the launcher is set to open the most recent project, a stale last URL is tried first, for up to 10 seconds,
+  before the default URL.
+- After a LAN IP change, rebuild and reinstall: the default URL and the link carry the old address. `start` stops and
+  says so.
+- When `rn-xtool start` was killed (`kill -9`, a closed terminal, a crash) rather than stopped with Ctrl+C, the
+  launcher can keep listing the old server until its announcement expires (`dnssd-advertise` announces it for 120
+  seconds). Start Metro again with `rn-xtool start`, or pick the live entry.
+- On a network that blocks the Bonjour announcement (Wi‑Fi client isolation, a firewall that drops UDP port 5353),
+  the dev launcher does not list the server. Open the project with the link or QR code `rn-xtool install` printed.
+- When two machines on the same Wi‑Fi run `rn-xtool start` for the same app (the same bundle id and team), the
+  launcher lists both under the same name and can open the other machine's Metro. Expo CLI announces the same way.
+  Open the project with the link or QR code `rn-xtool install` printed on your own machine.
+
+### Servers hidden by your discovery filters
+
+- xtool installs the app as `XTL-<Team ID>.<bundle id>`. Expo SDK 58's launcher lists only servers announced under
+  the installed app's own bundle id ("Match bundle identifier", on by default); Expo announces Metro under the app
+  config's id, so the list stays empty or says "… hidden by your discovery filters".
+- `rn-xtool install` records the id of the app it installed, and `rn-xtool start` announces Metro over Bonjour
+  (`_expo._tcp`) under that id, in place of Expo's announcement. It uses the project's own `dnssd-advertise`, as Expo
+  CLI does. `start` prints `ℹ Announcing Metro to the dev launcher as XTL-<Team ID>.<bundle id>.`
+- If the list is still empty: run `rn-xtool install` once, then `rn-xtool start`. Or open the link `install` printed.
+  Or, in the launcher's Settings under "Server discovery", turn off "Match bundle identifier" (it stays off until the
+  app is deleted).
+
+What `start` prints when it cannot announce Metro:
+
+- `` ℹ No installed bundle id recorded: run `rn-xtool install` once so `start` can announce Metro under the app's real id (Expo SDK 58's dev launcher hides other servers). ``
+  The app was installed by an older rn-xtool or not by `rn-xtool install`, or the bundle id changed since. Expo's
+  announcement stays on.
+- `ℹ Could not announce Metro for the dev launcher (<reason>); Expo announces it under the app config's bundle id, which Expo SDK 58's dev launcher hides unless "Match bundle identifier" is off in its Settings.`
+  The project's `dnssd-advertise` is missing (`dnssd-advertise is not installed in the project`), is not the 1.x
+  version Expo CLI uses (`dnssd-advertise has no advertise() function`,
+  `dnssd-advertise's advertise() did not return a stop function`), or failed. Expo's announcement stays on.
+- Bare apps: `` ℹ Could not announce Metro for the dev launcher (<reason>); `react-native start` does not announce it, so the launcher will not list it. Open the app with the link `rn-xtool install` printed. ``
+- `` ⚠ The Metro announcement for the dev launcher failed (<reason>). Open the app with the link `rn-xtool install` printed, or turn off "Match bundle identifier" in the launcher's Settings. ``
+  Printed once, when the network interface that carries the LAN IP reports an error while `start` runs. Errors on
+  other interfaces (Docker bridges, VPNs) are ignored, as Expo CLI ignores them.
+
+**Turning the announcement off.** With `CI=1`, `EXPO_UNSTABLE_BONJOUR=0` or `EXPO_UNSTABLE_HEADLESS=1`, `start`
+announces nothing, the same rule Expo CLI follows for its own announcement. For a dev-client app it says which variable
+did it, in case a shell profile or a devcontainer set it without you knowing:
+`` ℹ Metro is not announced to the dev launcher: CI=1 in the environment turns Bonjour off, as in Expo CLI. Open the app with the link `rn-xtool install` printed. ``
+Unset that variable to get the announcement back, or open the app with that link. rn-xtool reads
+these variables from the environment `start` runs in, not from the project's `.env` files (which Expo CLI also loads):
+set them in the shell, for example `EXPO_UNSTABLE_BONJOUR=0 rn-xtool start`.
+
 ## Setup and xtool
 
 - **"xtool could not run (exit <code>): ... On Ubuntu this usually means FUSE 2 is missing: sudo apt install
@@ -61,6 +146,19 @@ If none of it helps, `rn-xtool doctor --report` prints a report to paste into an
   tested with (1.24.0 in this release) and keeps one copy per version. After an update that pins a newer xtool, run
   `rn-xtool setup` once to download it. A copy at another path (`xtoolPath` in `rn-xtool.config.json`) of another
   version gives a warning, `expected 1.24.0, got <version>`.
+- **"Not enough free disk space for setup: the filesystem of <folder> has <free> GB free, and setup needs about <need>
+  GB there (<parts>). Free some space, then run `rn-xtool setup` again.":** `setup` adds up what it will download
+  before the first download, per filesystem, and stops when one is short. The parts are: Swift toolchain 5 GB (in
+  `~/.local/share/swiftly`), xtool 0.2 GB (next to the xtool AppImage), Darwin SDK 15 GB (in `~/.swiftpm/swift-sdks`,
+  or `$XDG_CONFIG_HOME/swiftpm/swift-sdks` when `XDG_CONFIG_HOME` is set, where xtool puts it; xtool unpacks the whole
+  Xcode there before it keeps only the SDK) and first build 4 GB (React Native artifacts, then the app's
+  `ios-xtool/.build`; counted on the filesystem of `~/Library/Caches/ReactNative`). Only the parts `setup` still has
+  to install count; the first build counts while the Swift toolchain or the SDK is still to install. The `Xcode.xip`
+  itself is not counted.
+- `setup` can be run again at any time: it skips what is installed and downloads nothing when everything is there.
+  After an interrupted SDK install it first removes the half-written `darwin.artifactbundle.tmp`
+  (`ℹ Removing ~/.swiftpm/swift-sdks/darwin.artifactbundle.tmp, left by an interrupted Darwin SDK install.`; under
+  `$XDG_CONFIG_HOME/swiftpm` when that is set).
 
 ## Unsupported setups
 
@@ -554,6 +652,44 @@ promise the vendored copy.
 **A malformed `rn-xtool.config.json`** fails the `project` line with the file's name and the JSON error, for example
 `rn-xtool.config.json: Expected double-quoted property name in JSON at position 25 (line 1 column 26)`, and no
 capability line is printed. Every command names the file the same way.
+
+## App icon and launch screen
+
+`build` gives the app the icon from `ios/<target>/Images.xcassets/AppIcon.appiconset`: the 1024×1024 entry, else the
+largest iPhone size. Expo writes that set during `expo prebuild` from the app config's `icon` (or `ios.icon`); in a
+bare app, it is the icon set of your Xcode project. `build` copies the PNG to `ios-xtool/AppIcon.png`, and xtool puts
+it in the app. It prints what it used:
+
+- `ℹ App icon: <path> (<width>×<height>)`.
+- `` ℹ No app icon: <set> does not exist. Add a 1024×1024 PNG to it to give the app an icon (Expo: set "icon" in the app config, then run `rn-xtool build --clean`). ``
+  The same advice follows `ℹ No app icon: <set> lists no PNG in its Contents.json.` (a fresh bare template's set
+  lists sizes without files).
+- `ℹ No app icon: <file> is not a PNG file. Replace it with a 1024×1024 PNG.`
+- `` ℹ No app icon: <icon> is an Icon Composer icon, which needs Xcode's actool. Set a 1024×1024 PNG as "icon" in the app config, then run `rn-xtool build --clean`. ``
+- `⚠ No app icon: an app resource is copied to the app bundle as AppIcon.png, the name rn-xtool gives the icon. Rename that resource to give the app its icon.`
+- `⚠ App icon <file> is <w>×<h>, not square: iOS stretches it. Use a 1024×1024 PNG.` and
+  `⚠ App icon <file> is <w>×<h>, smaller than 180×180: it looks blurry on the home screen. Use a 1024×1024 PNG.`
+  The icon is still used.
+- `` ⚠ The app config icon <icon> changed since the last expo prebuild wrote <set>: run `rn-xtool build --clean` to use it. ``
+  The record is only refreshed when `build` runs the prebuild: after a `npx expo prebuild` run outside rn-xtool, the
+  app already gets the new icon, but the warning stays until `rn-xtool build --clean`, which also refreshes the
+  record.
+
+A missing or unusable icon never stops the build.
+
+**Expo: a changed icon needs `rn-xtool build --clean`.** `build` runs `expo prebuild` only when `ios/` is missing or
+with `--clean`, so a new `icon` in the app config does not reach the icon set by itself. Each time `build` runs
+prebuild, it records the icon's path and a hash of its content. When the app config names another file, or the file's
+content changed, `build` prints the `⚠` line above and still uses the old icon. Touching the file or checking out the
+same content gives no warning. A project last built by an older rn-xtool, or prebuilt outside rn-xtool, has no record:
+the first `build` records the current icon without a warning, and later changes warn.
+
+**The home screen keeps a blank or old icon after a reinstall:** iOS caches app icons. Delete the app from the iPhone
+and install it again, or restart the phone.
+
+**Not supported:** dark and tinted icons, Icon Composer `.icon` icons, and a custom splash colour or image. The launch
+screen is the system background colour. They need Xcode's asset catalog compiler (`actool`), which does not run on
+Linux.
 
 ## Device and signing
 

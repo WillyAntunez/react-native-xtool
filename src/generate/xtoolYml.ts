@@ -1,6 +1,8 @@
 export interface XtoolYmlInput {
   bundleIdentifier: string;
   resources?: string[];
+  /** The app icon PNG, relative to xtool.yml; xtool copies it into the app and sets CFBundleIconFile. */
+  iconPath?: string;
 }
 
 /** Bundled by every app; `EXConstants.bundle` joins them when expo-constants is installed. */
@@ -14,6 +16,7 @@ export function renderXtoolYml(i: XtoolYmlInput): string {
     `bundleID: ${i.bundleIdentifier}`,
     "product: App",
     "infoPath: Info.plist",
+    ...(i.iconPath !== undefined ? [`iconPath: ${i.iconPath}`] : []),
     "skipLSP: true",
     "resources:",
     ...resources.map((r) => `  - ${r}`),

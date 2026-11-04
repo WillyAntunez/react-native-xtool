@@ -5,6 +5,11 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { fingerprintOf, depsFingerprint } from "../src/deps.js";
 
+/** The version `rn-xtool --version` prints. */
+const RN_XTOOL_VERSION = (
+  JSON.parse(readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8")) as { version: string }
+).version;
+
 function project(deps: Record<string, string>, installed: Record<string, string>, patches: string[] = []) {
   const root = mkdtempSync(join(tmpdir(), "deps-"));
   writeFileSync(join(root, "package.json"), JSON.stringify({ dependencies: deps }));
@@ -39,7 +44,14 @@ describe("depsFingerprint", () => {
   });
   it("marks uninstalled dependencies as missing", async () => {
     const missing = await depsFingerprint(project(deps, { a: "1.0.0" }));
-    expect(missing).toBe(fingerprintOf(["a@1.0.0", "b@missing"]));
+    expect(missing).toBe(fingerprintOf(["a@1.0.0", "b@missing", `rn-xtool@${RN_XTOOL_VERSION}`]));
+  });
+  it("changes with rn-xtool's own version, so an upgrade rebuilds", async () => {
+    const root = project(deps, { a: "1.0.0", b: "2.0.0" });
+    const old = await depsFingerprint(root, { toolVersion: "0.1.0-alpha.5" });
+    expect(await depsFingerprint(root, { toolVersion: "0.1.0-alpha.5" })).toBe(old);
+    expect(await depsFingerprint(root, { toolVersion: "0.1.0-alpha.6" })).not.toBe(old);
+    expect(await depsFingerprint(root)).toBe(await depsFingerprint(root, { toolVersion: RN_XTOOL_VERSION }));
   });
   it("changes with patch files and ignores other files", async () => {
     const base = await depsFingerprint(project(deps, { a: "1.0.0", b: "2.0.0" }));
@@ -114,6 +126,6 @@ describe("depsFingerprint of a bare project", () => {
     writeFileSync(join(root, "app.json"), JSON.stringify({ expo: { name: "a" } }));
     mkdirSync(join(root, "ios", "a.xcodeproj"), { recursive: true });
     writeFileSync(join(root, "ios", "a.xcodeproj", "project.pbxproj"), "// not read for expo");
-    expect(await depsFingerprint(root)).toBe(fingerprintOf(["expo@58.0.1"]));
+    expect(await depsFingerprint(root)).toBe(fingerprintOf(["expo@58.0.1", `rn-xtool@${RN_XTOOL_VERSION}`]));
   });
 });

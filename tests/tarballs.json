@@ -10,6 +10,16 @@
     "integrity": "sha512-2Q8jp0fKLrDMou4aKWZ5V2cCVfcwOScuV8GBMkogiXIv7bCwwN4CIkUIq5QsX7DHXJxbruXLTXEgrp6J+iF4YA=="
   },
   {
+    "spec": "react-native@0.86.3",
+    "file": "react-native-0.86.3.tgz",
+    "integrity": "sha512-JR5s3bM9ezud+Mw24GlNXNfthqPIKwrQgPPJcam+L97t2sKjjEavhCzBn+fyqZZRcM5+XlhYxpTxVkK7e1n38Q=="
+  },
+  {
+    "spec": "react-native@0.87.1",
+    "file": "react-native-0.87.1.tgz",
+    "integrity": "sha512-DJKG6ANoD7BtrE4z9DewiSD7/RxCX73lK5Pu49aUr85P3333Dm2roTiP0rRjQNDZdVizHSOmstWfwF/o9EjCRA=="
+  },
+  {
     "spec": "react-native@0.88.0",
     "file": "react-native-0.88.0.tgz",
     "integrity": "sha512-v/wee0nYWcammMYBnSat/e3WY/5iaf9YQOMcBrfKT/wPApPPlHp94hgZovBtwhMuthR01yc/8cGn0FpFTE/C4A=="
@@ -48,5 +58,15 @@
     "spec": "react-native-svg@15.16.0",
     "file": "react-native-svg-15.16.0.tgz",
     "integrity": "sha512-uh8yktufYeRU3W9Omi8+SPyLF9BVN4JmLflSgc9oOcKkSKk/S5JUmmTjKZq/L8GHfQUtCvcu/W6X4xhEfBBAjQ=="
+  },
+  {
+    "spec": "toqr@0.1.1",
+    "file": "toqr-0.1.1.tgz",
+    "integrity": "sha512-FWAPzCIHZHnrE/5/w9MPk0kK25hSQSH2IKhYh9PyjS3SG/+IEMvlwIHbhz+oF7xl54I+ueZlVnMjyzdSwLmAwA=="
+  },
+  {
+    "spec": "dnssd-advertise@1.1.6",
+    "file": "dnssd-advertise-1.1.6.tgz",
+    "integrity": "sha512-Ndrrf6BMPalkQPd/zubL+4YghH2J9NspapQ09uDXwYbvOPkP0oaqf5CkcwJ0b50kS2O3ul6yVu+jz+RY62Cejg=="
   }
 ]

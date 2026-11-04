@@ -4,16 +4,24 @@ rn-xtool does not reimplement Xcode. It patches the official React Native 0.88 a
 runs on Linux (React Native 0.86 and 0.87 and Expo SDK 57, which ship none, run vendored copies of it), generates a
 SwiftPM package for your app in `ios-xtool/`, and hands it to [xtool](https://github.com/xtool-org/xtool), which builds,
 signs and installs it with the Darwin SDK extracted from your own `Xcode.xip`. This page is the overview (toolchain,
-patches, build steps, Expo SDK 58 and 57, rebuild detection, scaffolded libraries); [recipe.md](recipe.md) has every
-step with file locations.
+patches, build steps, Expo SDK 58 and 57, rebuild detection, the first launch, dev-client discovery, scaffolded
+libraries); [recipe.md](recipe.md) has every step with file locations.
 
 [Back to README](../README.md)
 
 ## What `setup` installs
 
 - Swift 6.4 via swiftly, the xtool 1.24.0 AppImage (needs FUSE 2: `libfuse2t64` on Ubuntu 24.04 and newer, `libfuse2`
-  on older releases) and the Darwin SDK extracted from your `Xcode.xip` (Xcode 27.x). About 15 GB of free disk:
-  Xcode.xip is about 12 GB, the extracted SDK about 7 GB. `setup` is idempotent.
+  on older releases) and the Darwin SDK extracted from your `Xcode.xip` (Xcode 27.x). `setup` is idempotent: a second
+  run skips what is installed and downloads nothing.
+- Free disk: before the first download, `setup` adds up what it still has to install, per filesystem, and stops with
+  `Not enough free disk space for setup: …` when one is short. The figures: Swift toolchain 5 GB
+  (`~/.local/share/swiftly`), xtool 0.2 GB (next to the AppImage), Darwin SDK 15 GB (`~/.swiftpm/swift-sdks`, or
+  `$XDG_CONFIG_HOME/swiftpm/swift-sdks` when `XDG_CONFIG_HOME` is set, where xtool puts it: xtool unpacks the whole
+  Xcode there before it trims it to the SDK, about 7 GB) and the first build 4 GB (React Native artifacts in
+  `~/Library/Caches/ReactNative`, about 1.3 GB per React Native version, then the app's `ios-xtool/.build`). About
+  25 GB on a fresh machine, plus the Xcode.xip (about 12 GB), which is not counted. A half-written
+  `darwin.artifactbundle.tmp` left by an interrupted SDK install is removed before the check.
 - Swift's system packages are not installed for you: when some are missing, `setup` prints the exact
   `sudo apt-get update && sudo apt-get -y install ...` line to run before running `setup` again. On Ubuntu 24.04:
   `binutils zip gnupg2 libc6-dev libcurl4-openssl-dev libedit2 libgcc-13-dev libpython3-dev libstdc++-13-dev libxml2-dev
@@ -64,7 +72,13 @@ step with file locations.
    step 2, because the vendored plugin needs its headers. Before staging, the `frameworks` step checks that the
    frameworks fit together ([G4](#precompiled-frameworks-g4)).
 4. Generates `ios-xtool/` (Package.swift, xtool.yml, Info.plist, ip.txt, app config). It is a regenerable artifact; do
-   not edit it by hand.
+   not edit it by hand. It also gets:
+   - for apps without `expo-dev-client`, the `RNXtoolDevSupport` target, which reloads the app once Metro is reachable
+     ([First launch](#first-launch));
+   - `AppIcon.png`, the app icon taken from `Images.xcassets/AppIcon.appiconset`, named by `iconPath` in `xtool.yml`
+     ([details](troubleshooting.md#app-icon-and-launch-screen));
+   - for apps with `expo-dev-client`, `DEV_CLIENT_DEFAULT_LAUNCHER_URL = http://<lanIp>:<metroPort>` and `_expo._tcp`
+     in `NSBonjourServices` in Info.plist ([Dev-client discovery](#dev-client-discovery)).
 5. Gives CocoaPods-only libraries a `Package.swift` (see [below](#cocoapods-only-libraries)).
 6. `xtool` builds, signs and installs the app; Metro serves JS to the phone over Wi‑Fi.
 
@@ -221,8 +235,8 @@ extracts to `ios/build/expo-xcframeworks`.
 ## Rebuild detection
 
 `rn-xtool run` fingerprints your installed dependencies (every `dependencies`/`devDependencies` entry at its installed
-version, plus `patches/*.patch`) and compares that with the fingerprints stored by the last successful `build` and
-`install`:
+version, plus `patches/*.patch`, plus rn-xtool's own version) and compares that with the fingerprints stored by the
+last successful `build` and `install`:
 
 - **Unchanged** (built and installed for the current dependencies, and the baked Metro port and LAN IP still work): it
   prints `Native app is up to date`, skips build and install and starts Metro without clearing its cache.
@@ -239,6 +253,51 @@ or never with [Wi‑Fi installs](wifi-install.md) (`install --network`).
   `rn-xtool start --clear` forces a cache reset.
 - `rn-xtool run --force` always rebuilds and reinstalls (`--clean` does too).
 - `rn-xtool doctor` reports a `deps` warning when the app is out of date.
+
+## First launch
+
+On the first launch of a debug build, React Native checks whether Metro runs with a request to the baked host before
+it loads the bundle. That request is the app's first local-network connection: iOS shows the Local Network prompt and,
+while it is open, denies the request at once (Apple TN3179). React Native then finds no bundle and shows the red screen
+"No script URL provided". The same happens on a Mac for an Expo app without a dev client.
+
+For apps without `expo-dev-client` (Expo and bare), `build` adds a small target, `RNXtoolDevSupport`, to the debug
+build: a C policy with no I/O and an Objective-C file that connects it to React Native's notifications, UIKit's app
+state and Network.framework. Its sources are in `templates/dev-support/`, copied as they are into
+`ios-xtool/Sources/RNXtoolDevSupport/`. Dev-client apps do not get it: their launcher does not run this check and asks
+for Local Network access itself.
+
+- When React Native reports that the bundle failed to load (`RCTJavaScriptDidFailToLoadNotification`), the helper
+  opens a connection to Metro's host and port. iOS retries it by itself once the user taps Allow. When it connects, the
+  helper reloads the app (`RCTTriggerReloadCommandListeners`).
+- It reloads at most once per failure, and never once a bundle has loaded, so a bundling error with Metro up never
+  reloads in a loop. If Metro was reachable at once, the failure has another cause and it does not reload.
+- It runs only while the app is in the foreground. It gives up 5 minutes after the first failure. So an app opened
+  before `rn-xtool start` also recovers once Metro starts, within those 5 minutes.
+- When the connection keeps waiting because Local Network access is denied (Don't Allow), the app shows one alert,
+  "Local Network access is off", with an Open Settings button: at most once per launch, only while the app is active
+  (not while the system prompt is up), and only after 3 seconds of denial.
+- It reads Metro's host and port where React Native does: `ip.txt` in the app bundle (bare apps carry `<ip>:<port>`
+  there), and the port from Info.plist `RCTMetroPort` (Expo apps), else 8081.
+- It names React Native's notification and reload function as strings and looks the function up at run time
+  (`dlsym`), and it imports no React header. If a React Native release renames them, the helper does nothing and the
+  app behaves as before; the build never breaks on it.
+
+## Dev-client discovery
+
+expo-dev-launcher finds Metro servers only through Bonjour (`_expo._tcp`) announcements. Expo CLI announces Metro under
+the app config's bundle id, but xtool installs the app as `XTL-<Team ID>.<bundle id>`, and Expo SDK 58's launcher hides
+servers whose announced id differs from the app's own.
+
+- `rn-xtool install` records the bundle id of the app it installed in the build state (`installedBundleId` in
+  `ios-xtool/.rn-xtool-state.json`), without asking the iPhone anything more: over Wi‑Fi, the id the install reports;
+  over USB, the `XTL-<Team ID>.<bundle id>` it logs. `build` keeps that id while the bundle id stays the same.
+- `rn-xtool start` announces Metro with the project's own `dnssd-advertise` (Expo CLI's announcer, never an rn-xtool
+  dependency), as Expo CLI does, but with that id. For Expo apps, only once it started does `start` run `expo start`
+  with `EXPO_UNSTABLE_BONJOUR=0`, which turns Expo's own off. If it cannot announce, Expo's announcement stays, with an
+  `ℹ` line. When `start` ends, it sends the goodbye (waiting at most a second).
+- A user's off switch (`CI`, `EXPO_UNSTABLE_BONJOUR=0`) is respected, read from the environment `start` runs in.
+- The messages and what to do with them: [troubleshooting.md](troubleshooting.md#dev-client).
 
 ## Mixed-language manifests
 

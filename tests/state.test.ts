@@ -45,6 +45,19 @@ describe("state", () => {
     await rememberDevice(dir, { deviceIp: "192.168.1.10", deviceUdid: "U" });
     expect(await readState(dir)).toEqual({ ...state, deviceIp: "192.168.1.10", deviceUdid: "U" });
   });
+  it("rememberDevice records the installed id", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "state-"));
+    await writeState(dir, { ...state, name: "App", slug: "app" });
+    await rememberDevice(dir, { deviceIp: "192.168.1.10", deviceUdid: "U", installedBundleId: "XTL-TEAMID0000.com.example.app" });
+    expect(await readState(dir)).toEqual({
+      ...state,
+      name: "App",
+      slug: "app",
+      deviceIp: "192.168.1.10",
+      deviceUdid: "U",
+      installedBundleId: "XTL-TEAMID0000.com.example.app",
+    });
+  });
   it("does nothing to remember without a build", async () => {
     const dir = mkdtempSync(join(tmpdir(), "state-"));
     await rememberDevice(dir, { deviceIp: "192.168.1.10", deviceUdid: "U" });
