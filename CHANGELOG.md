@@ -6,8 +6,8 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 ## [Unreleased]
 
 ### Upgrading from 0.1.0-alpha.5
-- Run `rn-xtool build` and `rn-xtool install` to get the app icon and, for apps without expo-dev-client, the reload
-  after Allow.
+- `rn-xtool run` rebuilds and reinstalls the app after this upgrade, which gives it the app icon and, for apps without
+  expo-dev-client, the reload after Allow.
 - If the home screen keeps a blank icon, delete the app from the iPhone and install it again, or restart the phone:
   iOS caches app icons.
 - With expo-dev-client, run `rn-xtool install` once, so that `rn-xtool start` can announce Metro under the installed
@@ -49,6 +49,8 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   with expo-dev-client: "On the first launch the dev launcher asks for Local Network access: tap Allow, then open the
   link or QR code above, or enter the Metro URL above in the launcher." An app last built by 0.1.0-alpha.5 has no
   helper: until `rn-xtool build` runs again, `install` keeps the line "tap Allow, then Reload".
+- After an rn-xtool upgrade, `rn-xtool run` rebuilds and reinstalls the app: rn-xtool's version is part of the
+  dependency fingerprint, so `start` and `doctor` also report the build as out of date, as after a dependency change.
 - The README asks for about 25 GB of free disk for setup and the first build, plus the Xcode.xip (was about 15 GB).
 - The SDK-only check "Need at least 10 GB free in your home filesystem (~/.swiftpm) to install the Darwin SDK" is
   replaced by the setup-wide check above.

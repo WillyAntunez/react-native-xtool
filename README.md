@@ -101,8 +101,8 @@ you (change it if you want another; `expo prebuild` would ask you for one). Firs
 
 ## Daily loop
 
-`rn-xtool run` is the one command to use. It fingerprints your installed dependencies (plus `patches/*.patch`) and
-compares them with the last successful build and install ([details](docs/how-it-works.md#rebuild-detection)):
+`rn-xtool run` is the one command to use. It fingerprints your installed dependencies (plus `patches/*.patch` and
+rn-xtool's own version) and compares them with the last successful build and install ([details](docs/how-it-works.md#rebuild-detection)):
 
 - **Up to date**, and the baked Metro port and LAN IP still work: prints `Native app is up to date`, skips build and
   install, and starts Metro without clearing its cache.

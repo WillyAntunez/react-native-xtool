@@ -1,9 +1,13 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { join, relative, resolve } from "node:path";
 import { loadConfig } from "./config.js";
 import { detectProjectKind } from "./project/detect.js";
 import { openPbxproj, readTargetContent, resolveSetting } from "./project/pbxproj.js";
+
+/** rn-xtool's own version, from the package.json `rn-xtool --version` prints. */
+const RN_XTOOL_VERSION = (createRequire(import.meta.url)("../package.json") as { version: string }).version;
 
 /** sha256 over the sorted entries; order of the input never matters. */
 export function fingerprintOf(entries: string[]): string {
@@ -70,12 +74,13 @@ async function bareNativeEntries(root: string): Promise<string[]> {
 /**
  * Fingerprint of everything that can make the installed app or the Metro cache stale:
  * every dependency/devDependency at its INSTALLED version, plus the patches/*.patch names,
- * plus, for a bare project, the content of its native app target (see `bareNativeEntries`).
+ * plus, for a bare project, the content of its native app target (see `bareNativeEntries`),
+ * plus rn-xtool's own version (`toolVersion` in tests): what it generates into the app changes between releases.
  *
  * Deliberately no native/JS distinction: JS-only changes also need a Metro cache reset,
  * and telling native dependencies apart reliably needs the autolinking pass.
  */
-export async function depsFingerprint(root: string): Promise<string> {
+export async function depsFingerprint(root: string, opts: { toolVersion?: string } = {}): Promise<string> {
   const pkg = await readJson(join(root, "package.json"));
   const names = new Set<string>([
     ...Object.keys((pkg?.dependencies as Record<string, string> | undefined) ?? {}),
@@ -94,5 +99,6 @@ export async function depsFingerprint(root: string): Promise<string> {
   } catch {
     // no patches directory
   }
-  return fingerprintOf([...entries, ...patches, ...(await bareNativeEntries(root))]);
+  const tool = `rn-xtool@${opts.toolVersion ?? RN_XTOOL_VERSION}`;
+  return fingerprintOf([...entries, ...patches, ...(await bareNativeEntries(root)), tool]);
 }

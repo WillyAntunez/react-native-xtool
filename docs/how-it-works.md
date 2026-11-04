@@ -235,8 +235,8 @@ extracts to `ios/build/expo-xcframeworks`.
 ## Rebuild detection
 
 `rn-xtool run` fingerprints your installed dependencies (every `dependencies`/`devDependencies` entry at its installed
-version, plus `patches/*.patch`) and compares that with the fingerprints stored by the last successful `build` and
-`install`:
+version, plus `patches/*.patch`, plus rn-xtool's own version) and compares that with the fingerprints stored by the
+last successful `build` and `install`:
 
 - **Unchanged** (built and installed for the current dependencies, and the baked Metro port and LAN IP still work): it
   prints `Native app is up to date`, skips build and install and starts Metro without clearing its cache.
