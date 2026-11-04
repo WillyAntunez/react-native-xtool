@@ -10,6 +10,16 @@
     "integrity": "sha512-2Q8jp0fKLrDMou4aKWZ5V2cCVfcwOScuV8GBMkogiXIv7bCwwN4CIkUIq5QsX7DHXJxbruXLTXEgrp6J+iF4YA=="
   },
   {
+    "spec": "react-native@0.86.3",
+    "file": "react-native-0.86.3.tgz",
+    "integrity": "sha512-JR5s3bM9ezud+Mw24GlNXNfthqPIKwrQgPPJcam+L97t2sKjjEavhCzBn+fyqZZRcM5+XlhYxpTxVkK7e1n38Q=="
+  },
+  {
+    "spec": "react-native@0.87.1",
+    "file": "react-native-0.87.1.tgz",
+    "integrity": "sha512-DJKG6ANoD7BtrE4z9DewiSD7/RxCX73lK5Pu49aUr85P3333Dm2roTiP0rRjQNDZdVizHSOmstWfwF/o9EjCRA=="
+  },
+  {
     "spec": "react-native@0.88.0",
     "file": "react-native-0.88.0.tgz",
     "integrity": "sha512-v/wee0nYWcammMYBnSat/e3WY/5iaf9YQOMcBrfKT/wPApPPlHp94hgZovBtwhMuthR01yc/8cGn0FpFTE/C4A=="
