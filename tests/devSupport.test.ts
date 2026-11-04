@@ -182,7 +182,7 @@ describe.skipIf(!HAS_CC)(`auto-reload policy${HAS_CC ? "" : " (needs cc)"}`, () 
   });
 });
 
-const PINNED_RN = ["react-native@0.86.3", "react-native@0.87.1", "react-native@0.88.1"];
+const PINNED_RN = ["react-native@0.85.0", "react-native@0.86.3", "react-native@0.87.1", "react-native@0.88.1"];
 
 describe.each(PINNED_RN.map((spec) => [spec, needsTarball(spec)]))(
   "the names exist in each pinned React Native: %s%s",
