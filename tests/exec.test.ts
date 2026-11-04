@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { existsSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   lineBufferedArgv,
   onPath,
@@ -12,6 +13,7 @@ import {
   runTee,
   toolEnv,
 } from "../src/tools/exec.js";
+import { explainingXtool } from "../src/tools/xtoolErrors.js";
 import { capturingStdio, fakeTool } from "./support/stdio.js";
 
 describe("toolEnv", () => {
@@ -53,6 +55,47 @@ describe("runTee", () => {
     const out = await runTee("sh", ["-c", "echo Wrote to x/App.ipa; echo oops >&2"], { env: process.env, echo: false });
     expect(out).toContain("Wrote to x/App.ipa");
     expect(out).toContain("oops");
+  });
+
+  describe("on a failure", () => {
+    const failing = fakeTool("echo '[1/4] Compiling X'\necho 'error: unknown failure' >&2\nexit 1");
+    afterAll(() => failing.cleanup());
+
+    it("fails with the message `run` gives: the output was already shown live", async () => {
+      const { result, stdout, stderr } = await capturingStdio(() =>
+        runTee(failing.bin, ["dev", "build"], { env: process.env, onPath: () => false }),
+      );
+      expect(stdout).toContain("[1/4] Compiling X");
+      expect(stderr).toContain("error: unknown failure");
+      const e = (result as PromiseRejectedResult).reason as Failure;
+      expect(e.message).toBe(`Command failed with exit code 1: ${failing.bin} dev build`);
+      expect(e.stdout).toBe("[1/4] Compiling X");
+      expect(e.stderr).toBe("error: unknown failure");
+    });
+
+    it("still lets a known xtool failure be explained from its output", async () => {
+      const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "xtool-errors");
+      for (const [name, explained] of [
+        ["device-not-registered", /^Apple has no iPhone registered /],
+        ["app-id-limit", /^Apple refused to register another App ID/],
+      ] as const) {
+        const xtool = fakeTool(`cat '${path.join(fixtures, `${name}.txt`)}'\nexit 1`);
+        try {
+          const { result } = await capturingStdio(() =>
+            explainingXtool(() => runTee(xtool.bin, ["dev", "build"], { env: process.env, onPath: () => false })),
+          );
+          expect(((result as PromiseRejectedResult).reason as Error).message).toMatch(explained);
+        } finally {
+          xtool.cleanup();
+        }
+      }
+    });
+
+    it("keeps the output in the message when it was not shown", async () => {
+      const e = (await runTee(failing.bin, [], { env: process.env, echo: false }).catch((x: unknown) => x)) as Failure;
+      expect(e.message).toContain("[1/4] Compiling X");
+      expect(e.message).toContain("error: unknown failure");
+    });
   });
 });
 

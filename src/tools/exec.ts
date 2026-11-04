@@ -172,7 +172,8 @@ export async function runKeepingOutput(cmd: string, args: string[], opts: TeeOpt
 
 /**
  * Like `run`, but also returns the combined output (still shown live unless `echo: false`; shown,
- * stdout is line-buffered when `stdbuf` is on PATH).
+ * stdout is line-buffered when `stdbuf` is on PATH). A failure carries it as `.stdout` and `.stderr`;
+ * its message repeats it only when it was not shown.
  */
 export async function runTee(
   cmd: string,
@@ -191,7 +192,7 @@ export async function runTee(
       env,
       extendEnv: false,
     }),
-    { short: false, wrapped },
+    { short: echo, wrapped },
   );
   return `${r.stdout}\n${r.stderr}`;
 }
