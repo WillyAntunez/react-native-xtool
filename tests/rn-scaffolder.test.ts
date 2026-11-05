@@ -2075,6 +2075,13 @@ describe("scaffolder fix 13: the pod table (vendor/rn-spm)", () => {
     expect(manifest(scaffold("", table))).not.toContain("rn-xtool-pods");
   });
 
+  it("13: sorts the rn-xtool-pods line by pod name", () => {
+    const entry = (exact: string) => ({ url: `https://github.com/example/pod-${exact}`, exact, products: ["P"] });
+    const table = tableFile({ "Foo-Bar": entry("2.0.0"), Foo: entry("1.0.0") });
+    const pkg = manifest(scaffold(`  s.dependency "Foo-Bar"\n  s.dependency "Foo"`, table));
+    expect(pkg).toContain("\n// rn-xtool-pods: Foo=1.0.0, Foo-Bar=2.0.0\n");
+  });
+
   it.each([
     ["a missing file", (dir: string) => path.join(dir, "absent.json")],
     ["a file that is not JSON", (dir: string) => (writeFileSync(path.join(dir, "t.json"), "{ pods"), path.join(dir, "t.json"))],

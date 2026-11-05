@@ -1171,7 +1171,7 @@ index 8fcf04b..6dbb951 100644
    const name = field('name');
    const moduleName = field('module_name');
 diff --git a/node_modules/react-native/scripts/spm/scaffold-package-swift.js b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
-index cf7e587..a95bed4 100644
+index cf7e587..18e4e4b 100644
 --- a/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 +++ b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 @@ -54,6 +54,7 @@ const {
@@ -2451,9 +2451,9 @@ index cf7e587..a95bed4 100644
 +
 +  // The pods this manifest pins, sorted by pod, so rn-xtool can tell a
 +  // persisted scaffold pinned by another pod table.
-+  const pinned = (spec.externalPackages ?? [])
-+    .map(e => `${e.pod}=${e.exact}`)
-+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
++  const pinned = [...(spec.externalPackages ?? [])]
++    .sort((a, b) => (a.pod < b.pod ? -1 : a.pod > b.pod ? 1 : 0))
++    .map(e => `${e.pod}=${e.exact}`);
 +  const podsLine =
 +    pinned.length > 0 ? `\n${POD_PINS_MARKER}${pinned.join(', ')}` : '';
 +

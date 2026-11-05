@@ -1830,9 +1830,9 @@ let rnSpmBridgingHeader = Context.packageDirectory + "/${mixed.bridgingHeader}"
 
   // The pods this manifest pins, sorted by pod, so rn-xtool can tell a
   // persisted scaffold pinned by another pod table.
-  const pinned = (spec.externalPackages ?? [])
-    .map(e => `${e.pod}=${e.exact}`)
-    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const pinned = [...(spec.externalPackages ?? [])]
+    .sort((a, b) => (a.pod < b.pod ? -1 : a.pod > b.pod ? 1 : 0))
+    .map(e => `${e.pod}=${e.exact}`);
   const podsLine =
     pinned.length > 0 ? `\n${POD_PINS_MARKER}${pinned.join(', ')}` : '';
 
