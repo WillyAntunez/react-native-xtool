@@ -97,6 +97,72 @@ describe("renderPackageSwift", () => {
     expect(o.manifest65).toBeUndefined();
   });
 
+  describe("binary pods", () => {
+    const ARCHIVES = ["/p/ios/build/pod-binaries/archives/libMLKitCommon.a", "/p/ios/build/pod-binaries/archives/libMLKitVision.a"];
+    const pods = {
+      archives: ARCHIVES,
+      frameworks: ["AVFoundation", "Foundation", "React"],
+      libraries: ["c++", "sqlite3", "z"],
+      weakFrameworks: ["CoreNFC"],
+      emptyTargets: ["GTMDefines"],
+    };
+    const base = { iosDir: "/p/ios", frameworks, iosMin: "16.4", app: noApp };
+    const linker = (manifest: string): string => /linkerSettings: \[\n([\s\S]*?)\n {12}\]/.exec(manifest)![1]!;
+
+    it("adds one -force_load per archive and the pods' frameworks and libraries", () => {
+      const out = renderPackageSwift({ ...base, pods }).manifest;
+      expect(linker(out)).toBe(
+        [
+          '                .linkedLibrary("c++"),',
+          '                .unsafeFlags(["-Xlinker", "-ObjC", "-F", "/a/b", "-F", "/c/d", ' +
+            ARCHIVES.map((a) => `"-Xlinker", "-force_load", "-Xlinker", "${a}"`).join(", ") +
+            ', "-Xlinker", "-weak_framework", "-Xlinker", "CoreNFC", "-Xlinker", "-no_objc_relative_method_lists"]),',
+          '                .linkedFramework("React"),',
+          '                .linkedFramework("hermesvm"),',
+          '                .linkedFramework("ExpoFont"),',
+          // The pods' frameworks the runtime frameworks do not link already, then their libraries but c++, sorted.
+          '                .linkedFramework("AVFoundation"),',
+          '                .linkedFramework("Foundation"),',
+          '                .linkedLibrary("sqlite3"),',
+          '                .linkedLibrary("z"),',
+        ].join("\n"),
+      );
+    });
+
+    it("links each archive once, by -force_load only, and never -all_load", () => {
+      const out = renderPackageSwift({ ...base, pods }).manifest;
+      for (const a of ARCHIVES) {
+        expect(out.split(a).length - 1, a).toBe(1);
+        expect(out).toContain(`"-force_load", "-Xlinker", "${a}"`);
+      }
+      expect(out).not.toContain("all_load");
+      expect(out).not.toMatch(/\.linkedLibrary\("(MLKit|lib)/);
+    });
+
+    it("turns off relative method lists only when binary pods are linked", () => {
+      // Row 80: xtool's ld64.lld crashes on ML Kit's text-recognition object without it (G1).
+      expect(renderPackageSwift({ ...base, pods }).manifest).toContain('"-no_objc_relative_method_lists"');
+      expect(renderPackageSwift(base).manifest).not.toContain("no_objc_relative_method_lists");
+      const headersOnly = { ...pods, archives: [] };
+      expect(renderPackageSwift({ ...base, pods: headersOnly }).manifest).not.toContain("no_objc_relative_method_lists");
+    });
+
+    it("the manifest is byte-identical without pods", async () => {
+      const snapshot = await readFile(new URL("./fixtures/expo-Package.swift", import.meta.url), "utf8");
+      const expo = {
+        iosDir: "/p/ios",
+        frameworks,
+        iosMin: "16.4",
+        expo: expoInputs({ clangImporter: { swiftHeadersDir: "/h", includeDirs: ["/e/A/pod-headers"], moduleMaps: ["/h/A.modulemap"] } }),
+        app: { ...noApp, importerPaths: [] },
+      };
+      expect(renderPackageSwift(expo).manifest).toBe(snapshot);
+      const none = { archives: [], frameworks: [], libraries: [], weakFrameworks: [], emptyTargets: [] };
+      expect(renderPackageSwift({ ...expo, pods: none }).manifest).toBe(snapshot);
+      expect(renderPackageSwift({ ...base, pods: none }).manifest).toBe(renderPackageSwift(base).manifest);
+    });
+  });
+
   describe("the dev-support target", () => {
     const BLOCK = `        .target(
             name: "RNXtoolDevSupport",
@@ -326,6 +392,39 @@ describe("writeIosXtool", () => {
     expect(pkg.match(/"-F"/g)).toHaveLength(3); // compile-interfaces + 2 unique searchPaths
     expect(pkg).toContain("ExpoModulesJSIHeaders");
     expect(await readFile(join(paths.iosXtool, "xtool.yml"), "utf8")).toContain("  - EXConstants.bundle");
+  });
+
+  it("keeps the absolute archive paths out of every persisted file", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "xt7-pods-"));
+    tmps.push(tmp);
+    const target = join(tmp, "ios", "app");
+    await mkdir(target, { recursive: true });
+    await cp(new URL("./fixtures/ios-target", import.meta.url).pathname, target, { recursive: true });
+    const paths = projectPaths(tmp);
+    const project: ProjectInfo = {
+      kind: "expo", root: tmp, name: "app", slug: "app", version: "1.0.0", buildNumber: "1",
+      bundleIdentifier: "com.example.app", moduleName: "main", sdkVersion: 58, rnVersion: "0.88.0",
+      rnScripts: "installed", expoPlugin: "installed",
+      iosTargetName: "app", iosTargetDir: target, infoPlistPath: join(target, "Info.plist"),
+      hasExpoModules: true, hasExpoConstants: true, hasDevClient: false,
+    };
+    const archive = join(paths.podBinaries, "archives", "libMLKitVision.a");
+    const pods = { archives: [archive], frameworks: [], libraries: [], weakFrameworks: [], emptyTargets: [] };
+    await writeIosXtool({ project, paths, frameworks, metroPort: 8081, lanIp: "192.168.1.5", log: () => {}, pods, emptyTargets: ["GTMDefines"] });
+    // Row 81: the source-less target's object, where Swift Build looks for it at link.
+    const placeholder = join(paths.iosXtool, ".build", "out", "Products", "Debug-iphoneos", "GTMDefines.o");
+    expect((await readFile(placeholder)).subarray(0, 4).toString("hex")).toBe("cffaedfe");
+    const holding: string[] = [];
+    const walk = async (dir: string): Promise<void> => {
+      for (const e of await readdir(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) await walk(p);
+        else if (e.isFile() && (await readFile(p, "utf8")).includes(archive)) holding.push(p);
+      }
+    };
+    await walk(tmp);
+    // Only the manifest regenerated on every build (and never persisted) holds them.
+    expect(holding).toEqual([join(paths.iosXtool, "Package.swift")]);
   });
 
   /** An Expo project whose app target is a copy of `fixture` (a directory under tests/fixtures). */

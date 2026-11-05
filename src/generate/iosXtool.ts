@@ -14,6 +14,8 @@ import { APP_ICON_FILE, findAppIcon, type IconRecord } from "./appIcon.js";
 import { copyBareTarget } from "./bareSources.js";
 import { expoClangImporterInputs } from "./expoImporter.js";
 import { DEV_SUPPORT_TARGET, renderPackageSwift, type AppTargetInputs } from "./packageSwift.js";
+import { writeEmptyTargetObjects } from "../pods/emptyTargets.js";
+import type { PodsLinks } from "../pods/stage.js";
 import { scaffoldedImporterPaths } from "./scaffoldImporter.js";
 import { BASE_RESOURCES, DEFAULT_RESOURCES, renderXtoolYml } from "./xtoolYml.js";
 
@@ -26,6 +28,10 @@ export interface GenerateContext {
   log?: (s: string) => void;
   /** The app config icon `build` recorded when it last ran expo prebuild (findAppIcon's stale-icon check). */
   prebuildIcon?: IconRecord;
+  /** The binary pods' link inputs, for the App target (`stagePodBinaries`). */
+  pods?: PodsLinks;
+  /** Targets of the linked table pods without sources: an empty object is written in place of each (row 81). */
+  emptyTargets?: string[];
 }
 
 const MANIFEST_6_5 = "Package@swift-6.5.swift";
@@ -266,9 +272,12 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
       : undefined,
     app: { ...app, importerPaths: await scaffoldedImporterPaths(paths.autolinking) },
     devSupport,
+    ...(ctx.pods !== undefined ? { pods: ctx.pods } : {}),
   });
   await writeFile(join(paths.iosXtool, "Package.swift"), manifest);
   if (manifest65 !== undefined) await writeFile(join(paths.iosXtool, MANIFEST_6_5), manifest65);
   else await rm(join(paths.iosXtool, MANIFEST_6_5), { force: true });
   await writeFile(join(paths.iosXtool, ".gitignore"), "*\n");
+  // Before xtool-build: Swift Build links an object it never writes for a target without sources.
+  if (ctx.emptyTargets !== undefined && ctx.emptyTargets.length > 0) await writeEmptyTargetObjects(paths.iosXtool, ctx.emptyTargets, IOS_MIN);
 }

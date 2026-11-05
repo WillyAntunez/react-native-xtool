@@ -1,4 +1,5 @@
 import type { RuntimeFramework } from "../frameworks.js";
+import type { PodsLinks } from "../pods/stage.js";
 import type { ClangImporterInputs } from "./expoImporter.js";
 
 /** The Expo-only pieces of the manifest; absent for a bare project without Expo modules. */
@@ -38,6 +39,11 @@ export interface PackageSwiftInput {
   app: AppTargetInputs;
   /** Adds the {@link DEV_SUPPORT_TARGET} target and makes the App depend on it; absent or false: manifest unchanged. */
   devSupport?: boolean;
+  /**
+   * The binary pods' link inputs (`stagePodBinaries`): each archive by `-force_load` (absolute paths, in this manifest
+   * only, regenerated on every build), their weak frameworks, frameworks and libraries. Absent or empty: unchanged.
+   */
+  pods?: PodsLinks;
 }
 
 export interface RenderedPackageSwift {
@@ -144,10 +150,28 @@ export function renderPackageSwift(i: PackageSwiftInput): RenderedPackageSwift {
   const { expo, app } = i;
   const jsiHeaders = expo?.jsiHeaders === true;
   const searchPaths = [...new Set(i.frameworks.map((f) => f.searchPath))];
-  const linkerFlags = ["-Xlinker", "-ObjC", ...searchPaths.flatMap((p) => ["-F", p])];
-  const linkedFrameworks = i.frameworks
-    .map((f) => `                .linkedFramework(${lit(f.name)}),\n`)
-    .join("");
+  const pods = i.pods;
+  const archives = pods?.archives ?? [];
+  const linkerFlags = [
+    "-Xlinker",
+    "-ObjC",
+    ...searchPaths.flatMap((p) => ["-F", p]),
+    // Each binary pod archive once, whole: its +load classes register at launch (spec goal 2.4); never -all_load.
+    ...archives.flatMap((a) => ["-Xlinker", "-force_load", "-Xlinker", a]),
+    ...(pods?.weakFrameworks ?? []).flatMap((w) => ["-Xlinker", "-weak_framework", "-Xlinker", w]),
+    // Row 80: xtool's ld64.lld 21 crashes on ML Kit's MLKitTextRecognitionCommon object while it builds relative
+    // method lists (ObjCMethListSection), so they stay absolute, as before Xcode 14, when binary pods are linked.
+    ...(archives.length > 0 ? ["-Xlinker", "-no_objc_relative_method_lists"] : []),
+  ];
+  const runtime = new Set(i.frameworks.map((f) => f.name));
+  const podFrameworks = [...new Set(pods?.frameworks ?? [])].filter((f) => !runtime.has(f)).sort();
+  // c++ is linked already.
+  const podLibraries = [...new Set(pods?.libraries ?? [])].filter((l) => l !== "c++").sort();
+  const linkedFrameworks = [
+    ...i.frameworks.map((f) => `                .linkedFramework(${lit(f.name)}),\n`),
+    ...podFrameworks.map((f) => `                .linkedFramework(${lit(f)}),\n`),
+    ...podLibraries.map((l) => `                .linkedLibrary(${lit(l)}),\n`),
+  ].join("");
   const jsiPackage = jsiHeaders
     ? `        .package(name: "ExpoModulesJSIHeaders", path: ${lit(`${ios}/build/generated/autolinking/expo/ExpoModulesJSIHeaders`)}),\n`
     : "";

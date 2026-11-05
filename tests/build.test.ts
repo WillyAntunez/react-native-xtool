@@ -77,7 +77,7 @@ describe("buildSteps", () => {
 
 type ProjectOver = { kind?: "expo" | "bare"; hasExpoModules?: boolean; hasExpoConstants?: boolean; hasDevClient?: boolean; hasRnCli?: boolean; rnVersion?: string };
 
-function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunning?: (p: number) => Promise<boolean>; hasIos?: boolean; cfg?: object; route?: { ip?: string; dev?: string }; project?: ProjectOver & { rnScripts?: "installed" | "vendored"; expoPlugin?: "installed" | "vendored" }; applyPatches?: BuildDeps["applyPatches"]; installFailures?: BuildDeps["installFailures"]; libraryFailures?: BuildDeps["libraryFailures"] } = {}) {
+function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunning?: (p: number) => Promise<boolean>; hasIos?: boolean; cfg?: object; route?: { ip?: string; dev?: string }; project?: ProjectOver & { rnScripts?: "installed" | "vendored"; expoPlugin?: "installed" | "vendored" }; applyPatches?: BuildDeps["applyPatches"]; installFailures?: BuildDeps["installFailures"]; libraryFailures?: BuildDeps["libraryFailures"]; emptyTargets?: BuildDeps["emptyTargets"] } = {}) {
   const root = mkdtempSync(join(tmpdir(), "build-"));
   const calls: string[] = [];
   const logs: string[] = [];
@@ -137,6 +137,7 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
     readState,
     depsFingerprint: async () => "fp-test",
     unbundledResources: () => [],
+    emptyTargets: over.emptyTargets ?? (() => []),
     log: (s) => logs.push(s),
   };
   return { root, calls, logs, deps, writeIosXtool };
@@ -179,6 +180,23 @@ describe("build", () => {
     const t = setup();
     await build(t.root, {}, t.deps);
     expect((await readState(join(t.root, "ios-xtool")))?.depsFingerprint).toBe("fp-test");
+  });
+
+  it("hands the linked table pods' empty targets to generate, and nothing without them", async () => {
+    const seen: unknown[] = [];
+    const t = setup({
+      cfg: { pods: { X: { url: "https://example.invalid/x", exact: "1.0.0", products: ["X"] } } },
+      emptyTargets: (_root, opts) => {
+        seen.push(opts.pods);
+        return ["GTMDefines"];
+      },
+    });
+    await build(t.root, {}, t.deps);
+    expect((t.writeIosXtool.mock.calls[0] as unknown[])[0]).toMatchObject({ emptyTargets: ["GTMDefines"] });
+    expect(seen).toEqual([{ X: { url: "https://example.invalid/x", exact: "1.0.0", products: ["X"] } }]);
+    const plain = setup();
+    await build(plain.root, {}, plain.deps);
+    expect((plain.writeIosXtool.mock.calls[0] as unknown[])[0]).not.toHaveProperty("emptyTargets");
   });
 
   it("runs steps in order, passes port/ip and writes state", async () => {

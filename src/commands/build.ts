@@ -22,6 +22,7 @@ import {
   installFailures,
   libraryFailures,
   podPinWarnings,
+  scaffoldedPods,
   UnsupportedSetupError,
   type EarlyFailure,
   type LibraryCheckOptions,
@@ -40,6 +41,7 @@ import { appIconRecord } from "../generate/appIcon.js";
 import { readState, writeState, type BuildState } from "../state.js";
 import { run } from "../tools/exec.js";
 import { devBuild, xtoolBin } from "../tools/xtool.js";
+import { emptyTargetsOf } from "../pods/emptyTargets.js";
 
 export const BUILD_STEP_NAMES = [
   "patches",
@@ -172,6 +174,8 @@ export interface BuildDeps {
   xtoolBin: (config: ExpoXtoolConfig) => string;
   readState: (iosXtoolDir: string) => Promise<BuildState | undefined>;
   depsFingerprint: (root: string) => Promise<string>;
+  /** The targets without sources of the table pods the scaffolded libraries link (written as empty objects, row 81). */
+  emptyTargets: (root: string, opts: LibraryCheckOptions) => string[];
   /** After rn-spm: the resources scaffolded libraries declare that do not reach the app. */
   unbundledResources: (root: string) => { pkg: string; items: string[] }[];
   /** The app's CODE_SIGN_ENTITLEMENTS file (Debug); throws an EntitlementsError when xtool could not sign with it. */
@@ -211,6 +215,10 @@ const realDeps: BuildDeps = {
   readState,
   depsFingerprint: depsFingerprint,
   unbundledResources,
+  emptyTargets: (root, opts) => {
+    const table = mergedPodTable(opts.pods);
+    return emptyTargetsOf(table, [...scaffoldedPods(root, table, opts).values()].flat());
+  },
   readEntitlements,
   log: (s) => console.log(s),
 };
@@ -417,8 +425,18 @@ export async function build(
         installedBundleId: previousState.installedBundleId,
       }),
   };
+  const emptyTargets = d.emptyTargets(root, libraryChecks);
   await step("generate", async () => {
-    await d.writeIosXtool({ project, paths, frameworks, metroPort, lanIp, log: d.log, prebuildIcon });
+    await d.writeIosXtool({
+      project,
+      paths,
+      frameworks,
+      metroPort,
+      lanIp,
+      log: d.log,
+      prebuildIcon,
+      ...(emptyTargets.length > 0 ? { emptyTargets } : {}),
+    });
     await writeState(paths.iosXtool, state);
   });
   await step("xtool-build", () => d.devBuild(d.xtoolBin(config), paths.iosXtool));
