@@ -525,7 +525,8 @@ the pods' bundles again from the lock and the cache when they are gone since the
 GoogleToolboxForMac), with GoogleToolboxForMac's checked `outsideRequirement` and its `emptyTargets`.
 `data/pod-terms.json` maps a spec homepage to its vendor's terms page, for the line before the first download.
 
-**ML Kit text recognition**, in the build-only proof on bare React Native 0.88.1 (2026-11-05; not run on a device yet):
+**ML Kit text recognition**, in the build-only proof on bare React Native 0.88.1 (2026-11-05; the same app then
+recognized printed text on a physical iPhone):
 ten binary pods and four source pods; 40.3 MB downloaded from dl.google.com; the `pods` step took 7.5 s on the first
 build and 0.1 s offline later; nine `-force_load`s; the cache took 237 MB and the app's copies 66 MB; `App.app` grew by
 53 MB (the App binary by 40.3 MB); `ios-xtool/.build` took about 0.84 GB.

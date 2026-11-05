@@ -453,8 +453,8 @@ Some libraries depend on CocoaPods pods that ship prebuilt static binaries inste
 specs from the CocoaPods CDN, downloads the files the specs name, checks each one against `rn-xtool-pods.lock.json` at
 the project root, and keeps them in its own cache, `~/.cache/rn-xtool/pods` (`$XDG_CACHE_HOME/rn-xtool/pods` when
 `XDG_CACHE_HOME` is set). The copies a build puts in the project are git-ignored. ML Kit text recognition 2.0.0 is
-the verified case, checked by building only: it has not run on a device yet ([libraries.md](libraries.md)). The steps
-are in [how-it-works.md](how-it-works.md#cocoapods-binaries).
+the verified case: it builds, and recognizes text on a physical iPhone (2026-11-05; [libraries.md](libraries.md)).
+The steps are in [how-it-works.md](how-it-works.md#cocoapods-binaries).
 
 A pod takes this route when no pod table entry maps it and its spec downloads an archive (`.tar.gz`, `.tgz` or `.zip`)
 that holds static `vendored_frameworks` (`.framework` or `.xcframework`), or only headers (GoogleMLKit's `MLKitCore`).
@@ -786,7 +786,7 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   `RNSVGFilters.bundle`, declared in the podspec through `s.ios.resource_bundles`. rn-xtool builds that bundle from the
   two `*.iphoneos.metallib` files the package ships and copies it to `App.app`
   ([resource bundles](#resource-bundles)), so skipping the `.metal` sources costs nothing there. This is checked by
-  building (2026-11-05); a filter rendering on a device is not checked yet.
+  building and on a physical iPhone, where a `FeComposite` xor filter rendered (2026-11-05).
 - **An Expo config plugin change is missing from the app** (for example expo-image-picker's photo library text in
   Info.plist): `build` runs `expo prebuild` only when `ios/` is missing. After adding or changing a config plugin in
   `app.json`, run `rn-xtool build --clean` (or `run --clean`), which re-runs `expo prebuild --clean`.

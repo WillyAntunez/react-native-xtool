@@ -7,8 +7,11 @@ SwiftPM pipeline.
 [![npm](https://img.shields.io/npm/v/react-native-xtool/alpha?label=npm%20%40alpha)](https://www.npmjs.com/package/react-native-xtool)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-**Status:** alpha, [`react-native-xtool@0.1.0-alpha.5` on npm](https://www.npmjs.com/package/react-native-xtool) under the
-`alpha` tag. Verified end to end on a physical iPhone on 2026-11-04.
+**Status:** alpha, [`react-native-xtool@0.1.0-alpha.6` on npm](https://www.npmjs.com/package/react-native-xtool) under the
+`alpha` tag. Verified end to end on a physical iPhone on 2026-11-04 and 2026-11-05: the first launch without Reload,
+the dev client and the app icon; bare React Native 0.85; react-native-vision-camera, react-native-video,
+react-native-device-info and @react-native-community/netinfo, with react-native-app-auth linked and an entitlements
+file; and ML Kit text recognition with react-native-svg's Metal filters.
 
 <!-- demo GIF: rn-xtool run → app opens on the iPhone → Fast Refresh -->
 Demo video coming soon.
@@ -119,7 +122,7 @@ rn-xtool's own version) and compares them with the last successful build and ins
 Some libraries depend on CocoaPods pods that ship prebuilt static binaries instead of sources, such as Google's ML Kit
 behind @react-native-ml-kit/text-recognition. rn-xtool reads their specs from the CocoaPods CDN, downloads the files on
 your machine, wraps them for SwiftPM and links them, with no CocoaPods or Ruby. ML Kit text recognition 2.0.0 builds
-this way on bare React Native 0.88.1 (checked by building on 2026-11-05; not run on a device yet).
+this way on bare React Native 0.88.1, and recognizes text on a physical iPhone (checked on 2026-11-05).
 
 - Before the first download, `build` names the files, their sizes, the host and the vendor, with the vendor's terms:
   `ℹ pods — @react-native-ml-kit/text-recognition needs 10 CocoaPods binaries that are not in rn-xtool's cache, 40.3 MB
@@ -189,7 +192,7 @@ prints a `⚠` line for each key a free team does not get, such as push notifica
   script phases, storyboards, asset catalogs (except the app icon) and `.xib` files are not used; entitlements come
   from the Debug `CODE_SIGN_ENTITLEMENTS` file ([details](docs/bare-react-native.md#limits)).
 - Metal shaders are not compiled on Linux. react-native-svg's filters use the prebuilt `*.metallib` files it ships,
-  which reach the app in `RNSVGFilters.bundle` (checked by building; not yet on a device).
+  which reach the app in `RNSVGFilters.bundle` (checked on a physical iPhone on 2026-11-05).
 - `doctor --project` and `build` refuse early, with the reason and a link, the setups rn-xtool knows it cannot build
   yet: CocoaPods-only libraries with prebuilt binaries of their own (async-storage 3.x) or that depend on a CocoaPods
   pod from a git source without a known SwiftPM package, Expo modules that build vendored C sources (expo-sqlite),
