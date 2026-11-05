@@ -558,6 +558,37 @@ describe("detectCapabilities", () => {
     ]);
   });
 
+  it("carries the stale pod pins of the project's scaffold patches", async () => {
+    const dir = await expo58();
+    expect((await detect(dir)).scaffoldPins).toEqual([]);
+    const pkg = JSON.parse(await readFile(path.join(dir, "package.json"), "utf8"));
+    pkg.dependencies["react-native-app-auth"] = "8.5.1";
+    await writeFile(path.join(dir, "package.json"), JSON.stringify(pkg));
+    await writePackage(path.join(dir, "node_modules", "react-native-app-auth"), { name: "react-native-app-auth", version: "8.5.1" }, {
+      "react-native-app-auth.podspec": "Pod::Spec.new do |s|\n  s.dependency 'AppAuth', '>= 1.7.6'\nend\n",
+    });
+    const lines = [
+      "// AUTO-SCAFFOLDED by react-native spm scaffold — safe to edit & commit via patch-package.",
+      "// rn-xtool-scaffold-revision: 4",
+      "// rn-xtool-pods: AppAuth=3.0.0",
+      "// Cache slot: 0.88.1/dual-flavor",
+    ];
+    const target = "node_modules/react-native-app-auth/Package.swift";
+    await mkdir(path.join(dir, "patches"), { recursive: true });
+    await writeFile(
+      path.join(dir, "patches", "react-native-app-auth+8.5.1.patch"),
+      `diff --git a/${target} b/${target}\nnew file mode 100644\n--- /dev/null\n+++ b/${target}\n@@ -0,0 +1,4 @@\n` +
+        `${lines.map((l) => `+${l}`).join("\n")}\n`,
+    );
+    expect((await detect(dir)).scaffoldPins).toEqual([]);
+    const pods = { AppAuth: { url: "https://github.com/openid/AppAuth-iOS", exact: "3.1.0", products: ["AppAuth"] } };
+    await writeFile(path.join(dir, "rn-xtool.config.json"), JSON.stringify({ pods }));
+    expect((await detect(dir)).scaffoldPins).toEqual([
+      "⚠ patches/react-native-app-auth+8.5.1.patch pins AppAuth 3.0.0, the config says 3.1.0; delete it so rn-xtool " +
+        "regenerates it (also remove node_modules/react-native-app-auth and reinstall: that copy still has the old Package.swift)",
+    ]);
+  });
+
   it("leaves the React Native fields out without react-native", async () => {
     const c = await detect(await bare(null), noNetwork);
     expect(c.rnVersion).toBeUndefined();

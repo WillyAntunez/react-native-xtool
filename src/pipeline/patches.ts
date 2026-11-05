@@ -12,6 +12,8 @@ import {
   type ExpoPlugin,
   type RnScripts,
 } from "../versions.js";
+import { scaffoldedPods } from "../project/earlyChecks.js";
+import type { PodSource, PodTable } from "../project/podTable.js";
 import { packageRoot, toolEnv } from "../tools/exec.js";
 import { outside, packagesWithManifest } from "./manifests.js";
 
@@ -358,13 +360,51 @@ const REVISION_RE = /^\+\/\/ (?:rn|expo)-xtool-scaffold-revision: (\d+)\s*$/m;
 /** The scaffolder's RN_XTOOL_SCAFFOLD_REVISION (patches/react-native+0.88.{0,1}.patch and vendor/rn-spm). */
 export const SCAFFOLD_REVISION = 4;
 
+const PATCH_PODS_RE = /^\+\/\/ rn-xtool-pods: (.*?)\s*$/m;
+const MANIFEST_PODS_RE = /^\/\/ rn-xtool-pods: (.*?)\s*$/m;
+
+/** The `pod=exact` pairs of an rn-xtool-pods line; empty without one. */
+function recordedPins(line: string | undefined): Map<string, string> {
+  const pins = new Map<string, string>();
+  for (const pair of (line ?? "").split(",")) {
+    const [pod, exact] = pair.trim().split("=");
+    if (pod && exact) pins.set(pod, exact);
+  }
+  return pins;
+}
+
+interface PinChange {
+  pod: string;
+  /** The version the scaffold pins; undefined when it does not pin the pod. */
+  pinned?: string;
+  now: string;
+  source: PodSource;
+}
+
 /**
- * Warnings for the project's persisted scaffold patches (`patches/*.patch` with rn-xtool's scaffold marker): their
- * Package.swift is only regenerated when the manifest is missing, so one is stale when its cache-slot label names
- * another React Native version than the installed one, or when an older scaffolder revision wrote it. One line per
- * patch; the slot warning wins when both apply.
+ * How a scaffold's recorded pins differ from `table`: a recorded pod the table pins at another version, then each pod
+ * the library's podspec maps (`expected`) that the scaffold does not pin. Pods the table no longer names are left out.
+ * Compared per pod, so the line's order does not matter.
  */
-export function scaffoldPatchWarnings(projectRoot: string): string[] {
+function pinChanges(recorded: Map<string, string>, expected: readonly string[], table: PodTable): PinChange[] {
+  const changes: PinChange[] = [];
+  for (const [pod, pinned] of recorded) {
+    const now = table.pods[pod]?.exact;
+    if (now !== undefined && now !== pinned) changes.push({ pod, pinned, now, source: table.source[pod]! });
+  }
+  for (const pod of expected) {
+    const now = table.pods[pod]?.exact;
+    if (now !== undefined && !recorded.has(pod)) changes.push({ pod, now, source: table.source[pod]! });
+  }
+  return changes;
+}
+
+/** "the config says 3.1.0", "rn-xtool's table says 3.0.0" */
+const says = (c: PinChange): string => `${c.source === "config" ? "the config" : "rn-xtool's table"} says ${c.now}`;
+
+type ScaffoldPatchFinding = { kind: "slot" | "revision" | "pins"; line: string };
+
+function scaffoldPatchFindings(projectRoot: string, table: PodTable | undefined): ScaffoldPatchFinding[] {
   const installed = installedVersion(projectRoot, "react-native");
   const dir = path.join(projectRoot, "patches");
   let names: string[];
@@ -376,7 +416,8 @@ export function scaffoldPatchWarnings(projectRoot: string): string[] {
   // An orphan gets orphanPatchLine instead: it is not applied at all.
   const orphans = new Set(orphanPatches(projectRoot).map((o) => o.file));
   names = names.filter((n) => !orphans.has(n));
-  const warnings: string[] = [];
+  let expected: Map<string, string[]> | undefined;
+  const findings: ScaffoldPatchFinding[] = [];
   for (const name of names) {
     let text: string;
     try {
@@ -390,20 +431,55 @@ export function scaffoldPatchWarnings(projectRoot: string): string[] {
     const tail = `(also remove ${reinstall} and reinstall: that copy still has the old Package.swift)`;
     const slot = SLOT_LABEL_RE.exec(text)?.[1];
     if (installed !== undefined && slot !== undefined && slot !== installed) {
-      warnings.push(
-        `⚠ patches/${name} was scaffolded for React Native ${slot}; delete it so rn-xtool regenerates it for ${installed} ${tail}`,
-      );
+      findings.push({
+        kind: "slot",
+        line: `⚠ patches/${name} was scaffolded for React Native ${slot}; delete it so rn-xtool regenerates it for ${installed} ${tail}`,
+      });
       continue;
     }
     const revision = REVISION_RE.exec(text)?.[1];
     if (revision !== undefined && Number(revision) < SCAFFOLD_REVISION) {
-      warnings.push(
-        `⚠ patches/${name} was written by an older rn-xtool scaffolder (revision ${revision}, now ${SCAFFOLD_REVISION}); ` +
+      findings.push({
+        kind: "revision",
+        line:
+          `⚠ patches/${name} was written by an older rn-xtool scaffolder (revision ${revision}, now ${SCAFFOLD_REVISION}); ` +
           `delete it so rn-xtool regenerates it ${tail}`,
-      );
+      });
+      continue;
+    }
+    if (table === undefined) continue;
+    expected ??= scaffoldedPods(projectRoot, table);
+    const wanted = pkg === undefined ? [] : (expected.get(pkg) ?? []);
+    for (const c of pinChanges(recordedPins(PATCH_PODS_RE.exec(text)?.[1]), wanted, table)) {
+      findings.push({
+        kind: "pins",
+        line:
+          c.pinned !== undefined
+            ? `⚠ patches/${name} pins ${c.pod} ${c.pinned}, ${says(c)}; delete it so rn-xtool regenerates it ${tail}`
+            : `⚠ patches/${name} does not pin ${c.pod}, ${says(c)}: it was scaffolded without rn-xtool's pod table (not ` +
+              `through rn-xtool build); delete it so rn-xtool regenerates it ${tail}`,
+      });
     }
   }
-  return warnings;
+  return findings;
+}
+
+/**
+ * Warnings for the project's persisted scaffold patches (`patches/*.patch` with rn-xtool's scaffold marker): their
+ * Package.swift is only regenerated when the manifest is missing, so one is stale when its cache-slot label names
+ * another React Native version than the installed one, when an older scaffolder revision wrote it, or (with `table`)
+ * when its `rn-xtool-pods` line pins a pod at another version than the table, or leaves out a pod the library's
+ * podspec maps. One line per patch for the slot (which wins) or the revision, else one per pod.
+ */
+export function scaffoldPatchWarnings(projectRoot: string, table?: PodTable): string[] {
+  return scaffoldPatchFindings(projectRoot, table).map((f) => f.line);
+}
+
+/** `scaffoldPatchWarnings`' pin lines alone, for `doctor --project`. */
+export function scaffoldPinWarnings(projectRoot: string, table: PodTable): string[] {
+  return scaffoldPatchFindings(projectRoot, table)
+    .filter((f) => f.kind === "pins")
+    .map((f) => f.line);
 }
 
 /**
@@ -459,11 +535,16 @@ const marks = (revision: number, slot: string | undefined) =>
  * entry of the patch is a new scaffolded file: a patch that also changes the library's own files (`patch-package
  * <name>` folds the user's fix in) would then apply neither way, so the copy is kept and a `⚠` line names the
  * reinstall. Without any persisted patch, a copy rn-xtool's scaffolder wrote at an older revision or for another
- * React Native is removed, so the rn-spm step scaffolds and persists it again. Copies without rn-xtool's marker,
+ * React Native, or (with `table`) one whose `rn-xtool-pods` line differs from the table's pins for the library's mapped
+ * pods, is removed, so the rn-spm step scaffolds and persists it again. Copies without rn-xtool's marker,
  * packages linked from outside the project, and packages whose persisted patch is stale (warned about) are left alone.
  * Returns the `ℹ` lines for the replaced copies, which the caller logs once patch-package has written them.
  */
-export async function refreshStaleScaffolds(projectRoot: string, log: (line: string) => void): Promise<string[]> {
+export async function refreshStaleScaffolds(
+  projectRoot: string,
+  log: (line: string) => void,
+  table?: PodTable,
+): Promise<string[]> {
   const installedRn = installedVersion(projectRoot, "react-native");
   const patchesDir = path.join(projectRoot, "patches");
   let patchNames: string[] = [];
@@ -485,6 +566,7 @@ export async function refreshStaleScaffolds(projectRoot: string, log: (line: str
     persisted.set(pkg, [...(persisted.get(pkg) ?? []), { name, text }]);
   }
   const replaced: string[] = [];
+  let expected: Map<string, string[]> | undefined;
   const found = await packagesWithManifest(projectRoot);
   if (found.length === 0) return replaced;
   const realModules = await realpath(path.join(projectRoot, "node_modules"));
@@ -505,6 +587,10 @@ export async function refreshStaleScaffolds(projectRoot: string, log: (line: str
         why = `was scaffolded for React Native ${slot}, not ${installedRn}`;
       } else if (revision < SCAFFOLD_REVISION) {
         why = `was scaffolded by an older rn-xtool scaffolder (revision ${revision}, now ${SCAFFOLD_REVISION})`;
+      } else if (table !== undefined) {
+        expected ??= scaffoldedPods(projectRoot, table);
+        const [c] = pinChanges(recordedPins(MANIFEST_PODS_RE.exec(manifest)?.[1]), expected.get(pkg) ?? [], table);
+        if (c !== undefined) why = c.pinned !== undefined ? `pins ${c.pod} ${c.pinned}, not ${c.now}` : `does not pin ${c.pod}, ${says(c)}`;
       }
       if (why === undefined) continue;
       await rm(path.join(dir, "Package.swift"), { force: true });
@@ -571,7 +657,9 @@ const execPatchPackage: PatchExec = (cmd, args, cwd) =>
 export async function applyPatches(
   projectRoot: string,
   exec: PatchExec = execPatchPackage,
-  opts: { rnScripts: RnScripts; expoPlugin?: ExpoPlugin; log?: (line: string) => void } = { rnScripts: "installed" },
+  opts: { rnScripts: RnScripts; expoPlugin?: ExpoPlugin; podTable?: PodTable; log?: (line: string) => void } = {
+    rnScripts: "installed",
+  },
 ): Promise<void> {
   if (opts.rnScripts === "installed") {
     const bundledDir = path.join(packageRoot(), "patches");
@@ -602,11 +690,11 @@ export async function applyPatches(
     }
   }
   const log = opts.log ?? ((line: string) => console.log(line));
-  const replaced = await refreshStaleScaffolds(projectRoot, log);
+  const replaced = await refreshStaleScaffolds(projectRoot, log, opts.podTable);
   if (!hasProjectPatches(projectRoot)) return;
   const orphans = orphanPatches(projectRoot);
   for (const orphan of orphans) log(orphanPatchLine(orphan));
-  for (const warning of scaffoldPatchWarnings(projectRoot)) log(warning);
+  for (const warning of scaffoldPatchWarnings(projectRoot, opts.podTable)) log(warning);
   let [pcmd, pargs] = projectPatchesArgv();
   const staging = projectPaths(projectRoot).projectPatchesDir;
   await rm(staging, { recursive: true, force: true });

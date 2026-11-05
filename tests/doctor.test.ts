@@ -628,6 +628,21 @@ describe("doctor --project", () => {
     expect(none.checks.some((c) => c.name === "pods")).toBe(false);
   });
 
+  it("--project names scaffold patches with stale pod pins", async () => {
+    const line = "patches/react-native-app-auth+8.5.1.patch pins AppAuth 3.0.0, the config says 3.1.0; delete it so rn-xtool regenerates it";
+    const orphan = "patches/x+1.0.0.patch is for x, which is not installed; skipped. Delete it if you removed the library.";
+    const r = await doctorWithProbes(
+      { ...good, capabilities: async () => ({ ...expo58Caps, orphanPatches: [`⚠ ${orphan}`], scaffoldPins: [`⚠ ${line}`] }) },
+      "/proj",
+      { projectOnly: true },
+    );
+    expect(r.checks.filter((c) => c.name === "patches")).toEqual([
+      { name: "patches", status: "warn", detail: orphan },
+      { name: "patches", status: "warn", detail: line },
+    ]);
+    expect(r.ok).toBe(true);
+  });
+
   it("plain doctor prints no capability lines", async () => {
     const called: string[] = [];
     const r = await doctorWithProbes(

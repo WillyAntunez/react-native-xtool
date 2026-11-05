@@ -20,8 +20,10 @@ import {
   patchPackageOutputFailed,
   rnPatchMismatch,
   scaffoldPatchWarnings,
+  scaffoldPinWarnings,
   SCAFFOLD_REVISION,
 } from "../src/pipeline/patches.js";
+import { mergedPodTable } from "../src/project/podTable.js";
 import { AUTOLINKING_CONFIG_COMMAND, rnSpmArgs } from "../src/pipeline/rnSpm.js";
 import { packageRoot } from "../src/tools/exec.js";
 import { projectPaths } from "../src/paths.js";
@@ -1169,5 +1171,129 @@ describe("scaffolded manifests in node_modules older than the scaffolder or the 
     await applyPatches(root, async () => ({ exitCode: 0 }), { ...noBundled, log: (l) => lines.push(l) });
     for (const [rel, text] of Object.entries(files)) expect(read(root, rel), rel).toBe(text);
     expect(lines).toEqual([expect.stringMatching(/^⚠ patches\/react-native-screens\+4\.30\.0\.patch was scaffolded for React Native 0\.86\.3;/)]);
+  });
+});
+
+describe("pod pins in scaffolds", () => {
+  const LIB = "react-native-app-auth";
+  const PATCH = `${LIB}+8.5.1.patch`;
+  const BANNER = "// AUTO-SCAFFOLDED by react-native spm scaffold — safe to edit & commit via patch-package.";
+  const TAIL = `(also remove node_modules/${LIB} and reinstall: that copy still has the old Package.swift)`;
+  /** A scaffolded Package.swift of the current revision; `pins` is its rn-xtool-pods line (null: none). */
+  const manifest = (pins: string | null) =>
+    [
+      "// swift-tools-version: 6.0",
+      BANNER,
+      "// AUTO-SCAFFOLDED-VERSION: 20",
+      `// rn-xtool-scaffold-revision: ${SCAFFOLD_REVISION}`,
+      ...(pins !== null ? [`// rn-xtool-pods: ${pins}`] : []),
+      "// Cache slot: 0.88.1/dual-flavor",
+      "import PackageDescription",
+    ];
+  const patch = (pins: string | null) =>
+    [
+      `diff --git a/node_modules/${LIB}/Package.swift b/node_modules/${LIB}/Package.swift`,
+      "new file mode 100644",
+      "index 0000000..1111111",
+      "--- /dev/null",
+      `+++ b/node_modules/${LIB}/Package.swift`,
+      `@@ -0,0 +1,${manifest(pins).length} @@`,
+      ...manifest(pins).map((l) => `+${l}`),
+      "",
+    ].join("\n");
+  const config = (exact: string) => ({ AppAuth: { url: "https://github.com/openid/AppAuth-iOS", exact, products: ["AppAuth"] } });
+
+  /** A bare app on React Native 0.88.1 with react-native-app-auth's shape; `dependency` is its podspec's AppAuth line. */
+  async function app(dependency = "s.dependency 'AppAuth', '>= 1.7.6'"): Promise<string> {
+    const { root } = await tempProject();
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ name: "app", dependencies: { [LIB]: "8.5.1", "react-native": "0.88.1" } }),
+      "node_modules/react-native/package.json": JSON.stringify({ name: "react-native", version: "0.88.1" }),
+      [`node_modules/${LIB}/package.json`]: JSON.stringify({ name: LIB, version: "8.5.1" }),
+      [`node_modules/${LIB}/${LIB}.podspec`]: `Pod::Spec.new do |s|\n  s.dependency 'React-Core'\n  ${dependency}\nend\n`,
+    };
+    for (const [rel, text] of Object.entries(files)) {
+      await mkdir(path.dirname(path.join(root, rel)), { recursive: true });
+      await writeFile(path.join(root, rel), text);
+    }
+    return root;
+  }
+  const persist = async (root: string, text: string) => {
+    await mkdir(path.join(root, "patches"), { recursive: true });
+    await writeFile(path.join(root, "patches", PATCH), text);
+  };
+
+  it("warns when a persisted scaffold pins another version than the table", async () => {
+    const root = await app();
+    await persist(root, patch("AppAuth=2.1.0"));
+    const line = `⚠ patches/${PATCH} pins AppAuth 2.1.0, rn-xtool's table says 3.0.0; delete it so rn-xtool regenerates it ${TAIL}`;
+    expect(scaffoldPatchWarnings(root, mergedPodTable())).toEqual([line]);
+    expect(scaffoldPinWarnings(root, mergedPodTable())).toEqual([line]);
+    // The build's patches step logs it before patch-package runs.
+    const lines: string[] = [];
+    await applyPatches(root, async () => ({ exitCode: 0 }), { rnScripts: "vendored", podTable: mergedPodTable(), log: (l) => lines.push(l) });
+    expect(lines).toEqual([line]);
+  });
+
+  it("names the config when the config pins it", async () => {
+    const root = await app();
+    await persist(root, patch("AppAuth=3.0.0"));
+    expect(scaffoldPatchWarnings(root, mergedPodTable(config("3.1.0")))).toEqual([
+      `⚠ patches/${PATCH} pins AppAuth 3.0.0, the config says 3.1.0; delete it so rn-xtool regenerates it ${TAIL}`,
+    ]);
+  });
+
+  it("warns when a persisted scaffold of a library with mapped pods pins nothing", async () => {
+    const root = await app();
+    await persist(root, patch(null));
+    expect(scaffoldPatchWarnings(root, mergedPodTable())).toEqual([
+      `⚠ patches/${PATCH} does not pin AppAuth, rn-xtool's table says 3.0.0: it was scaffolded without rn-xtool's pod ` +
+        `table (not through rn-xtool build); delete it so rn-xtool regenerates it ${TAIL}`,
+    ]);
+  });
+
+  it("stays quiet when the pins match or the patch pins nothing", async () => {
+    const matching = await app();
+    await persist(matching, patch("AppAuth=3.0.0"));
+    expect(scaffoldPatchWarnings(matching, mergedPodTable())).toEqual([]);
+    // Without a table (callers before the pod table) nothing is compared.
+    const old = await app();
+    await persist(old, patch("AppAuth=2.1.0"));
+    expect(scaffoldPatchWarnings(old)).toEqual([]);
+    // A library whose podspec maps no pod, without the line.
+    const plain = await app("s.dependency 'react-native-missing'");
+    await persist(plain, patch(null));
+    expect(scaffoldPatchWarnings(plain, mergedPodTable())).toEqual([]);
+    // A pod the table no longer names is not compared.
+    const dropped = await app("s.dependency 'react-native-missing'");
+    await persist(dropped, patch("Gone=1.0.0"));
+    expect(scaffoldPatchWarnings(dropped, mergedPodTable())).toEqual([]);
+    // A stale revision gets that line only.
+    const stale = await app();
+    await persist(stale, patch("AppAuth=2.1.0").replace(`revision: ${SCAFFOLD_REVISION}`, "revision: 3"));
+    expect(scaffoldPatchWarnings(stale, mergedPodTable())).toEqual([expect.stringContaining("older rn-xtool scaffolder (revision 3")]);
+    expect(scaffoldPinWarnings(stale, mergedPodTable())).toEqual([]);
+  });
+
+  it("regenerates an unpersisted copy whose pins differ", async () => {
+    const copy = path.join("node_modules", LIB, "Package.swift");
+    const cases: [string | null, Record<string, unknown> | undefined, string][] = [
+      ["AppAuth=2.1.0", undefined, "pins AppAuth 2.1.0, not 3.0.0"],
+      ["AppAuth=3.0.0", config("3.1.0"), "pins AppAuth 3.0.0, not 3.1.0"],
+      [null, undefined, "does not pin AppAuth, rn-xtool's table says 3.0.0"],
+    ];
+    for (const [pins, pods, why] of cases) {
+      const root = await app();
+      await writeFile(path.join(root, copy), `${manifest(pins).join("\n")}\n`);
+      const lines: string[] = [];
+      const podTable = mergedPodTable(pods as never);
+      await applyPatches(root, async () => ({ exitCode: 0 }), { rnScripts: "vendored", podTable, log: (l) => lines.push(l) });
+      expect(existsSync(path.join(root, copy)), why).toBe(false);
+      expect(lines).toEqual([`ℹ node_modules/${LIB}/Package.swift ${why}: rn-xtool removed it so the rn-spm step scaffolds it again`]);
+    }
+    const current = await app();
+    await writeFile(path.join(current, copy), `${manifest("AppAuth=3.0.0").join("\n")}\n`);
+    await applyPatches(current, async () => ({ exitCode: 0 }), { rnScripts: "vendored", podTable: mergedPodTable(), log: () => {} });
+    expect(existsSync(path.join(current, copy))).toBe(true);
   });
 });

@@ -494,6 +494,31 @@ export function podPinWarnings(projectRoot: string, table: PodTable, opts: Libra
   return lines;
 }
 
+/**
+ * For each library rn-xtool would scaffold (those `libraryFailures` checks), the pods its unconditional podspec lines
+ * depend on that `table` maps, in podspec order: the pods its scaffold pins. Never throws.
+ */
+export function scaffoldedPods(projectRoot: string, table: PodTable, opts: LibraryCheckOptions = {}): Map<string, string[]> {
+  const pods = new Map<string, string[]>();
+  let libs: Libraries;
+  try {
+    libs = new Libraries(path.resolve(projectRoot), { ...opts, table });
+  } catch {
+    return pods;
+  }
+  for (const { name, dir } of libs.deps) {
+    try {
+      const lib = libs.library(name, dir);
+      if (lib === undefined || !libs.scaffolded(lib)) continue;
+      const mapped = [...new Set(libs.podDependencies(lib).filter((d) => d.kind === "mapped").map((d) => d.pod))];
+      if (mapped.length > 0) pods.set(name, mapped);
+    } catch {
+      // One unreadable package says nothing about the others.
+    }
+  }
+  return pods;
+}
+
 /** Where the parent-folder lookup stops (inclusive); `/` by default. Tests pass their own temp folder. */
 export interface LookupOptions {
   stopAt?: string;

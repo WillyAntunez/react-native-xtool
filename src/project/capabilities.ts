@@ -11,7 +11,7 @@ import path from "node:path";
 import { loadConfig } from "../config.js";
 import { projectPaths } from "../paths.js";
 import { rawSlotComplete, rnArtifactsCacheRoot, type Flavor } from "../pipeline/rnArtifactsStep.js";
-import { orphanPatchLine, orphanPatches } from "../pipeline/patches.js";
+import { orphanPatchLine, orphanPatches, scaffoldPinWarnings } from "../pipeline/patches.js";
 import { resolveRnDir, vendoredScriptsRoot } from "../pipeline/rnSpm.js";
 import { bareLines, compareVersions, expoPluginFor, releaseLine, rnLineStatus } from "../versions.js";
 import { DetectError, detectProjectKind } from "./detect.js";
@@ -230,6 +230,11 @@ export interface Capabilities {
   orphanPatches?: string[];
   /** The `⚠` line for each pod pin that misses a library's podspec requirement; detectCapabilities always sets it. */
   podPins?: string[];
+  /**
+   * The `⚠` line for each pod a persisted scaffold patch pins at another version than the pod table, or does not pin;
+   * detectCapabilities always sets it.
+   */
+  scaffoldPins?: string[];
 }
 
 /** The SwiftPM settings reader the build's plugin discovery uses (vendor/rn-spm/spm/swiftpm-config.js). */
@@ -306,11 +311,13 @@ export async function detectCapabilities(projectRoot: string, opts: ProbeOptions
   const rn = installedRn(root);
   const expoVersion = installedExpoVersion(root);
   const libraryChecks = config.pods !== undefined ? { pods: config.pods } : {};
+  const podTable = mergedPodTable(config.pods);
   const caps: Capabilities = {
     podspecs: podspecFeatures(root),
     limits: allowKnownLimits(earlyFailures(root, libraryChecks), config.knownLimits?.allow ?? []),
-    podPins: podPinWarnings(root, mergedPodTable(config.pods), libraryChecks),
+    podPins: podPinWarnings(root, podTable, libraryChecks),
     orphanPatches: orphanPatches(root).map(orphanPatchLine),
+    scaffoldPins: scaffoldPinWarnings(root, podTable),
   };
   if (kind !== undefined) caps.kind = kind;
   if (expoVersion !== undefined) {

@@ -711,9 +711,11 @@ checks, so it also runs on a machine without Swift or xtool. Run it from the pro
 - **pods** (only when a pin misses a requirement): one ⚠ line per pod whose version in the pod table is outside the
   requirement of a library's podspec, the `build` line without its `⚠`: `AppAuth 3.0.0 (rn-xtool table) is outside
   react-native-app-auth's requirement ">= 4.0"`. The build goes on with the pinned version.
-- **patches** (only when a patch's package is not installed): one ⚠ line per such patch in `patches/`, the `build` line
-  without its `⚠`: `patches/<file> is for <package>, which is not installed; skipped. Delete it if you removed the
-  library.` ([details](#build-and-patches)).
+- **patches** (only when a patch's package is not installed, or a scaffold patch's pod pins are stale): one ⚠ line per
+  such patch in `patches/`, the `build` line without its `⚠`: `patches/<file> is for <package>, which is not
+  installed; skipped. Delete it if you removed the library.` ([details](#build-and-patches)), and one per pod a
+  persisted scaffold pins at another version than the pod table (`patches/<file> pins AppAuth 3.0.0, the config says
+  3.1.0; delete it so rn-xtool regenerates it …`) or does not pin although the library's podspec maps it.
 - **known-limits**: the setups rn-xtool refuses before a build ([Unsupported setups](#unsupported-setups)). With none,
   it reads `none of the setups rn-xtool refuses early (CocoaPods-only libraries with prebuilt binaries, vendored C
   sources or CocoaPods pods without a SwiftPM package, pnpm, Yarn PnP, hoisted packages)`. Otherwise there is one ✖ line

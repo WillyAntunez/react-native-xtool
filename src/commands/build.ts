@@ -25,7 +25,7 @@ import {
   type EarlyFailure,
   type LibraryCheckOptions,
 } from "../project/earlyChecks.js";
-import { mergedPodTable } from "../project/podTable.js";
+import { mergedPodTable, type PodTable } from "../project/podTable.js";
 import { readProject, RN_CLI_MISSING, type ProjectInfo, type ProjectKind, type ReadProjectOptions } from "../project/index.js";
 import { appIconRecord } from "../generate/appIcon.js";
 import { readState, writeState, type BuildState } from "../state.js";
@@ -127,7 +127,8 @@ export interface BuildDeps {
   /** Deletes a directory tree (no error when it is missing). */
   remove: (path: string) => Promise<void>;
   prebuild: (root: string, clean: boolean) => Promise<void>;
-  applyPatches: (root: string, sources: { rnScripts: RnScripts; expoPlugin: ExpoPlugin }) => Promise<void>;
+  /** `podTable`: the merged pod table, for the stale-pin checks of scaffolds. */
+  applyPatches: (root: string, sources: { rnScripts: RnScripts; expoPlugin: ExpoPlugin; podTable?: PodTable }) => Promise<void>;
   /** After patch-package, before rn-spm: rewrites known non-portable snippets in the libraries' own manifests. */
   fixLibraryManifests: (root: string, log: (s: string) => void) => Promise<void>;
   /** Downloads (and adapts when needed) RN's prebuilt artifacts; returns the root for `rn-spm --artifacts`. */
@@ -262,7 +263,11 @@ export async function build(
   }
   // Library manifests last: idempotent, so a project's persisted patch-package fix of the same snippet applies first.
   await step("patches", async () => {
-    await d.applyPatches(paths.root, { rnScripts: project.rnScripts, expoPlugin: project.expoPlugin });
+    await d.applyPatches(paths.root, {
+      rnScripts: project.rnScripts,
+      expoPlugin: project.expoPlugin,
+      podTable: mergedPodTable(config.pods),
+    });
     await d.fixLibraryManifests(paths.root, d.log);
   });
   const preparedArtifacts = planned("rn-artifacts")
