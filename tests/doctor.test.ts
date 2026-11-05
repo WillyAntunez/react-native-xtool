@@ -71,6 +71,7 @@ const good: DoctorProbes = {
   swiftVersion: async () => "6.4",
   llvmNmVersion: async () => "21.0.0",
   llvmArVersion: async () => "21.0.0",
+  hasBinaryPods: () => false,
   xtoolPath: () => "/cache/xtool.AppImage",
   xtoolInstalled: () => true,
   xtoolVersion: async () => `xtool ${XTOOL_VERSION}`,
@@ -189,14 +190,23 @@ describe("doctorWithProbes", () => {
   it("prints the llvm-ar line after llvm-nm", async () => {
     const r = await doctorWithProbes(good);
     expect(r.checks.find((c) => c.name === "llvm-ar")).toEqual({ name: "llvm-ar", status: "ok", detail: "LLVM 21.0.0" });
-    const missing = await doctorWithProbes({
+  });
+
+  it("fails on a missing llvm-ar only when the project has binary pods, and warns otherwise", async () => {
+    const noAr = {
       ...good,
       llvmArVersion: async () => {
         throw new Error(LLVM_AR_MISSING);
       },
-    });
-    expect(missing.ok).toBe(false);
-    expect(missing.checks.find((c) => c.name === "llvm-ar")).toEqual({ name: "llvm-ar", status: "fail", detail: LLVM_AR_MISSING });
+    };
+    const roots: string[] = [];
+    const locked = await doctorWithProbes({ ...noAr, hasBinaryPods: (root) => (roots.push(root), true) }, "/proj");
+    expect(roots).toEqual(["/proj"]);
+    expect(locked.ok).toBe(false);
+    expect(locked.checks.find((c) => c.name === "llvm-ar")).toEqual({ name: "llvm-ar", status: "fail", detail: LLVM_AR_MISSING });
+    const none = await doctorWithProbes(noAr, "/proj");
+    expect(none.checks.find((c) => c.name === "llvm-ar")).toEqual({ name: "llvm-ar", status: "warn", detail: LLVM_AR_MISSING });
+    expect((await doctorWithProbes(noAr)).checks.find((c) => c.name === "llvm-ar")?.status).toBe("warn");
   });
 
   it("fails on swift older than required", async () => {
@@ -532,7 +542,7 @@ describe("doctor --project", () => {
 
   it("makes every probe but node, project and capabilities throw", () => {
     expect(Object.keys(forbidden([])).sort()).toEqual([
-      "authStatus", "buildState", "configLanIp", "depsFingerprint", "devices", "llvmArVersion", "llvmNmVersion", "lanRoute", "portFree",
+      "authStatus", "buildState", "configLanIp", "depsFingerprint", "devices", "hasBinaryPods", "llvmArVersion", "llvmNmVersion", "lanRoute", "portFree",
       "sdkInstalled", "swiftVersion", "ufwActive", "wifi", "xtoolInstalled", "xtoolPath", "xtoolSha256", "xtoolVersion",
     ].sort());
   });

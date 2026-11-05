@@ -17,6 +17,7 @@ import { MissingBundleIdentifierError, readProject, RN_CLI_MISSING, type Project
 import { openPbxproj } from "../project/pbxproj.js";
 import { makeNmRunner } from "../pipeline/symbols.js";
 import { makeArRunner } from "../pods/ar.js";
+import { readPodsLock } from "../pods/lock.js";
 import { readState } from "../state.js";
 import { NO_FINGERPRINT_WARNING } from "./start.js";
 import { sha256File } from "../tools/download.js";
@@ -63,6 +64,8 @@ export interface DoctorProbes {
   llvmNmVersion: () => Promise<string>;
   /** The LLVM version of the Swift toolchain's llvm-ar (binary pods need it); rejects with LLVM_AR_MISSING when missing. */
   llvmArVersion: () => Promise<string>;
+  /** Whether the project at `root` has binary pods: entries in rn-xtool-pods.lock.json. */
+  hasBinaryPods: (root: string) => boolean;
   /** Full path of the xtool binary, used in hints. */
   xtoolPath: () => string;
   xtoolInstalled: () => boolean;
@@ -174,6 +177,14 @@ export function realProbes(config: ExpoXtoolConfig, opts: { offline?: boolean } 
       /LLVM version (\S+)/.exec(await makeNmRunner("llvm-nm", PROBE_TIMEOUT_MS)(["--version"]))?.[1] ?? "unknown",
     llvmArVersion: async () =>
       /LLVM version (\S+)/.exec(await makeArRunner("llvm-ar", PROBE_TIMEOUT_MS)(["--version"]))?.[1] ?? "unknown",
+    hasBinaryPods: (root) => {
+      try {
+        return Object.keys(readPodsLock(root).pods).length > 0;
+      } catch {
+        // A lock rn-xtool cannot read still says the project uses binary pods.
+        return true;
+      }
+    },
     xtoolPath: () => config.xtoolPath ?? defaultXtoolPath(),
     xtoolInstalled: () => isExecutable(config.xtoolPath ?? defaultXtoolPath()),
     xtoolSha256: async () => {
@@ -543,8 +554,14 @@ export async function doctorWithProbes(
   }
   // Every build's frameworks step (G4) runs it, with no bypass: a missing one fails here instead of minutes into a build.
   await add("llvm-nm", async () => ({ status: "ok", detail: `LLVM ${await p.llvmNmVersion()}` }));
-  // The pods step wraps binary pods' objects with it.
-  await add("llvm-ar", async () => ({ status: "ok", detail: `LLVM ${await p.llvmArVersion()}` }));
+  // The pods step wraps binary pods' objects with it: missing, it fails a project with binary pods and warns otherwise.
+  await add("llvm-ar", async () => {
+    try {
+      return { status: "ok", detail: `LLVM ${await p.llvmArVersion()}` };
+    } catch (e) {
+      return { status: root !== undefined && p.hasBinaryPods(root) ? "fail" : "warn", detail: message(e) };
+    }
+  });
   await add("xtool", async () => {
     if (!p.xtoolInstalled()) return { status: "fail", detail: "not found — run rn-xtool setup" };
     const v = await p.xtoolVersion();

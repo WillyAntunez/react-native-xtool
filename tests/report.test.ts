@@ -72,6 +72,7 @@ const probes: DoctorProbes = {
   swiftVersion: async () => "6.4",
   llvmNmVersion: async () => "21.0.0",
   llvmArVersion: async () => "21.0.0",
+  hasBinaryPods: () => false,
   xtoolPath: () => "/cache/xtool.AppImage",
   xtoolInstalled: () => true,
   xtoolVersion: async () => `xtool ${XTOOL_VERSION}`,
