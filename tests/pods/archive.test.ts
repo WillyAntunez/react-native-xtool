@@ -280,6 +280,12 @@ describe("extractPod", () => {
     expect(treeFiles(dest)).toEqual(KEPT);
   });
 
+  it("reads a kept folder written with a trailing slash as the folder", async () => {
+    const keep = ["Frameworks/MLKitFoo.framework/", "Resources/FooResources/**", "NOTICES"];
+    const dest = await extractPod(request(write("tar.gz", FOO), "tar.gz", { keep }), cache);
+    expect(treeFiles(dest)).toEqual(KEPT);
+  });
+
   it("keeps the layout of a flatten archive with several top-level entries", async () => {
     const dest = await extractPod(request(write("tar.gz", FOO), "tar.gz", { flatten: true }), cache);
     expect(treeFiles(dest)).toEqual(KEPT);

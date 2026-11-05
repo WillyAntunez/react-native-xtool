@@ -109,6 +109,7 @@ function listTree(dir: string): { rel: string; isDir: boolean }[] {
 
 /** Whether `p` is a file, or a link to one. */
 const isFile = (p: string): boolean => statSync(p, { throwIfNoEntry: false })?.isFile() === true;
+const isDir = (p: string): boolean => statSync(p, { throwIfNoEntry: false })?.isDirectory() === true;
 
 /** The files below `dir` (links to files included), relative. */
 const filesBelow = (dir: string): string[] => listTree(dir).filter((e) => !e.isDir && isFile(path.join(dir, e.rel))).map((e) => e.rel);
@@ -309,7 +310,11 @@ class Wrapper {
   async headersOnly(): Promise<Made> {
     const { spec, layers, extracted } = this.i;
     const name = spec.moduleName ?? this.i.pod;
-    const patterns = [...new Set(layers.flatMap((l) => l.sourceFiles))];
+    // A folder stands for the headers below it, as CocoaPods' FileAccessor reads a source_files folder (review M6).
+    const patterns = [...new Set(layers.flatMap((l) => l.sourceFiles))].map((p) => {
+      const clean = p.replace(/\/+$/, "");
+      return !/[*?[\]{}]/.test(clean) && isDir(path.join(extracted, clean)) ? `${clean}/**/*.{h,hh,hpp}` : p;
+    });
     // Row 83: a named header that is missing, or patterns that match no file, would make an empty module.
     const literal = patterns.find((p) => !/[*?[\]{}]/.test(p) && !isFile(path.join(extracted, p.replace(/\/+$/, ""))));
     if (literal !== undefined) throw this.notInTree(literal);

@@ -413,7 +413,8 @@ export async function extractPod(
   const stamp: ExtractedStamp = {
     extractorVersion: EXTRACTOR_VERSION,
     sha256: req.sha256,
-    keep: [...req.keep].sort(),
+    // `Headers/` names the folder, as `Headers` does (a source_files folder, review M6).
+    keep: [...new Set(req.keep.map((k) => k.replace(/\/+$/, "")))].sort(),
     flatten: req.flatten,
   };
   const dest = path.join(cache, "extracted", treeName(req.sha256, stamp));

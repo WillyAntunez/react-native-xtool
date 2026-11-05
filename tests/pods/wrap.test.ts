@@ -355,6 +355,20 @@ describe("wrapPod", () => {
     );
   });
 
+  it("reads a source_files folder as the headers below it, as CocoaPods does", async () => {
+    write("MLKitCore/Headers/MLKit.h", "// umbrella");
+    write("MLKitCore/Headers/Sub/MLKitExtra.h", "// extra");
+    write("MLKitCore/Headers/README.md", "not a header");
+    const spec = podSpec("HeadersOnly", { source_files: "MLKitCore/Headers/" });
+    const w = await wrapPod(
+      { pod: "HeadersOnly", version: "1.0.0", sha256: SHA, neededBy: LIB, extracted, spec, layers: selectedLayers(spec, []).layers, headersOnly: true },
+      cache,
+      noAr,
+    );
+    const headers = path.join(w.frameworks[0]!.xcframework, "ios-arm64", "Headers", "HeadersOnly");
+    expect(readdirSync(headers).sort()).toEqual(["MLKit.h", "MLKitExtra.h", "module.modulemap"]);
+  });
+
   describe("a headers-only pod whose files are not in the tree (row 83)", () => {
     const headersOnly = (json: Record<string, unknown>) => {
       const spec = podSpec("HeadersOnly", json);
