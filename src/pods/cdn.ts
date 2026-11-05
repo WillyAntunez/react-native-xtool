@@ -88,7 +88,7 @@ const NOT_ON_TRUNK =
   `rn-xtool reads pods from trunk only; map the pod to a SwiftPM package under "pods" in rn-xtool.config.json, or leave the library out with "exclude". See ${PODS_LINK}`;
 
 /** A name rn-xtool puts in a cache path: no separator, no `.` or `..`. */
-function safeName(name: string): string {
+export function safeName(name: string): string {
   if (!/^[A-Za-z0-9_.+-]+$/.test(name) || name === "." || name === "..") {
     throw new PodsError(`rn-xtool cannot use "${name}" as a CocoaPods pod name or version. See ${PODS_LINK}`);
   }
