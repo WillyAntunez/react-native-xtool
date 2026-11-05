@@ -1015,7 +1015,9 @@ export function podPinWarnings(projectRoot: string, table: PodTable, opts?: Libr
   - `config` reads `the config says`, and the shipped table reads `rn-xtool's table says`.
 - An unpersisted copy whose `// rn-xtool-pods:` line differs from the table is removed with the existing `ℹ … rn-xtool
   removed it so the rn-spm step scaffolds it again` line, the same rule as an older revision (preflight P10).
-- A manifest without the line (pins nothing recorded) gets no pin warning.
+- A manifest without the line (pins nothing recorded) whose library's podspec maps a pod gets the "does not pin" warning
+  (row 48, C1–C4 review M2); a library whose podspec maps no pod gets none. The expected pins skip a subspec the
+  scaffolder drops for a missing sibling (row 51).
 
 - [ ] **Step 1: Write failing tests:**
   - `warns when a persisted scaffold pins another version than the table` (row 23);
@@ -1565,8 +1567,9 @@ See Fact 1 and the recipe in Global Constraints.
 - **P14 (sequencing).**
   - PR 1 ships revision 4 without the `rn-xtool-pods` line. PR 2 adds the line for libraries with mapped pods and
     does not bump again.
-  - Only a pager-view patch persisted between the two PRs (the owner's work app) lacks the line, and it gets no pin
-    warning.
+  - Only a pager-view patch persisted between the two PRs (the owner's work app) lacks the line. Under row 48 it gets
+    the "does not pin SwiftUIIntrospect" warning once (an unpersisted copy is regenerated), until the patch is deleted
+    and the library re-scaffolded.
   - Proposed accept, since no release happens in between. The alternative is revision 5 in C1.
 - **P15 (downloads).**
   - The approved list covers the five libraries and AppAuth-iOS. These need the owner's OK first:
