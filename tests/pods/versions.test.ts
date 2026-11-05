@@ -30,6 +30,18 @@ describe("CocoaPods versions", () => {
     expect(isPrerelease("3.30910.0")).toBe(false);
   });
 
+  it("tells a prerelease as CocoaPods does: a letter or a dash, build metadata left out", () => {
+    expect(isPrerelease("1.0.0-1")).toBe(true);
+    expect(isPrerelease("1.0.0+build")).toBe(false);
+    expect(isPrerelease("1.0.0+build.beta")).toBe(false);
+    expect(isPrerelease("1.0.0-beta7+exp")).toBe(true);
+    expect(comparePodVersions("1.0.0-1", "1.0.0")).toBe(-1);
+    expect(comparePodVersions("1.0.0-beta7", "1.0.0-1")).toBe(-1);
+    expect(comparePodVersions("1.0.0+build", "1.0.0")).toBe(0);
+    expect(newestSatisfying(["1.0.0", "1.0.0-1"], parseRequirements([">= 0"]))).toBe("1.0.0");
+    expect(newestSatisfying(["1.0.0+build"], parseRequirements([">= 0"]))).toBe("1.0.0+build");
+  });
+
   it("reads string and array requirements, trimmed", () => {
     expect(parseRequirements(["~> 13.0"])).toEqual([{ op: "~>", version: "13.0" }]);
     expect(parseRequirements([">= 3.3.2", " < 4.0"])).toEqual([

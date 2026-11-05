@@ -13,9 +13,19 @@ export class RequirementError extends Error {
 
 type Segment = number | string;
 
-/** The segments /[0-9]+|[A-Za-z]+/ of the trimmed text: `1.0.0-beta7` → [1, 0, 0, "beta", 7]. */
+/** The trimmed text without its `+build` metadata, which neither orders nor marks a prerelease. */
+const withoutMetadata = (version: string): string => version.trim().replace(/\+.*$/, "");
+
+/**
+ * The segments /[0-9]+|[A-Za-z]+/ of the trimmed text without metadata, a dash read as `.pre.` (Gem::Version):
+ * `1.0.0-beta7` → [1, 0, 0, "pre", "beta", 7], `1.0.0-1` → [1, 0, 0, "pre", 1]. This is RubyGems' order, not
+ * CocoaPods': `Pod::Version` puts `1.0.0-1` above `1.0.0`. Only a requirement that names a prerelease meets the
+ * difference (an accepted ruling).
+ */
 function versionSegments(version: string): Segment[] {
-  return [...version.trim().matchAll(/[0-9]+|[A-Za-z]+/g)].map(([s]) => (/^[0-9]/.test(s) ? Number(s) : s));
+  return [...withoutMetadata(version).replaceAll("-", ".pre.").matchAll(/[0-9]+|[A-Za-z]+/g)].map(([s]) =>
+    /^[0-9]/.test(s) ? Number(s) : s,
+  );
 }
 
 function compareSegmentLists(a: readonly Segment[], b: readonly Segment[]): number {
@@ -32,16 +42,16 @@ function compareSegmentLists(a: readonly Segment[], b: readonly Segment[]): numb
 }
 
 /**
- * Gem::Version order over the segments /[0-9]+|[A-Za-z]+/ of the trimmed text: a letter segment sorts before any
- * number, so 1.0.0-beta7 < 1.0.0; a missing segment counts as 0.
+ * Gem::Version order over the segments of the version: a letter segment sorts before any number, so 1.0.0-beta7 <
+ * 1.0.0-1 < 1.0.0; a missing segment counts as 0; `+build` metadata is left out.
  */
 export function comparePodVersions(a: string, b: string): number {
   return compareSegmentLists(versionSegments(a), versionSegments(b));
 }
 
-/** Whether the version has a letter segment (`1.0.0-beta7`). */
+/** CocoaPods' `prerelease?`: a letter or a dash in the version without its metadata (`1.0.0-beta7`, `1.0.0-1`). */
 export function isPrerelease(version: string): boolean {
-  return versionSegments(version).some((s) => typeof s === "string");
+  return /[A-Za-z-]/.test(withoutMetadata(version));
 }
 
 export interface Requirement {
