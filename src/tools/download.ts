@@ -87,12 +87,17 @@ export async function downloadFile(url: string, dest: string, opts: DownloadOpti
       if (!res.ok || !res.body) throw new DownloadHttpError(res.status, res.url || url, res.statusText);
       const expected = expectedSize(res, opts);
       let streamErr: unknown;
+      let received = 0;
+      const counted = Readable.fromWeb(res.body as never).on("data", (chunk: Buffer) => {
+        received += chunk.length;
+      });
       try {
-        await pipeline(Readable.fromWeb(res.body as never), createWriteStream(tmp));
+        await pipeline(counted, createWriteStream(tmp));
       } catch (err) {
         streamErr = err;
       }
-      const size = await sizeOf(tmp);
+      // A broken transfer is named by what it received: the file may hold less, as unflushed writes are dropped.
+      const size = streamErr === undefined ? await sizeOf(tmp) : received;
       if (expected !== undefined && size !== expected) {
         throw new DownloadSizeError(size, expected, streamErr === undefined ? undefined : { cause: streamErr });
       }
