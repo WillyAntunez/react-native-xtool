@@ -75,3 +75,8 @@ export function cacheDir(): string {
   const xdg = process.env.XDG_CACHE_HOME;
   return join(xdg ? xdg : join(homedir(), ".cache"), "rn-xtool");
 }
+
+/** The binary CocoaPods pods' cache: `specs/`, `downloads/<sha256>.<ext>`, `extracted/<sha256>/`, `wrapped/<sha256>/`. */
+export function podsCacheDir(): string {
+  return join(cacheDir(), "pods");
+}
