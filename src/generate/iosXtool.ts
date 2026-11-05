@@ -16,8 +16,8 @@ import { expoClangImporterInputs } from "./expoImporter.js";
 import { DEV_SUPPORT_TARGET, renderPackageSwift, type AppTargetInputs } from "./packageSwift.js";
 import { writeEmptyTargetObjects } from "../pods/emptyTargets.js";
 import type { PodsLinks } from "../pods/stage.js";
-import { PODS_LINK, PodsError } from "../pods/format.js";
-import { writeResourceBundle, type BundleSource } from "../pipeline/resourceBundles.js";
+import { PodsError } from "../pods/format.js";
+import { bundleLink, writeResourceBundle, type BundleSource } from "../pipeline/resourceBundles.js";
 import { scaffoldedImporterPaths } from "./scaffoldImporter.js";
 import { BASE_RESOURCES, DEFAULT_RESOURCES, renderXtoolYml } from "./xtoolYml.js";
 
@@ -201,18 +201,18 @@ async function expoBridgingHeader(iosDir: string, sourcesDir: string, log: (s: s
  * fails on an existing one).
  */
 function checkBundleNames(bundles: readonly BundleSource[], appResources: readonly string[]): void {
-  const owners = new Map<string, string>();
+  const owners = new Map<string, BundleSource>();
   for (const b of bundles) {
     const name = `${b.key}.bundle`;
     const first = owners.get(name);
     if (first !== undefined) {
-      throw new PodsError(`Two resource bundles would be copied to App.app/${name}: ${first} and ${b.owner}. See ${PODS_LINK}`);
+      throw new PodsError(`Two resource bundles would be copied to App.app/${name}: ${first.owner} and ${b.owner}. See ${bundleLink(first, b)}`);
     }
-    owners.set(name, b.owner);
+    owners.set(name, b);
     const clash = appResources.find((r) => basename(r) === name);
     if (clash !== undefined) {
       throw new PodsError(
-        `The resource bundle ${name} (${b.owner}) would be copied over the app resource ${basename(clash)} in App.app. See ${PODS_LINK}`,
+        `The resource bundle ${name} (${b.owner}) would be copied over the app resource ${basename(clash)} in App.app. See ${bundleLink(b)}`,
       );
     }
   }

@@ -133,8 +133,8 @@ describe("resources that do not reach the app", () => {
     expect(unbundledResources(root)).toEqual([{ pkg: "lib", items: ["logo.png", "*.strings", "extra.json"] }]);
     const dir = path.join(root, "node_modules", "lib");
     expect(scaffoldedResourceBundles(root)).toEqual([
-      { key: "Mixed", baseDir: dir, globs: ["ios/PrivacyInfo.xcprivacy", "ios/*.png"], owner: "lib" },
-      { key: "Lib_privacy", baseDir: dir, globs: ["ios/PrivacyInfo.xcprivacy"], owner: "lib" },
+      { key: "Mixed", baseDir: dir, globs: ["ios/PrivacyInfo.xcprivacy", "ios/*.png"], owner: "lib", library: true },
+      { key: "Lib_privacy", baseDir: dir, globs: ["ios/PrivacyInfo.xcprivacy"], owner: "lib", library: true },
     ]);
   });
 
@@ -192,6 +192,7 @@ describe("scaffolded libraries' resource bundles", () => {
         baseDir: path.join(root, "node_modules", "react-native-svg"),
         globs: ["apple/**/*.iphoneos.metallib"],
         owner: "react-native-svg",
+        library: true,
       },
     ]);
     expect(unbundledResources(root)).toEqual([]);
@@ -210,6 +211,7 @@ describe("scaffolded libraries' resource bundles", () => {
         baseDir: path.join(root, "node_modules", "react-native-device-info"),
         globs: ["ios/PrivacyInfo.xcprivacy"],
         owner: "react-native-device-info",
+        library: true,
       },
     ]);
     expect(unbundledResources(root)).toEqual([]);
@@ -223,7 +225,7 @@ describe("scaffolded libraries' resource bundles", () => {
       },
     });
     expect(scaffoldedResourceBundles(root)).toEqual([
-      { key: "R", baseDir: path.join(root, "node_modules", "lib"), globs: ["a/*.png", "b/*.png"], owner: "lib" },
+      { key: "R", baseDir: path.join(root, "node_modules", "lib"), globs: ["a/*.png", "b/*.png"], owner: "lib", library: true },
     ]);
   });
 

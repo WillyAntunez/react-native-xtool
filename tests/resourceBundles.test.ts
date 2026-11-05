@@ -188,8 +188,12 @@ describe("writeResourceBundle", () => {
 
   it("stops on a bundle name that is not a file name", async () => {
     write("r/a.txt");
-    await expect(writeResourceBundle(source("../K", ["r/**"], "some-lib"), resources, () => undefined)).rejects.toThrow(
-      `The resource bundle name "../K" (some-lib) is not a file name rn-xtool can use. See ${LINK}`,
+    await expect(writeResourceBundle(source("../K", ["r/**"], "MLKitFoo 1.0.0"), resources, () => undefined)).rejects.toThrow(
+      `The resource bundle name "../K" (MLKitFoo 1.0.0) is not a file name rn-xtool can use. See ${LINK}`,
+    );
+    // A scaffolded library's bundle links to the scaffolded libraries' section.
+    await expect(writeResourceBundle({ ...source("../K", ["r/**"], "some-lib"), library: true }, resources, () => undefined)).rejects.toThrow(
+      `The resource bundle name "../K" (some-lib) is not a file name rn-xtool can use. See ${troubleshootingUrl("scaffolded-libraries")}`,
     );
   });
 });

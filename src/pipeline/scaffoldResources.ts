@@ -163,7 +163,7 @@ export function scaffoldedResourceBundles(projectRoot: string): BundleSource[] {
   for (const { pkg, podspecs } of scaffoldedLibraries(projectRoot)) {
     for (const file of podspecs) {
       for (const [key, globs] of podspecResources(readText(file) ?? "").bundles) {
-        sources.push({ key, baseDir: path.dirname(file), globs, owner: pkg });
+        sources.push({ key, baseDir: path.dirname(file), globs, owner: pkg, library: true });
       }
     }
   }

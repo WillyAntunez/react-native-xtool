@@ -964,6 +964,7 @@ describe("writeIosXtool", () => {
 
   describe("resource bundles", () => {
     const LINK = troubleshootingUrl("cocoapods-binaries");
+    const LIBS_LINK = troubleshootingUrl("scaffolded-libraries");
     /** A pod folder holding `<dir>/<file>` for each entry. */
     async function podDir(files: Record<string, string>): Promise<string> {
       const dir = await mkdtemp(join(tmpdir(), "xt7-pod-"));
@@ -1002,11 +1003,20 @@ describe("writeIosXtool", () => {
       const err = await writeIosXtool({
         ...ctx,
         resourceBundles: [
-          { key: "Assets", baseDir: pod, globs: ["a/*.png"], owner: "lib-a" },
+          { key: "Assets", baseDir: pod, globs: ["a/*.png"], owner: "lib-a", library: true },
           { key: "Assets", baseDir: pod, globs: ["a/*.png"], owner: "MLKitFoo 1.0.0" },
         ],
       }).catch((e: unknown) => e);
-      expect((err as Error).message).toBe(`Two resource bundles would be copied to App.app/Assets.bundle: lib-a and MLKitFoo 1.0.0. See ${LINK}`);
+      // A scaffolded library is involved: its section, not the CocoaPods binaries'.
+      expect((err as Error).message).toBe(`Two resource bundles would be copied to App.app/Assets.bundle: lib-a and MLKitFoo 1.0.0. See ${LIBS_LINK}`);
+      const pods = await writeIosXtool({
+        ...ctx,
+        resourceBundles: [
+          { key: "Assets", baseDir: pod, globs: ["a/*.png"], owner: "MLKitBar 1.0.0" },
+          { key: "Assets", baseDir: pod, globs: ["a/*.png"], owner: "MLKitFoo 1.0.0" },
+        ],
+      }).catch((e: unknown) => e);
+      expect((pods as Error).message).toBe(`Two resource bundles would be copied to App.app/Assets.bundle: MLKitBar 1.0.0 and MLKitFoo 1.0.0. See ${LINK}`);
     });
 
     it("stops on a bundle named like an app resource", async () => {
@@ -1017,10 +1027,10 @@ describe("writeIosXtool", () => {
       const pod = await podDir({ "a/x.png": "x" });
       const err = await writeIosXtool({
         ...ctx,
-        resourceBundles: [{ key: "Maps", baseDir: pod, globs: ["a/*.png"], owner: "some-lib" }],
+        resourceBundles: [{ key: "Maps", baseDir: pod, globs: ["a/*.png"], owner: "some-lib", library: true }],
       }).catch((e: unknown) => e);
       expect((err as Error).message).toBe(
-        `The resource bundle Maps.bundle (some-lib) would be copied over the app resource Maps.bundle in App.app. See ${LINK}`,
+        `The resource bundle Maps.bundle (some-lib) would be copied over the app resource Maps.bundle in App.app. See ${LIBS_LINK}`,
       );
       ctx.project.hasExpoConstants = true;
       const expo = await writeIosXtool({

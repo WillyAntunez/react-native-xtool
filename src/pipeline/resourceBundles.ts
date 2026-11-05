@@ -13,6 +13,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import * as plist from "plist";
+import { troubleshootingUrl } from "../docs.js";
 import { PODS_LINK, PodsError } from "../pods/format.js";
 import { copyKeepingTime } from "../pods/stage.js";
 
@@ -29,6 +30,13 @@ export interface BundleSource {
   globs: string[];
   /** Who declares it, for the texts: "MLKitTextRecognition 6.0.0", "react-native-svg". */
   owner: string;
+  /** A scaffolded npm library's bundle, not a binary pod's: its texts link to the scaffolded libraries' section. */
+  library?: true;
+}
+
+/** The docs section a bundle's stop links to: the scaffolded libraries' for a library's, else the CocoaPods binaries'. */
+export function bundleLink(...bundles: readonly Pick<BundleSource, "library">[]): string {
+  return bundles.some((b) => b.library === true) ? troubleshootingUrl("scaffolded-libraries") : PODS_LINK;
 }
 
 export interface BuiltBundle {
@@ -146,7 +154,7 @@ function placed(s: BundleSource, found: { dest: string; src: string; rel: string
     const first = byDest.get(f.dest);
     if (first === undefined) byDest.set(f.dest, f);
     else if (first.src !== f.src) {
-      throw new DuplicateBundleFileError(`${s.key}.bundle (${s.owner}) would hold ${f.dest} twice: ${first.rel} and ${f.rel}. See ${PODS_LINK}`);
+      throw new DuplicateBundleFileError(`${s.key}.bundle (${s.owner}) would hold ${f.dest} twice: ${first.rel} and ${f.rel}. See ${bundleLink(s)}`);
     }
   }
   return [...byDest]
@@ -185,7 +193,7 @@ function usableKey(key: string): boolean {
  */
 export async function writeResourceBundle(s: BundleSource, resourcesDir: string, log: (l: string) => void): Promise<BuiltBundle | undefined> {
   if (!usableKey(s.key)) {
-    throw new PodsError(`The resource bundle name "${s.key}" (${s.owner}) is not a file name rn-xtool can use. See ${PODS_LINK}`);
+    throw new PodsError(`The resource bundle name "${s.key}" (${s.owner}) is not a file name rn-xtool can use. See ${bundleLink(s)}`);
   }
   const { files: found, compiled } = matches(s);
   const files = placed(s, found);
