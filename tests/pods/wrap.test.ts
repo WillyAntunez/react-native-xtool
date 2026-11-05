@@ -10,7 +10,8 @@ import { PodsError } from "../../src/pods/format.js";
 import { PLATFORM_IOS, readBinary } from "../../src/pods/macho.js";
 import { parsePodSpec, selectedLayers } from "../../src/pods/spec.js";
 import { POD_SLICE } from "../../src/pods/xcframework.js";
-import { WRAPPED_STAMP, wrapPod, type WrappedPod } from "../../src/pods/wrap.js";
+import { EXTRACTOR_VERSION } from "../../src/pods/archive.js";
+import { WRAPPED_STAMP, WRAPPER_VERSION, wrapPod, type WrappedPod } from "../../src/pods/wrap.js";
 import { IOS_MIN } from "../../src/versions.js";
 import { fixtureSpec } from "../support/podFixtures.js";
 import { arArchive, fat, machO, type Cpu } from "../support/macho.js";
@@ -433,6 +434,31 @@ describe("wrapPod", () => {
     const again = await wrap("MLKitFoo", { vendored_frameworks: ["Frameworks/MLKitFoo.framework"], platforms: { ios: "17.0" } }, noAr);
     expect(again).toEqual(first);
     expect(again.warnings).toHaveLength(1);
+  });
+
+  it("rebuilds a tree stamped by another WRAPPER_VERSION", async () => {
+    framework("Frameworks/MLKitFoo.framework", lib());
+    const w = await wrap("MLKitFoo", ["Frameworks/MLKitFoo.framework"]);
+    const stampFile = path.join(w.dir, WRAPPED_STAMP);
+    const stamp = JSON.parse(readFileSync(stampFile, "utf8")) as { wrapperVersion: number };
+    expect(stamp.wrapperVersion).toBe(WRAPPER_VERSION);
+    writeFileSync(stampFile, JSON.stringify({ ...stamp, wrapperVersion: WRAPPER_VERSION - 1 }));
+    await expect(wrap("MLKitFoo", ["Frameworks/MLKitFoo.framework"], noAr)).resolves.toEqual(w);
+    expect((JSON.parse(readFileSync(stampFile, "utf8")) as { wrapperVersion: number }).wrapperVersion).toBe(WRAPPER_VERSION);
+  });
+
+  it("keys the tree by the extractor's version too (row 79)", async () => {
+    framework("Frameworks/MLKitFoo.framework", lib());
+    const w = await wrap("MLKitFoo", ["Frameworks/MLKitFoo.framework"]);
+    const stampFile = path.join(w.dir, WRAPPED_STAMP);
+    const stamp = JSON.parse(readFileSync(stampFile, "utf8")) as { inputs: string };
+    // An extractor fix changes what lands in extracted/: the wrapped tree of the old extraction is not reused.
+    expect(JSON.parse(stamp.inputs)).toMatchObject({ extractorVersion: EXTRACTOR_VERSION });
+    writeFileSync(stampFile, JSON.stringify({ ...stamp, inputs: JSON.stringify({ ...JSON.parse(stamp.inputs), extractorVersion: EXTRACTOR_VERSION - 1 }) }));
+    await expect(wrap("MLKitFoo", ["Frameworks/MLKitFoo.framework"], noAr)).resolves.toEqual(w);
+    expect(JSON.parse((JSON.parse(readFileSync(stampFile, "utf8")) as { inputs: string }).inputs)).toMatchObject({
+      extractorVersion: EXTRACTOR_VERSION,
+    });
   });
 
   it("rebuilds a stamped tree whose files changed", async () => {

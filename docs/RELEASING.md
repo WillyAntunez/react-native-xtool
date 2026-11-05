@@ -93,6 +93,14 @@ library's podspec requirement accepts that builds, and check that the tag ships 
 pin makes every persisted scaffold of that library stale: users get the `⚠ patches/<file> pins <pod> <old>,
 rn-xtool's table says <new>` line until they regenerate it, so name the change in the CHANGELOG.
 
+## Binary pods
+
+The pods cache keeps extracted and wrapped trees across releases, named by their archive and their stamp. When a
+change alters what `extractPod` (`src/pods/archive.ts`) or `wrapPod` (`src/pods/wrap.ts`) writes into a tree, bump
+`EXTRACTOR_VERSION` (for `extractPod`) or `WRAPPER_VERSION` (for `wrapPod`) in the same commit. Users' trees made by
+the old code are then rebuilt instead of reused; a wrapped tree's key holds `EXTRACTOR_VERSION` too, so an extractor
+bump rebuilds both. A change that alters no tree content keeps the version.
+
 ## Drift watch
 
 `.github/workflows/drift-watch.yml` checks every day that rn-xtool still works with the newest patch release of each

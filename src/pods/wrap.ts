@@ -13,7 +13,7 @@ import { readXcframeworkSlices, swapIn } from "../pipeline/rnArtifacts.js";
 import { IOS_MIN } from "../versions.js";
 import { wrapObject, type ArRunner } from "./ar.js";
 import { PODS_LINK, PodsError } from "./format.js";
-import { treeName } from "./archive.js";
+import { EXTRACTOR_VERSION, treeName } from "./archive.js";
 import { durable, treeIntact, treeMeasure } from "./durable.js";
 import { arm64Slice, highestMinIos, platformProblem, readBinary } from "./macho.js";
 import { leavesFolder, type PodSpec, type SpecLayer } from "./spec.js";
@@ -370,6 +370,8 @@ export async function wrapPod(i: WrapInput, cache: string, ar: ArRunner, swap: t
     wrapperVersion: WRAPPER_VERSION,
     sha256: i.sha256,
     inputs: JSON.stringify({
+      // An extractor fix changes the tree this one is made from (row 79).
+      extractorVersion: EXTRACTOR_VERSION,
       headersOnly: i.headersOnly,
       moduleName: i.spec.moduleName ?? null,
       vendoredFrameworks: [...new Set(i.layers.flatMap((l) => l.vendoredFrameworks))].sort(),
