@@ -589,6 +589,24 @@ describe("detectCapabilities", () => {
     ]);
   });
 
+  it("carries the exclude lines and skips the excluded libraries", async () => {
+    const dir = await expo58();
+    expect((await detect(dir)).excluded).toEqual([]);
+    const pkg = JSON.parse(await readFile(path.join(dir, "package.json"), "utf8"));
+    pkg.dependencies["react-native-mmkv-lib"] = "1.0.0";
+    await writeFile(path.join(dir, "package.json"), JSON.stringify(pkg));
+    await writePackage(path.join(dir, "node_modules", "react-native-mmkv-lib"), { name: "react-native-mmkv-lib", version: "1.0.0" }, {
+      "MmkvLib.podspec": "Pod::Spec.new do |s|\n  s.dependency 'MMKV', '~> 2.0'\nend\n",
+    });
+    await writeFile(path.join(dir, "rn-xtool.config.json"), JSON.stringify({ exclude: ["react-native-mmkv-lib", "nope"] }));
+    const c = await detect(dir);
+    expect(c.limits).toEqual([]);
+    expect(c.excluded).toEqual([
+      expect.stringMatching(/^ℹ exclude — left out of this iOS build: react-native-mmkv-lib \(rn-xtool\.config\.json\)\./),
+      "⚠ exclude names nope, which is not a native iOS dependency of this project; ignored",
+    ]);
+  });
+
   it("leaves the React Native fields out without react-native", async () => {
     const c = await detect(await bare(null), noNetwork);
     expect(c.rnVersion).toBeUndefined();

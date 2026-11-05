@@ -519,6 +519,39 @@ export function scaffoldedPods(projectRoot: string, table: PodTable, opts: Libra
   return pods;
 }
 
+/**
+ * The lines `doctor --project` and `build` print for the config's `exclude`: one `ℹ` line naming the native iOS
+ * dependencies it leaves out, then a `⚠` per other name. A name is a native iOS dependency when it is a direct
+ * dependency with a podspec or a Package.swift (in the package root or ios/) and is not an Expo module for Apple
+ * platforms: Expo's autolinking links those anyway, so they get a warning pointing at `expo.autolinking.exclude`.
+ * Never throws; [] without `exclude`.
+ */
+export function excludeLines(projectRoot: string, exclude: readonly string[]): string[] {
+  if (exclude.length === 0) return [];
+  const deps = new Map(settled(() => dependencyDirs(path.resolve(projectRoot)), []).map((d) => [d.name, d.dir]));
+  const native = (dir: string): boolean =>
+    podspecFiles(dir).some((file) => existsSync(file)) || LIBRARY_MANIFESTS.some((rel) => existsSync(path.join(dir, rel)));
+  const left: string[] = [];
+  const warnings: string[] = [];
+  for (const name of new Set(exclude)) {
+    const dir = deps.get(name);
+    if (dir !== undefined && settled(() => isAppleExpoModule(dir), false)) {
+      warnings.push(
+        `⚠ exclude names ${name}, an Expo module: Expo's autolinking links it anyway; list it in expo.autolinking.exclude ` +
+          "in package.json to leave it out",
+      );
+    } else if (dir !== undefined && settled(() => native(dir), false)) {
+      left.push(name);
+    } else {
+      warnings.push(`⚠ exclude names ${name}, which is not a native iOS dependency of this project; ignored`);
+    }
+  }
+  const info =
+    `ℹ exclude — left out of this iOS build: ${left.join(", ")} (rn-xtool.config.json). JavaScript that uses it must ` +
+    `check that it is there; see ${troubleshootingUrl("leaving-a-module-out")}`;
+  return [...(left.length > 0 ? [info] : []), ...warnings];
+}
+
 /** Where the parent-folder lookup stops (inclusive); `/` by default. Tests pass their own temp folder. */
 export interface LookupOptions {
   stopAt?: string;

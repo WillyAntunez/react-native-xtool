@@ -384,8 +384,9 @@ function knownLimitsChecks(limits: NonNullable<Capabilities["limits"]>): DoctorC
 
 /**
  * `doctor --project`'s capability lines, in order: versions, rn-scripts, rn-artifacts, expo-plugin, expo-modules,
- * podspecs, pods, patches and known-limits. The four in between are left out when the project has no such field (no
- * react-native, no expo), pods unless a pod pin misses a podspec's requirement, patches unless a patch's package is not
+ * podspecs, exclude, pods, patches and known-limits. The four in between are left out when the project has no such field
+ * (no react-native, no expo), exclude without the config's `exclude` (one line per entry: info for the modules left
+ * out, warn for a name it ignores), pods unless a pod pin misses a podspec's requirement, patches unless a patch's package is not
  * installed or a scaffold patch's pod pins are stale (one warning each, the build's line without its `⚠ `), and
  * known-limits when `limits` is undefined. `projectError` is why the project could not be read; a
  * `VersionGateError` fails the versions line.
@@ -402,6 +403,11 @@ export function capabilityChecks(c: Capabilities, projectError?: unknown): Docto
   ];
   return [
     ...lines.flatMap(([name, result]) => (result === undefined ? [] : [{ name, ...result }])),
+    ...(c.excluded ?? []).map((line) => ({
+      name: "exclude",
+      status: line.startsWith("⚠ ") ? ("warn" as const) : ("info" as const),
+      detail: line.replace(/^[ℹ⚠] /, ""),
+    })),
     ...(c.podPins ?? []).map((line) => ({ name: "pods", status: "warn" as const, detail: line.replace(/^⚠ /, "") })),
     ...[...(c.orphanPatches ?? []), ...(c.scaffoldPins ?? [])].map((line) => ({
       name: "patches",

@@ -643,6 +643,27 @@ describe("doctor --project", () => {
     expect(r.ok).toBe(true);
   });
 
+  it("--project prints an exclude line per entry", async () => {
+    const info = "exclude — left out of this iOS build: react-native-vision-camera (rn-xtool.config.json). JavaScript that uses it must check that it is there; see https://example.invalid";
+    const warn = "exclude names lodash, which is not a native iOS dependency of this project; ignored";
+    const r = await doctorWithProbes(
+      { ...good, capabilities: async () => ({ ...expo58Caps, excluded: [`ℹ ${info}`, `⚠ ${warn}`] }) },
+      "/proj",
+      { projectOnly: true },
+    );
+    expect(r.checks.filter((c) => c.name === "exclude")).toEqual([
+      { name: "exclude", status: "info", detail: info },
+      { name: "exclude", status: "warn", detail: warn },
+    ]);
+    const names = r.checks.map((c) => c.name);
+    expect(names.indexOf("exclude")).toBeGreaterThan(names.indexOf("podspecs"));
+    expect(r.ok).toBe(true);
+    const none = await doctorWithProbes({ ...good, capabilities: async () => ({ ...expo58Caps, excluded: [] }) }, "/proj", {
+      projectOnly: true,
+    });
+    expect(none.checks.map((c) => c.name)).not.toContain("exclude");
+  });
+
   it("plain doctor prints no capability lines", async () => {
     const called: string[] = [];
     const r = await doctorWithProbes(

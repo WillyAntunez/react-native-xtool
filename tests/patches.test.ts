@@ -1275,6 +1275,27 @@ describe("pod pins in scaffolds", () => {
     expect(scaffoldPinWarnings(stale, mergedPodTable())).toEqual([]);
   });
 
+  it("leaves the scaffolds of excluded packages alone", async () => {
+    // rn-xtool never scaffolds an excluded package again, so "delete it so rn-xtool regenerates it" would be wrong.
+    const persisted = await app();
+    await persist(persisted, patch("AppAuth=2.1.0"));
+    expect(scaffoldPatchWarnings(persisted, mergedPodTable(), [LIB])).toEqual([]);
+    expect(scaffoldPinWarnings(persisted, mergedPodTable(), [LIB])).toEqual([]);
+    expect(scaffoldPinWarnings(persisted, mergedPodTable(), ["other-lib"])).toHaveLength(1);
+    const copy = path.join("node_modules", LIB, "Package.swift");
+    const unpersisted = await app();
+    await writeFile(path.join(unpersisted, copy), `${manifest("AppAuth=2.1.0").join("\n")}\n`);
+    const lines: string[] = [];
+    await applyPatches(unpersisted, async () => ({ exitCode: 0 }), {
+      rnScripts: "vendored",
+      podTable: mergedPodTable(),
+      exclude: [LIB],
+      log: (l) => lines.push(l),
+    });
+    expect(existsSync(path.join(unpersisted, copy))).toBe(true);
+    expect(lines).toEqual([]);
+  });
+
   it("regenerates an unpersisted copy whose pins differ", async () => {
     const copy = path.join("node_modules", LIB, "Package.swift");
     const cases: [string | null, Record<string, unknown> | undefined, string][] = [

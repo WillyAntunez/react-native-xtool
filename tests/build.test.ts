@@ -593,6 +593,56 @@ describe("build", () => {
     expect(real.logs).toContain(line);
   });
 
+  it("prints the exclude lines first and passes exclude to the checks", async () => {
+    const exclude = ["react-native-mmkv-lib"];
+    const seen: unknown[] = [];
+    const t = setup({
+      hasIos: true,
+      cfg: { exclude },
+      libraryFailures: (root, opts) => {
+        seen.push(["libraryFailures", opts]);
+        return [];
+      },
+    });
+    mkdirSync(join(t.root, "node_modules", "react-native-mmkv-lib"), { recursive: true });
+    writeFileSync(join(t.root, "package.json"), JSON.stringify({ name: "app", dependencies: { "react-native-mmkv-lib": "1.0.0" } }));
+    writeFileSync(join(t.root, "node_modules", "react-native-mmkv-lib", "package.json"), JSON.stringify({ name: "react-native-mmkv-lib", version: "1.0.0" }));
+    writeFileSync(join(t.root, "node_modules", "react-native-mmkv-lib", "MmkvLib.podspec"), "Pod::Spec.new do |s|\n  s.dependency 'MMKV'\nend\n");
+    const applyPatches = vi.fn(async () => {});
+    await build(t.root, {}, {
+      ...t.deps,
+      applyPatches,
+      podPinWarnings: (_root, opts) => {
+        seen.push(["podPinWarnings", opts]);
+        return [];
+      },
+    });
+    expect(seen).toEqual([
+      ["libraryFailures", { exclude }],
+      ["podPinWarnings", { exclude }],
+    ]);
+    expect(applyPatches).toHaveBeenCalledWith(t.root, expect.objectContaining({ exclude }));
+    const info = t.logs.findIndex((l) => l.startsWith("ℹ exclude — left out of this iOS build: react-native-mmkv-lib (rn-xtool.config.json)."));
+    expect(info).toBeGreaterThanOrEqual(0);
+    expect(info).toBeLessThan(t.logs.findIndex((l) => l.startsWith("▸")));
+
+    // The real early check: the excluded library's unmapped pod is not refused.
+    const real = setup({ hasIos: true, cfg: { exclude }, libraryFailures: realLibraryFailures });
+    mkdirSync(join(real.root, "node_modules", "react-native-mmkv-lib"), { recursive: true });
+    writeFileSync(join(real.root, "package.json"), JSON.stringify({ name: "app", dependencies: { "react-native-mmkv-lib": "1.0.0" } }));
+    writeFileSync(join(real.root, "node_modules", "react-native-mmkv-lib", "package.json"), JSON.stringify({ name: "react-native-mmkv-lib", version: "1.0.0" }));
+    writeFileSync(join(real.root, "node_modules", "react-native-mmkv-lib", "MmkvLib.podspec"), "Pod::Spec.new do |s|\n  s.dependency 'MMKV'\nend\n");
+    await expect(build(real.root, {}, { ...real.deps, loadConfig: async () => ({ metroPort: 8081 }) })).rejects.toThrow(UnsupportedSetupError);
+    await build(real.root, {}, real.deps);
+    expect(real.calls).toContain("xtool-build");
+  });
+
+  it("prints no exclude line without exclude", async () => {
+    const t = setup({ hasIos: true });
+    await build(t.root, {}, t.deps);
+    expect(t.logs.filter((l) => l.includes("exclude"))).toEqual([]);
+  });
+
   it("warns and builds on when rn-xtool.config.json allows every refusal", async () => {
     const pnpm: EarlyFailure = { id: "pnpm", allowKey: "pnpm", reason: "This project was installed with pnpm." };
     const hoisted: EarlyFailure = { id: "hoisted", allowKey: "hoisted", reason: "react-native is hoisted." };

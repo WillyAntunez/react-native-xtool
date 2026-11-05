@@ -18,6 +18,7 @@ import { checkFrameworkSymbols } from "../pipeline/symbols.js";
 import {
   allowedLimitText,
   allowKnownLimits,
+  excludeLines,
   installFailures,
   libraryFailures,
   podPinWarnings,
@@ -128,7 +129,10 @@ export interface BuildDeps {
   remove: (path: string) => Promise<void>;
   prebuild: (root: string, clean: boolean) => Promise<void>;
   /** `podTable`: the merged pod table, for the stale-pin checks of scaffolds. */
-  applyPatches: (root: string, sources: { rnScripts: RnScripts; expoPlugin: ExpoPlugin; podTable?: PodTable }) => Promise<void>;
+  applyPatches: (
+    root: string,
+    sources: { rnScripts: RnScripts; expoPlugin: ExpoPlugin; podTable?: PodTable; exclude?: readonly string[] },
+  ) => Promise<void>;
   /** After patch-package, before rn-spm: rewrites known non-portable snippets in the libraries' own manifests. */
   fixLibraryManifests: (root: string, log: (s: string) => void) => Promise<void>;
   /** Downloads (and adapts when needed) RN's prebuilt artifacts; returns the root for `rn-spm --artifacts`. */
@@ -224,7 +228,12 @@ export async function build(
   };
   // Before reading the project or writing anything (prebuild, --clean, patches): these setups would otherwise fail
   // minutes into rn-spm or SwiftPM. A Package.swift the project's patches/ create counts already, as in doctor.
-  const libraryChecks: LibraryCheckOptions = config.pods !== undefined ? { pods: config.pods } : {};
+  const libraryChecks: LibraryCheckOptions = {
+    ...(config.pods !== undefined ? { pods: config.pods } : {}),
+    ...(config.exclude !== undefined ? { exclude: config.exclude } : {}),
+  };
+  // What the config leaves out comes first: a refusal below may point at "exclude".
+  for (const line of excludeLines(root, config.exclude ?? [])) d.log(line);
   stopOnKnownLimits([...d.installFailures(root), ...d.libraryFailures(root, libraryChecks)]);
   for (const line of d.podPinWarnings(root, libraryChecks)) d.log(line);
   const project = await d.readProject(root, { log: d.log });
@@ -274,6 +283,7 @@ export async function build(
       rnScripts: project.rnScripts,
       expoPlugin: project.expoPlugin,
       podTable: mergedPodTable(config.pods),
+      ...(config.exclude !== undefined ? { exclude: config.exclude } : {}),
     });
     await d.fixLibraryManifests(paths.root, d.log);
   });

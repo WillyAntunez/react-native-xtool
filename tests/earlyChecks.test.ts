@@ -8,6 +8,7 @@ import {
   allowedLimitText,
   allowKnownLimits,
   earlyFailures,
+  excludeLines,
   installFailures,
   knownLimitHint,
   libraryFailures,
@@ -822,5 +823,64 @@ describe("unmapped pods", () => {
       { name: "React-Core", requirements: [] },
       { name: "Folly", requirements: [] },
     ]);
+  });
+});
+
+describe("exclude lines", () => {
+  const LEAVING = `${DOCS}#leaving-a-module-out`;
+  const camera = {
+    "package.json": JSON.stringify({ name: "react-native-vision-camera", version: "4.7.3" }),
+    "VisionCamera.podspec": "Pod::Spec.new do |s|\n  s.name = 'VisionCamera'\nend\n",
+  };
+  const netinfoIos = {
+    "package.json": JSON.stringify({ name: "@react-native-community/netinfo", version: "11.5.2" }),
+    "ios/Package.swift": "// swift-tools-version: 6.0\n",
+  };
+
+  it("prints the ℹ line for an excluded native dependency", async () => {
+    const root = await project({ "react-native-vision-camera": camera, "@react-native-community/netinfo": netinfoIos });
+    expect(excludeLines(root, ["react-native-vision-camera"])).toEqual([
+      "ℹ exclude — left out of this iOS build: react-native-vision-camera (rn-xtool.config.json). JavaScript that uses " +
+        `it must check that it is there; see ${LEAVING}`,
+    ]);
+    expect(excludeLines(root, ["react-native-vision-camera", "@react-native-community/netinfo", "react-native-vision-camera"])).toEqual([
+      "ℹ exclude — left out of this iOS build: react-native-vision-camera, @react-native-community/netinfo " +
+        `(rn-xtool.config.json). JavaScript that uses it must check that it is there; see ${LEAVING}`,
+    ]);
+    expect(excludeLines(root, [])).toEqual([]);
+  });
+
+  it("warns about a name that is not a native iOS dependency", async () => {
+    const root = await project({
+      "react-native-vision-camera": camera,
+      lodash: { "index.js": "module.exports = {};\n" },
+    });
+    // Misspelt, JavaScript only, and installed but not listed in the project's dependencies.
+    await writeFiles(root, { "node_modules/react-native-other/Other.podspec": "Pod::Spec.new do |s|\nend\n" });
+    expect(excludeLines(root, ["react-native-vision-camra", "lodash", "react-native-other", "react-native-vision-camera"])).toEqual([
+      "ℹ exclude — left out of this iOS build: react-native-vision-camera (rn-xtool.config.json). JavaScript that uses " +
+        `it must check that it is there; see ${LEAVING}`,
+      "⚠ exclude names react-native-vision-camra, which is not a native iOS dependency of this project; ignored",
+      "⚠ exclude names lodash, which is not a native iOS dependency of this project; ignored",
+      "⚠ exclude names react-native-other, which is not a native iOS dependency of this project; ignored",
+    ]);
+  });
+
+  it("warns that an Expo module needs expo.autolinking.exclude", async () => {
+    const root = await project({ "expo-sqlite": expoSqlite() });
+    expect(excludeLines(root, ["expo-sqlite"])).toEqual([
+      "⚠ exclude names expo-sqlite, an Expo module: Expo's autolinking links it anyway; list it in " +
+        "expo.autolinking.exclude in package.json to leave it out",
+    ]);
+  });
+
+  it("an excluded library is not refused", async () => {
+    const root = await project({
+      [ASYNC_STORAGE]: asyncStorage(),
+      "react-native-mmkv-lib": { "MmkvLib.podspec": "Pod::Spec.new do |s|\n  s.dependency 'MMKV'\nend\n" },
+    });
+    expect(libraryFailures(root).map((f) => f.id)).toEqual(["vendored-binaries", "unmapped-pod"]);
+    expect(libraryFailures(root, { exclude: [ASYNC_STORAGE, "react-native-mmkv-lib"] })).toEqual([]);
+    expect(earlyFailures(root, { exclude: [ASYNC_STORAGE, "react-native-mmkv-lib"] })).toEqual([]);
   });
 });

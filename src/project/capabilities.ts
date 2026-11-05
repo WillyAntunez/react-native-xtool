@@ -15,7 +15,7 @@ import { orphanPatchLine, orphanPatches, scaffoldPinWarnings } from "../pipeline
 import { resolveRnDir, vendoredScriptsRoot } from "../pipeline/rnSpm.js";
 import { bareLines, compareVersions, expoPluginFor, releaseLine, rnLineStatus } from "../versions.js";
 import { DetectError, detectProjectKind } from "./detect.js";
-import { allowKnownLimits, earlyFailures, podPinWarnings, type EarlyFailure } from "./earlyChecks.js";
+import { allowKnownLimits, earlyFailures, excludeLines, podPinWarnings, type EarlyFailure, type LibraryCheckOptions } from "./earlyChecks.js";
 import { mergedPodTable } from "./podTable.js";
 import { attribute, dependencyDirs, podspecFiles, readJson } from "./podspecs.js";
 import { andList, expoPackageDir, installedExpoMajor, installedExpoVersion } from "./expo.js";
@@ -221,6 +221,8 @@ export interface Capabilities {
   /** The version of that expo-modules-core; undefined without it. */
   expoModulesCoreVersion?: string;
   podspecs: Record<PodspecFeature, string[]>;
+  /** The `ℹ`/`⚠` lines for the config's `exclude` (`excludeLines`); detectCapabilities always sets it. */
+  excluded?: string[];
   /**
    * The setups rn-xtool refuses before a build (`earlyFailures`), those the config's `knownLimits.allow` names marked
    * allowed; detectCapabilities always sets it.
@@ -310,14 +312,18 @@ export async function detectCapabilities(projectRoot: string, opts: ProbeOptions
   const kind = kindOf(root, config.projectKind);
   const rn = installedRn(root);
   const expoVersion = installedExpoVersion(root);
-  const libraryChecks = config.pods !== undefined ? { pods: config.pods } : {};
+  const libraryChecks: LibraryCheckOptions = {
+    ...(config.pods !== undefined ? { pods: config.pods } : {}),
+    ...(config.exclude !== undefined ? { exclude: config.exclude } : {}),
+  };
   const podTable = mergedPodTable(config.pods);
   const caps: Capabilities = {
     podspecs: podspecFeatures(root),
+    excluded: excludeLines(root, config.exclude ?? []),
     limits: allowKnownLimits(earlyFailures(root, libraryChecks), config.knownLimits?.allow ?? []),
     podPins: podPinWarnings(root, podTable, libraryChecks),
     orphanPatches: orphanPatches(root).map(orphanPatchLine),
-    scaffoldPins: scaffoldPinWarnings(root, podTable),
+    scaffoldPins: scaffoldPinWarnings(root, podTable, config.exclude),
   };
   if (kind !== undefined) caps.kind = kind;
   if (expoVersion !== undefined) {

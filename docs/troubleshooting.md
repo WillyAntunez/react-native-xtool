@@ -235,6 +235,22 @@ one under "pods" in rn-xtool.config.json: { "pods": { "<pod>": { "url": "<git UR
 The library's podspec depends on a CocoaPods pod, and neither rn-xtool's pod table nor the `pods` of your
 `rn-xtool.config.json` names a SwiftPM package for it. Pods under a Ruby condition (`if`, `unless`) do not count.
 
+### Leaving a module out
+
+List a native module in `exclude` in `rn-xtool.config.json` to leave it out of rn-xtool's iOS builds; your
+`react-native.config.js` stays as it is for Xcode, CocoaPods and Android:
+
+```json
+{ "exclude": ["react-native-vision-camera"] }
+```
+
+`doctor --project` and `build` then print
+`ℹ exclude — left out of this iOS build: react-native-vision-camera (rn-xtool.config.json). JavaScript that uses it
+must check that it is there; see <this section>`. A name that is not a native iOS dependency of the project prints
+`⚠ exclude names <name>, which is not a native iOS dependency of this project; ignored`, and an Expo module
+`⚠ exclude names <name>, an Expo module: Expo's autolinking links it anyway; list it in expo.autolinking.exclude in
+package.json to leave it out`.
+
 ### pnpm and Yarn PnP
 
 `This project was installed with pnpm (pnpm-lock.yaml and a node_modules/.pnpm store); rn-xtool needs the flat
@@ -708,6 +724,8 @@ checks, so it also runs on a machine without Swift or xtool. Run it from the pro
 - **podspecs** (information only): the podspec features the dependencies use that rn-xtool tracks (`subspecs`,
   `compiler_flags`, `header_dir`, `header_mappings_dir`, `vendored_frameworks`, `resource_bundles`), each with the
   packages that use it, or `no tracked podspec features in the dependencies`.
+- **exclude** (only with `exclude` in `rn-xtool.config.json`): an ℹ line naming the modules left out of the build, and
+  a ⚠ line for each name it ignores ([Leaving a module out](#leaving-a-module-out)).
 - **pods** (only when a pin misses a requirement): one ⚠ line per pod whose version in the pod table is outside the
   requirement of a library's podspec, the `build` line without its `⚠`: `AppAuth 3.0.0 (rn-xtool table) is outside
   react-native-app-auth's requirement ">= 4.0"`. The build goes on with the pinned version.
