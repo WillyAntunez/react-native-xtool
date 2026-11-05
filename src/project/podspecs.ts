@@ -130,6 +130,28 @@ export function unconditionalLineIndexes(text: string): number[] {
   return kept;
 }
 
+const SUBSPEC_OPENER = /\.subspec\s*\(?\s*(["'])([^"']+)\1[^\n]*?\bdo\b/;
+
+/**
+ * For each of `podspecLines(text)`, the top-level subspec block it is in (`s.subspec 'Name' do |ss|` … `end`), else
+ * undefined: the subspec the scaffolder's reader gives its dependencies to (nested subspecs count as their outermost
+ * one). Block depth is counted as in `unconditionalLineIndexes`.
+ */
+export function subspecOfLines(text: string): (string | undefined)[] {
+  const stack: (string | undefined)[] = [];
+  return podspecLines(text).map((raw) => {
+    const code = rubyCode(raw);
+    const current = stack.find((name) => name !== undefined);
+    // Only a top-level subspec is named: one inside another counts as its outermost.
+    const opened = current === undefined ? SUBSPEC_OPENER.exec(raw)?.[2] : undefined;
+    if (COND_OPENER.test(code) || OTHER_OPENER.test(code)) stack.push(undefined);
+    const dos = (code.match(/\bdo\b/g) ?? []).length;
+    for (let i = 0; i < dos; i++) stack.push(i === 0 ? opened : undefined);
+    for (let i = (code.match(/\bend\b/g) ?? []).length; i > 0 && stack.length > 0; i--) stack.pop();
+    return current;
+  });
+}
+
 /** `<spec>.dependency` or `<spec>.ios.dependency` at the start of a line, with an optional `(`. */
 const DEPENDENCY = /^\s*[A-Za-z_]\w*\.(?:ios\.)?dependency\b\s*\(?\s*/;
 const STRING = /^(["'])((?:(?!\1)[^\\]|\\.)*)\1/;

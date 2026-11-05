@@ -11,7 +11,16 @@ import type { PodEntry } from "../config.js";
 import { troubleshootingUrl } from "../docs.js";
 import { packageRoot } from "../tools/exec.js";
 import { mergedPodTable, podRequirementSatisfied, type PodTable } from "./podTable.js";
-import { attribute, dependencyDirs, podDependencies, podspecFiles, unconditionalLines } from "./podspecs.js";
+import {
+  attribute,
+  dependencyDirs,
+  podDependencies,
+  podspecFiles,
+  podspecLines,
+  subspecOfLines,
+  unconditionalLineIndexes,
+  unconditionalLines,
+} from "./podspecs.js";
 
 export type EarlyCheckId = "vendored-binaries" | "vendored-sources" | "unmapped-pod" | "pnpm" | "yarn-pnp" | "hoisted";
 
@@ -359,23 +368,32 @@ class Libraries {
   /**
    * Each pod dependency on the unconditional lines of the library's podspecs, as the scaffolder classifies it: the
    * pod-name index covers the podspecs of every package installed at the top of node_modules and of every direct
-   * dependency (those left out of iOS too), and the linked packages are the
-   * dependencies with a podspec or a Package.swift that the project keeps on iOS.
+   * dependency (those left out of iOS too), and the linked packages are the dependencies with a podspec or a
+   * Package.swift that the project keeps on iOS. As in the scaffolder (fix 20), a subspec that declares a missing sibling
+   * is left out with its dependencies: its pods are neither pinned nor refused.
    */
   podDependencies(lib: Library): (PodClassification & { name: string; requirements: string[] })[] {
     const classify = (this.classifier ??= podClassifier());
     const table = this.table();
     const { podToNpm, linkedNpm } = (this.podIndex ??= this.index());
     return lib.podspecs.flatMap(({ rel, text }) => {
-      const source = unconditionalLines(text, "source");
-      const literal = source
-        .map((line) => /^\s*[A-Za-z_]\w*\.name\s*=\s*(["'])([\w.+-]+)\1\s*(?:#.*)?$/.exec(line)?.[2])
+      const all = podspecLines(text);
+      const subspecOf = subspecOfLines(text);
+      const kept = unconditionalLineIndexes(text);
+      const literal = kept
+        .map((i) => /^\s*[A-Za-z_]\w*\.name\s*=\s*(["'])([\w.+-]+)\1\s*(?:#.*)?$/.exec(all[i]!)?.[2])
         .find((n) => n !== undefined);
       const selfPodName = literal ?? path.basename(rel, ".podspec");
-      return podDependencies(source).map((dep) => ({
-        ...dep,
-        ...classify(dep.name, { selfPodName, ownNpm: lib.name, podToNpm, linkedNpm, table: table.pods }),
-      }));
+      const deps = kept.flatMap((i) =>
+        podDependencies([all[i]!]).map((dep) => ({
+          ...dep,
+          ...classify(dep.name, { selfPodName, ownNpm: lib.name, podToNpm, linkedNpm, table: table.pods }),
+          subspec: subspecOf[i],
+        })),
+      );
+      // The scaffolder leaves out a subspec that declares a missing sibling, with its dependencies (fix 20).
+      const dropped = new Set(deps.filter((d) => d.kind === "missing-sibling" && d.subspec !== undefined).map((d) => d.subspec));
+      return deps.filter((d) => d.subspec === undefined || !dropped.has(d.subspec)).map(({ subspec: _subspec, ...dep }) => dep);
     });
   }
 

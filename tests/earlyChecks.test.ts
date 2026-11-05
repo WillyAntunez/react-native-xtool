@@ -12,6 +12,8 @@ import {
   installFailures,
   knownLimitHint,
   libraryFailures,
+  podPinWarnings,
+  scaffoldedPods,
   UnsupportedSetupError,
 } from "../src/project/earlyChecks.js";
 import { mergedPodTable, type PodTable } from "../src/project/podTable.js";
@@ -793,6 +795,37 @@ describe("unmapped pods", () => {
     // Not installed at all: still read as a CocoaPods pod (preflight P9's accepted remainder).
     const missing = await project({ "react-native-reanimated": reanimated });
     expect(libraryFailures(missing, { table: NO_POD_TABLE }).map((f) => f.id)).toEqual(["unmapped-pod"]);
+  });
+
+  it("leaves out the pods of a subspec the scaffolder drops for a missing sibling", async () => {
+    // vision-camera 4.7.3's shape: FrameProcessors depends on react-native-worklets-core, which is not installed, so the
+    // scaffolder drops the subspec with its dependencies (fix 20); its pods are neither pinned nor refused.
+    const camera = (subspecPods: string) => ({
+      "package.json": JSON.stringify({ name: "react-native-vision-camera", version: "4.7.3" }),
+      "VisionCamera.podspec":
+        'Pod::Spec.new do |s|\n  s.name = "VisionCamera"\n  s.dependency "React-Core"\n' +
+        '  s.subspec \'Core\' do |core|\n    core.source_files = "ios/Core/**/*.{h,m,swift}"\n  end\n' +
+        `  s.subspec 'FrameProcessors' do |fp|\n    fp.dependency "react-native-worklets-core"\n${subspecPods}  end\nend\n`,
+    });
+    const dropped = await project({ "react-native-vision-camera": camera("    fp.dependency 'MMKV', '~> 2.0'\n") });
+    expect(libraryFailures(dropped, { table: NO_POD_TABLE })).toEqual([]);
+    const mapped = await project({ "react-native-vision-camera": camera("    fp.dependency 'AppAuth', '>= 1.7.6'\n") });
+    expect(scaffoldedPods(mapped, mergedPodTable())).toEqual(new Map());
+    expect(podPinWarnings(mapped, mergedPodTable({ AppAuth: { url: "https://github.com/openid/AppAuth-iOS", exact: "1.0.0", products: ["AppAuth"] } }))).toEqual([]);
+    // A subspec without a missing sibling is kept: its pods count.
+    const kept = await project({
+      "react-native-vision-camera": {
+        ...camera(""),
+        "VisionCamera.podspec": camera("")["VisionCamera.podspec"].replace(
+          "  s.subspec 'Core' do |core|\n",
+          "  s.subspec 'Core' do |core|\n    core.dependency 'AppAuth'\n    core.dependency 'MMKV'\n",
+        ),
+      },
+    });
+    expect(scaffoldedPods(kept, mergedPodTable())).toEqual(new Map([["react-native-vision-camera", ["AppAuth"]]]));
+    expect(libraryFailures(kept, { table: NO_POD_TABLE }).map((f) => f.reason)).toEqual([
+      expect.stringContaining("depends on the CocoaPods pods AppAuth and MMKV"),
+    ]);
   });
 
   it("skips the packages the config leaves out", async () => {

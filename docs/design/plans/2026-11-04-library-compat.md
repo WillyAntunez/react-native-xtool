@@ -191,7 +191,7 @@ The spec's failure-walk rulings are binding.
   - **PR 2** = C, D, E, F2–F3 and G2, from `feature/library-compat` after PR 1 is merged.
   - If F1 fails on a library, PR 1 waits, and the failure goes to the owner as a decision.
 
-### Failure-walk owners (spec rows 1–50)
+### Failure-walk owners (spec rows 1–51)
 
 | # | Ruling | Owner |
 |---|---|---|
@@ -245,6 +245,7 @@ The spec's failure-walk rulings are binding.
 | 48 | handle | Task C7 (C1–C4 review M2) `warns when a persisted scaffold of a library with mapped pods pins nothing`, `regenerates an unpersisted copy whose pins differ` |
 | 49 | handle | `fix: index every installed podspec package` (C5–C8 review I1), test `does not refuse a sibling installed as a peer, outside package.json (reanimated 4.3.4 and worklets 0.8.3)` |
 | 50 | handle | `fix: treat all React Native core pods as core` (C5–C8 review I2), tests `<name> is core` and the drift test `classifies every podspec name in react-native@<version> as core` |
+| 51 | handle | `fix: expect pod pins only for kept subspecs` (C5–C8 review M1), test `leaves out the pods of a subspec the scaffolder drops for a missing sibling` |
 
 ## Review Focus
 
