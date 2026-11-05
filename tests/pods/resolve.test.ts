@@ -54,6 +54,26 @@ afterEach(async () => {
   rmSync(cache, { recursive: true, force: true });
 });
 
+/** Serves a synthetic binary pod: its version list and one spec per version, with the given dependencies. */
+function servePod(pod: string, versions: Record<string, Record<string, string>>): void {
+  server.routes[`/all_pods_versions_${podShard(pod).join("_")}.txt`] = { body: `${[pod, ...Object.keys(versions)].join("/")}\n` };
+  for (const [version, dependencies] of Object.entries(versions)) {
+    server.routes[`/Specs/${podShard(pod).join("/")}/${pod}/${version}/${pod}.podspec.json`] = {
+      body: JSON.stringify({
+        name: pod,
+        version,
+        homepage: "https://example.invalid/pod",
+        license: { type: "Copyright", text: "Copyright 2026 Example" },
+        authors: "Example",
+        source: { http: `https://example.invalid/dl/${pod}-${version}.tar.gz` },
+        platforms: { ios: "15.5" },
+        vendored_frameworks: `Frameworks/${pod}.framework`,
+        dependencies: Object.fromEntries(Object.entries(dependencies).map(([d, r]) => [d, [r]])),
+      }),
+    };
+  }
+}
+
 const ctx = (over: { table?: PodTable; locked?: Record<string, string> } = {}) => ({
   table: over.table ?? table(),
   locked: over.locked ?? {},
@@ -165,8 +185,21 @@ describe("resolveBinaryPods", () => {
       { library: "react-native-foo", libraryVersion: "1.2.0", dependency: "MLKitFoo", requirements: ["1.0.0"] },
     ];
     await expect(resolveBinaryPods(roots, ctx())).rejects.toThrow(
-      `No version of MLKitCommon satisfies every requirement: "~> 13.0.0" (GoogleMLKit 8.0.0, needed by ${LIB}), "~> 14.0" (MLKitFoo 1.0.0, needed by react-native-foo). rn-xtool resolves CocoaPods versions without backtracking; leave one of the libraries out with "exclude" in rn-xtool.config.json. See ${LINK}`,
+      `No version of MLKitCommon satisfies every requirement: "~> 13.0.0" (GoogleMLKit 8.0.0, needed by ${LIB}), "~> 14.0" (MLKitFoo 1.0.0, needed by react-native-foo), "~> 13.0" (MLKitTextRecognition 6.0.0, needed by ${LIB}), "~> 13.0" (MLKitTextRecognitionCommon 5.0.0, needed by ${LIB}), "~> 13.0" (MLKitVision 9.0.0, needed by ${LIB}). rn-xtool resolves CocoaPods versions without backtracking; leave one of the libraries out with "exclude" in rn-xtool.config.json. See ${LINK}`,
     );
+  });
+
+  it("settles a conflict that only a stale round shows", async () => {
+    // Pods named apart from the shared fixtures' shards: PodA, PodB, PodC.
+    servePod("PodA", { "1.0.0": { PodC: "~> 1.0" }, "2.0.0": { PodC: "~> 2.0" } });
+    servePod("PodB", { "1.0.0": { PodA: "~> 1.0", PodC: "~> 1.0" } });
+    servePod("PodC", { "1.0.0": {}, "2.0.0": {} });
+    const roots: PodRoot[] = [
+      { library: "lib-a", libraryVersion: "1.0.0", dependency: "PodA", requirements: [] },
+      { library: "lib-b", libraryVersion: "1.0.0", dependency: "PodB", requirements: [] },
+    ];
+    const r = await resolveBinaryPods(roots, ctx());
+    expect(r.binary.map((b) => `${b.pod} ${b.version}`)).toEqual(["PodA 1.0.0", "PodB 1.0.0", "PodC 1.0.0"]);
   });
 
   it("joins the items of one requirement and names a library's own", async () => {

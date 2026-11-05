@@ -8,7 +8,7 @@ import { troubleshootingUrl } from "../docs.js";
 import type { PodTable } from "../project/podTable.js";
 import { podSpec, podVersions, type CdnOptions } from "./cdn.js";
 import { PODS_LINK, PodsError } from "./format.js";
-import { podRoute, selectedLayers, type PodSpec, type SpecLayer } from "./spec.js";
+import { PodSpecError, podRoute, selectedLayers, type PodSpec, type SpecLayer } from "./spec.js";
 import { RequirementError, newestSatisfying, parseRequirements, satisfiesAll, type Requirement } from "./versions.js";
 
 /** One per unconditional `s.dependency` the early checks classify `unmapped`. */
@@ -123,29 +123,39 @@ export async function resolveBinaryPods(
   for (let round = 0; ; round++) {
     graph = await collect(roots, choices, ctx.table, specOf);
     const next = new Map<string, string>();
+    // A round reads its requirements from the previous round's choices, so a failure may come from a choice this
+    // round moves: failures are collected, and the first is thrown only in a round where no choice moved.
+    const failures: Error[] = [];
     for (const pod of graph.order) {
       if (ctx.table.pods[pod] !== undefined) continue;
-      const reqs = requirementsOf(pod);
-      const locked = ctx.locked[pod];
-      let version = locked !== undefined && satisfiesAll(locked, reqs) ? locked : undefined;
-      if (version === undefined) {
-        let listed = versions.get(pod) ?? (await podVersions(pod, cdn));
-        versions.set(pod, listed);
-        version = newestSatisfying(listed, reqs);
-        if (version === undefined && !refreshed.has(pod)) {
-          refreshed.add(pod);
-          listed = await podVersions(pod, { ...cdn, refresh: true });
+      try {
+        const reqs = requirementsOf(pod);
+        const locked = ctx.locked[pod];
+        let version = locked !== undefined && satisfiesAll(locked, reqs) ? locked : undefined;
+        if (version === undefined) {
+          let listed = versions.get(pod) ?? (await podVersions(pod, cdn));
           versions.set(pod, listed);
           version = newestSatisfying(listed, reqs);
+          if (version === undefined && !refreshed.has(pod)) {
+            refreshed.add(pod);
+            listed = await podVersions(pod, { ...cdn, refresh: true });
+            versions.set(pod, listed);
+            version = newestSatisfying(listed, reqs);
+          }
+          if (version === undefined) throw new PodsError(conflictText(pod, graph.needs.get(pod) ?? [], describe));
         }
-        if (version === undefined) throw new PodsError(conflictText(pod, graph.needs.get(pod) ?? [], describe));
+        await checkRoute(pod, version, graph, specOf);
+        next.set(pod, version);
+      } catch (err) {
+        if (!(err instanceof PodsError || err instanceof PodSpecError)) throw err;
+        failures.push(err);
       }
-      next.set(pod, version);
-      await checkRoute(pod, version, graph, specOf);
     }
-    if (sameChoices(choices, next)) break;
+    const settled = sameChoices(choices, next);
+    if (settled && failures.length === 0) break;
+    if (settled) throw failures[0]!;
     if (round + 1 >= MAX_ROUNDS) {
-      const moving = sorted([...next.keys()].filter((p) => choices.get(p) !== next.get(p)));
+      const moving = sorted(new Set([...next.keys(), ...choices.keys()].filter((p) => choices.get(p) !== next.get(p))));
       throw new PodsError(`Resolving the CocoaPods pods did not settle after ${MAX_ROUNDS} rounds (${moving.join(", ")}). See ${PODS_LINK}`);
     }
     choices = next;
