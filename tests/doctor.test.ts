@@ -17,6 +17,7 @@ import type { Capabilities, PodspecFeature } from "../src/project/capabilities.j
 import { DetectError, VersionGateError } from "../src/project/detect.js";
 import { MissingBundleIdentifierError } from "../src/project/index.js";
 import { LLVM_NM_MISSING } from "../src/pipeline/symbols.js";
+import { LLVM_AR_MISSING } from "../src/pods/ar.js";
 import { NODE_MIN, XTOOL_SHA256, XTOOL_VERSION } from "../src/versions.js";
 import { fakeExpo57Modules } from "./support/expo57.js";
 import { fakeExpo58Modules } from "./support/expo58.js";
@@ -69,6 +70,7 @@ const good: DoctorProbes = {
   nodeVersion: () => "24.15.0",
   swiftVersion: async () => "6.4",
   llvmNmVersion: async () => "21.0.0",
+  llvmArVersion: async () => "21.0.0",
   xtoolPath: () => "/cache/xtool.AppImage",
   xtoolInstalled: () => true,
   xtoolVersion: async () => `xtool ${XTOOL_VERSION}`,
@@ -121,7 +123,7 @@ describe("doctorWithProbes", () => {
     const r = await doctorWithProbes(good);
     expect(r.ok).toBe(true);
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "swift", "llvm-nm", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
+      "node", "swift", "llvm-nm", "llvm-ar", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
     ]);
     expect(r.checks.every((c) => c.status === "ok")).toBe(true);
   });
@@ -182,6 +184,19 @@ describe("doctorWithProbes", () => {
     });
     expect(r.ok).toBe(false);
     expect(r.checks.find((c) => c.name === "llvm-nm")).toEqual({ name: "llvm-nm", status: "fail", detail: LLVM_NM_MISSING });
+  });
+
+  it("prints the llvm-ar line after llvm-nm", async () => {
+    const r = await doctorWithProbes(good);
+    expect(r.checks.find((c) => c.name === "llvm-ar")).toEqual({ name: "llvm-ar", status: "ok", detail: "LLVM 21.0.0" });
+    const missing = await doctorWithProbes({
+      ...good,
+      llvmArVersion: async () => {
+        throw new Error(LLVM_AR_MISSING);
+      },
+    });
+    expect(missing.ok).toBe(false);
+    expect(missing.checks.find((c) => c.name === "llvm-ar")).toEqual({ name: "llvm-ar", status: "fail", detail: LLVM_AR_MISSING });
   });
 
   it("fails on swift older than required", async () => {
@@ -346,7 +361,7 @@ describe("doctorWithProbes", () => {
     const r = await doctorWithProbes({ ...good, ufwActive: async () => true, buildState: async () => ({ metroPort: 8099, lanIp: "1.2.3.4" }) }, "/p");
     expect(r.checks.find((c) => c.name === "firewall")?.detail).toContain("ufw allow 8099/tcp");
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "swift", "llvm-nm", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip", "project", "project-config", "build-state", "deps", "metro-port",
+      "node", "swift", "llvm-nm", "llvm-ar", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip", "project", "project-config", "build-state", "deps", "metro-port",
     ]);
   });
 
@@ -517,7 +532,7 @@ describe("doctor --project", () => {
 
   it("makes every probe but node, project and capabilities throw", () => {
     expect(Object.keys(forbidden([])).sort()).toEqual([
-      "authStatus", "buildState", "configLanIp", "depsFingerprint", "devices", "llvmNmVersion", "lanRoute", "portFree",
+      "authStatus", "buildState", "configLanIp", "depsFingerprint", "devices", "llvmArVersion", "llvmNmVersion", "lanRoute", "portFree",
       "sdkInstalled", "swiftVersion", "ufwActive", "wifi", "xtoolInstalled", "xtoolPath", "xtoolSha256", "xtoolVersion",
     ].sort());
   });
@@ -695,7 +710,7 @@ describe("doctor --project", () => {
     );
     expect(called).toEqual([]);
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "swift", "llvm-nm", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
+      "node", "swift", "llvm-nm", "llvm-ar", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
       "project", "project-config", "build-state", "deps", "metro-port",
     ]);
     expect(r.capabilities).toBeUndefined();
@@ -704,7 +719,7 @@ describe("doctor --project", () => {
   it("withCapabilities appends the capability lines", async () => {
     const r = await doctorWithProbes(good, "/proj", { withCapabilities: true });
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "swift", "llvm-nm", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
+      "node", "swift", "llvm-nm", "llvm-ar", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
       "project", "project-config", "build-state", "deps", "metro-port",
       "versions", "rn-scripts", "rn-artifacts", "expo-plugin", "expo-modules", "podspecs",
     ]);
