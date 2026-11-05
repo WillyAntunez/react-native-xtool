@@ -247,6 +247,8 @@ The spec's failure-walk rulings are binding.
 | 50 | handle | `fix: treat all React Native core pods as core` (C5–C8 review I2), tests `<name> is core` and the drift test `classifies every podspec name in react-native@<version> as core` |
 | 51 | handle | `fix: expect pod pins only for kept subspecs` (C5–C8 review M1), test `leaves out the pods of a subspec the scaffolder drops for a missing sibling`; `fix: read parenthesised pod dependencies` (fix 26), tests `26: reads `s.dependency('Pod', …)` as CocoaPods does`, `26: pins a mapped pod named in parentheses` |
 | 52 | handle | `fix: pass entitlements only when the file has keys` (D/E review M1), tests `passes no entitlements for the prebuild's empty file: xtool.yml stays byte-identical (row 52)` and `reads the entitlements` (no doctor line for a file without keys) |
+| 53 | handle | `fix: clear ios/ when rn-xtool's prebuild fails` (F3 proof), tests `removes the ios/ a failed prebuild left and says so (row 53)`, `rethrows the error unchanged when the failed prebuild wrote no ios/`, `says so when the half-written ios/ cannot be removed` |
+| 54 | accept | Task H: a bare app with an entitlements file installs and launches on the device (xtool's ad-hoc pass at build leaves `App` and the framework binaries without the exec bit until `install` re-signs; F2, F3) |
 
 ## Review Focus
 

@@ -205,6 +205,57 @@ describe("build", () => {
     await build(t.root, { clean: true }, t.deps);
     expect(t.calls[0]).toBe("prebuild --clean");
   });
+  it("removes the ios/ a failed prebuild left and says so (row 53)", async () => {
+    for (const [hasIos, clean] of [[false, false], [true, true]] as const) {
+      const t = setup({ hasIos });
+      let wroteIos = false;
+      const prebuild = async (_r: string, c: boolean) => {
+        t.calls.push(c ? "prebuild --clean" : "prebuild");
+        wroteIos = true;
+        throw new Error("Command failed with exit code 1: npx expo prebuild --platform ios --no-install");
+      };
+      const exists = () => hasIos || wroteIos;
+      const error = await build(t.root, { clean }, { ...t.deps, prebuild, exists }).catch((e: unknown) => e);
+      expect((error as Error).message).toBe(
+        "Command failed with exit code 1: npx expo prebuild --platform ios --no-install\n" +
+          "The failed prebuild left ios/ half-written, so rn-xtool removed it; the next build runs expo prebuild again.",
+      );
+      expect(t.calls).toEqual([clean ? "prebuild --clean" : "prebuild", `remove ${join(t.root, "ios")}`]);
+    }
+  });
+  it("rethrows the error unchanged when the failed prebuild wrote no ios/", async () => {
+    const t = setup();
+    const failure = new Error("Command failed with exit code 1: npx expo prebuild --platform ios --no-install");
+    const error = await build(t.root, {}, {
+      ...t.deps,
+      prebuild: async () => {
+        t.calls.push("prebuild");
+        throw failure;
+      },
+    }).catch((e: unknown) => e);
+    expect(error).toBe(failure);
+    expect(t.calls).toEqual(["prebuild"]);
+  });
+  it("says so when the half-written ios/ cannot be removed", async () => {
+    const t = setup();
+    let wroteIos = false;
+    const error = await build(t.root, {}, {
+      ...t.deps,
+      exists: () => wroteIos,
+      prebuild: async () => {
+        wroteIos = true;
+        throw new Error("Command failed with exit code 1: npx expo prebuild --platform ios --no-install");
+      },
+      remove: async () => {
+        throw new Error("EACCES: permission denied");
+      },
+    }).catch((e: unknown) => e);
+    expect((error as Error).message).toBe(
+      "Command failed with exit code 1: npx expo prebuild --platform ios --no-install\n" +
+        "The failed prebuild left ios/ half-written, and rn-xtool could not remove it (EACCES: permission denied); delete " +
+        "ios/ before the next build, or run rn-xtool build --clean.",
+    );
+  });
   it("passes the scripts and plugin sources to the patches step", async () => {
     const applyPatches = vi.fn(async () => {});
     const t = setup({ applyPatches, project: { kind: "bare", rnScripts: "vendored" } });

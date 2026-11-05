@@ -215,6 +215,21 @@ const realDeps: BuildDeps = {
   log: (s) => console.log(s),
 };
 
+/** The failed prebuild's error, after removing the ios/ it left half-written, saying so. */
+async function prebuildFailure(e: unknown, removeIos: () => Promise<void>): Promise<Error> {
+  const reason = e instanceof Error ? e.message : String(e);
+  let tail: string;
+  try {
+    await removeIos();
+    tail = "The failed prebuild left ios/ half-written, so rn-xtool removed it; the next build runs expo prebuild again.";
+  } catch (r) {
+    tail =
+      `The failed prebuild left ios/ half-written, and rn-xtool could not remove it (${r instanceof Error ? r.message : String(r)}); ` +
+      "delete ios/ before the next build, or run rn-xtool build --clean.";
+  }
+  return new Error(`${reason}\n${tail}`, { cause: e });
+}
+
 export async function build(
   root: string,
   opts: { clean?: boolean },
@@ -283,7 +298,19 @@ export async function build(
   const planned = (name: string): boolean => steps.includes(name);
 
   const prebuilds = planned("prebuild") || planned("prebuild --clean");
-  if (prebuilds) await step(clean ? "prebuild --clean" : "prebuild", () => d.prebuild(paths.root, clean));
+  if (prebuilds) {
+    await step(clean ? "prebuild --clean" : "prebuild", async () => {
+      try {
+        await d.prebuild(paths.root, clean);
+      } catch (e) {
+        // rn-xtool prebuilds only without ios/ or on --clean, so this ios/ is the failed run's own: the next build
+        // would otherwise skip prebuild and build the half state. A prebuild that failed before writing ios/ (a
+        // config that throws) leaves nothing to remove, and its error stays as it is.
+        if (!d.exists(paths.ios)) throw e;
+        throw await prebuildFailure(e, () => d.remove(paths.ios));
+      }
+    });
+  }
   // Before anything else changes (on Expo, once prebuild wrote the pbxproj): what xtool drops when it signs, or why it
   // cannot sign at all.
   const entitlements = d.readEntitlements(project, paths.ios);
