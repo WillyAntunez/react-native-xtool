@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { troubleshootingUrl } from "../../src/docs.js";
 import {
   CDN_BASE,
@@ -18,6 +18,7 @@ import {
   versionIndexUrl,
   type CdnOptions,
 } from "../../src/pods/cdn.js";
+import { durable } from "../../src/pods/durable.js";
 import { formatSize } from "../../src/pods/format.js";
 import { tilde } from "../../src/commands/setup.js";
 import { podsCacheDir } from "../../src/paths.js";
@@ -70,6 +71,21 @@ describe("the CocoaPods CDN", () => {
       if (before === undefined) delete process.env.XDG_CACHE_HOME;
       else process.env.XDG_CACHE_HOME = before;
     }
+  });
+
+  it("syncs a cached spec and its folder", async () => {
+    const at = specPath("GoogleMLKit", "8.0.0");
+    server = await startPodsServer({ [at]: { body: JSON.stringify(fixtureSpec("GoogleMLKit", "8.0.0")) } });
+    const synced: string[] = [];
+    const file = vi.spyOn(durable, "syncFileSync").mockImplementation((p) => void synced.push(p));
+    const folder = vi.spyOn(durable, "syncDirSync").mockImplementation((p) => void synced.push(`${p}/`));
+    await podSpec("GoogleMLKit", "8.0.0", opts(server.base));
+    file.mockRestore();
+    folder.mockRestore();
+    const dir = path.join(cache, "specs", "GoogleMLKit");
+    expect(synced).toHaveLength(2);
+    expect(path.dirname(synced[0]!)).toBe(dir);
+    expect(synced[1]).toBe(`${dir}/`);
   });
 
   it("follows the redirect and sends rn-xtool's User-Agent", async () => {

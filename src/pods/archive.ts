@@ -12,6 +12,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { execa } from "execa";
 import { swapIn } from "../pipeline/rnArtifacts.js";
+import { durable, treeIntact, treeMeasure } from "./durable.js";
 import { PODS_LINK, PodsError } from "./format.js";
 
 export interface ArchiveEntry {
@@ -269,6 +270,9 @@ interface ExtractedStamp {
   sha256: string;
   keep: string[];
   flatten: boolean;
+  /** What the finished tree held (row 76): checked before reuse. */
+  files?: number;
+  bytes?: number;
 }
 
 function readStamp(file: string): ExtractedStamp | undefined {
@@ -279,12 +283,18 @@ function readStamp(file: string): ExtractedStamp | undefined {
   }
 }
 
-const sameStamp = (a: ExtractedStamp | undefined, b: ExtractedStamp): boolean =>
+const sameStamp = (a: ExtractedStamp | undefined, b: ExtractedStamp): a is ExtractedStamp =>
   a !== undefined &&
   a.extractorVersion === b.extractorVersion &&
   a.sha256 === b.sha256 &&
   a.flatten === b.flatten &&
   JSON.stringify(a.keep) === JSON.stringify(b.keep);
+
+/** A tree stamped for `stamp` that still holds the files and bytes its stamp records. */
+function current(dest: string, stamp: ExtractedStamp): boolean {
+  const found = readStamp(path.join(dest, EXTRACTED_STAMP));
+  return sameStamp(found, stamp) && treeIntact(dest, EXTRACTED_STAMP, found);
+}
 
 /** The one top-level folder every entry sits in, or undefined. */
 function singleTopFolder(entries: readonly ArchiveEntry[]): string | undefined {
@@ -390,8 +400,9 @@ export function treeName(sha256: string, stamp: unknown): string {
 /**
  * `<cache>/extracted/<sha256>-<stamp hash>`: the listing and its checks first; the members `keep` matches are extracted into
  * `<dest>.tmp-<pid>-<n>` (with `flatten`, from below the one top-level folder), `required` is checked, the stamp is
- * written last into the finished tree, and the tree is swapped in whole. A tree with the same stamp is reused; one
- * without it is rebuilt. A tree another build stamped meanwhile wins.
+ * written last into the finished tree (with its file count and bytes, synced), and the tree is swapped in whole. A
+ * tree with the same stamp that still holds what the stamp records is reused; any other is rebuilt. A tree another
+ * build stamped meanwhile wins.
  */
 export async function extractPod(
   req: ExtractRequest,
@@ -406,8 +417,7 @@ export async function extractPod(
     flatten: req.flatten,
   };
   const dest = path.join(cache, "extracted", treeName(req.sha256, stamp));
-  const stampFile = path.join(dest, EXTRACTED_STAMP);
-  if (sameStamp(readStamp(stampFile), stamp)) return dest;
+  if (current(dest, stamp)) return dest;
 
   const entries = await safeEntries(req.archive, req.ext, req, run);
   const top = req.flatten ? singleTopFolder(entries) : undefined;
@@ -466,16 +476,20 @@ export async function extractPod(
         );
       }
     }
-    await writeFile(path.join(tmp, EXTRACTED_STAMP), `${JSON.stringify(stamp, null, 2)}\n`);
-    if (sameStamp(readStamp(stampFile), stamp)) return dest;
+    const done: ExtractedStamp = { ...stamp, ...treeMeasure(tmp, EXTRACTED_STAMP) };
+    await writeFile(path.join(tmp, EXTRACTED_STAMP), `${JSON.stringify(done, null, 2)}\n`);
+    await durable.syncFile(path.join(tmp, EXTRACTED_STAMP));
+    await durable.syncDir(tmp);
+    if (current(dest, stamp)) return dest;
     await mkdir(path.dirname(dest), { recursive: true });
     try {
       await swap(tmp, dest, `${dest}.old-${process.pid}-${n}`);
     } catch (err) {
       // Another build swapped its tree in between the check and the swap: the stamped tree wins.
-      if (sameStamp(readStamp(stampFile), stamp)) return dest;
+      if (current(dest, stamp)) return dest;
       throw err;
     }
+    await durable.syncDir(path.dirname(dest));
     return dest;
   } finally {
     await rm(work, { recursive: true, force: true }).catch(() => undefined);

@@ -11,6 +11,7 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { DownloadHttpError, DownloadInsecureRedirectError, downloadFile } from "../tools/download.js";
 import { PodsNetworkError, networkReason, podsUserAgent, safeName } from "./cdn.js";
+import { durable } from "./durable.js";
 import { PODS_LINK, PodsError, formatSize } from "./format.js";
 import { PODS_LOCK, type LockEntry } from "./lock.js";
 
@@ -73,7 +74,7 @@ let sequence = 0;
 /**
  * The pod's archive in the cache. A locked entry whose file is cached, at the URL the lock records: no request.
  * Otherwise a download into `<cache>/downloads/.<pod>-<version>.<pid>-<n>.<ext>`, then the sha256 against the lock,
- * then the spec's sha256 or sha1, then a rename to `<sha256>.<ext>` (an existing one wins, and the temporary file is removed). A URL that is not
+ * then the spec's sha256 or sha1, then a synced rename to `<sha256>.<ext>`. A cached file is hashed again before reuse. A URL that is not
  * https, or a redirect away from https, is downloaded only when the lock records its sha256.
  */
 export async function fetchPodArchive(
@@ -86,7 +87,10 @@ export async function fetchPodArchive(
   // cache holds the file, so the lock records the new URL (review M-5).
   if (locked !== undefined && plan.url === locked.url) {
     const file = cachedArchive(cache, locked.sha256, plan.ext);
-    if (file !== undefined) return { file, sha256: locked.sha256, size: (await stat(file)).size, moved: false };
+    // Re-hashed before reuse (row 76): a file whose bytes were lost after a crash is downloaded again.
+    if (file !== undefined && (await hashFile(file, "sha256")) === locked.sha256) {
+      return { file, sha256: locked.sha256, size: (await stat(file)).size, moved: false };
+    }
   }
   const host = new URL(plan.url).host;
   /** P16's stop for a URL whose scheme is not https (compared as the URL parser reads it, so `HTTP:` too). */
@@ -144,7 +148,10 @@ export async function fetchPodArchive(
     }
     const size = (await stat(tmp)).size;
     const file = path.join(dir, `${sha256}.${plan.ext}`);
-    if (!existsSync(file)) await rename(tmp, file);
+    // Synced, then renamed over any file of that name (a checked copy replaces a damaged one), then the folder synced.
+    await durable.syncFile(tmp);
+    await rename(tmp, file);
+    await durable.syncDir(dir);
     return { file, sha256, size, moved: locked !== undefined && plan.url !== locked.url };
   } finally {
     await rm(tmp, { force: true });

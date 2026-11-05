@@ -362,6 +362,14 @@ describe("wrapPod", () => {
     expect(again.warnings).toHaveLength(1);
   });
 
+  it("rebuilds a stamped tree whose files changed", async () => {
+    framework("Frameworks/MLKitFoo.framework", lib());
+    const w = await wrap("MLKitFoo", ["Frameworks/MLKitFoo.framework"]);
+    writeFileSync(w.frameworks[0]!.archive!, "");
+    expect(await wrap("MLKitFoo", ["Frameworks/MLKitFoo.framework"])).toEqual(w);
+    expect(readFileSync(w.frameworks[0]!.archive!)).toEqual(lib());
+  });
+
   it("keeps one wrapped tree per selection of one archive", async () => {
     framework("Frameworks/A.framework", lib());
     framework("Frameworks/B.framework", lib());

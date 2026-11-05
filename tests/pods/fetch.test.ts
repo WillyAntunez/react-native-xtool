@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { troubleshootingUrl } from "../../src/docs.js";
 import { PodsNetworkError, offlineText, podsUserAgent } from "../../src/pods/cdn.js";
 import { cachedArchive, fetchPodArchive, headSize, type DownloadPlan } from "../../src/pods/fetch.js";
+import { durable } from "../../src/pods/durable.js";
 import type { LockEntry } from "../../src/pods/lock.js";
 import { tilde } from "../../src/commands/setup.js";
 import { closedPortBase, startPodsServer, type PodsServer } from "../support/podsServer.js";
@@ -124,6 +125,29 @@ describe("fetchPodArchive", () => {
     const got = await fetchPodArchive(plan({ locked: locked() }), cache);
     expect(got).toEqual({ file: path.join(cache, "downloads", `${SHA}.tar.gz`), sha256: SHA, size: 7000, moved: false });
     expect(s.requests).toEqual([]);
+  });
+
+  it("downloads again a locked file whose cached bytes changed", async () => {
+    const s = await serve({ [PATH]: { body } });
+    mkdirSync(path.join(cache, "downloads"));
+    writeFileSync(path.join(cache, "downloads", `${SHA}.tar.gz`), body.subarray(0, 4096));
+    const got = await fetchPodArchive(plan({ locked: locked() }), cache);
+    expect(got).toEqual({ file: path.join(cache, "downloads", `${SHA}.tar.gz`), sha256: SHA, size: 7000, moved: false });
+    expect(readFileSync(got.file)).toEqual(body);
+    expect(s.requests).toEqual([`GET ${PATH}`]);
+  });
+
+  it("syncs a download and its folder before it counts as cached", async () => {
+    await serve({ [PATH]: { body } });
+    const synced: string[] = [];
+    const file = vi.spyOn(durable, "syncFile").mockImplementation(async (p) => void synced.push(p));
+    const folder = vi.spyOn(durable, "syncDir").mockImplementation(async (p) => void synced.push(`${p}/`));
+    await fetchPodArchive(plan(), cache);
+    file.mockRestore();
+    folder.mockRestore();
+    expect(synced).toHaveLength(2);
+    expect(path.dirname(synced[0]!)).toBe(path.join(cache, "downloads"));
+    expect(synced[1]).toBe(`${path.join(cache, "downloads")}/`);
   });
 
   it("downloads a locked file that is not cached and checks it", async () => {

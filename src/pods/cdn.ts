@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, w
 import path from "node:path";
 import { tilde } from "../commands/setup.js";
 import { packageRoot } from "../tools/exec.js";
+import { durable } from "./durable.js";
 import { PODS_LINK, PodsError } from "./format.js";
 import { parsePodSpec, type PodSpec } from "./spec.js";
 
@@ -95,13 +96,15 @@ export function safeName(name: string): string {
   return name;
 }
 
-/** Writes through `<file>.<pid>.tmp` and a rename. */
+/** Writes through `<file>.<pid>.tmp`, synced, and a rename; then the folder is synced (row 76). */
 function writeCached(file: string, text: string): void {
   mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   try {
     writeFileSync(tmp, text);
+    durable.syncFileSync(tmp);
     renameSync(tmp, file);
+    durable.syncDirSync(path.dirname(file));
   } finally {
     rmSync(tmp, { force: true });
   }

@@ -14,6 +14,7 @@ import { IOS_MIN } from "../versions.js";
 import { wrapObject, type ArRunner } from "./ar.js";
 import { PODS_LINK, PodsError } from "./format.js";
 import { treeName } from "./archive.js";
+import { durable, treeIntact, treeMeasure } from "./durable.js";
 import { arm64Slice, highestMinIos, platformProblem, readBinary } from "./macho.js";
 import type { PodSpec, SpecLayer } from "./spec.js";
 import { frameworkModuleMap, generatedModuleMap, rewriteFrameworkModuleMap, writeHeadersXcframework } from "./xcframework.js";
@@ -65,6 +66,9 @@ interface WrappedStamp {
   frameworks: { name: string; archive: boolean; privacy: string[] }[];
   /** The highest iOS minimum the binaries name. */
   minIos?: string;
+  /** What the finished tree held (row 76): checked before reuse. */
+  files?: number;
+  bytes?: number;
 }
 
 const AR_MAGIC = "!<arch>\n";
@@ -297,6 +301,12 @@ function readStamp(file: string): WrappedStamp | undefined {
 const sameInputs = (a: WrappedStamp | undefined, b: { wrapperVersion: number; sha256: string; inputs: string }): a is WrappedStamp =>
   a !== undefined && a.wrapperVersion === b.wrapperVersion && a.sha256 === b.sha256 && a.inputs === b.inputs;
 
+/** The stamp of a tree at `dest` wrapped from these inputs that still holds what the stamp records. */
+function currentStamp(dest: string, key: { wrapperVersion: number; sha256: string; inputs: string }): WrappedStamp | undefined {
+  const found = readStamp(path.join(dest, WRAPPED_STAMP));
+  return sameInputs(found, key) && treeIntact(dest, WRAPPED_STAMP, found) ? found : undefined;
+}
+
 function result(i: WrapInput, dest: string, stamp: WrappedStamp): WrappedPod {
   const need = higher(i.spec.iosMin, stamp.minIos);
   return {
@@ -337,9 +347,8 @@ export async function wrapPod(i: WrapInput, cache: string, ar: ArRunner, swap: t
     }),
   };
   const dest = path.join(cache, "wrapped", treeName(i.sha256, key));
-  const stampFile = path.join(dest, WRAPPED_STAMP);
-  const current = readStamp(stampFile);
-  if (sameInputs(current, key)) return result(i, dest, current);
+  const current = currentStamp(dest, key);
+  if (current !== undefined) return result(i, dest, current);
 
   const n = sequence++;
   const tmp = `${dest}.tmp-${process.pid}-${n}`;
@@ -368,17 +377,21 @@ export async function wrapPod(i: WrapInput, cache: string, ar: ArRunner, swap: t
         return minIos !== undefined ? { minIos } : {};
       })(),
     };
+    Object.assign(stamp, treeMeasure(tmp, WRAPPED_STAMP));
     await writeFile(path.join(tmp, WRAPPED_STAMP), `${JSON.stringify(stamp, null, 2)}\n`);
-    const won = readStamp(stampFile);
-    if (sameInputs(won, key)) return result(i, dest, won);
+    await durable.syncFile(path.join(tmp, WRAPPED_STAMP));
+    await durable.syncDir(tmp);
+    const won = currentStamp(dest, key);
+    if (won !== undefined) return result(i, dest, won);
     try {
       await swap(tmp, dest, `${dest}.old-${process.pid}-${n}`);
     } catch (err) {
       // Another build swapped its tree in between the check and the swap: the stamped tree wins.
-      const other = readStamp(stampFile);
-      if (sameInputs(other, key)) return result(i, dest, other);
+      const other = currentStamp(dest, key);
+      if (other !== undefined) return result(i, dest, other);
       throw err;
     }
+    await durable.syncDir(path.dirname(dest));
     return result(i, dest, stamp);
   } finally {
     await rm(tmp, { recursive: true, force: true }).catch(() => undefined);

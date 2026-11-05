@@ -1,7 +1,7 @@
-import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { troubleshootingUrl } from "../../src/docs.js";
 import {
   EXTRACTED_STAMP,
@@ -18,6 +18,7 @@ import {
   type ListRunner,
 } from "../../src/pods/archive.js";
 import { swapIn } from "../../src/pipeline/rnArtifacts.js";
+import { durable } from "../../src/pods/durable.js";
 import { PodsError } from "../../src/pods/format.js";
 import { tarGz, zip, type ArchiveSpec } from "../support/archives.js";
 
@@ -268,6 +269,8 @@ describe("extractPod", () => {
       sha256: SHA_FOO,
       keep: ["Frameworks/MLKitFoo.framework", "NOTICES", "Resources/FooResources/**"],
       flatten: false,
+      files: KEPT.length,
+      bytes: KEPT.reduce((n, f) => n + statSync(path.join(dest, f)).size, 0),
     });
     expect(extracted()).toEqual([path.basename(dest)]);
   });
@@ -377,10 +380,32 @@ describe("extractPod", () => {
   it("reuses a stamped tree", async () => {
     const file = write("tar.gz", FOO);
     const dest = await extractPod(request(file, "tar.gz"), cache);
-    writeFileSync(path.join(dest, "marker"), "kept");
     rmSync(file);
+    expect(await extractPod(request(file, "tar.gz"), cache, failingRunner)).toBe(dest);
+    expect(treeFiles(dest)).toEqual(KEPT);
+  });
+
+  it.each([
+    ["a file lost its bytes", (dest: string) => writeFileSync(path.join(dest, "NOTICES"), "")],
+    ["a file is missing", (dest: string) => rmSync(path.join(dest, "Resources/FooResources/model.tflite"))],
+  ])("rebuilds a stamped tree when %s", async (_what, damage) => {
+    const file = write("tar.gz", FOO);
+    const dest = await extractPod(request(file, "tar.gz"), cache);
+    damage(dest);
     expect(await extractPod(request(file, "tar.gz"), cache)).toBe(dest);
-    expect(readFileSync(path.join(dest, "marker"), "utf8")).toBe("kept");
+    expect(treeFiles(dest)).toEqual(KEPT);
+    expect(readFileSync(path.join(dest, "NOTICES"), "utf8")).toBe("notices");
+  });
+
+  it("syncs the stamp and the tree's folder", async () => {
+    const synced: string[] = [];
+    const file = vi.spyOn(durable, "syncFile").mockImplementation(async (p) => void synced.push(p));
+    const folder = vi.spyOn(durable, "syncDir").mockImplementation(async (p) => void synced.push(`${p}/`));
+    const dest = await extractPod(request(write("tar.gz", FOO), "tar.gz"), cache);
+    file.mockRestore();
+    folder.mockRestore();
+    expect(synced.some((p) => p.endsWith(`/${EXTRACTED_STAMP}`))).toBe(true);
+    expect(synced).toContain(`${path.dirname(dest)}/`);
   });
 
   it("rebuilds a tree without its stamp", async () => {
