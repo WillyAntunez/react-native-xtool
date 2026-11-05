@@ -73,6 +73,7 @@ describe("headSize", () => {
     expect(await headSize(`${server.base}/a`)).toBe(7000);
     expect(server.requests).toEqual(["HEAD /a", "HEAD /b"]);
     expect(server.userAgents).toEqual([podsUserAgent(), podsUserAgent()]);
+    expect(server.encodings).toEqual(["identity", "identity"]);
   });
 
   it("is undefined without an answer, or with an encoded body", async () => {
@@ -107,6 +108,7 @@ describe("fetchPodArchive", () => {
     expect(readFileSync(got.file)).toEqual(body);
     expect(downloads()).toEqual([`${SHA}.tar.gz`]);
     expect(s.userAgents).toEqual([podsUserAgent()]);
+    expect(s.encodings).toEqual(["identity"]);
   });
 
   it("downloads without an expected size", async () => {

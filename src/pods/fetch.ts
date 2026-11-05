@@ -16,6 +16,12 @@ import { PODS_LOCK, type LockEntry } from "./lock.js";
 
 const HEAD_TIMEOUT_MS = 60_000;
 
+/**
+ * rn-xtool's User-Agent, and `Accept-Encoding: identity`: the file is hashed as the host stores it, never as a body
+ * fetch decoded from a `Content-Encoding` (review M-7).
+ */
+const podHeaders = (): Record<string, string> => ({ "User-Agent": podsUserAgent(), "Accept-Encoding": "identity" });
+
 export interface DownloadPlan {
   pod: string;
   version: string;
@@ -36,7 +42,7 @@ export async function headSize(url: string, opts: { fetch?: typeof fetch } = {})
     const res = await (opts.fetch ?? fetch)(url, {
       method: "HEAD",
       redirect: "follow",
-      headers: { "User-Agent": podsUserAgent() },
+      headers: podHeaders(),
       signal: AbortSignal.timeout(HEAD_TIMEOUT_MS),
     });
     const length = res.headers.get("content-length");
@@ -100,7 +106,7 @@ export async function fetchPodArchive(
         minBytes: 0,
         expectedBytes: plan.expectedBytes,
         checkLength: true,
-        headers: { "User-Agent": podsUserAgent() },
+        headers: podHeaders(),
         refuseHttpRedirect: locked === undefined,
       });
     } catch (err) {

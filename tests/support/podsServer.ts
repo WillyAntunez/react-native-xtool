@@ -28,6 +28,8 @@ export interface PodsServer {
   requests: string[];
   /** The User-Agent of each request, in order. */
   userAgents: (string | undefined)[];
+  /** The Accept-Encoding of each request, in order. */
+  encodings: (string | undefined)[];
   routes: Record<string, Route>;
   close(): Promise<void>;
 }
@@ -36,11 +38,13 @@ export interface PodsServer {
 export async function startPodsServer(routes: Record<string, Route> = {}): Promise<PodsServer> {
   const requests: string[] = [];
   const userAgents: (string | undefined)[] = [];
+  const encodings: (string | undefined)[] = [];
   const hanging = new Set<import("node:http").ServerResponse>();
   const server: Server = createServer((req, res) => {
     const url = req.url ?? "/";
     requests.push(`${req.method} ${url}`);
     userAgents.push(req.headers["user-agent"]);
+    encodings.push(req.headers["accept-encoding"]);
     // No kept-alive sockets: under load a client reuses one the server is closing, and the request fails with ECONNRESET.
     res.setHeader("connection", "close");
     const route = routes[url.replace(/\?.*$/, "")];
@@ -76,6 +80,7 @@ export async function startPodsServer(routes: Record<string, Route> = {}): Promi
     base: `http://127.0.0.1:${port}`,
     requests,
     userAgents,
+    encodings,
     routes,
     close: () => {
       for (const res of hanging) res.socket?.destroy();
