@@ -186,6 +186,12 @@ describe("entitlementLines", () => {
         "one; the build continues without it; reading the Wi-Fi network name returns nothing at runtime.",
     ],
     [
+      "Personal VPN's key, unknown to xtool (it decodes com.apple.networking.vpn.configuration)",
+      { "com.apple.developer.networking.vpn.api": ["allow-vpn"] },
+      "⚠ com.apple.developer.networking.vpn.api is not available on a free team, and xtool does not enable it on a paid " +
+        "one; the build continues without it; setting up a personal VPN fails at runtime.",
+    ],
+    [
       "free for Apple, unknown to xtool",
       { "com.apple.developer.default-data-protection": "NSFileProtectionComplete" },
       "⚠ com.apple.developer.default-data-protection is not enabled by xtool; the build continues without it; files keep " +

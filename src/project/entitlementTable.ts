@@ -99,4 +99,10 @@ export const ENTITLEMENT_TABLE: Readonly<Record<string, EntitlementInfo>> = {
     phrase: "reading NFC tags fails at runtime",
   },
   "com.apple.developer.icloud-services": { xtool: "unknown", appleFree: false, phrase: "iCloud fails at runtime" },
+  // Personal VPN's key in Apple's capability list; xtool decodes com.apple.networking.vpn.configuration only.
+  "com.apple.developer.networking.vpn.api": {
+    xtool: "unknown",
+    appleFree: false,
+    phrase: "setting up a personal VPN fails at runtime",
+  },
 };

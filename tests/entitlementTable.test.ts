@@ -50,6 +50,10 @@ describe("entitlement table", () => {
       ["com.apple.developer.networking.networkextension", { xtool: "unknown", appleFree: false }],
     ];
     for (const [key, flags] of keys) expect([key, ENTITLEMENT_TABLE[key]]).toEqual([key, expect.objectContaining(flags)]);
+    // Personal VPN's own key: xtool decodes only com.apple.networking.vpn.configuration.
+    expect(ENTITLEMENT_TABLE["com.apple.developer.networking.vpn.api"]).toEqual(
+      expect.objectContaining({ xtool: "unknown", appleFree: false, phrase: "setting up a personal VPN fails at runtime" }),
+    );
     // Apple's free column: App Groups, Data Protection, HealthKit, HomeKit, Inter-App Audio, Keychain Sharing and
     // Wireless Accessory Configuration are the entitlement-backed ones.
     for (const key of [
