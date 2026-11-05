@@ -15,7 +15,7 @@ import type { ExpoPlugin, RnScripts } from "../versions.js";
 import { runRnSpm } from "../pipeline/rnSpm.js";
 import type { BundleSource } from "../pipeline/resourceBundles.js";
 import { scaffoldedResourceBundles, unbundledResources, unbundledResourcesLine } from "../pipeline/scaffoldResources.js";
-import { checkFrameworkSymbols } from "../pipeline/symbols.js";
+import { checkFrameworkSymbols, makeNmRunner } from "../pipeline/symbols.js";
 import {
   allowedLimitText,
   allowKnownLimits,
@@ -46,6 +46,7 @@ import { run } from "../tools/exec.js";
 import { devBuild, xtoolBin } from "../tools/xtool.js";
 import { emptyTargetsOf } from "../pods/emptyTargets.js";
 import type { PodRoot } from "../pods/resolve.js";
+import { postPackChecks, postPackPods, type PostPackPods } from "../pods/postPack.js";
 import { stagePodBinaries, type StagedPods } from "../pods/stage.js";
 import { runPodsStep, type PodsStepResult } from "../pods/step.js";
 
@@ -204,6 +205,8 @@ export interface BuildDeps {
   pods: (root: string, roots: PodRoot[], table: PodTable, opts: { podsFile?: string; log: (s: string) => void }) => Promise<PodsStepResult>;
   /** The `pod-binaries` step: ios/build/pod-binaries, rebuilt on every build. */
   stagePods: (paths: ProjectPaths, result: PodsStepResult) => Promise<StagedPods>;
+  /** After xtool-build, with binary pods: the packed app's bundles, frameworks and force-loaded classes (spec goal 7). */
+  postPack: (appBundle: string, pods: PostPackPods) => Promise<void>;
   /** The app's CODE_SIGN_ENTITLEMENTS file (Debug); throws an EntitlementsError when xtool could not sign with it. */
   readEntitlements: (project: ProjectInfo, iosDir: string) => AppEntitlements | undefined;
   log: (s: string) => void;
@@ -246,6 +249,7 @@ const realDeps: BuildDeps = {
   unresolvedPodLines: (root, opts) => unresolvedPodLines(root, opts),
   pods: (root, roots, table, opts) => runPodsStep(root, roots, table, { ...(opts.podsFile !== undefined ? { podsFile: opts.podsFile } : {}), log: opts.log }),
   stagePods: (paths, result) => stagePodBinaries(paths, result),
+  postPack: (appBundle, pods) => postPackChecks(appBundle, pods, makeNmRunner()),
   emptyTargets: (root, opts) => {
     const table = mergedPodTable(opts.pods);
     return emptyTargetsOf(table, [...scaffoldedPods(root, table, opts).values()].flat());
@@ -487,5 +491,7 @@ export async function build(
     await writeState(paths.iosXtool, state);
   });
   await step("xtool-build", () => d.devBuild(d.xtoolBin(config), paths.iosXtool));
+  // A failure leaves the state without the fingerprint, so the next run builds again.
+  if (pods !== undefined && staged !== undefined) await d.postPack(paths.appBundle, postPackPods(staged, pods));
   await writeState(paths.iosXtool, { ...state, depsFingerprint });
 }

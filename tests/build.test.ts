@@ -172,6 +172,9 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
     stagePods: async () => {
       throw new Error("no pod-binaries step without pods");
     },
+    postPack: async () => {
+      calls.push("post-pack");
+    },
     emptyTargets: over.emptyTargets ?? (() => []),
     log: (s) => logs.push(s),
   };
@@ -335,6 +338,37 @@ describe("build", () => {
       await build(t.root, {}, { ...t.deps, runRnSpm });
       expect(applyPatches).toHaveBeenCalledWith(t.root, expect.objectContaining({ podTable: mergedPodTable(undefined, RESULT.binary) }));
       expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ binary: RESULT.binary }));
+    });
+
+    it("runs the checks after xtool-build only with binary pods", async () => {
+      const t = withPods();
+      const seen: unknown[] = [];
+      await build(t.root, {}, {
+        ...t.deps,
+        postPack: async (app, pods) => {
+          t.calls.push("post-pack");
+          seen.push([app, pods]);
+        },
+      });
+      expect(t.calls.slice(-2)).toEqual(["xtool-build", "post-pack"]);
+      expect(seen).toEqual([
+        [
+          join(t.root, "ios-xtool", "xtool", "App.app"),
+          { binaryTargets: ["MLKitCommon"], archives: [{ path: LINKS.archives[0], owner: "libMLKitCommon.a" }], bundles: [{ key: BUNDLE.key, owner: BUNDLE.owner }] },
+        ],
+      ]);
+      expect((await readState(join(t.root, "ios-xtool")))?.depsFingerprint).toBe("fp-test");
+
+      const failing = withPods();
+      const postPack = async () => {
+        throw new Error("The packed app is not what the CocoaPods binaries need");
+      };
+      await expect(build(failing.root, {}, { ...failing.deps, postPack })).rejects.toThrow("The packed app is not");
+      expect((await readState(join(failing.root, "ios-xtool")))?.depsFingerprint).toBeUndefined();
+
+      const plain = setup();
+      await build(plain.root, {}, plain.deps);
+      expect(plain.calls).not.toContain("post-pack");
     });
 
     it("passes the links and the bundles to generate", async () => {
