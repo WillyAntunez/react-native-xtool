@@ -1367,6 +1367,26 @@ describe("pod pins in scaffolds", () => {
       expect(scaffoldPatchWarnings(root, mapped).some((l) => l.includes("pins GoogleMLKit binary"))).toBe(false);
     });
 
+    it("warns about a persisted binary-route scaffold whose pod the table maps now", async () => {
+      const root = await mlApp();
+      await persistMl(root, mlPatch("GoogleMLKit=binary"));
+      const mapped = mergedPodTable({ GoogleMLKit: { url: "https://github.com/example/mlkit", exact: "1.0.0", products: ["MLKit"] } });
+      const line =
+        `⚠ patches/${ML_PATCH} links GoogleMLKit's CocoaPods binaries, but the config maps GoogleMLKit to a SwiftPM package now; ` +
+        `delete it so rn-xtool regenerates it ${ML_TAIL}`;
+      expect(scaffoldPatchWarnings(root, mapped)).toEqual([line]);
+      // An unpersisted copy is scaffolded again.
+      const copy = path.join("node_modules", ML, "Package.swift");
+      const fresh = await mlApp();
+      await writeFile(path.join(fresh, copy), `${manifest("GoogleMLKit=binary").join("\n")}\n`);
+      const lines: string[] = [];
+      await applyPatches(fresh, async () => ({ exitCode: 0 }), { rnScripts: "vendored", podTable: mapped, log: (l) => lines.push(l) });
+      expect(existsSync(path.join(fresh, copy))).toBe(false);
+      expect(lines).toEqual([
+        `ℹ node_modules/${ML}/Package.swift links GoogleMLKit's CocoaPods binaries, but the config maps GoogleMLKit to a SwiftPM package now: rn-xtool removed it so the rn-spm step scaffolds it again`,
+      ]);
+    });
+
     it("regenerates an unpersisted copy that does not link a binary pod", async () => {
       const root = await mlApp();
       const copy = path.join("node_modules", ML, "Package.swift");
