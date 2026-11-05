@@ -512,7 +512,8 @@ describe("runRnSpm", () => {
       { exitCode: 0, output: "" },
     ]);
     await runRnSpm(paths, { kind: "expo", rnScripts: "installed", expoPlugin: "installed" }, h.deps);
-    expect(h.logs).toContain("✔ scaffold — persisted patches/lib-a+1.2.3.patch");
+    // The fake writes no file: the guard cannot read it, so it does not say it persisted it.
+    expect(h.logs).toContain("⚠ Did not persist lib-a's scaffold: rn-xtool could not read patches/lib-a+1.2.3.patch to check it for binary files");
   });
 
   it("falls back to the computed filename when patch-package prints none", async () => {
@@ -523,7 +524,7 @@ describe("runRnSpm", () => {
       { exitCode: 0, output: "" },
     ]);
     await runRnSpm(paths, { kind: "expo", rnScripts: "installed", expoPlugin: "installed" }, h.deps);
-    expect(h.logs).toContain("✔ scaffold — persisted patches/lib-a+unknown.patch");
+    expect(h.logs).toContain("⚠ Did not persist lib-a's scaffold: rn-xtool could not read patches/lib-a+unknown.patch to check it for binary files");
   });
 
   it("throws RN's message without scaffolding when only no-podspec libs failed", async () => {
@@ -846,8 +847,11 @@ describe("the persist guard", () => {
   const BINARY_PATCH = `${TEXT_PATCH}diff --git a/node_modules/lib-a/libMLKitVision.a b/node_modules/lib-a/libMLKitVision.a\nnew file mode 100644\nGIT binary patch\nliteral 8\nPcmc~u&B@6x$;e;;0\n`;
   const AR_PATCH = `${TEXT_PATCH}diff --git a/node_modules/lib-a/libX.a b/node_modules/lib-a/libX.a\nnew file mode 100644\n--- /dev/null\n+++ b/node_modules/lib-a/libX.a\n@@ -0,0 +1 @@\n+!<arch>\n`;
 
-  /** A project where patch-package writes `written` as lib-a's patch; `previous` is the patch file before (none: absent). */
-  async function persisting(written: string, previous?: string) {
+  /**
+   * A project where patch-package writes `written` as lib-a's patch (under `as`, the printed name by default) and prints
+   * `printed`; `previous` is the patch file before (none: absent).
+   */
+  async function persisting(written: string, previous?: string, o: { as?: string; printed?: string } = {}) {
     const root = mkdtempSync(path.join(tmpdir(), "rn-spm-guard-"));
     tmp.push(root);
     if (previous !== undefined) {
@@ -861,8 +865,8 @@ describe("the persist guard", () => {
       if (n === 1) return { exitCode: 1, output: missing("lib-a") };
       if (cmd === process.execPath && args.includes("--patch-dir")) {
         mkdirSync(path.join(root, "patches"), { recursive: true });
-        writeFileSync(path.join(root, PATCH), written, "latin1");
-        return { exitCode: 0, output: `✔ Created file ${PATCH}\n` };
+        writeFileSync(path.join(root, o.as ?? PATCH), written, "latin1");
+        return { exitCode: 0, output: `✔ Created file ${o.printed ?? PATCH}\n` };
       }
       return { exitCode: 0, output: "" };
     };
@@ -873,8 +877,24 @@ describe("the persist guard", () => {
       writePodTable: () => POD_TABLE,
     });
     const file = path.join(root, PATCH);
-    return { logs, after: existsSync(file) ? readFileSync(file, "utf8") : undefined };
+    const other = path.join(root, o.as ?? PATCH);
+    return { logs, after: existsSync(file) ? readFileSync(file, "utf8") : undefined, other: existsSync(other) };
   }
+
+  it("fails closed when it cannot read the patch it names (row 40)", async () => {
+    const r = await persisting(TEXT_PATCH, "the previous patch\n", { as: "patches/unrelated.patch", printed: "patches/lib-a+9.9.9.patch" });
+    expect(r.logs).toContain(
+      "⚠ Did not persist lib-a's scaffold: rn-xtool could not read patches/lib-a+9.9.9.patch to check it for binary files",
+    );
+    expect(r.logs.some((l) => l.startsWith("✔ scaffold — persisted"))).toBe(false);
+    expect(r.after).toBe("the previous patch\n");
+  });
+
+  it("checks every patch file of the library that changed, whatever name it printed", async () => {
+    const r = await persisting(BINARY_PATCH, undefined, { as: "patches/lib-a+2.0.0.patch" });
+    expect(r.logs).toContain("⚠ Did not persist lib-a's scaffold: the patch would contain a binary file (node_modules/lib-a/libMLKitVision.a)");
+    expect(r.other).toBe(false);
+  });
 
   it("does not persist a patch with a GIT binary patch hunk, and says so", async () => {
     const r = await persisting(BINARY_PATCH, "the previous patch\n");

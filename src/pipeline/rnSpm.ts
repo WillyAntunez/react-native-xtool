@@ -441,12 +441,23 @@ export async function runRnSpm(
       continue;
     }
     const patchFile = createdPatchFile(persisted) ?? computedPatchFile(paths.root, name);
-    let binary: string | undefined;
+    // Every patch file of the library that is new or changed, and the one it names: the guard fails closed (row 40).
+    const after = libraryPatches(paths.root, name);
+    const changed = [...after].filter(([f, bytes]) => !before.get(f)?.equals(bytes)).map(([, bytes]) => bytes);
+    let named: Buffer | undefined;
     try {
-      binary = binaryInPatch(readFileSync(path.join(paths.root, patchFile), "latin1"));
+      named = readFileSync(path.join(paths.root, patchFile));
     } catch {
-      // patch-package wrote no file under the name it printed: nothing to check.
+      // Not under the name it printed.
     }
+    if (named === undefined && changed.length === 0) {
+      restorePatches(paths.root, name, before);
+      log(`⚠ Did not persist ${name}'s scaffold: rn-xtool could not read ${patchFile} to check it for binary files`);
+      continue;
+    }
+    const binary = [...changed, ...(named !== undefined ? [named] : [])]
+      .map((bytes) => binaryInPatch(bytes.toString("latin1")))
+      .find((b) => b !== undefined);
     if (binary !== undefined) {
       restorePatches(paths.root, name, before);
       log(`⚠ Did not persist ${name}'s scaffold: the patch would contain a binary file (${binary})`);
