@@ -309,6 +309,22 @@ describe("resolveBinaryPods", () => {
     expect(server.requests.filter((q) => q.includes("all_pods_versions"))).toEqual([`GET ${index}`]);
   });
 
+  it("names the conflict when the choices go round in a cycle", async () => {
+    servePod("PodC", { "1.0.0": { PodD: "~> 9.0" }, "2.0.0": {} });
+    servePod("PodD", { "1.0.0": { PodC: "~> 1.0" } });
+    const roots: PodRoot[] = [
+      { library: "lib-c", libraryVersion: "1.0.0", dependency: "PodC", requirements: [] },
+      { library: "lib-d", libraryVersion: "1.0.0", dependency: "PodD", requirements: [] },
+    ];
+    let rounds = 0;
+    await expect(resolveBinaryPods(roots, { ...ctx(), onRound: () => rounds++ })).rejects.toThrow(
+      `No version of PodD satisfies every requirement: "~> 9.0" (PodC 1.0.0, needed by lib-c). rn-xtool resolves CocoaPods versions without backtracking; leave one of the libraries out with "exclude" in rn-xtool.config.json. See ${LINK}`,
+    );
+    // The cycle is seen when the choices come back, long before the 20-round limit.
+    expect(rounds).toBeGreaterThan(1);
+    expect(rounds).toBeLessThanOrEqual(6);
+  });
+
   it("makes no request when the lock and the cache hold everything", async () => {
     const locked = Object.fromEntries((await resolveBinaryPods(ML_KIT_ROOTS, ctx())).binary.map((b) => [b.pod, b.version]));
     server.requests.length = 0;

@@ -85,7 +85,13 @@ const sorted = (set: Iterable<string>): string[] => [...set].sort();
 
 export async function resolveBinaryPods(
   roots: readonly PodRoot[],
-  ctx: { table: PodTable; locked: Record<string, string>; cdn: CdnOptions },
+  ctx: {
+    table: PodTable;
+    locked: Record<string, string>;
+    cdn: CdnOptions;
+    /** Called at the start of each round (a test seam: the cycle check ends long before the round limit). */
+    onRound?: (round: number) => void;
+  },
 ): Promise<Resolution> {
   const specs = new Map<string, PodSpec>();
   const versions = new Map<string, string[]>();
@@ -122,7 +128,10 @@ export async function resolveBinaryPods(
     });
 
   let choices = new Map<string, string>();
+  const seen = new Set<string>();
+  let lastFailures: Error[] = [];
   for (let round = 0; ; round++) {
+    ctx.onRound?.(round);
     graph = await collect(roots, choices, ctx.table, specOf);
     const next = new Map<string, string>();
     // A round reads its requirements from the previous round's choices, so a failure may come from a choice this
@@ -155,6 +164,11 @@ export async function resolveBinaryPods(
     const settled = sameChoices(choices, next);
     if (settled && failures.length === 0) break;
     if (settled) throw failures[0]!;
+    if (failures.length > 0) lastFailures = failures;
+    // Choices that come back to an earlier round go round in a cycle: a real conflict, named by its failure (row 8).
+    const key = choiceKey(next);
+    if ((seen.has(key) || round + 1 >= MAX_ROUNDS) && lastFailures.length > 0) throw (failures.length > 0 ? failures : lastFailures)[0]!;
+    seen.add(key);
     if (round + 1 >= MAX_ROUNDS) {
       const moving = sorted(new Set([...next.keys(), ...choices.keys()].filter((p) => choices.get(p) !== next.get(p))));
       throw new PodsError(`Resolving the CocoaPods pods did not settle after ${MAX_ROUNDS} rounds (${moving.join(", ")}). See ${PODS_LINK}`);
@@ -346,6 +360,10 @@ async function checkRoute(
     );
   }
 }
+
+/** One round's choices as a string, pods sorted. */
+const choiceKey = (choices: ReadonlyMap<string, string>): string =>
+  sorted([...choices].map(([pod, version]) => `${pod}@${version}`)).join(" ");
 
 function conflictText(pod: string, needs: readonly Need[], describe: (by: Imposer) => string): string {
   const named = needs.filter((n) => n.requirements.length > 0);
