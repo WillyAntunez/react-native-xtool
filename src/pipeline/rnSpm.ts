@@ -358,6 +358,22 @@ function firstLine(text: string): string {
   return text.split("\n").map((l) => l.trim()).find((l) => l !== "") ?? "";
 }
 
+/**
+ * Why patch-package failed, in one line: its error line (`**ERROR** …`, `Error: …`), else the step it was on with the
+ * status its crash dump names, else `exit <code>`. Never its `patch-package <version>` banner or a progress line alone.
+ */
+export function patchPackageReason(output: string, exitCode: number): string {
+  const lines = output.split("\n").map((l) => l.trim()).filter((l) => l !== "");
+  // `error: null` is a field of the crash dump patch-package prints, not an error.
+  const said = lines.find((l) => /^(\*\*ERROR\*\*|error:|npm ERR!|ERR!|✖)/i.test(l) && !/^error:\s*null,?$/i.test(l));
+  if (said !== undefined) return said;
+  const step = lines.filter((l) => l.startsWith("• ")).at(-1)?.slice(2);
+  const status = /^status:\s*(\d+)/m.exec(lines.join("\n"))?.[1];
+  if (step !== undefined && status !== undefined) return `${step} failed (status ${status})`;
+  const other = lines.find((l) => !/^patch-package \d/.test(l) && !l.startsWith("• "));
+  return other ?? `exit ${exitCode}`;
+}
+
 function tail(output: string): string {
   return output.trimEnd().split("\n").slice(-40).join("\n");
 }
@@ -430,7 +446,7 @@ export async function runRnSpm(
     try {
       const r = await runner(cmd, args, { cwd: paths.root });
       persisted = r.output;
-      if (r.exitCode !== 0) failure = firstLine(r.output) || `exit ${r.exitCode}`;
+      if (r.exitCode !== 0) failure = patchPackageReason(r.output, r.exitCode);
     } catch (e) {
       failure = firstLine(e instanceof Error ? e.message : String(e)) || "spawn error";
     }

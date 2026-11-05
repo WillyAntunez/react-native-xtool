@@ -469,6 +469,29 @@ describe("runRnSpm", () => {
     expect(h.calls).toHaveLength(4);
   });
 
+  it("names patch-package's error, not its banner, when persisting fails", async () => {
+    const crash =
+      "patch-package 8.0.1\n• Creating temporary folder\n• Installing lib-a@2.0.0 with npm\n{\n  status: 254,\n  signal: null,\n" +
+      "  error: null\n}\n\n/x/node_modules/patch-package/dist/makePatch.js:395\n        throw e;\n        ^\n";
+    const said = "patch-package 8.0.1\n• Creating temporary folder\n\n**ERROR** Failed to diff files. See https://example.invalid\n";
+    for (const [output, reason] of [
+      [crash, "Installing lib-a@2.0.0 with npm failed (status 254)"],
+      [said, "**ERROR** Failed to diff files. See https://example.invalid"],
+      ["patch-package 8.0.1\n", "exit 1"],
+    ] as const) {
+      const h = harness([
+        { exitCode: 1, output: missing("lib-a") },
+        { exitCode: 0, output: "" },
+        { exitCode: 1, output },
+        { exitCode: 0, output: "" },
+      ]);
+      await runRnSpm(paths, { kind: "expo", rnScripts: "installed", expoPlugin: "installed" }, h.deps);
+      expect(h.logs).toContain(
+        `⚠ Could not persist lib-a's Package.swift to patches/ (${reason}). The build continues; it will be re-scaffolded on the next fresh install.`,
+      );
+    }
+  });
+
   it("warns and still retries when persisting fails", async () => {
     const h = harness([
       { exitCode: 1, output: missing("lib-a") },
