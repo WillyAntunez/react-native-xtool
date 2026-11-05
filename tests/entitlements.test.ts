@@ -68,6 +68,22 @@ describe("readEntitlements", () => {
     });
   });
 
+  it("resolves $(CFBundleIdentifier) as the bundle id, and both own-group forms get no line (row 38)", async () => {
+    const { ios, project } = await bare("HelloWorld/HelloWorld.entitlements");
+    await writeFile(
+      join(ios, "HelloWorld", "HelloWorld.entitlements"),
+      plistOf(
+        "<dict>\n<key>keychain-access-groups</key>\n<array>\n<string>$(AppIdentifierPrefix)$(CFBundleIdentifier)</string>\n" +
+          "<string>$(TeamIdentifierPrefix)com.example.app</string>\n</array>\n</dict>",
+      ),
+    );
+    const e = readEntitlements(project, ios);
+    expect(e?.dict).toEqual({
+      "keychain-access-groups": ["$(AppIdentifierPrefix)com.example.app", "$(TeamIdentifierPrefix)com.example.app"],
+    });
+    expect(entitlementLines(e as AppEntitlements, "com.example.app")).toEqual([]);
+  });
+
   it("resolves $(PRODUCT_BUNDLE_IDENTIFIER) and keeps $(AppIdentifierPrefix)", async () => {
     const { ios, project } = await bare("$(SRCROOT)/HelloWorld/HelloWorld.entitlements");
     await writeFile(
@@ -149,7 +165,7 @@ describe("entitlementLines", () => {
     [
       "shared keychain groups (row 38)",
       { "keychain-access-groups": [`$(AppIdentifierPrefix)${ID}`, "$(AppIdentifierPrefix)com.example.shared"] },
-      `⚠ keychain-access-groups lists other groups; xtool signs the app with its own group only (<Team ID>.${ID}); the ` +
+      `⚠ keychain-access-groups lists other groups; xtool signs the app with its own group only (<Team ID>.XTL-<Team ID>.${ID}); the ` +
         "build continues; sharing keychain items with other apps fails at runtime.",
     ],
     [
@@ -178,6 +194,12 @@ describe("entitlementLines", () => {
       ),
     ).toEqual([]);
     expect(entitlementLines(of({}), ID)).toEqual([]);
+  });
+
+  it("counts $(TeamIdentifierPrefix)<bundle id> as the app's own keychain group (row 38)", () => {
+    expect(entitlementLines(of({ "keychain-access-groups": [`$(TeamIdentifierPrefix)${ID}`] }), ID)).toEqual([]);
+    expect(entitlementLines(of({ "keychain-access-groups": [`$(TeamIdentifierPrefix)${ID}`, `$(AppIdentifierPrefix)${ID}`] }), ID)).toEqual([]);
+    expect(entitlementLines(of({ "keychain-access-groups": ["$(TeamIdentifierPrefix)com.example.shared"] }), ID)).toHaveLength(1);
   });
 
   it("uses the generic phrase for a key without one", () => {

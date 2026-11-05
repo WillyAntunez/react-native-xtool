@@ -39,13 +39,16 @@ export interface AppEntitlements {
 const SIGNING_REFERENCES = new Set(["AppIdentifierPrefix", "TeamIdentifierPrefix"]);
 const REFERENCE = /\$\(([A-Za-z_][A-Za-z0-9_]*)(?::[A-Za-z0-9]+)?\)/g;
 
+/** The names Xcode resolves to the app's bundle id in entitlements: the build setting, and the Info.plist key. */
+const BUNDLE_ID_REFERENCES = new Set(["PRODUCT_BUNDLE_IDENTIFIER", "CFBundleIdentifier"]);
+
 /**
- * A setting's value resolved like Xcode would: `$(PRODUCT_BUNDLE_IDENTIFIER)` is the app's bundle id (the one xtool
- * signs), Xcode's own settings (`$(SRCROOT)` is ios/) and the rest come from the pbxproj.
+ * A setting's value resolved like Xcode would: `$(PRODUCT_BUNDLE_IDENTIFIER)` and `$(CFBundleIdentifier)` are the
+ * app's bundle id (the one xtool signs), Xcode's own settings (`$(SRCROOT)` is ios/) and the rest come from the pbxproj.
  */
 function resolveIn(p: Pbxproj, raw: string, bundleId: string): string {
   return resolveBuildSettingValue(raw, (name) =>
-    name === "PRODUCT_BUNDLE_IDENTIFIER" ? bundleId : (builtinSetting(p, name) ?? resolveSetting(p, name)),
+    BUNDLE_ID_REFERENCES.has(name) ? bundleId : (builtinSetting(p, name) ?? resolveSetting(p, name)),
   );
 }
 
@@ -127,7 +130,8 @@ const KEYCHAIN = "keychain-access-groups";
  * - a key xtool knows and marks paid is dropped on a free team;
  * - a key xtool does not know is dropped on a free team, and gets no capability on a paid one;
  * - a key Apple gives free teams that xtool does not know, or a key not in the table, is never enabled by xtool;
- * - `keychain-access-groups` listing a group other than the app's own is replaced by the app's own group;
+ * - `keychain-access-groups` listing a group other than the app's own (`$(AppIdentifierPrefix)<bundle id>`, or
+ *   `$(TeamIdentifierPrefix)<bundle id>`, the same group on an iOS app) is replaced by the app's own group;
  * - a key xtool knows and signs on a free team gets no line.
  */
 export function entitlementLines(e: AppEntitlements, bundleId: string): string[] {
@@ -135,12 +139,13 @@ export function entitlementLines(e: AppEntitlements, bundleId: string): string[]
     const info = ENTITLEMENT_TABLE[key];
     const phrase = info?.phrase ?? GENERIC_PHRASE;
     if (key === KEYCHAIN) {
-      const own = `$(AppIdentifierPrefix)${bundleId}`;
+      const own = new Set([`$(AppIdentifierPrefix)${bundleId}`, `$(TeamIdentifierPrefix)${bundleId}`]);
       const groups = Array.isArray(value) ? value : [value];
-      if (groups.every((g) => g === own)) return [];
+      if (groups.every((g) => typeof g === "string" && own.has(g))) return [];
+      // xtool registers the app as XTL-<Team ID>.<bundle id> and rewrites the group with that id.
       return [
-        `⚠ ${KEYCHAIN} lists other groups; xtool signs the app with its own group only (<Team ID>.${bundleId}); the build ` +
-          `continues; ${phrase}.`,
+        `⚠ ${KEYCHAIN} lists other groups; xtool signs the app with its own group only (<Team ID>.XTL-<Team ID>.${bundleId}); ` +
+          `the build continues; ${phrase}.`,
       ];
     }
     if (info === undefined || (info.xtool === "unknown" && info.appleFree)) {

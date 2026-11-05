@@ -243,8 +243,10 @@ header layout, an entitlement key), never a library name or a version number.
       is printed.
     - More than one App Group on a free team throws `tooManyAppGroups` (line 192): this is the only refusal found.
     - Then `update(teamID:bundleID:)` rewrites application-identifier, team-identifier and keychain-access-groups to
-      `<team>.<bundle id>` (`EntitlementWithTeamOrBundleID.swift:15-31`). A shared keychain group is replaced by the
-      app's own.
+      `<Team ID>.<App ID>` (`EntitlementWithTeamOrBundleID.swift:15-31`). The App ID is the one xtool registers,
+      `XTL-<Team ID>.<bundle id>` (`ProvisioningIdentifiers.identifier(fromSanitized:)`,
+      `DeveloperServicesAddAppOperation.swift:46` and `:190-196` in 1.24.0), so the only keychain group in the signature
+      is `<Team ID>.XTL-<Team ID>.<bundle id>`. A shared keychain group is replaced by the app's own.
     - xtool's free/paid flags (`DeveloperServicesCapability.swift`):
       - free: App Groups, HealthKit, HomeKit, inter-app audio, wireless accessory;
       - paid: Sign in with Apple, associated domains, multipath, network extension, VPN, push, Siri, Wi-Fi Aware.
@@ -463,8 +465,8 @@ All five are generic, go into `docs/upstream/react-native-scaffolder.md` as fixe
    - free for Apple but unknown to xtool: `⚠ com.apple.developer.default-data-protection is not enabled by xtool; the
      build continues without it; files keep the default protection.`
    - shared keychain groups: `⚠ keychain-access-groups lists other groups; xtool signs the app with its own group
-     only (TEAMID0000.com.example.app); the build continues; sharing keychain items with other apps fails at
-     runtime.`
+     only (<Team ID>.XTL-<Team ID>.com.example.app); the build continues; sharing keychain items with other apps fails
+     at runtime.`
    - several App Groups: `⚠ com.apple.security.application-groups lists 2 groups; a free team allows one, and xtool
      stops at signing with more than one.` `src/tools/xtoolErrors.ts` maps xtool's `tooManyAppGroups` error to the
      same sentence.
@@ -577,7 +579,7 @@ The process, end to end:
 | 35 | Entitlements, free team | a paid or unknown key is dropped by xtool | user: the ⚠ line before the build; on the device the feature does not work | handle (the line) and accept (Apple's policy) |
 | 36 | Entitlements, paid team | an unknown key stays in the signature without a capability on the App ID | user: the ⚠ line; possibly an install error from the iPhone | accept: unverified without a paid account (Non-goals); the line says xtool does not enable it |
 | 37 | Entitlements, App Groups | more than one group on a free team | user: the ⚠ line, then xtool's `tooManyAppGroups` at signing, mapped to the same sentence | handle: line plus `xtoolErrors.ts` mapping |
-| 38 | Entitlements, keychain | a shared group is replaced by the app's own | user: the ⚠ line; on the device, shared items are not found | handle (the line) and accept (xtool's rewrite) |
+| 38 | Entitlements, keychain | a shared group is replaced by the app's own | user: the ⚠ line; on the device, shared items are not found | handle (the line) and accept (xtool's rewrite); the app's own group, written `$(AppIdentifierPrefix)` or `$(TeamIdentifierPrefix)` followed by the bundle id, `$(PRODUCT_BUNDLE_IDENTIFIER)` or `$(CFBundleIdentifier)`, gets no line (tests `resolves $(CFBundleIdentifier) as the bundle id, and both own-group forms get no line (row 38)`, `counts $(TeamIdentifierPrefix)<bundle id> as the app's own keychain group (row 38)`) |
 | 39 | Entitlements, table drift | a newer xtool knows more types or changes the free filter | maintainer: the `XTOOL_VERSION` guard test fails on the bump | handle: goal 5.5 |
 | 40 | Entitlements, xtool 1.24.0 | the pinned release differs from the `main` source that was read | user: lines that are wrong about what xtool drops | handle: the builder reads the 1.24.0 tag's source before coding the table (open question 5) |
 | 41 | Device | a scaffold compiles but registers nothing (vision-camera without frame processors, device-info through the shim) | user: the library does nothing, or "not linked" at runtime | handle: the owner's device pass (Verification) before any doc calls these device-verified |

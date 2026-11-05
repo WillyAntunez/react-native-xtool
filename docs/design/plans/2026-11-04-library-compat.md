@@ -232,7 +232,7 @@ The spec's failure-walk rulings are binding.
 | 35 | handle + accept | Task E4 line tests; Apple's policy is recorded in Task G2 |
 | 36 | accept | Task E4 text says xtool does not enable it on a paid team; spec Non-goals |
 | 37 | handle (pending E1) | Task E4 `several App Groups` line and Task E5 mapping, **only if 1.24.0 has `tooManyAppGroups`**; otherwise App Groups get the generic paid line (owner decision, preflight P1) |
-| 38 | handle + accept | Task E4 `keychain-access-groups` line test; xtool's rewrite recorded in Task G2 |
+| 38 | handle + accept | Task E4 `keychain-access-groups` line test; the app's own group in its `$(TeamIdentifierPrefix)` and `$(CFBundleIdentifier)` forms gets no line (final review PR 2 m3), tests `resolves $(CFBundleIdentifier) as the bundle id, and both own-group forms get no line (row 38)`, `counts $(TeamIdentifierPrefix)<bundle id> as the app's own keychain group (row 38)`; xtool's rewrite recorded in Task G2 |
 | 39 | handle | Task E2 `the table was checked with the pinned xtool` |
 | 40 | handle | Task E1 (1.24.0 tag source read before Task E2) |
 | 41 | handle | Task H (owner's device pass); Task G1/G2 docs call the libraries build-verified until then |
@@ -1278,7 +1278,7 @@ export function entitlementLines(e: AppEntitlements, bundleId: string): string[]
   - known to xtool and paid: `⚠ aps-environment is not available on a free team; the build continues without it; push notifications fail at runtime.`
   - unknown to xtool, not free for Apple: `⚠ com.apple.developer.networking.wifi-info is not available on a free team, and xtool does not enable it on a paid one; the build continues without it; reading the Wi-Fi network name returns nothing at runtime.`
   - free for Apple, unknown to xtool: `⚠ com.apple.developer.default-data-protection is not enabled by xtool; the build continues without it; files keep the default protection.`
-  - shared keychain groups (an entry other than `$(AppIdentifierPrefix)${bundleId}`): `⚠ keychain-access-groups lists other groups; xtool signs the app with its own group only (<Team ID>.${bundleId}); the build continues; sharing keychain items with other apps fails at runtime.`
+  - shared keychain groups (an entry other than `$(AppIdentifierPrefix)${bundleId}`): `⚠ keychain-access-groups lists other groups; xtool signs the app with its own group only (<Team ID>.XTL-<Team ID>.${bundleId}); the build continues; sharing keychain items with other apps fails at runtime.`
   - several App Groups (only if E1 confirms `tooManyAppGroups` and free App Groups): `⚠ com.apple.security.application-groups lists ${n} groups; a free team allows one, and xtool stops at signing with more than one.`
   - known to xtool and free: nothing.
 
@@ -1584,7 +1584,8 @@ See Fact 1 and the recipe in Global Constraints.
   - rn-xtool always passes the command explicitly and never reads that record. Proposed accept.
 - **P17 (keychain line).**
   - The spec's example shows `TEAMID0000`. rn-xtool does not know the Team ID at build time.
-  - Planned: `<Team ID>.${bundleId}`.
+  - Planned: `<Team ID>.XTL-<Team ID>.${bundleId}`. xtool registers the app as `XTL-<Team ID>.<bundle id>` and
+    rewrites the keychain group with that id (fact 23), in the README's `XTL-` notation.
 - **P18 (xtool's entitlement decoding, unverified).**
   - `xtool dev build` decodes the file with `PropertyListDecoder` into `Entitlements`. A value type it cannot decode
     would fail the build after compiling.
