@@ -557,6 +557,11 @@ describe("detectCapabilities", () => {
     expect((await detect(dir)).podPins).toEqual([
       '⚠ AppAuth 1.7.5 (rn-xtool.config.json) is outside react-native-app-auth\'s requirement ">= 1.7.6"',
     ]);
+    // From rn-xtool.config.js, the line names that file.
+    await writeFile(path.join(dir, "rn-xtool.config.js"), `export default ${JSON.stringify({ pods })};\n`);
+    expect((await detect(dir)).podPins).toEqual([
+      '⚠ AppAuth 1.7.5 (rn-xtool.config.js) is outside react-native-app-auth\'s requirement ">= 1.7.6"',
+    ]);
   });
 
   it("carries the stale pod pins of the project's scaffold patches", async () => {
@@ -605,6 +610,11 @@ describe("detectCapabilities", () => {
     expect(c.excluded).toEqual([
       expect.stringMatching(/^ℹ exclude — left out of this iOS build: react-native-mmkv-lib \(rn-xtool\.config\.json\)\./),
       "⚠ exclude names nope, which is not a native iOS dependency of this project; ignored",
+    ]);
+    // From rn-xtool.config.js, the line names that file.
+    await writeFile(path.join(dir, "rn-xtool.config.js"), "export default { exclude: ['react-native-mmkv-lib'] };\n");
+    expect((await detect(dir)).excluded).toEqual([
+      expect.stringMatching(/^ℹ exclude — left out of this iOS build: react-native-mmkv-lib \(rn-xtool\.config\.js\)\./),
     ]);
   });
 

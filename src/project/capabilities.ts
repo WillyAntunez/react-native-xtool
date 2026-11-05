@@ -8,7 +8,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { loadConfig } from "../config.js";
+import { configFileOf, loadConfig } from "../config.js";
 import { projectPaths } from "../paths.js";
 import { rawSlotComplete, rnArtifactsCacheRoot, type Flavor } from "../pipeline/rnArtifactsStep.js";
 import { orphanPatchLine, orphanPatches, scaffoldPinWarnings } from "../pipeline/patches.js";
@@ -315,15 +315,17 @@ export async function detectCapabilities(projectRoot: string, opts: ProbeOptions
   const kind = kindOf(root, config.projectKind);
   const rn = installedRn(root);
   const expoVersion = installedExpoVersion(root);
+  const podsFile = configFileOf(config, "pods");
   const libraryChecks: LibraryCheckOptions = {
     ...(config.pods !== undefined ? { pods: config.pods } : {}),
+    ...(podsFile !== undefined ? { podsFile } : {}),
     ...(config.exclude !== undefined ? { exclude: config.exclude } : {}),
     ...(kind !== undefined ? { kind } : {}),
   };
   const podTable = mergedPodTable(config.pods);
   const caps: Capabilities = {
     podspecs: podspecFeatures(root),
-    excluded: excludeLines(root, config.exclude ?? []),
+    excluded: excludeLines(root, config.exclude ?? [], { kind, file: configFileOf(config, "exclude") }),
     limits: allowKnownLimits(earlyFailures(root, libraryChecks), config.knownLimits?.allow ?? []),
     podPins: podPinWarnings(root, podTable, libraryChecks),
     orphanPatches: orphanPatches(root).map(orphanPatchLine),

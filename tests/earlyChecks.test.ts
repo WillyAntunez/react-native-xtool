@@ -990,12 +990,43 @@ describe("exclude lines", () => {
     });
     // Misspelt, JavaScript only, and installed but not listed in the project's dependencies.
     await writeFiles(root, { "node_modules/react-native-other/Other.podspec": "Pod::Spec.new do |s|\nend\n" });
-    expect(excludeLines(root, ["react-native-vision-camra", "lodash", "react-native-other", "react-native-vision-camera"])).toEqual([
+    expect(excludeLines(root, ["react-native-vision-camra", "lodash", "react-native-other", "react-native-vision-camera"], { kind: "bare" })).toEqual([
       "ℹ exclude — left out of this iOS build: react-native-vision-camera (rn-xtool.config.json). JavaScript that uses " +
         `it must check that it is there; see ${LEAVING}`,
       "⚠ exclude names react-native-vision-camra, which is not a native iOS dependency of this project; ignored",
       "⚠ exclude names lodash, which is not a native iOS dependency of this project; ignored",
       "⚠ exclude names react-native-other, which is not a native iOS dependency of this project; ignored",
+    ]);
+  });
+
+  it("judges each name against the packages autolinking links (row 28)", async () => {
+    const pod = { "Lib.podspec": "Pod::Spec.new do |s|\nend\n" };
+    const root = await project({ "react-native-vision-camera": camera }, {
+      dependencies: { "react-native-vision-camera": "*" },
+      devDependencies: { "react-native-dev": "*" },
+      peerDependencies: { "react-native-peer": "*" },
+    });
+    for (const name of ["react-native-dev", "react-native-peer", "react-native-transitive"]) {
+      await writeFiles(path.join(root, "node_modules", name), { "package.json": JSON.stringify({ name, version: "1.0.0" }), ...pod });
+    }
+    const names = ["react-native-dev", "react-native-peer", "react-native-transitive"];
+    const info = (left: string) =>
+      `ℹ exclude — left out of this iOS build: ${left} (rn-xtool.config.json). JavaScript that uses it must check that ` +
+      `it is there; see ${LEAVING}`;
+    // Bare: the community CLI links dependencies, devDependencies and peerDependencies.
+    expect(excludeLines(root, names, { kind: "bare" })).toEqual([
+      info("react-native-dev, react-native-peer"),
+      "⚠ exclude names react-native-transitive, which is not a native iOS dependency of this project; ignored",
+    ]);
+    // Expo: its autolinking links every installed package with native code, a transitive one too.
+    expect(excludeLines(root, names, { kind: "expo" })).toEqual([info("react-native-dev, react-native-peer, react-native-transitive")]);
+  });
+
+  it("names the config file the exclude comes from", async () => {
+    const root = await project({ "react-native-vision-camera": camera });
+    expect(excludeLines(root, ["react-native-vision-camera"], { file: "rn-xtool.config.js" })).toEqual([
+      "ℹ exclude — left out of this iOS build: react-native-vision-camera (rn-xtool.config.js). JavaScript that uses " +
+        `it must check that it is there; see ${LEAVING}`,
     ]);
   });
 

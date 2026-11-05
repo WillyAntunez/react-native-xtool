@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConfigError, checkPodEntries, loadConfig } from "../src/config.js";
+import { ConfigError, checkPodEntries, configFileOf, loadConfig } from "../src/config.js";
 import { cacheDir, projectPaths } from "../src/paths.js";
 
 describe("loadConfig", () => {
@@ -126,6 +126,18 @@ describe("loadConfig", () => {
     await writeFile(join(dir, "rn-xtool.config.js"), `export default { pods: ${JSON.stringify(pods)} };\n`);
     await expect(loadConfig(dir)).rejects.toThrow(`rn-xtool.config.js: ${message}`);
     expect(() => checkPodEntries("data/pods.json", pods)).toThrow(`data/pods.json: ${message}`);
+  });
+
+  it("names the file each key comes from", async () => {
+    expect(configFileOf(await loadConfig(dir), "exclude")).toBeUndefined();
+    await writeFile(join(dir, "rn-xtool.config.json"), JSON.stringify({ exclude: ["a"], metroPort: 9000 }));
+    expect(configFileOf(await loadConfig(dir), "exclude")).toBe("rn-xtool.config.json");
+    await writeFile(join(dir, "rn-xtool.config.js"), "export default { exclude: ['b'] };\n");
+    const both = await loadConfig(dir);
+    expect(both.exclude).toEqual(["b"]);
+    expect(configFileOf(both, "exclude")).toBe("rn-xtool.config.js");
+    expect(configFileOf(both, "metroPort")).toBe("rn-xtool.config.json");
+    expect(configFileOf({ metroPort: 8081, exclude: ["c"] }, "exclude")).toBeUndefined();
   });
 
   it("reads exclude", async () => {

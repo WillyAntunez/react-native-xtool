@@ -15,6 +15,7 @@ import { mergedPodTable, podRequirementSatisfied, type PodTable } from "./podTab
 import {
   attribute,
   dependencyDirs,
+  packageDir,
   podDependencies,
   podspecFiles,
   podspecLines,
@@ -318,6 +319,8 @@ function iosExcluded(root: string): (pkg: string) => boolean {
 export interface LibraryCheckOptions {
   /** The config's `pods`, merged over rn-xtool's table (`mergedPodTable`). */
   pods?: Record<string, PodEntry>;
+  /** The config file `pods` came from (`configFileOf`), named in the pin lines; rn-xtool.config.json by default. */
+  podsFile?: string;
   /** Packages the config leaves out of the iOS build: skipped, like those taken out of iOS autolinking. */
   exclude?: readonly string[];
   /** The pod table to classify with, instead of `mergedPodTable(pods)` (a test seam). */
@@ -588,7 +591,7 @@ export function podPinWarnings(projectRoot: string, table: PodTable, opts: Libra
       for (const dep of libs.podDependencies(lib)) {
         const exact = table.pods[dep.pod]?.exact;
         if (dep.kind !== "mapped" || exact === undefined || podRequirementSatisfied(exact, dep.requirements)) continue;
-        const source = table.source[dep.pod] === "config" ? "rn-xtool.config.json" : "rn-xtool table";
+        const source = table.source[dep.pod] === "config" ? (opts.podsFile ?? "rn-xtool.config.json") : "rn-xtool table";
         const line =
           `⚠ ${dep.pod} ${exact} (${source}) is outside ${name}'s requirement "${dep.requirements.join(", ")}"`;
         if (!lines.includes(line)) lines.push(line);
@@ -627,20 +630,27 @@ export function scaffoldedPods(projectRoot: string, table: PodTable, opts: Libra
 
 /**
  * The lines `doctor --project` and `build` print for the config's `exclude`: one `ℹ` line naming the native iOS
- * dependencies it leaves out, then a `⚠` per other name. A name is a native iOS dependency when it is a direct
- * dependency with a podspec or a Package.swift (in the package root or ios/) and is not an Expo module for Apple
- * platforms: Expo's autolinking links those anyway, so they get a warning pointing at `expo.autolinking.exclude`.
- * Never throws; [] without `exclude`.
+ * dependencies it leaves out and the config file it comes from (`file`, rn-xtool.config.json by default), then a `⚠`
+ * per other name. A name is a native iOS dependency when autolinking links it and it has a podspec or a Package.swift
+ * (in the package root or ios/): on bare, the community CLI links what package.json lists in dependencies,
+ * devDependencies and peerDependencies; on Expo, its autolinking links every installed package too, a transitive one
+ * included. An Expo module for Apple platforms is linked by Expo's autolinking anyway, so it gets a warning pointing at
+ * `expo.autolinking.exclude`. Without `kind`, the bare rule. Never throws; [] without `exclude`.
  */
-export function excludeLines(projectRoot: string, exclude: readonly string[]): string[] {
+export function excludeLines(
+  projectRoot: string,
+  exclude: readonly string[],
+  opts: { kind?: ProjectKind; file?: string } = {},
+): string[] {
   if (exclude.length === 0) return [];
-  const deps = new Map(settled(() => dependencyDirs(path.resolve(projectRoot)), []).map((d) => [d.name, d.dir]));
+  const root = path.resolve(projectRoot);
+  const linked = settled(() => linkedPackageDirs(root, opts.kind), new Map<string, string>());
   const native = (dir: string): boolean =>
     podspecFiles(dir).some((file) => existsSync(file)) || LIBRARY_MANIFESTS.some((rel) => existsSync(path.join(dir, rel)));
   const left: string[] = [];
   const warnings: string[] = [];
   for (const name of new Set(exclude)) {
-    const dir = deps.get(name);
+    const dir = linked.get(name);
     if (dir !== undefined && settled(() => isAppleExpoModule(dir), false)) {
       warnings.push(
         `⚠ exclude names ${name}, an Expo module: Expo's autolinking links it anyway; list it in expo.autolinking.exclude ` +
@@ -653,9 +663,25 @@ export function excludeLines(projectRoot: string, exclude: readonly string[]): s
     }
   }
   const info =
-    `ℹ exclude — left out of this iOS build: ${left.join(", ")} (rn-xtool.config.json). JavaScript that uses it must ` +
-    `check that it is there; see ${troubleshootingUrl("leaving-a-module-out")}`;
+    `ℹ exclude — left out of this iOS build: ${left.join(", ")} (${opts.file ?? "rn-xtool.config.json"}). JavaScript ` +
+    `that uses it must check that it is there; see ${troubleshootingUrl("leaving-a-module-out")}`;
   return [...(left.length > 0 ? [info] : []), ...warnings];
+}
+
+/**
+ * The packages autolinking reads, with their folders (react-native itself left out): those package.json lists in
+ * dependencies, devDependencies and peerDependencies that resolve from the root, and on Expo every package at the top of
+ * node_modules (and `@scope/*`) too.
+ */
+function linkedPackageDirs(root: string, kind: ProjectKind | undefined): Map<string, string> {
+  const dirs = new Map<string, string>();
+  if (kind === "expo") for (const { name, dir } of installedPackages(root)) dirs.set(name, dir);
+  for (const name of listedPackages(root)) {
+    const dir = dirs.get(name) ?? packageDir(root, name);
+    if (dir !== undefined) dirs.set(name, dir);
+  }
+  dirs.delete("react-native");
+  return dirs;
 }
 
 /** Where the parent-folder lookup stops (inclusive); `/` by default. Tests pass their own temp folder. */

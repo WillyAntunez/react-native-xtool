@@ -127,8 +127,20 @@ function checkExclude(file: string, config: Partial<ExpoXtoolConfig> | undefined
 /** The config of a project without rn-xtool.config.json or rn-xtool.config.js. */
 export const DEFAULT_CONFIG: Readonly<ExpoXtoolConfig> = { metroPort: 8081 };
 
+/** For each config `loadConfig` returned, the file each key it read came from. */
+const SOURCES = new WeakMap<ExpoXtoolConfig, Partial<Record<keyof ExpoXtoolConfig, string>>>();
+
+/** The file `loadConfig` read `key` from (`rn-xtool.config.json` or `rn-xtool.config.js`); undefined for a default. */
+export function configFileOf(config: ExpoXtoolConfig, key: keyof ExpoXtoolConfig): string | undefined {
+  return SOURCES.get(config)?.[key];
+}
+
 export async function loadConfig(projectRoot: string): Promise<ExpoXtoolConfig> {
   let config: ExpoXtoolConfig = { ...DEFAULT_CONFIG };
+  const sources: Partial<Record<keyof ExpoXtoolConfig, string>> = {};
+  const record = (file: string, values: object | undefined): void => {
+    for (const key of Object.keys(values ?? {})) sources[key as keyof ExpoXtoolConfig] = file;
+  };
 
   const jsonPath = join(projectRoot, "rn-xtool.config.json");
   if (existsSync(jsonPath)) {
@@ -144,6 +156,7 @@ export async function loadConfig(projectRoot: string): Promise<ExpoXtoolConfig> 
     checkPods("rn-xtool.config.json", parsed);
     checkExclude("rn-xtool.config.json", parsed);
     config = { ...config, ...parsed };
+    record("rn-xtool.config.json", parsed);
   }
 
   const jsPath = join(projectRoot, "rn-xtool.config.js");
@@ -153,7 +166,9 @@ export async function loadConfig(projectRoot: string): Promise<ExpoXtoolConfig> 
     checkPods("rn-xtool.config.js", mod.default);
     checkExclude("rn-xtool.config.js", mod.default);
     config = { ...config, ...mod.default };
+    record("rn-xtool.config.js", mod.default);
   }
 
+  SOURCES.set(config, sources);
   return config;
 }

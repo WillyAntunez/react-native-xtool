@@ -222,7 +222,7 @@ The spec's failure-walk rulings are binding.
 | 25 | accept | Task G2 docs: the pod table is the one place to align pins |
 | 26 | accept | Task F2 step 2 records whether `AppAuth_AppAuth.bundle` and `AppAuth_AppAuthCore.bundle` reach `App.app`; Task G2 states the result in the present tense |
 | 27 | handle | Task C8 unit tests; Task F3 (Expo SDK 58 with the plugin). Without F3: documented as build-unverified (OQ8) |
-| 28 | handle | Task D3 `warns about a name that is not a native iOS dependency` |
+| 28 | handle | Task D3 `warns about a name that is not a native iOS dependency`; `fix: judge exclude names against the linked set` (D/E review M3), tests `judges each name against the packages autolinking links (row 28)`, `names the config file the exclude comes from` |
 | 29 | accept | Task A1 (the "not installed (or not linked for iOS)" warning names the dependency, and excluded packages count as not linked); Task G2 docs: exclude the dependents too |
 | 30 | handle | Task D2 Step 0 (spike: netinfo excluded in the proof app); Task F2 step 6 |
 | 31 | accept | Task D3 `ℹ exclude` line at every `doctor --project` and `build`; Task G2 present-tense docs with the guard |
@@ -1130,10 +1130,12 @@ export function configCommandFor(
 
 **Interfaces:**
 ```ts
-export function excludeLines(projectRoot: string, exclude: readonly string[]): string[];
-//   A name is a native iOS dependency when it is a direct dependency with a podspec or a Package.swift (in the package
-//   root or ios/), and no expo-module.config.json naming apple/ios. An Expo module gets the Expo warning; other names
-//   get the "not a native iOS dependency" warning; the rest are joined into the ℹ line.
+export function excludeLines(projectRoot: string, exclude: readonly string[], opts?: { kind?: ProjectKind; file?: string }): string[];
+//   A name is a native iOS dependency when autolinking links it (bare: package.json's dependencies, devDependencies and
+//   peerDependencies; Expo: every installed package too; D/E review M3) and it has a podspec or a Package.swift (in the
+//   package root or ios/), and no expo-module.config.json naming apple/ios. An Expo module gets the Expo warning; other
+//   names get the "not a native iOS dependency" warning; the rest are joined into the ℹ line, which names the config
+//   file `exclude` was read from (`file`: rn-xtool.config.json or rn-xtool.config.js).
 ```
 - Texts:
   - `ℹ exclude — left out of this iOS build: react-native-vision-camera (rn-xtool.config.json). JavaScript that uses it must check that it is there; see ${troubleshootingUrl("leaving-a-module-out")}`

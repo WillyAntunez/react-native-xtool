@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { depsFingerprint } from "../deps.js";
-import { loadConfig, type ExpoXtoolConfig, type PodEntry } from "../config.js";
+import { configFileOf, loadConfig, type ExpoXtoolConfig, type PodEntry } from "../config.js";
 import { readFlavoredFrameworks, stageFrameworks, type RuntimeFramework } from "../frameworks.js";
 import { hasDevSupport, writeIosXtool } from "../generate/iosXtool.js";
 import { detectLanIp, detectLanRoute, findFreePort, isMetroRunning, isPortFree, suspiciousLanRoute, tunnelWarning, type LanRoute } from "../net.js";
@@ -246,13 +246,15 @@ export async function build(
   } catch {
     kind = undefined;
   }
+  const podsFile = configFileOf(config, "pods");
   const libraryChecks: LibraryCheckOptions = {
     ...(config.pods !== undefined ? { pods: config.pods } : {}),
+    ...(podsFile !== undefined ? { podsFile } : {}),
     ...(config.exclude !== undefined ? { exclude: config.exclude } : {}),
     ...(kind !== undefined ? { kind } : {}),
   };
   // What the config leaves out comes first: a refusal below may point at "exclude".
-  for (const line of excludeLines(root, config.exclude ?? [])) d.log(line);
+  for (const line of excludeLines(root, config.exclude ?? [], { kind, file: configFileOf(config, "exclude") })) d.log(line);
   stopOnKnownLimits([...d.installFailures(root), ...d.libraryFailures(root, libraryChecks)]);
   for (const line of d.podPinWarnings(root, libraryChecks)) d.log(line);
   const project = await d.readProject(root, { log: d.log });

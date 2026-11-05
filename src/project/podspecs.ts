@@ -27,7 +27,7 @@ export function readJson(file: string): Record<string, any> | undefined {
  * The directory `pkg` resolves to from `root`, along Node's node_modules lookup paths (a package whose `exports`
  * hides package.json still counts).
  */
-function packageDir(root: string, pkg: string): string | undefined {
+export function packageDir(root: string, pkg: string): string | undefined {
   const lookup = createRequire(path.join(root, "package.json")).resolve.paths(pkg) ?? [];
   return lookup.map((dir) => path.join(dir, pkg)).find((dir) => existsSync(path.join(dir, "package.json")));
 }

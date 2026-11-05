@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { build, buildSteps, chooseMetroPort, type BuildDeps } from "../src/commands/build.js";
+import { loadConfig as realLoadConfig } from "../src/config.js";
 import { jsiRnHeaderDirs } from "../src/pipeline/jsi.js";
 import { fixLibraryManifests } from "../src/pipeline/manifests.js";
 import { libraryFailures as realLibraryFailures, podPinWarnings, UnsupportedSetupError, type EarlyFailure } from "../src/project/earlyChecks.js";
@@ -592,6 +593,16 @@ describe("build", () => {
     writeFileSync(join(lib, "react-native-app-auth.podspec"), "Pod::Spec.new do |s|\n  s.dependency 'AppAuth', '>= 1.7.6'\nend\n");
     await build(real.root, {}, { ...real.deps, podPinWarnings: (root, opts) => podPinWarnings(root, mergedPodTable(opts.pods), opts) });
     expect(real.logs).toContain(line);
+
+    // With "pods" in rn-xtool.config.js, the line names that file.
+    writeFileSync(join(real.root, "rn-xtool.config.js"), `export default ${JSON.stringify({ pods })};\n`);
+    real.logs.length = 0;
+    await build(real.root, {}, {
+      ...real.deps,
+      loadConfig: realLoadConfig,
+      podPinWarnings: (root, opts) => podPinWarnings(root, mergedPodTable(opts.pods), opts),
+    });
+    expect(real.logs).toContain(line.replace("rn-xtool.config.json", "rn-xtool.config.js"));
   });
 
   it("passes the project kind to the library checks (row 49: bare refuses an unlisted pod sibling)", async () => {
