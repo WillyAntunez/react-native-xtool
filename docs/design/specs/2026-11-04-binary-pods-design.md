@@ -642,11 +642,11 @@ The process, end to end:
 | 49 | SwiftPM fetch | another package pins GoogleUtilities, GTMSessionFetcher or GoogleDataTransport at another exact version (Firebase, GoogleSignIn) | user: SwiftPM's version conflict naming both | accept: block 2's row 25; the docs name the table as the one place to align pins |
 | 50 | xtool | a binary target is embedded as a dynamic framework (#130) | user: post-pack check 2 stops the build before install | handle: library-type slices never match `<name>.framework/<name>`; post-pack check |
 | 51 | xtool | a bundle is not copied, or lands under another name | user: post-pack check 1 | handle |
-| 52 | xtool | a bundle's `Info.plist` is refused at signing or install | user: xtool's or the iPhone's error | handle: CocoaPods' keys (goal 4.1); the owner's device pass |
+| 52 | xtool | a bundle's `Info.plist` is refused at signing or install | user: xtool's or the iPhone's error | handle: CocoaPods' keys (goal 4.1); the owner's device pass (2026-11-05: installed) |
 | 53 | xtool | the app grows by about 53 MB (G2), so installs over Wi-Fi take longer; the per-app copies in `ios/build/pod-binaries` and `ios-xtool/Resources` take about 66 MB more on disk (58 MB of xcframeworks and archives, 8 MB of models) | user: a slower install | accept: present tense in `docs/libraries.md` |
-| 54 | Runtime | the model bundle is not found: "Invalid model path." at the first recognition, not at launch | user on the device | handle: post-pack check 1, and the device pass |
-| 55 | Runtime | a `+load` registration is missing: the recognizer is nil, or `process` fails | user on the device | handle: `-force_load`, post-pack check 3, and the device pass |
-| 56 | Runtime | dead stripping removes data that is found only by name | user on the device: "Invalid model path." with the bundle present | handle: the device pass decides; the slice is an archive, so d-date's relink-as-dynamic cause does not apply (fact 4) |
+| 54 | Runtime | the model bundle is not found: "Invalid model path." at the first recognition, not at launch | user on the device | handle: post-pack check 1, and the device pass (checked 2026-11-05) |
+| 55 | Runtime | a `+load` registration is missing: the recognizer is nil, or `process` fails | user on the device | handle: `-force_load`, post-pack check 3, and the device pass (checked 2026-11-05) |
+| 56 | Runtime | dead stripping removes data that is found only by name | user on the device: "Invalid model path." with the bundle present | handle: the device pass decides (checked 2026-11-05); the slice is an archive, so d-date's relink-as-dynamic cause does not apply (fact 4) |
 | 57 | Runtime | the privacy manifests inside the frameworks are not in the app | nobody for a development build | accept: they are read at App Store submission (Non-goals); the ℹ line names them |
 | 58 | Runtime | the iPhone's iOS is older than a pod's minimum | user: a launch crash | accept: rn-xtool's minimum is 16.4, ML Kit's 15.5; row 35 covers the general case |
 | 59 | Disk | not enough space for the downloads, their unpacked and wrapped copies and the per-app copies | user: a stop before the first download, with what is needed and where | handle: goal 5.5; the factor is 8 (G2 measured 7.5× with the per-app copies of row 85); with the project on another filesystem than the cache (row 36), the project's filesystem gets its share of the factor, 2 for the per-app copies, and the cache's the other 6 (final review M5); a file HEAD gives no length counts with the size the lock records (E/F review M3), and a cached file that fails its re-hash is announced and counted like a missing one (E/F review M2) |
@@ -731,6 +731,16 @@ The process, end to end:
   - optional: one Japanese or Chinese sample through the matching script option.
 
   Until the owner confirms these, the docs call ML Kit text recognition build-verified only.
+- **Device pass, run 2026-11-05** (the owner, iOS 26), on the G2 app (bare React Native 0.88.1 with
+  @react-native-ml-kit/text-recognition 2.0.0, react-native-svg 15.16.0 and an entitlements file):
+  - installed over Wi‑Fi: the re-run of the post-pack checks before the install (row 88) passed silently, and the app
+    installed and launched (row 52);
+  - `TextRecognition.recognize()` on a photo of printed text returned the text, with no "Invalid model path." (rows
+    54–56 checked);
+  - react-native-svg: a Metal filter shape (`FeComposite` xor) rendered from `RNSVGFilters.bundle` (OQ3);
+  - Fast Refresh works.
+
+  Not part of this pass: the optional Japanese or Chinese sample.
 
 ## Open questions
 

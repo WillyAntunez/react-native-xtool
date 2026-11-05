@@ -37,11 +37,11 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   every requirement, downloads the files on your machine into `~/.cache/rn-xtool/pods`, wraps each framework for
   SwiftPM (a headers-only xcframework, and its arm64 archive linked once with `-force_load`), and writes the local
   package `ios/build/pod-binaries` that the scaffold links. @react-native-ml-kit/text-recognition 2.0.0 builds this way
-  on bare React Native 0.88.1 (checked by building on 2026-11-05; not run on a device yet): ten Google pods, their
-  five OCR model bundles at the root of `App.app`, and GoogleToolboxForMac, GoogleUtilities, GoogleDataTransport and
-  GTMSessionFetcher from their SwiftPM packages through the pod table. The app grows by about 53 MB. Other shapes
-  (dynamic or Swift frameworks, vendored libraries, compiled sources) stop with a message naming the pod. See
-  [troubleshooting.md](docs/troubleshooting.md#cocoapods-binaries).
+  on bare React Native 0.88.1 (checked on a device on 2026-11-05: it recognized printed text from a photo): ten Google
+  pods, their five OCR model bundles at the root of `App.app`, and GoogleToolboxForMac, GoogleUtilities,
+  GoogleDataTransport and GTMSessionFetcher from their SwiftPM packages through the pod table. The app grows by about
+  53 MB. Other shapes (dynamic or Swift frameworks, vendored libraries, compiled sources) stop with a message naming the
+  pod. See [troubleshooting.md](docs/troubleshooting.md#cocoapods-binaries).
 - `rn-xtool-pods.lock.json`, at the project root, records each binary pod's version, URL, size and sha256: "ℹ pods —
   recorded the sha256 of 10 downloads in rn-xtool-pods.lock.json; commit it, so other machines check that they get the
   same files." Later builds keep the locked versions and check every download against it; a file with another sha256
@@ -54,7 +54,8 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 - Scaffolded libraries' `resource_bundles` reach the app: each unconditional entry whose name and globs are plain
   strings becomes `<name>.bundle` at the root of `App.app`, as CocoaPods places it, with `.lproj` folders kept.
   react-native-svg gets `RNSVGFilters.bundle` with its prebuilt Metal filters, and react-native-device-info its
-  privacy bundle (checked by building; svg's filters are not checked on a device yet).
+  privacy bundle (checked by building; svg's filters also on a device on 2026-11-05: a `FeComposite` xor filter
+  rendered).
 - `doctor --project` has a `pods` line for binary pods, from the lock and the cache, or probed online within its 10 s
   budget: "✔ pods — 10 CocoaPods binaries for @react-native-ml-kit/text-recognition, in rn-xtool's cache and in
   rn-xtool-pods.lock.json", "ℹ pods — …, 10 to download from dl.google.com (40.3 MB)", and the lock entries no library

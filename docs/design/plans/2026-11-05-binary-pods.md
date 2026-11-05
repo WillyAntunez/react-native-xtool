@@ -1595,12 +1595,16 @@ No commit. It needs the owner's OK: a `create-expo-app` download and about 1 GB 
 
 No commit by the implementer. Until the owner confirms an item, the docs call it build-verified only.
 
-- [ ] The app from G2 installs and launches (row 52).
-- [ ] `TextRecognition.recognize()` on a photo of a printed page returns its blocks and lines, and the first call shows
-  no "Invalid model path." (rows 54–56).
+**Run 2026-11-05 (the owner, iOS 26, install over Wi‑Fi): pass.** The G2 app (bare React Native 0.88.1 with ML Kit
+text recognition 2.0.0, react-native-svg 15.16.0 and an entitlements file): install's re-run of the post-pack checks
+passed silently, and the app installed and launched. Fast Refresh works. The item left unchecked below was not run.
+
+- [x] The app from G2 installs and launches (row 52).
+- [x] `TextRecognition.recognize()` on a photo of a printed page returns its blocks and lines, and the first call shows
+  no "Invalid model path." (rows 54–56). (A photo of printed text; the text came back.)
 - [ ] Optional: one Japanese or Chinese sample through the matching script option.
-- [ ] react-native-svg: an `<FeColorMatrix>` or another Metal filter renders (OQ3).
-- [ ] The results go into `docs/libraries.md`'s dates, in one `docs:` commit by the controller.
+- [x] react-native-svg: an `<FeColorMatrix>` or another Metal filter renders (OQ3). (`FeComposite` xor.)
+- [x] The results go into `docs/libraries.md`'s dates, in one `docs:` commit by the controller.
 
 ---
 
