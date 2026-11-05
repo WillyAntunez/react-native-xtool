@@ -233,6 +233,35 @@ describe("fetchPodArchive", () => {
     expect(s.requests).toEqual([]);
   });
 
+  it("follows a redirect that stays on https", async () => {
+    const s = await serve({ [PATH]: { redirect: "/moved.tar.gz" }, "/moved.tar.gz": { body } });
+    const got = await fetchPodArchive(plan(), cache);
+    expect(got.sha256).toBe(SHA);
+    expect(s.requests).toEqual([`GET ${PATH}`, "GET /moved.tar.gz"]);
+  });
+
+  it("refuses a redirect from https to plain http that the lock does not record", async () => {
+    const s = await serve({ [PATH]: { redirect: `http://plain.${HOST}/f.tar.gz` }, "/f.tar.gz": { body } });
+    await expect(fetchPodArchive(plan(), cache)).rejects.toThrow(
+      `MLImage 1.0.0-beta7 downloads over plain http from plain.${HOST}; rn-xtool downloads it only when rn-xtool-pods.lock.json already records its sha256. See ${LINK}`,
+    );
+    expect(s.requests).toEqual([`GET ${PATH}`]);
+    expect(downloads()).toEqual([]);
+  });
+
+  it("follows a redirect to plain http when the lock records the file, and checks it", async () => {
+    const s = await serve({ "/f.tar.gz": { body } });
+    s.routes[PATH] = { redirect: `${s.base}/f.tar.gz` };
+    const got = await fetchPodArchive(plan({ locked: locked() }), cache);
+    expect(got).toMatchObject({ sha256: SHA, moved: false });
+    expect(s.requests).toEqual([`GET ${PATH}`, "GET /f.tar.gz"]);
+    rmSync(path.join(cache, "downloads"), { recursive: true });
+    s.routes["/f.tar.gz"] = { body: other };
+    await expect(fetchPodArchive(plan({ locked: locked() }), cache)).rejects.toThrow(
+      "is not the one rn-xtool-pods.lock.json records",
+    );
+  });
+
   it("downloads a plain http URL the lock records, and checks it", async () => {
     const httpUrl = `http://${HOST}${PATH}`;
     await serve({ [PATH]: { body } });

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { networkReason } from "../src/pods/cdn.js";
-import { downloadFile, sha256File } from "../src/tools/download.js";
+import { DownloadInsecureRedirectError, downloadFile, sha256File } from "../src/tools/download.js";
 import { closedPortBase, startPodsServer, type PodsServer } from "./support/podsServer.js";
 
 const body = Buffer.alloc(2 * 1024 * 1024, 7);
@@ -126,5 +126,38 @@ describe("downloadFile sizes, headers and causes", () => {
     const err = await downloadFile(`${server.base}/gone`, join(dir, "a")).catch((e: unknown) => e);
     expect((err as Error).message).toMatch(/HTTP 404/);
     expect(((err as Error).cause as { status?: number }).status).toBe(404);
+  });
+});
+
+describe("downloadFile redirects", () => {
+  const redirect = (location: string): Response => new Response(null, { status: 302, headers: { location } });
+
+  it("refuses a redirect from https to plain http when asked, without a retry", async () => {
+    const f = vi.fn(async (url: string) => (url === "https://a.invalid/f" ? redirect("http://b.invalid/g") : new Response(body)));
+    vi.stubGlobal("fetch", f);
+    const dest = join(dir, "a");
+    const err = await downloadFile("https://a.invalid/f", dest, { refuseHttpRedirect: true }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DownloadInsecureRedirectError);
+    expect(err).toMatchObject({ from: "https://a.invalid/f", to: "http://b.invalid/g" });
+    expect(f.mock.calls.map(([u]) => u)).toEqual(["https://a.invalid/f"]);
+    expect(existsSync(dest)).toBe(false);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("follows redirects that stay on https, hop by hop, when asked", async () => {
+    const f = vi.fn(async (url: string) =>
+      url === "https://a.invalid/f" ? redirect("/g") : url === "https://a.invalid/g" ? redirect("https://c.invalid/h") : new Response(body),
+    );
+    vi.stubGlobal("fetch", f);
+    const dest = join(dir, "a");
+    await downloadFile("https://a.invalid/f", dest, { refuseHttpRedirect: true });
+    expect(readFileSync(dest)).toEqual(body);
+    expect(f.mock.calls.map(([u]) => u)).toEqual(["https://a.invalid/f", "https://a.invalid/g", "https://c.invalid/h"]);
+  });
+
+  it("stops after 20 redirects", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => redirect("/loop")));
+    const err = await downloadFile("https://a.invalid/f", join(dir, "a"), { refuseHttpRedirect: true }).catch((e: unknown) => e);
+    expect((err as Error).message).toMatch(/too many redirects/);
   });
 });

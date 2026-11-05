@@ -40,6 +40,37 @@ export class DownloadSizeError extends Error {
   }
 }
 
+/** A redirect from https to plain http, refused with `refuseHttpRedirect`; never retried. */
+export class DownloadInsecureRedirectError extends Error {
+  constructor(
+    readonly from: string,
+    readonly to: string,
+  ) {
+    super(`${from} redirects to plain http: ${to}`);
+    this.name = "DownloadInsecureRedirectError";
+  }
+}
+
+const MAX_REDIRECTS = 20;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+/** GET `url`, following redirects; with `refuseHttpRedirect`, hop by hop, refusing a step from https to http. */
+async function get(url: string, opts: DownloadOptions): Promise<Response> {
+  const signal = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
+  if (!opts.refuseHttpRedirect) return fetch(url, { redirect: "follow", headers: opts.headers, signal });
+  let current = url;
+  for (let hops = 0; ; hops++) {
+    const res = await fetch(current, { redirect: "manual", headers: opts.headers, signal });
+    const location = res.headers.get("location");
+    if (!REDIRECT_STATUSES.has(res.status) || location === null) return res;
+    await res.body?.cancel();
+    if (hops === MAX_REDIRECTS) throw new Error(`too many redirects from ${url}`);
+    const next = new URL(location, current).href;
+    if (current.startsWith("https:") && next.startsWith("http:")) throw new DownloadInsecureRedirectError(current, next);
+    current = next;
+  }
+}
+
 export interface DownloadOptions {
   /** Rejects a body of this many bytes or fewer; 1 MiB by default, none when `expectedBytes` is given. */
   minBytes?: number;
@@ -50,6 +81,8 @@ export interface DownloadOptions {
   expectedBytes?: number;
   /** Without expectedBytes: compare with the response's Content-Length when it has no Content-Encoding. */
   checkLength?: boolean;
+  /** Follows redirects one by one and refuses one from https to plain http (a DownloadInsecureRedirectError). */
+  refuseHttpRedirect?: boolean;
 }
 
 /** The size the body must have: `expectedBytes`, else (with `checkLength`) a plain Content-Length. */
@@ -79,11 +112,7 @@ export async function downloadFile(url: string, dest: string, opts: DownloadOpti
   let lastErr: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const res = await fetch(url, {
-        redirect: "follow",
-        headers: opts.headers,
-        signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
-      });
+      const res = await get(url, opts);
       if (!res.ok || !res.body) throw new DownloadHttpError(res.status, res.url || url, res.statusText);
       const expected = expectedSize(res, opts);
       let streamErr: unknown;
@@ -116,7 +145,7 @@ export async function downloadFile(url: string, dest: string, opts: DownloadOpti
       return;
     } catch (err) {
       await rm(tmp, { force: true });
-      if (err instanceof ChecksumError) throw err;
+      if (err instanceof ChecksumError || err instanceof DownloadInsecureRedirectError) throw err;
       lastErr = err;
     }
   }
