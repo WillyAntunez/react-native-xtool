@@ -139,6 +139,23 @@ describe("writeResourceBundle", () => {
     expect(statSync(path.join(resources, "LatinOCRResources.bundle", "model.tflite")).mtimeMs).toBe(old.getTime());
   });
 
+  it("keeps the Info.plist's modification time when its content is unchanged (row 87)", async () => {
+    write("Resources/LatinOCRResources/model.tflite", "weights");
+    const src = source("LatinOCRResources", ["Resources/LatinOCRResources/**"]);
+    await writeResourceBundle(src, resources, () => {});
+    const info = path.join(resources, "LatinOCRResources.bundle", "Info.plist");
+    const old = new Date("2026-01-02T03:04:05.000Z");
+    utimesSync(info, old, old);
+    await writeResourceBundle(src, resources, () => {});
+    expect(statSync(info).mtimeMs).toBe(old.getTime());
+    // Other content is written with a new time.
+    writeFileSync(info, "edited");
+    utimesSync(info, old, old);
+    await writeResourceBundle(src, resources, () => {});
+    expect(readFileSync(info, "utf8")).toBe(resourceBundleInfoPlist("LatinOCRResources"));
+    expect(statSync(info).mtimeMs).not.toBe(old.getTime());
+  });
+
   it("writes its own Info.plist without writing through a linked one", async () => {
     write("r/Info.plist", "the pod's");
     write("r/a.txt");

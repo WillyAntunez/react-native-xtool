@@ -9,13 +9,13 @@
  * never reaches the cache or the package).
  */
 import { readdirSync, realpathSync, statSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import * as plist from "plist";
 import { troubleshootingUrl } from "../docs.js";
 import { PODS_LINK, PodsError } from "../pods/format.js";
-import { copyKeepingTime } from "../pods/stage.js";
+import { copyKeepingTime, unchangedTimes } from "../pods/stage.js";
 
 const micromatch = createRequire(import.meta.url)("micromatch") as {
   isMatch: (path: string, patterns: string | string[], options?: { dot?: boolean }) => boolean;
@@ -201,6 +201,10 @@ export async function writeResourceBundle(s: BundleSource, resourcesDir: string,
     log(`ℹ Left out of ${s.key}.bundle (${s.owner}), as they need Xcode's tools (asset catalogs, storyboards, xibs): ${compiled.join(", ")}`);
   }
   const bundle = path.join(resourcesDir, `${s.key}.bundle`);
+  const info = path.join(bundle, "Info.plist");
+  const infoPlist = resourceBundleInfoPlist(s.key);
+  // The last build's Info.plist times, when it holds these bytes (row 87).
+  const infoTimes = await unchangedTimes(info, infoPlist);
   await rm(bundle, { recursive: true, force: true });
   if (files.length === 0) {
     log(`⚠ ${s.key}.bundle (${s.owner}) matches no file (${s.globs.join(", ")}); it is not built`);
@@ -213,8 +217,8 @@ export async function writeResourceBundle(s: BundleSource, resourcesDir: string,
     await copyKeepingTime(realpathSync(f.src), dest);
   }
   // A matched Info.plist gives way to the bundle's own.
-  const info = path.join(bundle, "Info.plist");
   await rm(info, { force: true });
-  await writeFile(info, resourceBundleInfoPlist(s.key));
+  await writeFile(info, infoPlist);
+  if (infoTimes !== undefined) await utimes(info, infoTimes.atime, infoTimes.mtime);
   return { name: `${s.key}.bundle`, owner: s.owner, files: files.length };
 }

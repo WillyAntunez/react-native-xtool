@@ -322,6 +322,20 @@ describe("stagePodBinaries", () => {
     expect(statSync(path.join(staged.dir, "xcframeworks/MLKitVision.xcframework/Info.plist")).mtimeMs).toBe(old.getTime());
   });
 
+  it("keeps the generated files' modification times when their content is unchanged (row 87)", async () => {
+    const generated = ["Package.swift", ".gitignore", "Sources/GoogleMLKitWrapper/wrapper.c", "Sources/GoogleMLKitWrapper/include/GoogleMLKitWrapper.h"];
+    const first = await stagePodBinaries(paths, mlKit(), { iosMin: "15.1" });
+    const old = new Date("2026-01-02T03:04:05.000Z");
+    for (const f of generated) utimesSync(path.join(first.dir, f), old, old);
+    await stagePodBinaries(paths, mlKit(), { iosMin: "15.1" });
+    for (const f of generated) expect([f, statSync(path.join(first.dir, f)).mtimeMs]).toEqual([f, old.getTime()]);
+    // A changed manifest is written with a new time; the unchanged wrapper keeps its own.
+    await stagePodBinaries(paths, mlKit(), { iosMin: "16.0" });
+    expect(readFileSync(path.join(first.dir, "Package.swift"), "utf8")).toContain('.iOS("16.0")');
+    expect(statSync(path.join(first.dir, "Package.swift")).mtimeMs).not.toBe(old.getTime());
+    expect(statSync(path.join(first.dir, "Sources/GoogleMLKitWrapper/wrapper.c")).mtimeMs).toBe(old.getTime());
+  });
+
   it("writes a .gitignore with * in pod-binaries", async () => {
     const staged = await stagePodBinaries(paths, mlKit(), { iosMin: "15.1" });
     expect(readFileSync(path.join(staged.dir, ".gitignore"), "utf8")).toBe("*\n");
