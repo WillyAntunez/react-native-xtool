@@ -3,6 +3,7 @@
 // AUTO-SCAFFOLDED-VERSION: 20
 // rn-xtool-scaffold-revision: 4
 // rn-xtool-swift-importer-paths: ["ios",".","rn-spm-swift"]
+// rn-xtool-pods: SwiftUIIntrospect=1.5.0
 // Cache slot: 0.86.3/dual-flavor
 // Edit the contents below if needed and re-run `npx patch-package <dep-name>`
 // to persist across `npm install`. To regenerate from the podspec, remove

@@ -467,12 +467,20 @@ CocoaPods pod (react-native-pager-view 9.x: `s.dependency "SwiftUIIntrospect", '
 dropped it with "Unknown dependency ... Edit manually if needed", so the scaffolded package failed with
 `unable to resolve module dependency: 'SwiftUIIntrospect'` and had to be edited by hand.
 
-Fix: a small built-in map `KNOWN_POD_SPM_PACKAGES` (pod → `{ url, exact, product }`) turns a known pod into
-`.package(url: "<url>", exact: "<exact>")` + `.product(name: "<product>", package: "<identity>")` (identity =
-the URL's last path component). Today it holds one entry,
+Fix: a pod table (pod → `{ url, exact, products, subspecs?, forwardHeaders? }`) turns a known pod into
+`.package(url: "<url>", exact: "<exact>")` + one `.product(name: "<product>", package: "<identity>")` per product
+(identity = the URL's last path component). A `<pod>/<subspec>` dependency takes the products `subspecs` names for it,
+else the entry's; an entry with `product: "<name>"` reads as `products: ["<name>"]`. The built-in baseline,
+`KNOWN_POD_SPM_PACKAGES`, holds one entry,
 `SwiftUIIntrospect → https://github.com/siteline/swiftui-introspect exact "1.5.0"` (the newest 1.x, within the
-podspec's `~> 1.0`; pinned because `ios-xtool/` has no committed Package.resolved, so a range would drift). An unmapped pod gets one warning per pod (subspecs collapse to the
-root pod): `Dependency "<pod>" is a CocoaPods pod with no known SwiftPM equivalent; the scaffolded package
+podspec's `~> 1.0`; pinned because `ios-xtool/` has no committed Package.resolved, so a range would drift).
+`loadPodTable` merges over it the `pods` object of the JSON file named by the environment variable
+`RN_SPM_POD_TABLE` (per pod, the file's entry wins); rn-xtool writes that file with its own entries and the app's.
+A file that cannot be read or has the wrong shape is an error result for each library scaffolded with it:
+`react-native spm scaffold: cannot read the pod table <file>: <reason>`. A manifest that pins at least one pod records
+the pins, sorted by pod, on a line after the importer-paths line (or the revision line):
+`// rn-xtool-pods: AppAuth=3.0.0, SwiftUIIntrospect=1.5.0`. An unmapped pod gets one warning per pod (subspecs
+collapse to the root pod): `Dependency "<pod>" is a CocoaPods pod with no known SwiftPM equivalent; the scaffolded package
 may fail to build — add it to the pod→SwiftPM map in scaffold-package-swift.js`. Expo-named pods
 (`expo-*`, `Expo*`, `EX*`) keep the old "Unknown dependency" warning. A remote package makes the first build
 of a clean `.build` need network (SwiftPM clones it). Verified on react-native-pager-view 9.0.7: re-scaffolded

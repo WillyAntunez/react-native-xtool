@@ -160,6 +160,11 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
     it("scaffold-package-swift.js has the fix 25 hunk", () => {
       expect(src("scaffold-package-swift.js")).toContain("onlyDeps?: ReadonlyArray<string>");
     });
+    it("scaffold-package-swift.js has the pod table file hunk", () => {
+      const f = src("scaffold-package-swift.js");
+      expect(f).toContain("function loadPodTable");
+      expect(f).toContain("// rn-xtool-pods: ");
+    });
   });
 
   it("gives the per-app header farm a header-less module map, so Objective-C imports it textually", () => {
@@ -988,7 +993,7 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
   });
 
   describe("CocoaPods dependencies mapped to SwiftPM packages", () => {
-    type ExtSpec = Spec & { externalPackages: { pod: string; url: string; from: string; product: string; package: string }[] };
+    type ExtSpec = Spec & { externalPackages: { pod: string; url: string; exact: string; products: string[]; package: string }[] };
     function lib(deps: string): string {
       const root = tempDir();
       mkdirSync(path.join(root, "ios"), { recursive: true });
@@ -1015,7 +1020,7 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
           pod: "SwiftUIIntrospect",
           url: "https://github.com/siteline/swiftui-introspect",
           exact: "1.5.0",
-          product: "SwiftUIIntrospect",
+          products: ["SwiftUIIntrospect"],
           package: "swiftui-introspect",
         },
       ]);
@@ -1951,5 +1956,150 @@ describe("scaffolder fixes 20–25 (vendor/rn-spm)", () => {
       const run = twoLibs({ force: false });
       expect(run.statuses).toEqual({ a: "written", b: "written" });
     });
+  });
+});
+
+// Fix 13's pod table, read from the file RN_SPM_POD_TABLE names, exercised on the vendored copy, so it never skips.
+describe("scaffolder fix 13: the pod table (vendor/rn-spm)", () => {
+  const req = createRequire(import.meta.url);
+  const load = <T>(f: string) => req(path.join(VENDORED_RN_SPM, f)) as T;
+  const APPAUTH = { url: "https://github.com/openid/AppAuth-iOS", exact: "3.0.0", products: ["AppAuth"] };
+  /** A clang-only library whose podspec carries `deps`, as a temp dir. */
+  function lib(deps: string): string {
+    const root = tempDir();
+    mkdirSync(path.join(root, "ios"), { recursive: true });
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "foo", version: "1.0.0" }));
+    writeFileSync(path.join(root, "ios/Foo.h"), "#import <Foundation/Foundation.h>\n");
+    writeFileSync(path.join(root, "ios/Foo.m"), '#import "Foo.h"\n');
+    writeFileSync(
+      path.join(root, "Foo.podspec"),
+      `Pod::Spec.new do |s|\n  s.name = "Foo"\n  s.source_files = "ios/**/*.{h,m}"\n  s.dependency "React-Core"\n${deps}\nend\n`,
+    );
+    return root;
+  }
+  /** A pod table file with the given `pods`, as rn-xtool writes it. */
+  function tableFile(pods: unknown): string {
+    const file = path.join(tempDir(), "rn-xtool-pods.json");
+    writeFileSync(file, JSON.stringify({ pods }));
+    return file;
+  }
+  /** Runs `run` with RN_SPM_POD_TABLE set to `file` (unset when undefined). */
+  function withTable<T>(file: string | undefined, run: () => T): T {
+    const saved = process.env["RN_SPM_POD_TABLE"];
+    if (file === undefined) delete process.env["RN_SPM_POD_TABLE"];
+    else process.env["RN_SPM_POD_TABLE"] = file;
+    try {
+      return run();
+    } finally {
+      if (saved === undefined) delete process.env["RN_SPM_POD_TABLE"];
+      else process.env["RN_SPM_POD_TABLE"] = saved;
+    }
+  }
+  const scaffold = (deps: string, file: string | undefined) =>
+    withTable(file, () => scaffoldLibraries(VENDORED_RN_SPM, { foo: lib(deps) }));
+  const manifest = (run: ReturnType<typeof scaffoldLibraries>) => {
+    expect(run.statuses["foo"]).toBe("written");
+    return run.files["foo/Package.swift"]!;
+  };
+  const APPAUTH_DEP = `  s.dependency 'AppAuth', '>= 1.7.6'`;
+
+  it("13: reads the pod table file named by RN_SPM_POD_TABLE over the built-in one", () => {
+    const pkg = manifest(scaffold(APPAUTH_DEP, tableFile({ AppAuth: APPAUTH })));
+    expect(pkg).toContain('.package(url: "https://github.com/openid/AppAuth-iOS", exact: "3.0.0")');
+    expect(pkg).toContain('.product(name: "AppAuth", package: "appauth-ios")');
+    expect(pkg).not.toContain("no known SwiftPM equivalent");
+    // Per pod, the file's entry wins over the built-in one.
+    const pinned = manifest(
+      scaffold(
+        `  s.dependency "SwiftUIIntrospect", '~> 1.0'`,
+        tableFile({ SwiftUIIntrospect: { url: "https://github.com/siteline/swiftui-introspect", exact: "1.6.0", products: ["SwiftUIIntrospect"] } }),
+      ),
+    );
+    expect(pinned).toContain('.package(url: "https://github.com/siteline/swiftui-introspect", exact: "1.6.0")');
+    expect(pinned).not.toContain('exact: "1.5.0"');
+  });
+
+  it("13: maps a pod subspec to its products", () => {
+    const table = tableFile({
+      GoogleUtilities: {
+        url: "https://github.com/google/GoogleUtilities",
+        exact: "8.1.0",
+        products: ["GULEnvironment"],
+        subspecs: { Logger: ["GULLogger"], UserDefaults: ["GULUserDefaults"] },
+      },
+    });
+    const pkg = manifest(scaffold(`  s.dependency "GoogleUtilities/Logger"\n  s.dependency "GoogleUtilities/UserDefaults"`, table));
+    expect(pkg.match(/\.package\(url: "https:\/\/github\.com\/google\/GoogleUtilities", exact: "8\.1\.0"\)/g)).toHaveLength(1);
+    expect(pkg).toContain('.product(name: "GULLogger", package: "googleutilities")');
+    expect(pkg).toContain('.product(name: "GULUserDefaults", package: "googleutilities")');
+    expect(pkg).not.toContain('.product(name: "GULEnvironment"');
+    // A subspec the entry does not name, or the pod itself, gets the entry's products.
+    expect(manifest(scaffold(`  s.dependency "GoogleUtilities/Other"`, table))).toContain(
+      '.product(name: "GULEnvironment", package: "googleutilities")',
+    );
+  });
+
+  it("13: still reads an entry with one product", () => {
+    const pkg = manifest(scaffold(APPAUTH_DEP, tableFile({ AppAuth: { url: APPAUTH.url, exact: "3.0.0", product: "AppAuth" } })));
+    expect(pkg).toContain('.product(name: "AppAuth", package: "appauth-ios")');
+    const { KNOWN_POD_SPM_PACKAGES } = load<{ KNOWN_POD_SPM_PACKAGES: object }>("scaffold-package-swift.js");
+    expect(KNOWN_POD_SPM_PACKAGES).toEqual({
+      SwiftUIIntrospect: { url: "https://github.com/siteline/swiftui-introspect", exact: "1.5.0", products: ["SwiftUIIntrospect"] },
+    });
+  });
+
+  it("13: records the pinned pods on the rn-xtool-pods line", () => {
+    const table = tableFile({ AppAuth: APPAUTH });
+    const pkg = manifest(scaffold(`${APPAUTH_DEP}\n  s.dependency "SwiftUIIntrospect", '~> 1.0'`, table));
+    // Clang-only, searching beyond its public headers: after the importer-paths line.
+    expect(pkg).toMatch(
+      /^\/\/ rn-xtool-scaffold-revision: 4\n\/\/ rn-xtool-swift-importer-paths: \[.*\]\n\/\/ rn-xtool-pods: AppAuth=3\.0\.0, SwiftUIIntrospect=1\.5\.0\n\/\/ Cache slot: /m,
+    );
+    // Pure Swift (no importer-paths line): after the revision line.
+    const swift = tempDir();
+    writeFileSync(path.join(swift, "package.json"), JSON.stringify({ name: "foo", version: "1.0.0" }));
+    mkdirSync(path.join(swift, "ios"));
+    writeFileSync(path.join(swift, "ios/Foo.swift"), "import Foundation\n");
+    writeFileSync(
+      path.join(swift, "Foo.podspec"),
+      `Pod::Spec.new do |s|\n  s.name = "Foo"\n  s.source_files = "ios/**/*.swift"\n${APPAUTH_DEP}\nend\n`,
+    );
+    const swiftPkg = manifest(withTable(table, () => scaffoldLibraries(VENDORED_RN_SPM, { foo: swift })));
+    expect(swiftPkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 4\n\/\/ rn-xtool-pods: AppAuth=3\.0\.0\n/m);
+    // No pinned pod, no line.
+    expect(manifest(scaffold("", table))).not.toContain("rn-xtool-pods");
+  });
+
+  it.each([
+    ["a missing file", (dir: string) => path.join(dir, "absent.json")],
+    ["a file that is not JSON", (dir: string) => (writeFileSync(path.join(dir, "t.json"), "{ pods"), path.join(dir, "t.json"))],
+    ["a file without a pods object", (dir: string) => (writeFileSync(path.join(dir, "t.json"), '{"pods": []}'), path.join(dir, "t.json"))],
+    [
+      "an entry without products",
+      (dir: string) => (writeFileSync(path.join(dir, "t.json"), JSON.stringify({ pods: { AppAuth: { url: APPAUTH.url, exact: "3.0.0" } } })), path.join(dir, "t.json")),
+    ],
+    [
+      "an entry without a url",
+      (dir: string) => (writeFileSync(path.join(dir, "t.json"), JSON.stringify({ pods: { AppAuth: { exact: "3.0.0", products: ["AppAuth"] } } })), path.join(dir, "t.json")),
+    ],
+  ])("13: an unreadable pod table is the library's error, naming the file (%s)", (_name, make) => {
+    const file = make(tempDir());
+    const run = scaffold(APPAUTH_DEP, file);
+    expect(run.statuses["foo"]).toBe("error");
+    expect(run.results[0]!.reason).toMatch(new RegExp(`^react-native spm scaffold: cannot read the pod table ${file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}: .+`));
+    expect(existsSync(path.join(run.roots["foo"]!, "Package.swift"))).toBe(false);
+  });
+
+  it("13: without the variable, the built-in table", () => {
+    const pkg = manifest(scaffold(`  s.dependency "SwiftUIIntrospect", '~> 1.0'\n${APPAUTH_DEP}`, undefined));
+    expect(pkg).toContain('.package(url: "https://github.com/siteline/swiftui-introspect", exact: "1.5.0")');
+    expect(pkg).toContain('.product(name: "SwiftUIIntrospect", package: "swiftui-introspect")');
+    expect(pkg).not.toContain("AppAuth-iOS");
+    expect(pkg).toContain("// rn-xtool-pods: SwiftUIIntrospect=1.5.0\n");
+    expect(manifest(scaffold(APPAUTH_DEP, ""))).not.toContain("AppAuth-iOS");
+    const { loadPodTable, KNOWN_POD_SPM_PACKAGES } = load<{ loadPodTable(): object; KNOWN_POD_SPM_PACKAGES: object }>(
+      "scaffold-package-swift.js",
+    );
+    expect(withTable(undefined, loadPodTable)).toEqual(KNOWN_POD_SPM_PACKAGES);
   });
 });
