@@ -60,6 +60,9 @@ describe("rewriteFrameworkModuleMap", () => {
     ["a framework submodule", "framework module A {\n  explicit framework module B {\n    header \"B.h\"\n  }\n}\n"],
     ["a framework submodule", "framework module A {\n  framework module B {}\n}\n"],
     ["another framework module", "framework module A {}\nframework module A_Private {}\n"],
+    ['an umbrella directory ("Headers")', 'framework module A {\n  umbrella "Headers"\n  export *\n}\n'],
+    ['a path relative to the framework ("../PrivateHeaders/A+Private.h")', 'framework module A {\n  private header "../PrivateHeaders/A+Private.h"\n}\n'],
+    ['a path relative to the framework ("/usr/include/a.h")', 'module A {\n  textual header "/usr/include/a.h"\n}\n'],
   ])("stops on %s", (what, text) => {
     expect(() => rewriteFrameworkModuleMap(text, MAP_REL, LABEL)).toThrow(
       new PodsError(`${LABEL}: ${MAP_REL} names the framework bundle (${what}), which rn-xtool cannot rewrite for SwiftPM. See ${LINK}`),

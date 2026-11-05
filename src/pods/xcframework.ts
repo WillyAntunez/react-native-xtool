@@ -16,7 +16,10 @@ export const POD_SLICE: XcframeworkLibrary = {
 };
 
 interface Token {
+  /** An identifier, or `""` for a string literal. */
   word: string;
+  /** A string literal's text. */
+  str?: string;
   start: number;
   depth: number;
 }
@@ -35,8 +38,10 @@ function tokens(text: string): Token[] {
       const end = text.indexOf("*/", i + 2);
       i = end === -1 ? text.length : end + 2;
     } else if (c === '"') {
+      const start = i;
       i++;
       while (i < text.length && text[i] !== '"') i += text[i] === "\\" ? 2 : 1;
+      out.push({ word: "", str: text.slice(start + 1, i), start, depth });
       i++;
     } else if (c === "{") {
       depth++;
@@ -62,13 +67,20 @@ function cannotRewrite(label: string, rel: string, what: string): PodsError {
 /**
  * Drops the leading `framework` of the one top-level `framework module <Name>`, and keeps everything else (umbrella,
  * export, `module *`, every `link` line, comments). A map without a framework module is returned as it is. Throws on a
- * framework submodule (`explicit framework module`, or one inside another module) or a second framework module.
+ * framework submodule (`explicit framework module`, or one inside another module), a second framework module, an
+ * umbrella directory, or a header path that is absolute or goes up with `..`.
  */
 export function rewriteFrameworkModuleMap(text: string, file: string, label: string): string {
   const words = tokens(text);
   let drop: { start: number; end: number } | undefined;
   for (let n = 0; n < words.length; n++) {
     const t = words[n]!;
+    // The headers move to Headers/<Name>/ (row 77): an umbrella directory, or a path that reaches outside the headers,
+    // would no longer name the same files.
+    if (t.str !== undefined && words[n - 1]?.word === "umbrella") throw cannotRewrite(label, file, `an umbrella directory ("${t.str}")`);
+    if (t.str !== undefined && words[n - 1]?.word === "header" && (t.str.startsWith("/") || t.str.split("/").includes(".."))) {
+      throw cannotRewrite(label, file, `a path relative to the framework ("${t.str}")`);
+    }
     if (t.word !== "framework" || words[n - 1]?.word === "link") continue;
     if (words[n + 1]?.word !== "module") continue;
     if (words[n - 1]?.word === "explicit" || t.depth > 0) throw cannotRewrite(label, file, "a framework submodule");
