@@ -227,6 +227,13 @@ describe("build", () => {
     const ctx = (t.writeIosXtool.mock.calls[0] as unknown[])[0] as { frameworks: { name: string }[] };
     expect(ctx.frameworks.map((f) => f.name)).toEqual(["A"]);
   });
+  it("passes the config's pods to runRnSpm", async () => {
+    const pods = { AppAuth: { url: "https://github.com/example/AppAuth-iOS", exact: "2.1.0", products: ["AppAuth"] } };
+    const t = setup({ cfg: { pods }, project: { kind: "bare" } });
+    const runRnSpm = vi.fn(async () => {});
+    await build(t.root, {}, { ...t.deps, runRnSpm });
+    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ pods }));
+  });
   it("passes the scripts source to runRnSpm", async () => {
     const t = setup({ project: { kind: "bare", rnScripts: "vendored" } });
     const runRnSpm = vi.fn(async () => {});

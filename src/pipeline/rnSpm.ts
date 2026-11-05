@@ -7,6 +7,8 @@ import { swiftHeadersEnv, type ProjectPaths } from "../paths.js";
 import type { ProjectKind } from "../project/index.js";
 import type { ExpoPlugin, RnScripts } from "../versions.js";
 import { packageRoot, runArgv, toolEnv } from "../tools/exec.js";
+import type { PodEntry } from "../config.js";
+import { POD_TABLE_ENV, mergedPodTable, writePodTable, type PodTable } from "../project/podTable.js";
 
 export const AUTOLINKING_CONFIG_COMMAND = [
   "npx",
@@ -181,12 +183,14 @@ function scaffoldFailureMessage(failed: ScaffoldOutcome["failed"]): string {
 /**
  * Env of every React Native run. RN's scaffolder warns about mixed-language libraries when the
  * Swift headers dir is unset, and any manifest it evaluates must see the same value the xtool build
- * uses. The vendored Expo plugin takes its precompiled modules from `ios/build/expo-precompiled`.
+ * uses. The vendored Expo plugin takes its precompiled modules from `ios/build/expo-precompiled`. The scaffolder
+ * maps CocoaPods pods with the pod table file, when given.
  */
-export function rnSpmEnv(paths: ProjectPaths, expoPlugin: ExpoPlugin): Record<string, string> {
+export function rnSpmEnv(paths: ProjectPaths, expoPlugin: ExpoPlugin, podTableFile?: string): Record<string, string> {
   return {
     ...swiftHeadersEnv(paths.iosXtool),
     ...(expoPlugin === "vendored" ? { EXPO_PRECOMPILED_MODULES_PATH: paths.expoPrecompiled } : {}),
+    ...(podTableFile !== undefined ? { [POD_TABLE_ENV]: podTableFile } : {}),
   };
 }
 
@@ -205,6 +209,7 @@ export interface RnSpmDeps {
   runner: RnRunner;
   log: (s: string) => void;
   rnDir?: string;
+  writePodTable: (paths: ProjectPaths, table: PodTable) => string;
 }
 
 /** Runs a command with nice, streaming its output live while buffering it. */
@@ -289,7 +294,14 @@ function tail(output: string): string {
 
 export async function runRnSpm(
   paths: ProjectPaths,
-  opts: { rnArtifactsDir?: string; kind: ProjectKind; rnScripts: RnScripts; expoPlugin: ExpoPlugin },
+  opts: {
+    rnArtifactsDir?: string;
+    kind: ProjectKind;
+    rnScripts: RnScripts;
+    expoPlugin: ExpoPlugin;
+    /** The config's pods, merged over rn-xtool's table for the scaffolder. */
+    pods?: Record<string, PodEntry>;
+  },
   deps: Partial<RnSpmDeps> = {},
 ): Promise<void> {
   // Expo 58 runs `setup-apple-spm.js add --yes`, which may edit the xcodeproj: never pick it by default.
@@ -313,7 +325,9 @@ export async function runRnSpm(
   // Bare apps and Expo SDK 57 never run `setup-apple-spm.js add|update`: only the driver.
   const driver = opts.kind === "bare" || opts.expoPlugin === "vendored";
   const rnArgs = driver ? rnSpmGenerateArgs(paths, opts, rnDir) : rnSpmArgs(paths, opts, rnDir);
-  const env = rnSpmEnv(paths, opts.expoPlugin);
+  // Every run gets the table: the scaffold step reads it, whichever project kind runs it.
+  const podTableFile = (deps.writePodTable ?? writePodTable)(paths, mergedPodTable(opts.pods));
+  const env = rnSpmEnv(paths, opts.expoPlugin, podTableFile);
 
   const first = await runner("node", rnArgs, { cwd: paths.ios, env });
   if (first.exitCode === 0) return;

@@ -9,9 +9,10 @@ work as Linux but is untested so far. arm64 Linux is untested (the xtool checksu
    run. CI does not compile for iOS or touch a device, so the clean-machine check below still applies.
 2. `npm ci && npm test && npm run lint` are green locally too (with `node scripts/fetch-test-tarballs.mjs` run first).
 3. `CHANGELOG.md` has the release under a new version heading (move the `Unreleased` entries there, with the date).
-4. `npm pack --dry-run` lists only `bin/`, `dist/`, `patches/`, `scripts/`, `shims/`, `templates/` (the first-launch
-   helper's sources, copied into the app), `vendor/` (the vendored SwiftPM scripts and Expo plugin, needed at
-   runtime), `README.md`, `CHANGELOG.md`, `LICENSE` and `package.json`. No `tests/`, `docs/`, `src/` or `.superpowers/`.
+4. `npm pack --dry-run` lists only `bin/`, `data/` (the shipped pod table, `data/pods.json`, read at runtime),
+   `dist/`, `patches/`, `scripts/`, `shims/`, `templates/` (the first-launch helper's sources, copied into the app),
+   `vendor/` (the vendored SwiftPM scripts and Expo plugin, needed at runtime), `README.md`, `CHANGELOG.md`, `LICENSE`
+   and `package.json`. No `tests/`, `docs/`, `src/` or `.superpowers/`.
 5. On a clean machine (or a fresh WSL2 distro) install the packed tarball and run `rn-xtool doctor`:
    `npm pack && npm i -g ./react-native-xtool-<version>.tgz && rn-xtool doctor`.
 6. On a device, a fresh install of a reference app without the dev client shows its icon on the home screen and
@@ -80,6 +81,10 @@ skip, and the vitest summary says so. Before committing a scaffolder change, run
 tests/vendor-rn-spm.test.ts tests/patches.test.ts tests/patches-upstream.test.ts tests/rn-scaffolder.test.ts` and check
 that none of the provenance, identical-patch, upstream dry-run or "the patched RN files carry the patch" tests is
 skipped. Each new fix adds one hunk test to "the patched RN files carry the patch".
+
+A CocoaPods pod mapped to its SwiftPM package is data, not a scaffolder change: add it to `data/pods.json`, which
+`tests/podTable.test.ts` checks with the config's `pods` rules. The scaffolder's own `KNOWN_POD_SPM_PACKAGES` keeps its
+one baseline entry, so the 0.88 patches and the scaffold revision stay as they are.
 
 ## Drift watch
 

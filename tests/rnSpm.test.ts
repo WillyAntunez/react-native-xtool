@@ -17,11 +17,13 @@ import {
 } from "../src/pipeline/rnSpm.js";
 import { projectPaths, swiftHeadersEnv, type ProjectPaths } from "../src/paths.js";
 import { packageRoot } from "../src/tools/exec.js";
+import { mergedPodTable, type PodTable } from "../src/project/podTable.js";
 import path from "node:path";
 
 const RESULTS = "/proj/ios/build/rn-xtool-scaffold-results.json";
 const paths = { root: "/proj", ios: "/proj/ios", iosXtool: "/proj/ios-xtool", scaffoldResults: RESULTS } as unknown as ProjectPaths;
 const SWIFT_HEADERS = "/proj/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos";
+const POD_TABLE = "/proj/ios/build/rn-xtool-pods.json";
 const rnDir = "/proj/node_modules/react-native";
 const INST = { rnScripts: "installed" } as const;
 const missing = (n: string) =>
@@ -40,10 +42,16 @@ function harness(results: { exitCode: number; output: string }[]) {
     calls.push({ cmd, args, cwd: o.cwd, ...(o.env ? { env: o.env } : {}) });
     return results.shift() ?? { exitCode: 0, output: "" };
   };
+  const tables: PodTable[] = [];
+  const writePodTable = (_p: ProjectPaths, table: PodTable) => {
+    tables.push(table);
+    return POD_TABLE;
+  };
   return {
     calls,
     logs,
-    deps: { runner, log: (s: string) => logs.push(s), rnDir },
+    tables,
+    deps: { runner, log: (s: string) => logs.push(s), rnDir, writePodTable },
   };
 }
 
@@ -190,6 +198,7 @@ describe("Expo on the driver", () => {
     const env = {
       RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS,
       EXPO_PRECOMPILED_MODULES_PATH: "/proj/ios/build/expo-precompiled",
+      RN_SPM_POD_TABLE: POD_TABLE,
     };
     expect(h.calls).toEqual([
       { cmd: "node", args: generate, cwd: "/proj/ios", env },
@@ -197,14 +206,14 @@ describe("Expo on the driver", () => {
       { cmd: persistScaffoldArgv("lib-a")[0], args: persistScaffoldArgv("lib-a")[1], cwd: "/proj" },
       { cmd: "node", args: generate, cwd: "/proj/ios", env },
     ]);
-    expect(rnSpmEnv(full, "vendored")).toEqual(env);
+    expect(rnSpmEnv(full, "vendored", POD_TABLE)).toEqual(env);
   });
 
   it("keeps Expo 58's add|update argv and env, and scaffolds through the driver", async () => {
     const setup = `${rnDir}/scripts/setup-apple-spm.js`;
     const cfg = '["npx","expo-modules-autolinking","react-native-config","--json","--platform","ios"]';
     const offline = ["--download", "skip", "--artifacts", "/art"];
-    const env = { RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS };
+    const env = { RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS, RN_SPM_POD_TABLE: POD_TABLE };
     const h = harness([
       { exitCode: 1, output: missing("lib-a") },
       { exitCode: 0, output: "" },
@@ -241,6 +250,7 @@ describe("Expo on the driver", () => {
       { cmd: "node", args: [setup, "add", "--config-command", cfg, "--yes", ...offline], cwd: "/proj/ios", env },
     ]);
     expect(rnSpmEnv(full, "installed")).toEqual(swiftHeadersEnv(full.iosXtool));
+    expect(rnSpmEnv(full, "installed", POD_TABLE)).toEqual({ ...swiftHeadersEnv(full.iosXtool), RN_SPM_POD_TABLE: POD_TABLE });
 
     const bare = harness([{ exitCode: 0, output: "" }]);
     await runRnSpm(full, { kind: "bare", rnScripts: "vendored", expoPlugin: "installed", rnArtifactsDir: "/art" }, bare.deps);
@@ -264,7 +274,7 @@ describe("runRnSpm", () => {
         cmd: "node",
         args: rnSpmGenerateArgs(paths, INST, rnDir),
         cwd: "/proj/ios",
-        env: { RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS },
+        env: { RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS, RN_SPM_POD_TABLE: POD_TABLE },
       },
     ]);
     const expo = harness([{ exitCode: 0, output: "" }]);
@@ -303,7 +313,7 @@ describe("runRnSpm", () => {
     ]);
     for (const c of [h.calls[0]!, h.calls[1]!, h.calls[3]!]) {
       expect(c.cwd).toBe("/proj/ios");
-      expect(c.env).toEqual({ RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS });
+      expect(c.env).toEqual({ RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS, RN_SPM_POD_TABLE: POD_TABLE });
     }
   });
 
@@ -388,9 +398,40 @@ describe("runRnSpm", () => {
     await runRnSpm(paths, { kind: "expo", rnScripts: "installed", expoPlugin: "installed" }, h.deps);
     const rnRuns = h.calls.filter((c) => c.cmd === "node");
     expect(rnRuns.map((c) => c.args[1])).toEqual([expect.stringMatching(/add|update/), "--rn-dir", expect.stringMatching(/add|update/)]);
-    for (const c of rnRuns) expect(c.env).toEqual({ RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS });
+    for (const c of rnRuns) expect(c.env).toEqual({ RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS, RN_SPM_POD_TABLE: POD_TABLE });
     expect(h.calls[1]!.args).toContain("--scaffold");
     expect(h.calls[2]!.args[1]).toBe("pager");
+  });
+
+  it("passes the pod table file to every React Native run", async () => {
+    const pods = { AppAuth: { url: "https://github.com/example/AppAuth-iOS", exact: "2.1.0", products: ["AppAuth"] } };
+    for (const opts of [
+      { kind: "bare", rnScripts: "installed", expoPlugin: "installed" },
+      { kind: "bare", rnScripts: "vendored", expoPlugin: "installed" },
+      { kind: "expo", rnScripts: "vendored", expoPlugin: "vendored" },
+      { kind: "expo", rnScripts: "installed", expoPlugin: "installed" },
+    ] as const) {
+      const h = harness([
+        { exitCode: 1, output: missing("lib-a") },
+        { exitCode: 0, output: "" },
+        { exitCode: 0, output: "" },
+        { exitCode: 0, output: "" },
+      ]);
+      await runRnSpm(paths, { ...opts, pods }, h.deps);
+      const rnRuns = h.calls.filter((c) => c.cmd === "node");
+      expect(rnRuns, opts.kind).toHaveLength(3);
+      expect(rnRuns[1]!.args).toContain("--scaffold");
+      for (const c of rnRuns) expect(c.env?.["RN_SPM_POD_TABLE"]).toBe(POD_TABLE);
+      // The table is written once, before the first run: the config's entry over rn-xtool's own and the scaffolder's.
+      expect(h.tables).toEqual([mergedPodTable(pods)]);
+      expect(h.tables[0]!.pods["AppAuth"]).toEqual(pods.AppAuth);
+      expect(h.tables[0]!.source["AppAuth"]).toBe("config");
+    }
+    // Without a config entry, still the shipped table.
+    const h = harness([{ exitCode: 0, output: "" }]);
+    await runRnSpm(paths, { kind: "bare", rnScripts: "installed", expoPlugin: "installed" }, h.deps);
+    expect(h.tables).toEqual([mergedPodTable()]);
+    expect(h.calls[0]!.env?.["RN_SPM_POD_TABLE"]).toBe(POD_TABLE);
   });
 
   it("forwards artifact flags to the scaffold run", async () => {
@@ -444,7 +485,11 @@ describe("runRnSpm", () => {
       if (calls.length === 3) throw new Error("spawn ENOENT\nstack");
       return results.shift() ?? { exitCode: 0, output: "" };
     };
-    await runRnSpm(paths, { kind: "expo", rnScripts: "installed", expoPlugin: "installed" }, { runner, log: (s) => logs.push(s), rnDir });
+    await runRnSpm(
+      paths,
+      { kind: "expo", rnScripts: "installed", expoPlugin: "installed" },
+      { runner, log: (s) => logs.push(s), rnDir, writePodTable: () => POD_TABLE },
+    );
     expect(calls).toHaveLength(4);
     expect(logs.some((l) => l.startsWith("⚠") && l.includes("spawn ENOENT"))).toBe(true);
   });

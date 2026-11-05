@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { depsFingerprint } from "../deps.js";
-import { loadConfig, type ExpoXtoolConfig } from "../config.js";
+import { loadConfig, type ExpoXtoolConfig, type PodEntry } from "../config.js";
 import { readFlavoredFrameworks, stageFrameworks, type RuntimeFramework } from "../frameworks.js";
 import { hasDevSupport, writeIosXtool } from "../generate/iosXtool.js";
 import { detectLanIp, detectLanRoute, findFreePort, isMetroRunning, isPortFree, suspiciousLanRoute, tunnelWarning, type LanRoute } from "../net.js";
@@ -126,7 +126,7 @@ export interface BuildDeps {
   prepareRnArtifacts: (paths: ProjectPaths, rnVersion: string) => Promise<string>;
   runRnSpm: (
     paths: ProjectPaths,
-    opts: { rnArtifactsDir?: string; kind: ProjectKind; rnScripts: RnScripts; expoPlugin: ExpoPlugin },
+    opts: { rnArtifactsDir?: string; kind: ProjectKind; rnScripts: RnScripts; expoPlugin: ExpoPlugin; pods?: Record<string, PodEntry> },
   ) => Promise<void>;
   buildJsi: (paths: ProjectPaths, opts?: { rnHeaders?: JsiRnHeaders; headersXcframework?: boolean }) => Promise<RuntimeFramework>;
   generateAppConfig: (paths: ProjectPaths) => Promise<void>;
@@ -272,6 +272,7 @@ export async function build(
       kind: project.kind,
       rnScripts: project.rnScripts,
       expoPlugin: project.expoPlugin,
+      ...(config.pods !== undefined ? { pods: config.pods } : {}),
     }),
   );
   const resources = unbundledResourcesLine(d.unbundledResources(paths.root));
