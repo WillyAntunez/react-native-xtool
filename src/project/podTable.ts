@@ -91,7 +91,8 @@ function compareSegments(a: readonly number[], b: readonly number[]): number {
  * Whether `version` meets every CocoaPods requirement in `requirements`: `= x` or a bare `x`, `!=`, `>`, `>=`, `<`, `<=`
  * and `~> a.b` (>= a.b, < a+1) or `~> a.b.c` (>= a.b.c, < a.(b+1)). Items are trimmed and may hold several requirements
  * separated by commas. Segments compare numerically. A requirement rn-xtool cannot read (an interpolation, a
- * prerelease) is taken as met: the check warns only about a mismatch it can show.
+ * prerelease) is taken as met: the check warns only about a mismatch it can show. The binary-pod resolver chooses
+ * versions with the strict matcher instead (`satisfiesAll` in src/pods/versions.ts).
  */
 export function podRequirementSatisfied(version: string, requirements: readonly string[]): boolean {
   const have = segments(version.trim());
