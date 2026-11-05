@@ -28,7 +28,14 @@ import {
 } from "../project/earlyChecks.js";
 import { entitlementLines, readEntitlements, type AppEntitlements } from "../project/entitlements.js";
 import { mergedPodTable, type PodTable } from "../project/podTable.js";
-import { readProject, RN_CLI_MISSING, type ProjectInfo, type ProjectKind, type ReadProjectOptions } from "../project/index.js";
+import {
+  detectProjectKind,
+  readProject,
+  RN_CLI_MISSING,
+  type ProjectInfo,
+  type ProjectKind,
+  type ReadProjectOptions,
+} from "../project/index.js";
 import { appIconRecord } from "../generate/appIcon.js";
 import { readState, writeState, type BuildState } from "../state.js";
 import { run } from "../tools/exec.js";
@@ -232,9 +239,17 @@ export async function build(
   };
   // Before reading the project or writing anything (prebuild, --clean, patches): these setups would otherwise fail
   // minutes into rn-spm or SwiftPM. A Package.swift the project's patches/ create counts already, as in doctor.
+  // The kind as readProject will detect it; undetectable here, the checks run without it and readProject says why.
+  let kind: ProjectKind | undefined;
+  try {
+    kind = detectProjectKind(root, config.projectKind);
+  } catch {
+    kind = undefined;
+  }
   const libraryChecks: LibraryCheckOptions = {
     ...(config.pods !== undefined ? { pods: config.pods } : {}),
     ...(config.exclude !== undefined ? { exclude: config.exclude } : {}),
+    ...(kind !== undefined ? { kind } : {}),
   };
   // What the config leaves out comes first: a refusal below may point at "exclude".
   for (const line of excludeLines(root, config.exclude ?? [])) d.log(line);

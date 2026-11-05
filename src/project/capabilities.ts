@@ -318,6 +318,7 @@ export async function detectCapabilities(projectRoot: string, opts: ProbeOptions
   const libraryChecks: LibraryCheckOptions = {
     ...(config.pods !== undefined ? { pods: config.pods } : {}),
     ...(config.exclude !== undefined ? { exclude: config.exclude } : {}),
+    ...(kind !== undefined ? { kind } : {}),
   };
   const podTable = mergedPodTable(config.pods);
   const caps: Capabilities = {

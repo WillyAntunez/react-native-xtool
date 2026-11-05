@@ -594,6 +594,31 @@ describe("build", () => {
     expect(real.logs).toContain(line);
   });
 
+  it("passes the project kind to the library checks (row 49: bare refuses an unlisted pod sibling)", async () => {
+    const kinds: unknown[] = [];
+    const run = async (files: Record<string, string>, cfg: object = {}) => {
+      const t = setup({
+        cfg,
+        // A refusal stops the build right after the checks.
+        libraryFailures: (_root, opts) => {
+          kinds.push(opts.kind);
+          return [{ id: "unlisted-sibling", allowKey: "lib", reason: "lib 1.0.0: refused." }];
+        },
+      });
+      for (const [rel, text] of Object.entries(files)) {
+        mkdirSync(dirname(join(t.root, rel)), { recursive: true });
+        writeFileSync(join(t.root, rel), text);
+      }
+      await expect(build(t.root, {}, t.deps)).rejects.toBeInstanceOf(UnsupportedSetupError);
+    };
+    await run({ "package.json": JSON.stringify({ name: "app" }), "ios/HelloWorld.xcodeproj/project.pbxproj": "" });
+    await run({ "package.json": JSON.stringify({ name: "app", dependencies: { expo: "*" } }), "app.json": JSON.stringify({ expo: {} }) });
+    await run({ "package.json": JSON.stringify({ name: "app", dependencies: { expo: "*" } }), "app.json": "{}" }, { projectKind: "expo" });
+    // Undetectable: the checks run as before, without a kind.
+    await run({});
+    expect(kinds).toEqual(["bare", "expo", "expo", undefined]);
+  });
+
   it("prints the exclude lines first and passes exclude to the checks", async () => {
     const exclude = ["react-native-mmkv-lib"];
     const seen: unknown[] = [];

@@ -8,6 +8,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import type { PodEntry } from "../config.js";
+import type { ProjectKind } from "./types.js";
 import { troubleshootingUrl } from "../docs.js";
 import { packageRoot } from "../tools/exec.js";
 import { mergedPodTable, podRequirementSatisfied, type PodTable } from "./podTable.js";
@@ -22,7 +23,14 @@ import {
   unconditionalLines,
 } from "./podspecs.js";
 
-export type EarlyCheckId = "vendored-binaries" | "vendored-sources" | "unmapped-pod" | "pnpm" | "yarn-pnp" | "hoisted";
+export type EarlyCheckId =
+  | "vendored-binaries"
+  | "vendored-sources"
+  | "unmapped-pod"
+  | "unlisted-sibling"
+  | "pnpm"
+  | "yarn-pnp"
+  | "hoisted";
 
 export interface EarlyFailure {
   id: EarlyCheckId;
@@ -88,6 +96,8 @@ interface PodClassification {
   kind: "subspec" | "core" | "expo" | "sibling" | "missing-sibling" | "mapped" | "unmapped";
   /** The name before any `/<subspec>`. */
   pod: string;
+  /** For a sibling or a missing sibling: its npm package. */
+  npm?: string;
 }
 
 type ClassifyPodDependency = (
@@ -312,6 +322,11 @@ export interface LibraryCheckOptions {
   exclude?: readonly string[];
   /** The pod table to classify with, instead of `mergedPodTable(pods)` (a test seam). */
   table?: PodTable;
+  /**
+   * The project kind. On bare, a pod sibling that is installed but not listed in package.json is not linked by the
+   * community CLI, so it is refused (`unlisted-sibling`); Expo's autolinking links such a package.
+   */
+  kind?: ProjectKind;
 }
 
 /** A dependency with podspecs: its name, folder, version and podspec texts. */
@@ -324,13 +339,31 @@ interface Library {
   expoModule: boolean;
 }
 
+/**
+ * A pod dependency as the early checks read it: the scaffolder's classification, or `unlisted-sibling` on bare for a
+ * sibling installed but not listed in package.json (the scaffolder reads it as an unmapped pod).
+ */
+type DependencyClassification = Omit<PodClassification, "kind"> & { kind: PodClassification["kind"] | "unlisted-sibling" };
+
+/** The names the root package.json lists in dependencies, devDependencies and peerDependencies (findDependencies). */
+function listedPackages(root: string): Set<string> {
+  const pkg = readJson(path.join(root, "package.json"));
+  return new Set(
+    [pkg?.dependencies, pkg?.devDependencies, pkg?.peerDependencies].flatMap((deps: unknown) =>
+      deps !== null && typeof deps === "object" ? Object.keys(deps) : [],
+    ),
+  );
+}
+
 /** The project's direct dependencies, read once for every library check. */
 class Libraries {
   readonly root: string;
   readonly deps: { name: string; dir: string }[];
+  /** The names package.json lists in dependencies, devDependencies or peerDependencies: those the community CLI links. */
+  readonly listed: Set<string>;
   private readonly excluded: (pkg: string) => boolean;
   private readonly opts: LibraryCheckOptions;
-  private podIndex?: { podToNpm: Map<string, string>; linkedNpm: Set<string> };
+  private podIndex?: { podToNpm: Map<string, string>; linkedNpm: Set<string>; listedPodToNpm: Map<string, string> };
   private podTable?: PodTable;
   private classifier?: ClassifyPodDependency;
 
@@ -338,6 +371,7 @@ class Libraries {
     this.root = root;
     this.opts = opts;
     this.deps = dependencyDirs(root);
+    this.listed = listedPackages(root);
     const autolinking = iosExcluded(root);
     const config = new Set(opts.exclude ?? []);
     this.excluded = (pkg) => config.has(pkg) || autolinking(pkg);
@@ -372,10 +406,19 @@ class Libraries {
    * Package.swift that the project keeps on iOS. As in the scaffolder (fix 20), a subspec that declares a missing sibling
    * is left out with its dependencies: its pods are neither pinned nor refused.
    */
-  podDependencies(lib: Library): (PodClassification & { name: string; requirements: string[] })[] {
-    const classify = (this.classifier ??= podClassifier());
+  podDependencies(lib: Library): (DependencyClassification & { name: string; requirements: string[] })[] {
+    const classifier = (this.classifier ??= podClassifier());
     const table = this.table();
-    const { podToNpm, linkedNpm } = (this.podIndex ??= this.index());
+    const { podToNpm, linkedNpm, listedPodToNpm } = (this.podIndex ??= this.index());
+    const bare = this.opts.kind === "bare";
+    // On bare, the scaffolder knows only the pod names of the packages the CLI links (those package.json lists): a
+    // sibling installed outside package.json reads to it as a CocoaPods pod it cannot map.
+    const classify = (name: string, selfPodName: string): DependencyClassification => {
+      const ctx = { selfPodName, ownNpm: lib.name, linkedNpm, table: table.pods };
+      const c = classifier(name, { ...ctx, podToNpm });
+      if (!bare || c.kind !== "missing-sibling" || c.npm === undefined || this.listed.has(c.npm)) return c;
+      return classifier(name, { ...ctx, podToNpm: listedPodToNpm }).kind === "unmapped" ? { ...c, kind: "unlisted-sibling" } : c;
+    };
     return lib.podspecs.flatMap(({ rel, text }) => {
       const all = podspecLines(text);
       const subspecOf = subspecOfLines(text);
@@ -387,7 +430,7 @@ class Libraries {
       const deps = kept.flatMap((i) =>
         podDependencies([all[i]!]).map((dep) => ({
           ...dep,
-          ...classify(dep.name, { selfPodName, ownNpm: lib.name, podToNpm, linkedNpm, table: table.pods }),
+          ...classify(dep.name, selfPodName),
           subspec: subspecOf[i],
         })),
       );
@@ -402,7 +445,7 @@ class Libraries {
     return (this.podTable ??= this.opts.table ?? mergedPodTable(this.opts.pods));
   }
 
-  private index(): { podToNpm: Map<string, string>; linkedNpm: Set<string> } {
+  private index(): { podToNpm: Map<string, string>; linkedNpm: Set<string>; listedPodToNpm: Map<string, string> } {
     const podToNpm = new Map<string, string>();
     const linkedNpm = new Set<string>();
     // Every installed package's pod names: autolinking links peers and transitive dependencies too (react-native-worklets
@@ -416,7 +459,8 @@ class Libraries {
       const manifest = LIBRARY_MANIFESTS.some((rel) => existsSync(path.join(dir, rel)));
       if ((podspecs.length > 0 || manifest) && !this.excluded(name)) linkedNpm.add(name);
     }
-    return { podToNpm, linkedNpm };
+    const listedPodToNpm = new Map([...podToNpm].filter(([, npm]) => this.listed.has(npm)));
+    return { podToNpm, linkedNpm, listedPodToNpm };
   }
 }
 
@@ -459,12 +503,32 @@ function unmappedFailure(libs: Libraries, lib: Library): EarlyFailure | undefine
   };
 }
 
+function unlistedFailure(libs: Libraries, lib: Library): EarlyFailure | undefined {
+  const npms: string[] = [];
+  for (const dep of libs.podDependencies(lib)) {
+    if (dep.kind === "unlisted-sibling" && dep.npm !== undefined && !npms.includes(dep.npm)) npms.push(dep.npm);
+  }
+  if (npms.length === 0) return undefined;
+  const several = npms.length > 1;
+  return {
+    id: "unlisted-sibling",
+    allowKey: lib.name,
+    reason:
+      `${lib.name} ${lib.version}: its podspec depends on ${andList(npms)}, which ${several ? "are" : "is"} installed but ` +
+      `not listed in package.json, so React Native does not link ${several ? "them" : "it"}; add ` +
+      `${several ? "them" : "it"} to dependencies (npm i ${npms.join(" ")}). ` +
+      `See ${troubleshootingUrl("libraries-that-depend-on-cocoapods-pods")}`,
+  };
+}
+
 /**
  * The project's dependencies rn-xtool cannot build, by name:
  * - a CocoaPods-only library rn-xtool would scaffold whose podspec declares prebuilt binaries (packages with an
  *   expo-module.config.json are left out: the Expo plugin links their binaries);
  * - the same kind of library depending, on an unconditional podspec line, on a CocoaPods pod the pod table does not map
  *   (one failure per library, naming every such pod);
+ * - on bare, the same kind of library depending by pod name on a package that is installed but not listed in
+ *   package.json, which the community CLI does not link (one failure per library, naming every such package);
  * - an Expo module that builds C sources from its vendor/ folder without a Package.swift or prebuilds.
  * A Package.swift the project's patches/ create counts, and so does a scaffold the user edited. Dependencies the
  * project takes out of iOS autolinking or the config leaves out (`exclude`), binaries and pods under a test spec or a
@@ -491,6 +555,7 @@ export function libraryFailures(projectRoot: string, opts: LibraryCheckOptions =
     return [
       settled(() => binariesFailure(name, lib.version, lib.podspecs), undefined),
       settled(() => unmappedFailure(libs, lib), undefined),
+      settled(() => unlistedFailure(libs, lib), undefined),
     ];
   };
   return libs.deps.flatMap(({ name, dir }) => {

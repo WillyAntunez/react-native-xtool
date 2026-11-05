@@ -768,21 +768,90 @@ describe("unmapped pods", () => {
     expect(libraryFailures(scaffolded, { table: NO_POD_TABLE }).map((f) => f.id)).toEqual(["unmapped-pod"]);
   });
 
-  it("does not refuse a sibling installed as a peer, outside package.json (reanimated 4.3.4 and worklets 0.8.3)", async () => {
-    // npm installs react-native-worklets as reanimated's peer; autolinking links it, and the scaffolder wires
-    // RNWorklets as a sibling, so the pod name is an installed package's, not a CocoaPods pod.
-    const reanimated = {
-      "package.json": JSON.stringify({ name: "react-native-reanimated", version: "4.3.4", peerDependencies: { "react-native-worklets": ">=0.8.0" } }),
-      "RNReanimated.podspec":
-        'Pod::Spec.new do |s|\n  s.name         = "RNReanimated"\n  s.source_files = "apple/**/*.{mm,h,m}"\n' +
-        '  s.dependency "RNWorklets"\n  install_modules_dependencies(s)\n  s.dependency \'React-jsi\'\nend\n',
-    };
+  /** reanimated 4.3.4's shape: its podspec names react-native-worklets by its pod name, RNWorklets. */
+  const reanimated = {
+    "package.json": JSON.stringify({ name: "react-native-reanimated", version: "4.3.4", peerDependencies: { "react-native-worklets": ">=0.8.0" } }),
+    "RNReanimated.podspec":
+      'Pod::Spec.new do |s|\n  s.name         = "RNReanimated"\n  s.source_files = "apple/**/*.{mm,h,m}"\n' +
+      '  s.dependency "RNWorklets"\n  install_modules_dependencies(s)\n  s.dependency \'React-jsi\'\nend\n',
+  };
+  const worklets = {
+    "package.json": JSON.stringify({ name: "react-native-worklets", version: "0.8.3" }),
+    "RNWorklets.podspec": 'Pod::Spec.new do |s|\n  s.name         = "RNWorklets"\n  install_modules_dependencies(s)\nend\n',
+  };
+  const unlisted = (lib: string, npm: string) =>
+    `${lib}: its podspec depends on ${npm}, which is installed but not listed in package.json, so React Native does not ` +
+    `link it; add it to dependencies (npm i ${npm}). See ${DOCS}#libraries-that-depend-on-cocoapods-pods`;
+
+  it("on bare, refuses a pod sibling installed but not listed in package.json (row 49)", async () => {
+    // The community CLI links only the app's dependencies, devDependencies and peerDependencies: worklets installed as
+    // reanimated's peer is not linked, so the scaffolder reads RNWorklets as a CocoaPods pod and reanimated fails.
     const root = await project({ "react-native-reanimated": reanimated });
-    await writeFiles(path.join(root, "node_modules", "react-native-worklets"), {
-      "package.json": JSON.stringify({ name: "react-native-worklets", version: "0.8.3" }),
-      "RNWorklets.podspec": 'Pod::Spec.new do |s|\n  s.name         = "RNWorklets"\n  install_modules_dependencies(s)\nend\n',
+    await writeFiles(path.join(root, "node_modules", "react-native-worklets"), worklets);
+    const failures = libraryFailures(root, { table: NO_POD_TABLE, kind: "bare" });
+    expect(failures).toEqual([
+      {
+        id: "unlisted-sibling",
+        allowKey: "react-native-reanimated",
+        reason: unlisted("react-native-reanimated 4.3.4", "react-native-worklets"),
+      },
+    ]);
+    const [allowed] = allowKnownLimits(failures, ["react-native-reanimated"]);
+    expect(allowed).toMatchObject({ id: "unlisted-sibling", allowed: true });
+    // Under a subspec too: the scaffolder does not drop it, since it reads the pod as unmapped.
+    const sub = await project({
+      "react-native-reanimated": {
+        ...reanimated,
+        "RNReanimated.podspec": reanimated["RNReanimated.podspec"].replace(
+          '  s.dependency "RNWorklets"\n',
+          "  s.subspec 'Worklets' do |w|\n    w.dependency \"RNWorklets\"\n  end\n",
+        ),
+      },
     });
-    expect(libraryFailures(root, { table: NO_POD_TABLE })).toEqual([]);
+    await writeFiles(path.join(sub, "node_modules", "react-native-worklets"), worklets);
+    expect(libraryFailures(sub, { table: NO_POD_TABLE, kind: "bare" }).map((f) => f.id)).toEqual(["unlisted-sibling"]);
+    // Listed in devDependencies or peerDependencies, the CLI links it.
+    for (const field of ["devDependencies", "peerDependencies"]) {
+      const listed = await project({ "react-native-reanimated": reanimated }, {
+        dependencies: { "react-native-reanimated": "*" },
+        [field]: { "react-native-worklets": "*" },
+      });
+      await writeFiles(path.join(listed, "node_modules", "react-native-worklets"), worklets);
+      expect(libraryFailures(listed, { table: NO_POD_TABLE, kind: "bare" })).toEqual([]);
+    }
+    // A scoped package names itself in the text.
+    const scoped = await project({
+      "react-native-reanimated": { ...reanimated, "RNReanimated.podspec": reanimated["RNReanimated.podspec"].replace("RNWorklets", "ScopedPeer") },
+    });
+    await writeFiles(path.join(scoped, "node_modules", "@scope", "peer"), {
+      "package.json": JSON.stringify({ name: "@scope/peer", version: "1.0.0" }),
+      "ios/ScopedPeer.podspec": "Pod::Spec.new do |s|\nend\n",
+    });
+    expect(libraryFailures(scoped, { table: NO_POD_TABLE, kind: "bare" }).map((f) => f.reason)).toEqual([
+      unlisted("react-native-reanimated 4.3.4", "@scope/peer"),
+    ]);
+  });
+
+  it("names several unlisted siblings in one refusal", async () => {
+    const root = await project({
+      lib: { "Lib.podspec": "Pod::Spec.new do |s|\n  s.dependency 'PeerA'\n  s.dependency 'PeerB'\n  s.dependency 'PeerA'\nend\n" },
+    });
+    for (const n of ["PeerA", "PeerB"]) {
+      await writeFiles(path.join(root, "node_modules", `peer-${n.slice(-1).toLowerCase()}`), { [`${n}.podspec`]: "Pod::Spec.new do |s|\nend\n" });
+    }
+    expect(libraryFailures(root, { table: NO_POD_TABLE, kind: "bare" }).map((f) => f.reason)).toEqual([
+      "lib 1.0.0: its podspec depends on peer-a and peer-b, which are installed but not listed in package.json, so React " +
+        "Native does not link them; add them to dependencies (npm i peer-a peer-b). " +
+        `See ${DOCS}#libraries-that-depend-on-cocoapods-pods`,
+    ]);
+  });
+
+  it("on Expo, does not refuse a sibling installed as a peer, outside package.json (reanimated 4.3.4 and worklets 0.8.3)", async () => {
+    // npm installs react-native-worklets as reanimated's peer; Expo's autolinking links it, and the scaffolder wires
+    // RNWorklets as a sibling, so the pod name is an installed package's, not a CocoaPods pod.
+    const root = await project({ "react-native-reanimated": reanimated });
+    await writeFiles(path.join(root, "node_modules", "react-native-worklets"), worklets);
+    expect(libraryFailures(root, { table: NO_POD_TABLE, kind: "expo" })).toEqual([]);
     // A scoped package's podspec counts too.
     const scoped = await project({
       "react-native-reanimated": { ...reanimated, "RNReanimated.podspec": reanimated["RNReanimated.podspec"].replace("RNWorklets", "ScopedPeer") },
@@ -791,10 +860,12 @@ describe("unmapped pods", () => {
       "package.json": JSON.stringify({ name: "@scope/peer", version: "1.0.0" }),
       "ios/ScopedPeer.podspec": "Pod::Spec.new do |s|\nend\n",
     });
-    expect(libraryFailures(scoped, { table: NO_POD_TABLE })).toEqual([]);
-    // Not installed at all: still read as a CocoaPods pod (preflight P9's accepted remainder).
+    expect(libraryFailures(scoped, { table: NO_POD_TABLE, kind: "expo" })).toEqual([]);
+    // Not installed at all: still read as a CocoaPods pod (preflight P9's accepted remainder), on bare too.
     const missing = await project({ "react-native-reanimated": reanimated });
-    expect(libraryFailures(missing, { table: NO_POD_TABLE }).map((f) => f.id)).toEqual(["unmapped-pod"]);
+    for (const kind of ["expo", "bare"] as const) {
+      expect(libraryFailures(missing, { table: NO_POD_TABLE, kind }).map((f) => f.id)).toEqual(["unmapped-pod"]);
+    }
   });
 
   it("leaves out the pods of a subspec the scaffolder drops for a missing sibling", async () => {
