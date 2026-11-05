@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -309,6 +309,17 @@ describe("stagePodBinaries", () => {
       weakFrameworks: [],
       emptyTargets: ["GTMDefines"],
     });
+  });
+
+  it("keeps the cache's modification times on the staged copies, so Swift Build skips unchanged inputs", async () => {
+    const r = mlKit();
+    const vision = r.wrapped.find((w) => w.pod === "MLKitVision")!.frameworks[0]!;
+    const old = new Date("2026-01-02T03:04:05.000Z");
+    utimesSync(vision.archive!, old, old);
+    utimesSync(path.join(vision.xcframework, "Info.plist"), old, old);
+    const staged = await stagePodBinaries(paths, r, { iosMin: "15.1" });
+    expect(statSync(path.join(staged.dir, "archives/libMLKitVision.a")).mtimeMs).toBe(old.getTime());
+    expect(statSync(path.join(staged.dir, "xcframeworks/MLKitVision.xcframework/Info.plist")).mtimeMs).toBe(old.getTime());
   });
 
   it("writes a .gitignore with * in pod-binaries", async () => {

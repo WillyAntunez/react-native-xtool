@@ -6,7 +6,7 @@
  * build, never under node_modules.
  */
 import { existsSync, readdirSync, realpathSync } from "node:fs";
-import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import type { PodEntry } from "../config.js";
@@ -165,14 +165,24 @@ ${binaryLines}${wrapperLines}    ]
 `;
 }
 
-/** `src`'s tree at `dest`: folders made, files copied (row 85: never the cache's own inodes). */
+/**
+ * `src`'s bytes at `dest`, with `src`'s modification time (row 87): a copy of an unchanged file looks unchanged to Swift
+ * Build, which then neither processes the xcframeworks nor relinks the app again.
+ */
+export async function copyKeepingTime(src: string, dest: string): Promise<void> {
+  await copyFile(src, dest);
+  const { atime, mtime } = await stat(src);
+  await utimes(dest, atime, mtime);
+}
+
+/** `src`'s tree at `dest`: folders made, files copied (row 85: never the cache's own inodes) with their times. */
 async function copyTree(src: string, dest: string): Promise<void> {
   await mkdir(dest, { recursive: true });
   for (const e of readdirSync(src, { withFileTypes: true })) {
     const from = path.join(src, e.name);
     const to = path.join(dest, e.name);
     if (e.isDirectory()) await copyTree(from, to);
-    else await copyFile(from, to);
+    else await copyKeepingTime(from, to);
   }
 }
 
@@ -252,7 +262,7 @@ export async function stagePodBinaries(
         await copyTree(f.xcframework, path.join(tmp, "xcframeworks", `${f.name}.xcframework`));
         if (f.archive === undefined) continue;
         await mkdir(path.join(tmp, "archives"), { recursive: true });
-        await copyFile(f.archive, path.join(tmp, "archives", `lib${f.name}.a`));
+        await copyKeepingTime(f.archive, path.join(tmp, "archives", `lib${f.name}.a`));
         archives.push(path.join(dir, "archives", `lib${f.name}.a`));
       }
     }

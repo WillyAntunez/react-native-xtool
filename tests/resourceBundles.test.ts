@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import * as plist from "plist";
@@ -129,6 +129,14 @@ describe("writeResourceBundle", () => {
     }
     expect(plist.parse(readFileSync(path.join(bundle, "Info.plist"), "utf8"))).toMatchObject({ CFBundleName: "LatinOCRResources" });
     expect(lines).toEqual([]);
+  });
+
+  it("keeps the source's modification time on the copies", async () => {
+    write("Resources/LatinOCRResources/model.tflite", "weights");
+    const old = new Date("2026-01-02T03:04:05.000Z");
+    utimesSync(path.join(base, "Resources/LatinOCRResources/model.tflite"), old, old);
+    await writeResourceBundle(source("LatinOCRResources", ["Resources/LatinOCRResources/**"]), resources, () => {});
+    expect(statSync(path.join(resources, "LatinOCRResources.bundle", "model.tflite")).mtimeMs).toBe(old.getTime());
   });
 
   it("writes its own Info.plist without writing through a linked one", async () => {

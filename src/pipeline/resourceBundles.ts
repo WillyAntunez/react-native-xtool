@@ -9,11 +9,12 @@
  * never reaches the cache or the package).
  */
 import { readdirSync, realpathSync, statSync } from "node:fs";
-import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import * as plist from "plist";
 import { PODS_LINK, PodsError } from "../pods/format.js";
+import { copyKeepingTime } from "../pods/stage.js";
 
 const micromatch = createRequire(import.meta.url)("micromatch") as {
   isMatch: (path: string, patterns: string | string[], options?: { dot?: boolean }) => boolean;
@@ -200,8 +201,8 @@ export async function writeResourceBundle(s: BundleSource, resourcesDir: string,
   for (const f of files) {
     const dest = path.join(bundle, f.dest);
     await mkdir(path.dirname(dest), { recursive: true });
-    // A symlink's target, so the bundle holds a regular file.
-    await copyFile(realpathSync(f.src), dest);
+    // A symlink's target, so the bundle holds a regular file; with its time, so an unchanged file is not copied again.
+    await copyKeepingTime(realpathSync(f.src), dest);
   }
   // A matched Info.plist gives way to the bundle's own.
   const info = path.join(bundle, "Info.plist");
