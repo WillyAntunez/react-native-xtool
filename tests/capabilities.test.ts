@@ -620,6 +620,9 @@ describe("detectCapabilities", () => {
         "CODE_SIGN_ENTITLEMENTS names ios/HelloWorld/HelloWorld.entitlements, which does not exist; xtool cannot sign the " +
         "app without it. Fix the setting or create the file.",
     });
+    // A file without keys is not passed to xtool (row 52): no line, as without the setting.
+    await writeFile(path.join(dir, "ios", "HelloWorld", "HelloWorld.entitlements"), plistOf("<dict/>"));
+    expect((await detect(dir)).entitlements).toBeUndefined();
     await writeFile(
       path.join(dir, "ios", "HelloWorld", "HelloWorld.entitlements"),
       plistOf(

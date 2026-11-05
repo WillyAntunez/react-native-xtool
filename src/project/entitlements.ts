@@ -166,7 +166,8 @@ export function entitlementLines(e: AppEntitlements, bundleId: string): string[]
  * What `doctor --project` reports on the entitlements: the file and its lines; `pending` for an Expo app whose ios/
  * holds no Xcode project yet (read after expo prebuild, at build); `error` for a refusal or an unreadable pbxproj;
  * undefined when CODE_SIGN_ENTITLEMENTS is unset (or ios/ is missing on bare). The bundle id is the pbxproj's
- * PRODUCT_BUNDLE_IDENTIFIER, as the bare reader takes it.
+ * PRODUCT_BUNDLE_IDENTIFIER, as the bare reader takes it. A file without keys is not passed to xtool, so it is
+ * reported as an unset setting.
  */
 export type EntitlementsCapability = { rel: string; lines: string[] } | { pending: true } | { error: string };
 
@@ -194,7 +195,8 @@ export function entitlementsCapability(root: string, kind: ProjectKind | undefin
       // the project line names an unresolvable bundle id
     }
     const e = readEntitlements({ root, bundleIdentifier: bundleId }, iosDir);
-    return e === undefined ? undefined : { rel: e.rel, lines: entitlementLines(e, bundleId) };
+    // A file without keys is not passed to xtool (writeIosXtool): reported as without the setting.
+    return e === undefined || Object.keys(e.dict).length === 0 ? undefined : { rel: e.rel, lines: entitlementLines(e, bundleId) };
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
   }

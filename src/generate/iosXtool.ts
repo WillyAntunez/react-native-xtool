@@ -234,8 +234,10 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
   // DEV_CLIENT_DEFAULT_LAUNCHER_URL or from a deep link.
   const packagerHost = project.kind === "bare" ? `${ctx.lanIp}:${ctx.metroPort}` : ctx.lanIp;
   await writeFile(join(paths.iosXtool, "ip.txt"), `${packagerHost}\n`);
-  // CODE_SIGN_ENTITLEMENTS (Debug; on Expo, the prebuild's pbxproj): removed when the setting goes.
-  const entitlements = readEntitlements(project, paths.ios);
+  // CODE_SIGN_ENTITLEMENTS (Debug; on Expo, the prebuild's pbxproj): removed when the setting goes. A file without keys
+  // (every Expo prebuild writes one holding only <dict/>) is not passed, so xtool skips its signing pass with it.
+  const read = readEntitlements(project, paths.ios);
+  const entitlements = read !== undefined && Object.keys(read.dict).length > 0 ? read : undefined;
   const entitlementsFile = join(paths.iosXtool, ENTITLEMENTS_FILE);
   if (entitlements !== undefined) await writeFile(entitlementsFile, plist.build(entitlements.dict as plist.PlistValue));
   else await rm(entitlementsFile, { force: true });

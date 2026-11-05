@@ -489,6 +489,21 @@ describe("writeIosXtool", () => {
       expect(await readFile(join(paths.iosXtool, "xtool.yml"), "utf8")).toContain("\ninfoPath: Info.plist\nentitlementsPath: App.entitlements\n");
     });
 
+    it("passes no entitlements for the prebuild's empty file: xtool.yml stays byte-identical (row 52)", async () => {
+      // Every Expo prebuild sets CODE_SIGN_ENTITLEMENTS to a file holding only <dict/>.
+      const plain = await expoProject("ios-target");
+      await writeIosXtool(plain.ctx);
+      const expected = await readFile(join(plain.paths.iosXtool, "xtool.yml"), "utf8");
+      for (const empty of [plistOf("<dict/>"), plistOf("<dict>\n</dict>")]) {
+        const { paths, ctx } = await libApp(DEFAULT_HEADER, empty);
+        await mkdir(paths.iosXtool, { recursive: true });
+        await writeFile(join(paths.iosXtool, "App.entitlements"), plistOf("<dict/>"));
+        await writeIosXtool(ctx);
+        expect(await readFile(join(paths.iosXtool, "xtool.yml"), "utf8")).toBe(expected);
+        expect(await readdir(paths.iosXtool)).not.toContain("App.entitlements");
+      }
+    });
+
     it("resolves $(SRCROOT) and $(PROJECT_DIR) in the bridging header setting", async () => {
       const header = `${DEFAULT_HEADER}#import "RNAppAuthAuthorizationFlowManager.h"\n`;
       for (const builtin of ["$(SRCROOT)", "$(PROJECT_DIR)"]) {
