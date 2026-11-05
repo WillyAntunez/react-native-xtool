@@ -20,6 +20,11 @@ export interface Route {
   truncate?: { at: number; times?: number };
   /** Never answers (the connection stays open until the server closes). */
   hang?: boolean;
+  /**
+   * For the first `times` requests: answers `status` (with an empty body), or, without one, resets the connection
+   * before any answer (the client reads ECONNRESET).
+   */
+  fail?: { times: number; status?: number };
 }
 
 export interface PodsServer {
@@ -54,6 +59,12 @@ export async function startPodsServer(routes: Record<string, Route> = {}): Promi
     }
     if (route.needsUserAgent !== undefined && !(req.headers["user-agent"] ?? "").startsWith(route.needsUserAgent)) {
       res.writeHead(403).end("forbidden");
+      return;
+    }
+    if (route.fail !== undefined && route.fail.times > 0) {
+      route.fail.times--;
+      if (route.fail.status !== undefined) res.writeHead(route.fail.status).end();
+      else req.socket.resetAndDestroy();
       return;
     }
     if (route.hang === true) {

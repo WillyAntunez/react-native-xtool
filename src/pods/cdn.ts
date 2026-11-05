@@ -110,29 +110,54 @@ function writeCached(file: string, text: string): void {
   }
 }
 
-/** GET `url`; the body on 200, `404` on 404; a PodsNetworkError when the host cannot be reached; else the status stop. */
+/** The error codes of a connection that broke on a working network (a reused socket reset, a stalled route). */
+const TRANSIENT_CODES = new Set(["ECONNRESET", "ETIMEDOUT", "EPIPE", "UND_ERR_SOCKET"]);
+
+/** Whether a failed request is worth one more try (three-ways #3): a reset or a timed-out socket, never our own timeout. */
+export function transientNetworkError(err: unknown): boolean {
+  const codes = (e: unknown): unknown[] => {
+    const cause = (e as { cause?: unknown } | null)?.cause;
+    const inner = (cause as { errors?: unknown[] } | undefined)?.errors ?? [];
+    return [e, cause, ...inner].map((c) => (c as { code?: unknown } | null | undefined)?.code);
+  };
+  return codes(err).some((code) => typeof code === "string" && TRANSIENT_CODES.has(code));
+}
+
+/**
+ * GET `url`; the body on 200, `404` on 404; a PodsNetworkError when the host cannot be reached; else the status stop.
+ * A reset connection or a 5xx answer is read once more (row 89); the second failure stops as the first would have.
+ */
 async function get(url: string, what: string, plural: boolean, opts: CdnOptions): Promise<string | 404> {
-  let res: Response;
-  try {
-    res = await (opts.fetch ?? fetch)(url, {
-      redirect: "follow",
-      headers: { "User-Agent": podsUserAgent() },
-      signal: AbortSignal.timeout(opts.timeoutMs ?? REQUEST_TIMEOUT_MS),
-    });
-  } catch (err) {
-    throw new PodsNetworkError(new URL(url).host, networkReason(err), what, plural);
-  }
-  if (res.status === 404) return 404;
-  if (!res.ok) {
-    const host = new URL(res.url || url).host;
-    throw new PodsError(
-      `${host} answered HTTP ${res.status} for ${url} (${what}). Build again later; if it keeps failing, see ${PODS_LINK}`,
-    );
-  }
-  try {
-    return await res.text();
-  } catch (err) {
-    throw new PodsNetworkError(new URL(url).host, networkReason(err), what, plural);
+  for (let attempt = 0; ; attempt++) {
+    const last = attempt === 1;
+    let res: Response;
+    try {
+      res = await (opts.fetch ?? fetch)(url, {
+        redirect: "follow",
+        headers: { "User-Agent": podsUserAgent() },
+        signal: AbortSignal.timeout(opts.timeoutMs ?? REQUEST_TIMEOUT_MS),
+      });
+    } catch (err) {
+      if (!last && transientNetworkError(err)) continue;
+      throw new PodsNetworkError(new URL(url).host, networkReason(err), what, plural);
+    }
+    if (res.status === 404) return 404;
+    if (!res.ok) {
+      if (!last && res.status >= 500) {
+        await res.body?.cancel();
+        continue;
+      }
+      const host = new URL(res.url || url).host;
+      throw new PodsError(
+        `${host} answered HTTP ${res.status} for ${url} (${what}). Build again later; if it keeps failing, see ${PODS_LINK}`,
+      );
+    }
+    try {
+      return await res.text();
+    } catch (err) {
+      if (!last && transientNetworkError(err)) continue;
+      throw new PodsNetworkError(new URL(url).host, networkReason(err), what, plural);
+    }
   }
 }
 

@@ -177,6 +177,38 @@ describe("the CocoaPods CDN", () => {
     expect(readdirSync(cache)).toEqual([]);
   });
 
+  it("reads once more after a reset or a 5xx answer", async () => {
+    server = await startPodsServer({
+      [indexPath("MLKitCommon")]: { body: "MLKitCommon/13.0.0\n", fail: { times: 1 } },
+      [specPath("MLImage", "1.0.0-beta7")]: { body: JSON.stringify(fixtureSpec("MLImage", "1.0.0-beta7")), fail: { times: 1, status: 502 } },
+    });
+    expect(await podVersions("MLKitCommon", opts(server.base))).toEqual(["13.0.0"]);
+    expect((await podSpec("MLImage", "1.0.0-beta7", opts(server.base))).version).toBe("1.0.0-beta7");
+    expect(server.requests).toEqual([
+      `GET ${indexPath("MLKitCommon")}`,
+      `GET ${indexPath("MLKitCommon")}`,
+      `GET ${specPath("MLImage", "1.0.0-beta7")}`,
+      `GET ${specPath("MLImage", "1.0.0-beta7")}`,
+    ]);
+  });
+
+  it("stops as before when the second read fails too, and reads a 4xx answer once", async () => {
+    server = await startPodsServer({
+      [indexPath("MLKitCommon")]: { body: "MLKitCommon/13.0.0\n", fail: { times: 2 } },
+      [indexPath("MLKitVision")]: { body: "", fail: { times: 2, status: 503 } },
+      [indexPath("MLImage")]: { status: 403, body: "no" },
+    });
+    const host = new URL(server.base).host;
+    const err = await podVersions("MLKitCommon", opts(server.base)).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(PodsNetworkError);
+    expect((err as PodsNetworkError).reason).toMatch(/ECONNRESET/);
+    await expect(podVersions("MLKitVision", opts(server.base))).rejects.toThrow(`${host} answered HTTP 503 for`);
+    await expect(podVersions("MLImage", opts(server.base))).rejects.toThrow(`${host} answered HTTP 403 for`);
+    expect(server.requests.filter((r) => r.includes(podShard("MLKitCommon").join("_")))).toHaveLength(2);
+    expect(server.requests.filter((r) => r === `GET ${indexPath("MLKitVision")}`)).toHaveLength(2);
+    expect(server.requests.filter((r) => r === `GET ${indexPath("MLImage")}`)).toHaveLength(1);
+  });
+
   it("gives up on a CDN that does not answer, as an unreachable one", async () => {
     server = await startPodsServer({ [specPath("MLImage", "1.0.0-beta7")]: { hang: true } });
     const err = await podSpec("MLImage", "1.0.0-beta7", { ...opts(server.base), timeoutMs: 200 }).catch((e: unknown) => e);

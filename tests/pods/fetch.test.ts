@@ -236,6 +236,24 @@ describe("fetchPodArchive", () => {
     errors.mockRestore();
   });
 
+  it("downloads once more after a reset or a 5xx answer (row 89)", async () => {
+    const s = await serve({ [PATH]: { body, fail: { times: 1 } } });
+    expect((await fetchPodArchive(plan(), cache)).sha256).toBe(SHA);
+    expect(s.requests).toEqual([`GET ${PATH}`, `GET ${PATH}`]);
+    rmSync(path.join(cache, "downloads"), { recursive: true, force: true });
+    s.routes[PATH] = { body, fail: { times: 1, status: 502 } };
+    expect((await fetchPodArchive(plan(), cache)).sha256).toBe(SHA);
+    expect(s.requests).toHaveLength(4);
+  });
+
+  it("stops after a second reset with goal 5.4's text", async () => {
+    await serve({ [PATH]: { body, fail: { times: 2 } } });
+    const err = await fetchPodArchive(plan(), cache).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(PodsNetworkError);
+    expect((err as PodsNetworkError).reason).toMatch(/ECONNRESET/);
+    expect(downloads()).toEqual([]);
+  });
+
   it("retries a partial download once, then names both sizes", async () => {
     const s = await serve({ [PATH]: { body, truncate: { at: 3000 } } });
     await expect(fetchPodArchive(plan(), cache)).rejects.toThrow(
