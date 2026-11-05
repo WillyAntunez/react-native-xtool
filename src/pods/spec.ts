@@ -46,6 +46,10 @@ export interface PodSpec extends PodSpecNode {
   authors: string[];
   moduleName?: string;
   iosMin?: string;
+  /** False when `platforms` lists other platforms and not iOS; true without `platforms` (every platform). */
+  supportsIos: boolean;
+  /** The platforms the spec lists, for the text of a pod without iOS. */
+  platforms?: string[];
 }
 
 export class PodSpecError extends Error {
@@ -151,7 +155,12 @@ class Reader {
 
   node(obj: Record<string, unknown>, name: string): PodSpecNode {
     const node: PodSpecNode = { name, layer: this.layer(obj), subspecs: [] };
-    if (obj.default_subspecs !== undefined) node.defaultSubspecs = this.list("default_subspecs", obj.default_subspecs);
+    // `default_subspecs`, or the older singular `default_subspec`; "none" (`:none`) selects no subspec.
+    const key = obj.default_subspecs !== undefined ? "default_subspecs" : "default_subspec";
+    if (obj[key] !== undefined) {
+      const defaults = this.list(key, obj[key]);
+      node.defaultSubspecs = defaults.length === 1 && defaults[0] === "none" ? [] : defaults;
+    }
     if (obj.subspecs !== undefined) {
       if (!Array.isArray(obj.subspecs)) this.fail("subspecs", obj.subspecs);
       for (const sub of obj.subspecs as unknown[]) {
@@ -220,7 +229,12 @@ export function parsePodSpec(json: unknown, where: { pod: string; version: strin
     source: json.source === undefined ? {} : r.source(json.source),
     license: r.license(json.license),
     authors: r.authors(json.authors),
+    supportsIos: true,
   };
+  if (isRecord(json.platforms)) {
+    spec.platforms = Object.keys(json.platforms);
+    spec.supportsIos = "ios" in json.platforms;
+  }
   if (json.homepage !== undefined) spec.homepage = r.string("homepage", json.homepage);
   if (json.module_name !== undefined) spec.moduleName = r.string("module_name", json.module_name);
   const iosMin = r.iosMin(json.platforms);
@@ -331,6 +345,7 @@ function urlExtension(file: string): string {
  */
 export function podRoute(spec: PodSpec, layers: readonly SpecLayer[]): PodRoute {
   const { source } = spec;
+  if (!spec.supportsIos) return { kind: "other", what: `does not support iOS (its platforms: ${(spec.platforms ?? []).join(", ")})` };
   if (source.http !== undefined) {
     const file = urlPath(source.http);
     const archive = source.type === undefined ? /\.(tar\.gz|tgz|zip)$/.test(file) : ["tgz", "zip"].includes(source.type);

@@ -53,12 +53,29 @@ describe("parsePodSpec", () => {
     expect(fixture("nanopb", "3.30910.0").authors).toEqual(["Placeholder Author"]);
   });
 
+  it("tells a pod without iOS from one without platforms", () => {
+    expect(spec({ platforms: { osx: "10.13" } }).supportsIos).toBe(false);
+    expect(spec({ platforms: { ios: "15.5" } }).supportsIos).toBe(true);
+    expect(spec({ platforms: { ios: null } }).supportsIos).toBe(true);
+    expect(spec({}).supportsIos).toBe(true);
+    expect(spec({}).iosMin).toBeUndefined();
+  });
+
   it("selects default_subspecs when the root is named, and every subspec without them", () => {
     expect(selectedLayers(fixture("GoogleMLKit", "8.0.0"), []).used).toEqual(["Common", "MLKitCore"]);
     expect(selectedLayers(fixture("GTMSessionFetcher", "3.5.0"), []).used).toEqual(["Core", "Full"]);
     const noDefaults = spec({ subspecs: [{ name: "A" }, { name: "B" }] });
     expect(selectedLayers(noDefaults, []).used).toEqual(["A", "B"]);
     expect(selectedLayers(noDefaults, ["Example"]).used).toEqual(["A", "B"]);
+  });
+
+  it('reads default_subspecs "none" as no subspec, and the singular default_subspec', () => {
+    const subs = [{ name: "Core" }, { name: "Extra" }];
+    expect(selectedLayers(spec({ subspecs: subs, default_subspecs: "none" }), []).used).toEqual([]);
+    expect(selectedLayers(spec({ subspecs: subs, default_subspecs: ["none"] }), ["Example"]).used).toEqual([]);
+    expect(selectedLayers(spec({ subspecs: subs, default_subspec: "Core" }), []).used).toEqual(["Core"]);
+    expect(selectedLayers(spec({ subspecs: subs, default_subspec: "none" }), []).used).toEqual([]);
+    expect(selectedLayers(spec({ subspecs: subs, default_subspecs: ["Extra"], default_subspec: "Core" }), []).used).toEqual(["Extra"]);
   });
 
   it("follows a subspec's dependency on another subspec of the same pod", () => {
@@ -200,6 +217,12 @@ describe("parsePodSpec", () => {
       spec({ source_files: "Frameworks/Example.framework/Headers/*.h" }),
       [],
       { kind: "binary", headersOnly: false },
+    ],
+    [
+      "a pod without iOS in its platforms",
+      spec({ platforms: { osx: "10.13", tvos: "13.0" } }),
+      [],
+      { kind: "other", what: "does not support iOS (its platforms: osx, tvos)" },
     ],
     ["GTMSessionFetcher", fixture("GTMSessionFetcher", "3.5.0"), ["Core"], { kind: "source" }],
     ["a zip", fixture("MLKitFoo", "1.0.0"), [], { kind: "binary", headersOnly: false }],
