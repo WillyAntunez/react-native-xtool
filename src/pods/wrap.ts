@@ -278,16 +278,33 @@ class Wrapper {
     return { name, rel: `${sliceRel}/${lp}`, privacy: this.privacy(sliceDir, sliceRel), ...(s.minos !== undefined ? { minos: s.minos } : {}) };
   }
 
+  /** Row 83 (row 23's text): the spec names `rel`, which the extracted tree does not hold. */
+  notInTree(rel: string): PodsError {
+    const top = listTree(this.i.extracted)
+      .filter((e) => !e.rel.includes("/"))
+      .map((e) => (e.isDir ? `${e.rel}/` : e.rel))
+      .sort();
+    return new PodsError(
+      `${this.label}: its spec names ${rel}, which the download does not hold. Its top-level entries: ${top.length > 0 ? top.join(", ") : "none"}. See ${PODS_LINK}`,
+    );
+  }
+
   /** A headers-only pod: one xcframework named by its module, with its header source_files flat. */
   async headersOnly(): Promise<Made> {
     const { spec, layers, extracted } = this.i;
     const name = spec.moduleName ?? this.i.pod;
-    const headers = expand(layers.flatMap((l) => l.sourceFiles), this.tree).filter((h) => isFile(path.join(extracted, h)));
+    const patterns = [...new Set(layers.flatMap((l) => l.sourceFiles))];
+    // Row 83: a named header that is missing, or patterns that match no file, would make an empty module.
+    const literal = patterns.find((p) => !/[*?[\]{}]/.test(p) && !isFile(path.join(extracted, p.replace(/\/+$/, ""))));
+    if (literal !== undefined) throw this.notInTree(literal);
+    const headers = expand(patterns, this.tree).filter((h) => isFile(path.join(extracted, h)));
+    if (headers.length === 0 && patterns.length > 0) throw this.notInTree(patterns.join(", "));
     const dirs = new Set(headers.map((h) => path.posix.dirname(h)));
     const explicit = layers.map((l) => l.moduleMap).find((m) => m !== undefined);
     const kept = expand(layers.flatMap((l) => l.preservePaths), this.tree).find(
       (p) => path.posix.basename(p) === "module.modulemap" && dirs.has(path.posix.dirname(p)),
     );
+    if (explicit !== undefined && !isFile(path.join(extracted, explicit))) throw this.notInTree(explicit);
     const mapRel = explicit ?? kept;
     const flat = [...new Set(headers.map((h) => path.posix.basename(h)))].sort();
     let map: string;

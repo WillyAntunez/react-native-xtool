@@ -315,6 +315,39 @@ describe("wrapPod", () => {
     );
   });
 
+  describe("a headers-only pod whose files are not in the tree (row 83)", () => {
+    const headersOnly = (json: Record<string, unknown>) => {
+      const spec = podSpec("HeadersOnly", json);
+      return wrapPod(
+        { pod: "HeadersOnly", version: "1.0.0", sha256: SHA, neededBy: LIB, extracted, spec, layers: selectedLayers(spec, []).layers, headersOnly: true },
+        cache,
+        noAr,
+      );
+    };
+    const missing = (p: string, top: string) =>
+      new PodsError(
+        `HeadersOnly 1.0.0 (needed by ${LIB}): its spec names ${p}, which the download does not hold. Its top-level entries: ${top}. See ${LINK}`,
+      );
+
+    it("stops when source_files match no header", async () => {
+      write("Other/README.md");
+      await expect(headersOnly({ source_files: "Sources/*.h" })).rejects.toThrow(missing("Sources/*.h", "Other/"));
+      expect(trees()).toEqual([]);
+    });
+
+    it("stops on a source file the tree does not hold", async () => {
+      write("Sources/A.h");
+      await expect(headersOnly({ source_files: ["Sources/A.h", "Sources/B.h"] })).rejects.toThrow(missing("Sources/B.h", "Sources/"));
+    });
+
+    it("stops on a module_map the tree does not hold", async () => {
+      write("Sources/A.h");
+      await expect(headersOnly({ source_files: "Sources/*.h", module_map: "Sources/module.modulemap" })).rejects.toThrow(
+        missing("Sources/module.modulemap", "Sources/"),
+      );
+    });
+  });
+
   describe("a vendored xcframework", () => {
     const XCF = "Frameworks/MLKitFoo.xcframework";
     function xcframework(libraries: Record<string, unknown>[]): void {
