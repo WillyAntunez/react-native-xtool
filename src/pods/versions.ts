@@ -59,7 +59,8 @@ export interface Requirement {
   version: string;
 }
 
-const REQUIREMENT = /^(=|!=|>=|<=|>|<|~>)?\s*([0-9]+(?:[.+-]?[0-9A-Za-z]+)*)$/;
+/** Each separator is required, so a run of characters splits one way only (linear time). */
+const REQUIREMENT = /^(=|!=|>=|<=|>|<|~>)?\s*([0-9][0-9A-Za-z]*(?:[.+-][0-9A-Za-z]+)*)$/;
 
 /**
  * Items trimmed and split at commas; a bare version is "="; [] means any version. Throws RequirementError for an item

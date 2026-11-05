@@ -42,6 +42,14 @@ describe("CocoaPods versions", () => {
     expect(newestSatisfying(["1.0.0+build"], parseRequirements([">= 0"]))).toBe("1.0.0+build");
   });
 
+  it("reads a long requirement it cannot match in linear time", () => {
+    const started = Date.now();
+    expect(() => parseRequirements([`1${"a".repeat(40)}!`])).toThrow(RequirementError);
+    expect(Date.now() - started).toBeLessThan(200);
+    expect(parseRequirements(["1.0.0+build-1"])).toEqual([{ op: "=", version: "1.0.0+build-1" }]);
+    expect(parseRequirements(["~>1.0.0-beta14"])).toEqual([{ op: "~>", version: "1.0.0-beta14" }]);
+  });
+
   it("reads string and array requirements, trimmed", () => {
     expect(parseRequirements(["~> 13.0"])).toEqual([{ op: "~>", version: "13.0" }]);
     expect(parseRequirements([">= 3.3.2", " < 4.0"])).toEqual([
