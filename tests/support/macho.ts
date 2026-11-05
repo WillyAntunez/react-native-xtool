@@ -1,3 +1,5 @@
+import { closeSync, openSync, readSync } from "node:fs";
+
 /**
  * Hand-made Mach-O files for the wrap tests: a 64-bit header with a chosen file type, CPU and platform load command,
  * fat and fat64 wrappers, and BSD `ar` archives with `#1/<n>` long names and a `__.SYMDEF` member. No vendor byte.
@@ -130,4 +132,29 @@ export function arArchive(members: { name: string; data: Buffer }[], opts: { sym
     if (data.length % 2 === 1) parts.push(Buffer.from("\n"));
   }
   return Buffer.concat(parts);
+}
+
+const MACHO_MAGICS = new Set([0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe]);
+const FAT_MAGICS = new Set([0xcafebabe, 0xcafebabf]);
+
+/**
+ * The kind of binary a file starts as: an `ar` archive (`!<arch>\n` or `!<thin>\n`), a Mach-O (32 or 64 bit, either
+ * byte order) or a fat file; undefined for anything else (row 65's check on the npm package).
+ */
+export function binaryMagic(file: string): "ar" | "Mach-O" | "fat" | undefined {
+  const head = Buffer.alloc(8);
+  const fd = openSync(file, "r");
+  let n: number;
+  try {
+    n = readSync(fd, head, 0, 8, 0);
+  } finally {
+    closeSync(fd);
+  }
+  const text = head.subarray(0, n).toString("latin1");
+  if (text === "!<arch>\n" || text === "!<thin>\n") return "ar";
+  if (n < 4) return undefined;
+  const magic = head.readUInt32BE(0);
+  if (MACHO_MAGICS.has(magic)) return "Mach-O";
+  if (FAT_MAGICS.has(magic)) return "fat";
+  return undefined;
 }
