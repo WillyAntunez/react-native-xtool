@@ -1,8 +1,9 @@
 /**
  * Resolves the binary CocoaPods pods the libraries rn-xtool scaffolds depend on (spec goal 1.5): greedy, newest
  * satisfying version first, without backtracking, as `pod install` would pick on a fresh project. A locked version
- * that still satisfies is kept without a request; a pod the lock does not record reads the version index again once. Dependencies are walked
- * through binary pods only: a pod with a table entry is a SwiftPM package and brings its own dependencies.
+ * that still satisfies is kept without a request; any other pod reads the version index again, once per resolution.
+ * Dependencies are walked through binary pods only: a pod with a table entry is a SwiftPM package and brings its own
+ * dependencies.
  */
 import type { PodEntry } from "../config.js";
 import { troubleshootingUrl } from "../docs.js";
@@ -134,19 +135,14 @@ export async function resolveBinaryPods(
         const locked = ctx.locked[pod];
         let version = locked !== undefined && satisfiesAll(locked, reqs) ? locked : undefined;
         if (version === undefined) {
-          // A pod the lock does not record is resolved from a fresh index (once per resolution), so the version the
-          // lock records does not depend on how old this machine's cache is (row 71).
-          const fresh = locked === undefined && !refreshed.has(pod);
+          // A pod the lock does not record, or whose locked version no longer satisfies, is resolved from a fresh
+          // index (once per resolution), so the version the lock records does not depend on how old this machine's
+          // cache is (row 71).
+          const fresh = !refreshed.has(pod);
           if (fresh) refreshed.add(pod);
-          let listed = (fresh ? undefined : versions.get(pod)) ?? (await podVersions(pod, { ...cdn, refresh: fresh }));
+          const listed = (fresh ? undefined : versions.get(pod)) ?? (await podVersions(pod, { ...cdn, refresh: fresh }));
           versions.set(pod, listed);
           version = newestSatisfying(listed, reqs);
-          if (version === undefined && !refreshed.has(pod)) {
-            refreshed.add(pod);
-            listed = await podVersions(pod, { ...cdn, refresh: true });
-            versions.set(pod, listed);
-            version = newestSatisfying(listed, reqs);
-          }
           if (version === undefined) throw new PodsError(conflictText(pod, graph.needs.get(pod) ?? [], describe));
         }
         await checkRoute(pod, version, graph, specOf);

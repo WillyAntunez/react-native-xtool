@@ -3,7 +3,7 @@
  * CDN redirects, refuses requests without one) and cached under `<cache>/specs/`. A version's spec is cached once and
  * never fetched again: a published version does not change, and trunk is read-only from 2026-12-02. The version index
  * is fetched when it is missing, when it does not name the pod, or when the resolver asks (a pod the lock does not
- * record, or no cached version satisfies a requirement).
+ * record, or whose locked version no longer satisfies a requirement).
  */
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
