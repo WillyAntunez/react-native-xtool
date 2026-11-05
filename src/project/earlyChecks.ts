@@ -8,7 +8,12 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import type { PodEntry } from "../config.js";
+import { cachedSpecVersions } from "../pods/cdn.js";
+import { readPodsLock, type PodsLock } from "../pods/lock.js";
 import type { PodRoot } from "../pods/resolve.js";
+import { parsePodSpec, podRoute, selectedLayers } from "../pods/spec.js";
+import { newestSatisfying, parseRequirements } from "../pods/versions.js";
+import { podsCacheDir } from "../paths.js";
 import type { ProjectKind } from "./types.js";
 import { troubleshootingUrl } from "../docs.js";
 import { packageRoot } from "../tools/exec.js";
@@ -333,6 +338,31 @@ export interface LibraryCheckOptions {
    * community CLI, so it is refused (`unlisted-sibling`); Expo's autolinking links such a package.
    */
   kind?: ProjectKind;
+  /** The binary pods' cache whose specs route a pod offline; `podsCacheDir()` by default (a test seam). */
+  podsCache?: string;
+}
+
+/**
+ * How the `pods` step will take an unmapped pod, read offline (spec goal 5.1): in the lock → binary; else the newest
+ * cached spec version that satisfies the requirements decides (an http archive → binary, a git source → source);
+ * else unknown. A shape the `pods` step refuses reads as unknown: the step names it.
+ */
+export function offlinePodRoute(
+  pod: string,
+  requirements: readonly string[],
+  ctx: { lock: PodsLock; cache: string },
+): "binary" | "source" | "unknown" {
+  if (ctx.lock.pods[pod] !== undefined) return "binary";
+  try {
+    const version = newestSatisfying(cachedSpecVersions(pod, ctx.cache), parseRequirements(requirements));
+    if (version === undefined) return "unknown";
+    const text = readFileSync(path.join(ctx.cache, "specs", pod, `${version}.podspec.json`), "utf8");
+    const spec = parsePodSpec(JSON.parse(text) as unknown, { pod, version });
+    const route = podRoute(spec, selectedLayers(spec, [spec.name]).layers);
+    return route.kind === "other" ? "unknown" : route.kind;
+  } catch {
+    return "unknown";
+  }
 }
 
 /** A dependency with podspecs: its name, folder, version and podspec texts. */
@@ -372,6 +402,7 @@ class Libraries {
   private podIndex?: { podToNpm: Map<string, string>; linkedNpm: Set<string>; listedPodToNpm: Map<string, string> };
   private podTable?: PodTable;
   private classifier?: ClassifyPodDependency;
+  private routes?: { lock: PodsLock; cache: string };
 
   constructor(root: string, opts: LibraryCheckOptions) {
     this.root = root;
@@ -447,6 +478,12 @@ class Libraries {
     });
   }
 
+  /** How the `pods` step will take an unmapped pod, from the lock and the cached specs (never the network). */
+  route(pod: string, requirements: readonly string[]): "binary" | "source" | "unknown" {
+    this.routes ??= { lock: lockOf(this.root), cache: this.opts.podsCache ?? podsCacheDir() };
+    return offlinePodRoute(pod, requirements, this.routes);
+  }
+
   /** The pod table the checks classify with. */
   table(): PodTable {
     return (this.podTable ??= this.opts.table ?? mergedPodTable(this.opts.pods, this.opts.binary));
@@ -497,9 +534,24 @@ function andList(items: readonly string[]): string {
   return items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 }
 
+/** The project's lock; an empty one when it cannot be read (the `pods` step names why). */
+function lockOf(root: string): PodsLock {
+  try {
+    return readPodsLock(root);
+  } catch {
+    return { lockfileVersion: 1, pods: {} };
+  }
+}
+
+/**
+ * Block 2's refusal, for the unmapped pods the `pods` step cannot take: those whose cached spec is a git source. A
+ * pod the lock records or whose cached spec is binary passes, and so does one with neither (`unresolvedPodLines`).
+ */
 function unmappedFailure(libs: Libraries, lib: Library): EarlyFailure | undefined {
   const pods: string[] = [];
-  for (const dep of libs.podDependencies(lib)) if (dep.kind === "unmapped" && !pods.includes(dep.pod)) pods.push(dep.pod);
+  for (const dep of libs.podDependencies(lib)) {
+    if (dep.kind === "unmapped" && !pods.includes(dep.pod) && libs.route(dep.pod, dep.requirements) === "source") pods.push(dep.pod);
+  }
   if (pods.length === 0) return undefined;
   const several = pods.length > 1;
   const snippet = `{ "pods": { "${pods[0]}": { "url": "<git URL>", "exact": "<version>", "products": ["<product>"] } } }`;
@@ -634,6 +686,34 @@ export function scaffoldedPods(projectRoot: string, table: PodTable, opts: Libra
     }
   }
   return pods;
+}
+
+/**
+ * The `ℹ` line per unmapped pod of a library rn-xtool would scaffold whose route the early checks cannot read offline
+ * (no lock entry, no cached spec that satisfies): the `pods` step reads its spec. Never throws.
+ */
+export function unresolvedPodLines(projectRoot: string, opts: LibraryCheckOptions & { cache?: string } = {}): string[] {
+  let libs: Libraries;
+  try {
+    libs = new Libraries(path.resolve(projectRoot), opts.cache !== undefined ? { ...opts, podsCache: opts.cache } : opts);
+  } catch {
+    return [];
+  }
+  const lines: string[] = [];
+  for (const { name, dir } of libs.deps) {
+    try {
+      const lib = libs.library(name, dir);
+      if (lib === undefined || !libs.scaffolded(lib)) continue;
+      for (const dep of libs.podDependencies(lib)) {
+        if (dep.kind !== "unmapped" || libs.route(dep.pod, dep.requirements) !== "unknown") continue;
+        const line = `ℹ pods — ${dep.pod} (from ${name}) is not resolved yet; rn-xtool build reads its spec from the CocoaPods CDN.`;
+        if (!lines.includes(line)) lines.push(line);
+      }
+    } catch {
+      // One unreadable package says nothing about the others.
+    }
+  }
+  return lines;
 }
 
 /**

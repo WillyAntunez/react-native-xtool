@@ -25,6 +25,7 @@ import {
   libraryFailures,
   podPinWarnings,
   scaffoldedPods,
+  unresolvedPodLines,
   UnsupportedSetupError,
   type EarlyFailure,
   type LibraryCheckOptions,
@@ -195,6 +196,8 @@ export interface BuildDeps {
   unbundledResources: (root: string) => { pkg: string; items: string[] }[];
   /** After rn-spm: the scaffolded libraries' `resource_bundles` generate builds into the app. */
   resourceBundles: (root: string) => BundleSource[];
+  /** After the early checks: the `ℹ` line per unmapped pod the early checks cannot route offline. */
+  unresolvedPodLines: (root: string, opts: LibraryCheckOptions) => string[];
   /** The binary CocoaPods pods the scaffolded libraries depend on (`unmapped` dependencies; excluded libraries skipped). */
   binaryPodCandidates: (root: string, opts: LibraryCheckOptions) => PodRoot[];
   /** The `pods` step: resolve, announce, download, verify, wrap, record the lock. */
@@ -240,6 +243,7 @@ const realDeps: BuildDeps = {
   unbundledResources,
   resourceBundles: scaffoldedResourceBundles,
   binaryPodCandidates: (root, opts) => binaryPodCandidates(root, opts),
+  unresolvedPodLines: (root, opts) => unresolvedPodLines(root, opts),
   pods: (root, roots, table, opts) => runPodsStep(root, roots, table, { ...(opts.podsFile !== undefined ? { podsFile: opts.podsFile } : {}), log: opts.log }),
   stagePods: (paths, result) => stagePodBinaries(paths, result),
   emptyTargets: (root, opts) => {
@@ -307,6 +311,7 @@ export async function build(
   for (const line of excludeLines(root, config.exclude ?? [], { kind, file: configFileOf(config, "exclude") })) d.log(line);
   stopOnKnownLimits([...d.installFailures(root), ...d.libraryFailures(root, libraryChecks)]);
   for (const line of d.podPinWarnings(root, libraryChecks)) d.log(line);
+  for (const line of d.unresolvedPodLines(root, libraryChecks)) d.log(line);
   const project = await d.readProject(root, { log: d.log });
   // Bare rn-spm runs RN's default autolinking config command, `npx --no-install @react-native-community/cli config`.
   if (project.kind === "bare" && project.hasRnCli === false) throw new Error(RN_CLI_MISSING);

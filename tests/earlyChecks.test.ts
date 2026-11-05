@@ -6,6 +6,8 @@ import Module, { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   binaryPodCandidates,
+  offlinePodRoute,
+  unresolvedPodLines,
   allowedLimitText,
   allowKnownLimits,
   earlyFailures,
@@ -19,6 +21,13 @@ import {
 } from "../src/project/earlyChecks.js";
 import { mergedPodTable, type PodTable } from "../src/project/podTable.js";
 import { podDependencies } from "../src/project/podspecs.js";
+import { PODS_LOCK } from "../src/pods/lock.js";
+import { fixtureSpec } from "./support/podFixtures.js";
+import { useGitSpecCache, writeGitSpecs } from "./support/podsCache.js";
+
+// The early checks read the pods cache: one whose specs are git sources, so an unmapped pod reads as a source pod
+// (block 2's refusal), and the machine's own cache is never read.
+useGitSpecCache();
 
 const tempDirs: string[] = [];
 
@@ -670,6 +679,72 @@ describe("unmapped pods", () => {
       "react-native.config.js": "module.exports = { dependencies: { '@react-native-ml-kit/text-recognition': { platforms: { ios: null } } } };\n",
     });
     expect(binaryPodCandidates(root, {})).toEqual([]);
+  });
+
+  describe("offline routes (row 1)", () => {
+    const LIB = "@react-native-ml-kit/text-recognition";
+    const NOT_RESOLVED = `ℹ pods — GoogleMLKit (from ${LIB}) is not resolved yet; rn-xtool build reads its spec from the CocoaPods CDN.`;
+    const emptyCache = async (): Promise<string> => tempDir();
+
+    it("passes a pod the lock records", async () => {
+      const root = await project({ [LIB]: mlKit() });
+      await writeFiles(root, {
+        [PODS_LOCK]: JSON.stringify({
+          lockfileVersion: 1,
+          pods: { GoogleMLKit: { version: "8.0.0", subspecs: [], url: "https://example.invalid/g.tar.gz", size: 1, sha256: "a".repeat(64), neededBy: [LIB] } },
+        }),
+      });
+      const podsCache = await emptyCache();
+      expect(libraryFailures(root, { podsCache })).toEqual([]);
+      expect(unresolvedPodLines(root, { podsCache })).toEqual([]);
+    });
+
+    it("passes a pod whose cached spec is binary", async () => {
+      const root = await project({ [LIB]: mlKit() });
+      const podsCache = await emptyCache();
+      await writeFiles(podsCache, { "specs/GoogleMLKit/8.0.0.podspec.json": JSON.stringify(fixtureSpec("GoogleMLKit", "8.0.0")) });
+      expect(offlinePodRoute("GoogleMLKit", ["8.0.0"], { lock: { lockfileVersion: 1, pods: {} }, cache: podsCache })).toBe("binary");
+      expect(libraryFailures(root, { podsCache })).toEqual([]);
+      expect(unresolvedPodLines(root, { podsCache })).toEqual([]);
+    });
+
+    it("refuses a pod whose cached spec is a git source without a table entry", async () => {
+      const root = await project({ "react-native-app-auth": appAuth() });
+      const podsCache = await emptyCache();
+      writeGitSpecs(podsCache, ["AppAuth"]);
+      expect(offlinePodRoute("AppAuth", [">= 1.7.6"], { lock: { lockfileVersion: 1, pods: {} }, cache: podsCache })).toBe("source");
+      expect(libraryFailures(root, { table: NO_POD_TABLE, podsCache })).toEqual([
+        { id: "unmapped-pod", allowKey: "react-native-app-auth", reason: unmapped("react-native-app-auth 8.5.1", "AppAuth", "AppAuth", false) },
+      ]);
+    });
+
+    it("does not refuse a pod it cannot route offline, and prints the ℹ line", async () => {
+      const root = await project({ [LIB]: mlKit() });
+      const podsCache = await emptyCache();
+      expect(offlinePodRoute("GoogleMLKit", ["8.0.0"], { lock: { lockfileVersion: 1, pods: {} }, cache: podsCache })).toBe("unknown");
+      expect(libraryFailures(root, { podsCache })).toEqual([]);
+      expect(unresolvedPodLines(root, { podsCache })).toEqual([NOT_RESOLVED]);
+      // A cached version that does not satisfy the requirement says nothing either.
+      writeGitSpecs(podsCache, ["GoogleMLKit"]);
+      expect(offlinePodRoute("GoogleMLKit", ["9.0.0"], { lock: { lockfileVersion: 1, pods: {} }, cache: podsCache })).toBe("unknown");
+      expect(unresolvedPodLines(root, { podsCache, exclude: [LIB] })).toEqual([]);
+    });
+
+    it("makes no network request", async () => {
+      const root = await project({ [LIB]: mlKit() });
+      const fetch = vi.fn(() => {
+        throw new Error("no network in the early checks");
+      });
+      vi.stubGlobal("fetch", fetch);
+      try {
+        const podsCache = await emptyCache();
+        libraryFailures(root, { podsCache });
+        unresolvedPodLines(root, { podsCache });
+        expect(fetch).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
   });
 
   it("refuses AppAuth's shape without a table entry", async () => {

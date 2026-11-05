@@ -15,6 +15,10 @@ import { fakeExpo58Modules } from "./support/expo58.js";
 import { makeFakeSlot088 } from "./support/fakeSlots.js";
 import { fakeRnScripts } from "./support/rnScripts.js";
 import { plistOf, withEntitlements } from "./support/entitlements.js";
+import { useGitSpecCache } from "./support/podsCache.js";
+
+// Unmapped pods read as git sources from a cache of their own, never the machine's.
+useGitSpecCache();
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
 const tempDirs: string[] = [];

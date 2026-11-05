@@ -8,10 +8,14 @@ import { build, buildSteps, chooseMetroPort, type BuildDeps } from "../src/comma
 import { loadConfig as realLoadConfig } from "../src/config.js";
 import { jsiRnHeaderDirs } from "../src/pipeline/jsi.js";
 import { fixLibraryManifests } from "../src/pipeline/manifests.js";
-import { binaryPodCandidates as realBinaryPodCandidates, libraryFailures as realLibraryFailures, podPinWarnings, UnsupportedSetupError, type EarlyFailure } from "../src/project/earlyChecks.js";
+import { binaryPodCandidates as realBinaryPodCandidates, unresolvedPodLines as realUnresolvedPodLines, libraryFailures as realLibraryFailures, podPinWarnings, UnsupportedSetupError, type EarlyFailure } from "../src/project/earlyChecks.js";
 import { mergedPodTable } from "../src/project/podTable.js";
 import { readState, writeState } from "../src/state.js";
 import { withEntitlements } from "./support/entitlements.js";
+import { useGitSpecCache } from "./support/podsCache.js";
+
+// Unmapped pods read as git sources from a cache of their own, never the machine's.
+useGitSpecCache();
 
 const expoFlags = { kind: "expo" as const, hasExpoModules: true, hasExpoConstants: true, rnArtifacts: false, expoPlugin: "installed" as const };
 const bareFlags = { kind: "bare" as const, hasExpoModules: false, hasExpoConstants: false, rnArtifacts: false, expoPlugin: "installed" as const };
@@ -161,6 +165,7 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
     unbundledResources: () => [],
     resourceBundles: () => [],
     binaryPodCandidates: () => [],
+    unresolvedPodLines: () => [],
     pods: async () => {
       throw new Error("no pods step without candidates");
     },
@@ -252,6 +257,29 @@ describe("build", () => {
       expect(t.seen.staged).toBe(RESULT);
       expect(t.logs).toContain("▸ pods");
       expect(t.logs).toContain("▸ pod-binaries");
+    });
+
+    it("prints the not-resolved line after the early checks", async () => {
+      const t = withPods({ cfg: { exclude: ["other-lib"] } });
+      const pkg = join(t.root, "node_modules", LIB);
+      mkdirSync(pkg, { recursive: true });
+      writeFileSync(join(t.root, "package.json"), JSON.stringify({ name: "app", dependencies: { [LIB]: "2.0.0" } }));
+      writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: LIB, version: "2.0.0" }));
+      writeFileSync(join(pkg, "RNMLKitTextRecognition.podspec"), "Pod::Spec.new do |s|\n  s.dependency 'GoogleMLKit/TextRecognition', '8.0.0'\nend\n");
+      const podsCache = mkdtempSync(join(tmpdir(), "build-pods-cache-"));
+      const seen: unknown[] = [];
+      await build(t.root, {}, {
+        ...t.deps,
+        libraryFailures: (root, opts) => realLibraryFailures(root, { ...opts, podsCache }),
+        unresolvedPodLines: (root, opts) => {
+          seen.push(opts);
+          return realUnresolvedPodLines(root, { ...opts, podsCache });
+        },
+      });
+      const line = `ℹ pods — GoogleMLKit (from ${LIB}) is not resolved yet; rn-xtool build reads its spec from the CocoaPods CDN.`;
+      expect(t.logs.filter((l) => l === line)).toHaveLength(1);
+      expect(t.logs.indexOf(line)).toBeLessThan(t.logs.indexOf("▸ pods"));
+      expect(seen).toEqual([{ exclude: ["other-lib"] }]);
     });
 
     it("stops on an unreachable CDN before anything changes", async () => {
