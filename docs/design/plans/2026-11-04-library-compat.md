@@ -1400,16 +1400,22 @@ No commit. It needs the owner's OK: a `create-expo-app` download, about 1 GB of 
 No commit. It runs after F1 for the four libraries, and after F2 for the rest. Until the owner confirms an item, the
 docs call that library build-verified only (row 41).
 
-- [ ] react-native-video plays a remote MP4 with its controls.
-- [ ] The vision-camera preview shows after the permission prompt (`NSCameraUsageDescription` in Info.plist).
-- [ ] device-info returns plausible values: model, system version and unique id. The name is the generic one.
-- [ ] netinfo reports the connection type and follows Wi‑Fi on and off. The SSID is empty, as the entitlement line
-  says.
-- [ ] The app installs with the entitlements file of F2 step 7, and nothing on the iPhone refuses it.
+**Run 2026-11-05 (the owner, iOS 26, install over Wi‑Fi): pass.** The bare React Native 0.88.1 proof app with the
+five libraries and an entitlements file (keychain groups, `aps-environment`, `wifi-info`, `HotspotConfiguration`, an
+App Group): the five ⚠ lines printed, and the app, signed at build with its binaries left without the exec bit,
+installed and launched normally (row 54). Fast Refresh works. The items left unchecked below were not run.
+
+- [x] react-native-video plays a remote MP4 with its controls.
+- [x] The vision-camera preview shows after the permission prompt (`NSCameraUsageDescription` in Info.plist).
+- [x] device-info returns plausible values: model, system version and unique id. The name is the generic one. (Model
+  and iOS version checked.)
+- [x] netinfo reports the connection type and follows Wi‑Fi on and off. The SSID is empty, as the entitlement line
+  says. (Type `wifi`, connected `true` checked; Wi‑Fi off and on not run.)
+- [x] The app installs with the entitlements file of F2 step 7, and nothing on the iPhone refuses it.
 - [ ] With netinfo excluded and its import guarded, the app launches without a red screen.
 - [ ] Optional: the AppAuth login opens the system browser sheet and returns through the redirect. This needs a test
-  OpenID provider and the redirect scheme in Info.plist.
-- [ ] Results go into `docs/libraries.md` dates, with one `docs:` commit by the controller.
+  OpenID provider and the redirect scheme in Info.plist. (react-native-app-auth is linked: `authorize` is present.)
+- [x] Results go into `docs/libraries.md` dates, with one `docs:` commit by the controller.
 
 ### Task I: Final review (controller)
 

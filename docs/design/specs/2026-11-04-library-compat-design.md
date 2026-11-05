@@ -635,6 +635,21 @@ The process, end to end:
     OpenID provider and the redirect scheme in Info.plist.
 
   Until the owner confirms these, the docs call the libraries build-verified only.
+- **Device pass, run 2026-11-05** (the owner, iOS 26, install over Wi‑Fi), on the bare React Native 0.88.1 app of the
+  build-only proof with the five libraries and an entitlements file set as `CODE_SIGN_ENTITLEMENTS` (keychain groups,
+  `aps-environment`, `wifi-info`, `HotspotConfiguration`, an App Group):
+  - `build` printed the five ⚠ lines, xtool signed the app at build (its binaries without the exec bit), and the app
+    installed and launched normally (row 54);
+  - vision-camera: the camera permission prompt, then the back-camera preview;
+  - video: a remote MP4 plays with the native controls;
+  - device-info: the model and the iOS version are shown;
+  - netinfo: type `wifi`, connected `true`;
+  - react-native-app-auth: linked (`authorize` is present); the login flow was not run;
+  - Fast Refresh works.
+
+  Not part of this pass: netinfo following Wi‑Fi off and on, device-info's unique id, the app with netinfo excluded,
+  and the AppAuth login. The docs call vision-camera, video, device-info and netinfo verified on a device on bare
+  React Native 0.88.1, and react-native-app-auth linked on a device with its login flow unchecked.
 
 ## Open questions
 

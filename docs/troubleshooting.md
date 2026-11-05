@@ -974,8 +974,9 @@ builds Debug only, so a different Release file is not read. `$(PRODUCT_BUNDLE_ID
 (both the bundle id) and the project's other settings in the values are resolved; `$(AppIdentifierPrefix)` and
 `$(TeamIdentifierPrefix)` are kept, for xtool to fill in. When the file has keys, rn-xtool writes them to
 `ios-xtool/App.entitlements`, names it as `entitlementsPath` in `xtool.yml`, and xtool signs the app with them
-("Applying entitlements..." in the build log). The file every Expo prebuild writes holds no keys, so it is not
-passed, and `doctor --project` prints no `entitlements` line for it, as for a project without the setting.
+("Applying entitlements..." in the build log). An app built with an entitlements file installs and launches on the
+iPhone as any other (checked on 2026-11-05). The file every Expo prebuild writes holds no keys, so it is not passed,
+and `doctor --project` prints no `entitlements` line for it, as for a project without the setting.
 
 **What xtool keeps.** xtool registers the app and signs it on your team, and it keeps only the entitlements it knows,
 on a free team only those of free capabilities. Before compiling, `build` prints one line per key it drops or does not

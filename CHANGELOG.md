@@ -27,13 +27,14 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 ### Added
 - CocoaPods pods with a SwiftPM package: a scaffolded library's dependency on a CocoaPods pod becomes a
   `.package(url:exact:)` dependency when the pod table names the pod. rn-xtool's table maps AppAuth to AppAuth-iOS
-  3.0.0, so react-native-app-auth 8.5.1 builds on bare React Native 0.88.1 and on Expo SDK 58 (checked by building
-  only, on 2026-11-05). A `pods` object in `rn-xtool.config.json` adds pods or overrides rn-xtool's entries field by
-  field (`url`, `exact`, `products`, and optional `subspecs` and `forwardHeaders`, which forward a pod's umbrella
-  header to its SwiftPM modules). Each scaffold records its pins (`// rn-xtool-pods: AppAuth=3.0.0`), and `build` and
-  `doctor --project` warn about a persisted scaffold whose pins differ from the table, and about a pin outside a
-  podspec's requirement: "⚠ AppAuth 1.0.0 (rn-xtool.config.json) is outside react-native-app-auth's requirement ">=
-  1.7.6"". See [troubleshooting.md](docs/troubleshooting.md#libraries-that-depend-on-cocoapods-pods).
+  3.0.0, so react-native-app-auth 8.5.1 builds on bare React Native 0.88.1 and on Expo SDK 58 (both checked by building
+  on 2026-11-05; on bare React Native 0.88.1 it is also linked on a device, and its login flow is not checked yet). A
+  `pods` object in `rn-xtool.config.json` adds pods or overrides rn-xtool's entries field by field (`url`, `exact`,
+  `products`, and optional `subspecs` and `forwardHeaders`, which forward a pod's umbrella header to its SwiftPM
+  modules). Each scaffold records its pins (`// rn-xtool-pods: AppAuth=3.0.0`), and `build` and `doctor --project` warn
+  about a persisted scaffold whose pins differ from the table, and about a pin outside a podspec's requirement: "⚠
+  AppAuth 1.0.0 (rn-xtool.config.json) is outside react-native-app-auth's requirement ">= 1.7.6"". See
+  [troubleshooting.md](docs/troubleshooting.md#libraries-that-depend-on-cocoapods-pods).
 - `doctor --project` and `build` refuse early a CocoaPods-only library that depends on a pod the pod table does not
   map, naming the pod and the `pods` entry to add: "<package> <version>: its podspec depends on the CocoaPods pod <pod>,
   which has no SwiftPM package rn-xtool knows. …". @react-native-ml-kit/text-recognition 2.0.0 is refused this way
@@ -128,8 +129,9 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 ### Fixed
 - react-native-vision-camera 4.7.3, react-native-video 6.19.3, react-native-device-info 15.0.2 and
   @react-native-community/netinfo 11.5.2 build without hand fixes on bare React Native 0.88.1, and device-info on Expo
-  SDK 58 (checked by building only, on 2026-11-04). Scaffolder fixes 20–24, in
-  [upstream/react-native-scaffolder.md](docs/upstream/react-native-scaffolder.md):
+  SDK 58 (checked by building only, on 2026-11-04). On bare React Native 0.88.1 the four also work on a device
+  (checked on 2026-11-05: the camera preview, video playback, the device model and iOS version, the connection type).
+  Scaffolder fixes 20–24, in [upstream/react-native-scaffolder.md](docs/upstream/react-native-scaffolder.md):
   - a dependency on a React Native library that is not autolinked for iOS is left out, as CocoaPods leaves it out,
     with the subspec that declares it: vision-camera without react-native-worklets-core builds without frame
     processors, and the scaffold says so (`Dependency "react-native-worklets-core" is not installed (or not linked for
