@@ -3,6 +3,8 @@ export interface XtoolYmlInput {
   resources?: string[];
   /** The app icon PNG, relative to xtool.yml; xtool copies it into the app and sets CFBundleIconFile. */
   iconPath?: string;
+  /** The app's entitlements, relative to xtool.yml: xtool signs the app with them (`App.entitlements`). */
+  entitlementsPath?: string;
 }
 
 /** Bundled by every app; `EXConstants.bundle` joins them when expo-constants is installed. */
@@ -16,6 +18,7 @@ export function renderXtoolYml(i: XtoolYmlInput): string {
     `bundleID: ${i.bundleIdentifier}`,
     "product: App",
     "infoPath: Info.plist",
+    ...(i.entitlementsPath !== undefined ? [`entitlementsPath: ${i.entitlementsPath}`] : []),
     ...(i.iconPath !== undefined ? [`iconPath: ${i.iconPath}`] : []),
     "skipLSP: true",
     "resources:",

@@ -6,6 +6,7 @@ import type { RuntimeFramework } from "../frameworks.js";
 import { swiftHeadersDir, type ProjectPaths } from "../paths.js";
 import { transformInfoPlist } from "../plist.js";
 import { buildVars, type ProjectInfo } from "../project/index.js";
+import { readEntitlements } from "../project/entitlements.js";
 import { openPbxproj, resolveSetting } from "../project/pbxproj.js";
 import { packageRoot } from "../tools/exec.js";
 import { IOS_MIN } from "../versions.js";
@@ -28,6 +29,8 @@ export interface GenerateContext {
 }
 
 const MANIFEST_6_5 = "Package@swift-6.5.swift";
+/** The app's entitlements in ios-xtool, which xtool.yml's `entitlementsPath` names. */
+export const ENTITLEMENTS_FILE = "App.entitlements";
 
 /** The app gets the auto-reload helper target: apps without expo-dev-client only. */
 export function hasDevSupport(project: Pick<ProjectInfo, "hasDevClient">): boolean {
@@ -214,6 +217,11 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
   // DEV_CLIENT_DEFAULT_LAUNCHER_URL or from a deep link.
   const packagerHost = project.kind === "bare" ? `${ctx.lanIp}:${ctx.metroPort}` : ctx.lanIp;
   await writeFile(join(paths.iosXtool, "ip.txt"), `${packagerHost}\n`);
+  // CODE_SIGN_ENTITLEMENTS (Debug; on Expo, the prebuild's pbxproj): removed when the setting goes.
+  const entitlements = readEntitlements(project, paths.ios);
+  const entitlementsFile = join(paths.iosXtool, ENTITLEMENTS_FILE);
+  if (entitlements !== undefined) await writeFile(entitlementsFile, plist.build(entitlements.dict as plist.PlistValue));
+  else await rm(entitlementsFile, { force: true });
   await writeFile(
     join(paths.iosXtool, "xtool.yml"),
     renderXtoolYml({
@@ -223,6 +231,7 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
         ...resources.map((r) => `Resources/${r}`),
       ],
       iconPath: icon.source !== undefined ? APP_ICON_FILE : undefined,
+      entitlementsPath: entitlements !== undefined ? ENTITLEMENTS_FILE : undefined,
     }),
   );
   const { manifest, manifest65 } = renderPackageSwift({
