@@ -10,7 +10,7 @@ import { podShard } from "../../src/pods/cdn.js";
 import { formatSize } from "../../src/pods/format.js";
 import { PODS_LOCK, readPodsLock, recordedLine, renderPodsLock, writePodsLock } from "../../src/pods/lock.js";
 import type { PodRoot } from "../../src/pods/resolve.js";
-import { POD_DISK_FACTOR, podTerms, runPodsStep, type PodsStepDeps } from "../../src/pods/step.js";
+import { POD_APP_COPY_FACTOR, POD_DISK_FACTOR, podTerms, runPodsStep, type PodsStepDeps } from "../../src/pods/step.js";
 import { mergedPodTable } from "../../src/project/podTable.js";
 import { arArchive, machO } from "../support/macho.js";
 import { tarGz, type ArchiveSpec } from "../support/archives.js";
@@ -324,6 +324,39 @@ describe("runPodsStep", () => {
     );
     expect(downloads()).toEqual([]);
     expect(existsSync(path.join(root, PODS_LOCK))).toBe(false);
+  });
+
+  describe("with the project on another filesystem than the cache (row 59)", () => {
+    const app = POD_DISK_FACTOR - POD_APP_COPY_FACTOR;
+    const split = (free: { cache: number; project: number }) => async (dir: string) =>
+      dir === cache ? { dev: 1, freeBytes: free.cache } : { dev: 2, freeBytes: free.project };
+
+    it("checks the project's filesystem for the per-app copies", async () => {
+      const probed: string[] = [];
+      const filesystemOf = split({ cache: 1e12, project: 1000 });
+      const run = runPodsStep(root, ROOTS, table(), deps({ filesystemOf: (dir) => (probed.push(dir), filesystemOf(dir)) }));
+      await expect(run).rejects.toThrow(
+        `Not enough free disk space for the CocoaPods binaries: the filesystem of ${tilde(root)} has 1 KB free, and rn-xtool needs about ` +
+          `${formatSize(total * POD_APP_COPY_FACTOR)} there (the per-app copies in ios/build/pod-binaries and ios-xtool/Resources). ` +
+          "Free some space, then build again.",
+      );
+      expect(probed.sort()).toEqual([cache, root].sort());
+      expect(downloads()).toEqual([]);
+    });
+
+    it("checks the cache's filesystem for the downloads and their trees only, and names both when both are short", async () => {
+      const cacheText =
+        `the filesystem of ${tilde(cache)} has 1 KB free, and rn-xtool needs about ${formatSize(total * app)} there ` +
+        `(10 downloads ${formatSize(total)}, unpacked and wrapped copies ${formatSize(total * (app - 1))})`;
+      await expect(runPodsStep(root, ROOTS, table(), deps({ filesystemOf: split({ cache: 1000, project: 1e12 }) }))).rejects.toThrow(
+        `Not enough free disk space for the CocoaPods binaries: ${cacheText}. Free some space, then build again.`,
+      );
+      await expect(runPodsStep(root, ROOTS, table(), deps({ filesystemOf: split({ cache: 1000, project: 1000 }) }))).rejects.toThrow(
+        `Not enough free disk space for the CocoaPods binaries: ${cacheText}; the filesystem of ${tilde(root)} has 1 KB free`,
+      );
+      await runPodsStep(root, ROOTS, table(), deps({ filesystemOf: split({ cache: total * app, project: total * POD_APP_COPY_FACTOR }) }));
+      expect(downloads()).toHaveLength(10);
+    });
   });
 
   it("sizes the disk check from the lock when HEAD gives no length", async () => {

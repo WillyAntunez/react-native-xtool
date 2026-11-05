@@ -41,6 +41,11 @@ import { wrapPod, type WrappedPod } from "./wrap.js";
  * build-only proof).
  */
 export const POD_DISK_FACTOR = 8;
+/**
+ * The part of `POD_DISK_FACTOR` that lands in the project, the per-app copies (G2: 66 MB for 40.3 MB of downloads):
+ * checked on the project's filesystem when the cache is on another one (final review M5).
+ */
+export const POD_APP_COPY_FACTOR = 2;
 
 /** What the step hands to staging and to `build`: the binary pods as the scaffolder takes them, the lock, the bundles. */
 export interface PodsStepResult extends PodsResult {
@@ -240,18 +245,32 @@ export async function runPodsStep(root: string, candidates: readonly PodRoot[], 
       }),
     );
     // Row 59: the downloads, their extracted and wrapped trees and the per-app copies (factor 8), checked on the cache's
-    // filesystem. A file HEAD gives no length for counts with the size the lock records for this version (review M3).
+    // filesystem; the per-app copies' share on the project's when it is another one (final review M5). A file HEAD gives
+    // no length for counts with the size the lock records for this version (review M3).
     const sizeOf = (t: Download): number =>
       t.plan.expectedBytes ?? (t.plan.locked?.version === t.b.version ? t.plan.locked.size : undefined) ?? 0;
     const bytes = todo.reduce((a, t) => a + sizeOf(t), 0);
-    const need = bytes * POD_DISK_FACTOR;
-    const { freeBytes } = await (d.filesystemOf ?? realFilesystemOf)(cache);
-    if (freeBytes < need) {
-      throw new PodsError(
-        `Not enough free disk space for the CocoaPods binaries: the filesystem of ${tilde(cache)} has ${diskSize(freeBytes)} free, ` +
-          `and rn-xtool needs about ${diskSize(need)} there (${todo.length} download${todo.length === 1 ? "" : "s"} ${diskSize(bytes)}, ` +
-          `unpacked, wrapped and per-app copies ${diskSize(need - bytes)}). Free some space, then build again.`,
+    const filesystemOf = d.filesystemOf ?? realFilesystemOf;
+    const [cacheFs, projectFs] = await Promise.all([filesystemOf(cache), filesystemOf(root)]);
+    const apart = cacheFs.dev !== projectFs.dev;
+    const cacheNeed = bytes * (apart ? POD_DISK_FACTOR - POD_APP_COPY_FACTOR : POD_DISK_FACTOR);
+    const downloadsText = `${todo.length} download${todo.length === 1 ? "" : "s"} ${diskSize(bytes)}`;
+    const short: string[] = [];
+    if (cacheFs.freeBytes < cacheNeed) {
+      short.push(
+        `the filesystem of ${tilde(cache)} has ${diskSize(cacheFs.freeBytes)} free, and rn-xtool needs about ${diskSize(cacheNeed)} there ` +
+          `(${downloadsText}, ${apart ? "unpacked and wrapped copies" : "unpacked, wrapped and per-app copies"} ${diskSize(cacheNeed - bytes)})`,
       );
+    }
+    const projectNeed = bytes * POD_APP_COPY_FACTOR;
+    if (apart && projectFs.freeBytes < projectNeed) {
+      short.push(
+        `the filesystem of ${tilde(root)} has ${diskSize(projectFs.freeBytes)} free, and rn-xtool needs about ${diskSize(projectNeed)} there ` +
+          "(the per-app copies in ios/build/pod-binaries and ios-xtool/Resources)",
+      );
+    }
+    if (short.length > 0) {
+      throw new PodsError(`Not enough free disk space for the CocoaPods binaries: ${short.join("; ")}. Free some space, then build again.`);
     }
     d.log(announcement(todo, cache, d.terms ?? podTerms()));
   }
