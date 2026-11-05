@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { afterAll, describe, expect, it } from "vitest";
 import { streamingRunner } from "../src/pipeline/rnSpm.js";
 import {
   AUTOLINKING_CONFIG_COMMAND,
+  binaryInPatch,
   configCommandFor,
   parseMissingPackageSwift,
   persistScaffoldArgv,
@@ -800,5 +801,98 @@ describe("streamingRunner", () => {
     } finally {
       process.stdout.write = w;
     }
+  });
+});
+
+describe("binaryInPatch", () => {
+  const added = (file: string, first: string) =>
+    [`diff --git a/${file} b/${file}`, "new file mode 100644", "--- /dev/null", `+++ b/${file}`, "@@ -0,0 +1,2 @@", `+${first}`, "+more", ""].join("\n");
+  const TEXT = added("node_modules/lib-a/Package.swift", "// swift-tools-version: 6.0");
+
+  it.each([
+    ["a GIT binary patch hunk", `${TEXT}diff --git a/node_modules/lib-a/x.a b/node_modules/lib-a/x.a\nnew file mode 100644\nGIT binary patch\nliteral 8\nPcmc~u&B@6x$;e;;0\n`, "node_modules/lib-a/x.a"],
+    ["a binary file git only names", `${TEXT}diff --git a/node_modules/lib-a/y.o b/node_modules/lib-a/y.o\nnew file mode 100644\nBinary files /dev/null and b/node_modules/lib-a/y.o differ\n`, "node_modules/lib-a/y.o"],
+    ["an added ar archive", `${TEXT}${added("node_modules/lib-a/libX.a", "!<arch>")}`, "node_modules/lib-a/libX.a"],
+    ["an added thin archive", added("node_modules/lib-a/libY.a", "!<thin>"), "node_modules/lib-a/libY.a"],
+    ["an added Mach-O object", added("node_modules/lib-a/Z", "\xcf\xfa\xed\xfe\x0c\x00\x00\x01"), "node_modules/lib-a/Z"],
+    ["an added fat file", added("node_modules/lib-a/F", "\xca\xfe\xba\xbe\x00\x00\x00\x02"), "node_modules/lib-a/F"],
+  ])("names the first binary file: %s", (_name, text, file) => {
+    expect(binaryInPatch(text)).toBe(file);
+  });
+
+  it("passes a text-only patch, a removed archive and a text line that names the magic", () => {
+    expect(binaryInPatch(TEXT)).toBeUndefined();
+    const removed = ["diff --git a/x.a b/x.a", "deleted file mode 100644", "--- a/x.a", "+++ /dev/null", "@@ -1 +0,0 @@", "-!<arch>", ""].join("\n");
+    expect(binaryInPatch(removed)).toBeUndefined();
+    expect(binaryInPatch(added("node_modules/lib-a/README.md", "an archive starts with !<arch>"))).toBeUndefined();
+  });
+});
+
+describe("the persist guard", () => {
+  const tmp: string[] = [];
+  afterAll(() => {
+    for (const d of tmp) rmSync(d, { recursive: true, force: true });
+  });
+  const PATCH = "patches/lib-a+1.0.0.patch";
+  const TEXT_PATCH = [
+    "diff --git a/node_modules/lib-a/Package.swift b/node_modules/lib-a/Package.swift",
+    "new file mode 100644",
+    "--- /dev/null",
+    "+++ b/node_modules/lib-a/Package.swift",
+    "@@ -0,0 +1 @@",
+    "+// swift-tools-version: 6.0",
+    "",
+  ].join("\n");
+  const BINARY_PATCH = `${TEXT_PATCH}diff --git a/node_modules/lib-a/libMLKitVision.a b/node_modules/lib-a/libMLKitVision.a\nnew file mode 100644\nGIT binary patch\nliteral 8\nPcmc~u&B@6x$;e;;0\n`;
+  const AR_PATCH = `${TEXT_PATCH}diff --git a/node_modules/lib-a/libX.a b/node_modules/lib-a/libX.a\nnew file mode 100644\n--- /dev/null\n+++ b/node_modules/lib-a/libX.a\n@@ -0,0 +1 @@\n+!<arch>\n`;
+
+  /** A project where patch-package writes `written` as lib-a's patch; `previous` is the patch file before (none: absent). */
+  async function persisting(written: string, previous?: string) {
+    const root = mkdtempSync(path.join(tmpdir(), "rn-spm-guard-"));
+    tmp.push(root);
+    if (previous !== undefined) {
+      mkdirSync(path.join(root, "patches"), { recursive: true });
+      writeFileSync(path.join(root, PATCH), previous);
+    }
+    const logs: string[] = [];
+    let n = 0;
+    const runner: RnRunner = async (cmd, args) => {
+      n++;
+      if (n === 1) return { exitCode: 1, output: missing("lib-a") };
+      if (cmd === process.execPath && args.includes("--patch-dir")) {
+        mkdirSync(path.join(root, "patches"), { recursive: true });
+        writeFileSync(path.join(root, PATCH), written, "latin1");
+        return { exitCode: 0, output: `✔ Created file ${PATCH}\n` };
+      }
+      return { exitCode: 0, output: "" };
+    };
+    await runRnSpm(projectPaths(root), { kind: "bare", rnScripts: "vendored", expoPlugin: "installed" }, {
+      runner,
+      log: (l) => logs.push(l),
+      rnDir,
+      writePodTable: () => POD_TABLE,
+    });
+    const file = path.join(root, PATCH);
+    return { logs, after: existsSync(file) ? readFileSync(file, "utf8") : undefined };
+  }
+
+  it("does not persist a patch with a GIT binary patch hunk, and says so", async () => {
+    const r = await persisting(BINARY_PATCH, "the previous patch\n");
+    expect(r.after).toBe("the previous patch\n");
+    expect(r.logs).toContain("⚠ Did not persist lib-a's scaffold: the patch would contain a binary file (node_modules/lib-a/libMLKitVision.a)");
+    expect(r.logs.some((l) => l.startsWith("✔ scaffold — persisted"))).toBe(false);
+  });
+
+  it("does not persist an added file with ar magic", async () => {
+    const r = await persisting(AR_PATCH);
+    expect(r.after).toBeUndefined();
+    expect(r.logs).toContain("⚠ Did not persist lib-a's scaffold: the patch would contain a binary file (node_modules/lib-a/libX.a)");
+  });
+
+  it("persists a text-only patch as before", async () => {
+    const r = await persisting(TEXT_PATCH, "the previous patch\n");
+    expect(r.after).toBe(TEXT_PATCH);
+    expect(r.logs).toContain(`✔ scaffold — persisted ${PATCH}`);
+    expect(r.logs.some((l) => l.includes("Did not persist"))).toBe(false);
   });
 });

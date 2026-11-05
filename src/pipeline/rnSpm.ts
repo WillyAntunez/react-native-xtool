@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execa } from "execa";
 import { installedVersion, patchPackageScript } from "./patches.js";
 import { createRequire } from "node:module";
@@ -312,6 +312,48 @@ function computedPatchFile(root: string, name: string): string {
   return `patches/${name.replace("/", "+")}+${version}.patch`;
 }
 
+/** Mach-O (thin, both byte orders, 32 and 64 bits) and fat magics, as latin1 text. */
+const BINARY_MAGICS = ["\xcf\xfa\xed\xfe", "\xfe\xed\xfa\xcf", "\xce\xfa\xed\xfe", "\xfe\xed\xfa\xce", "\xca\xfe\xba\xbe", "\xbe\xba\xfe\xca", "\xca\xfe\xba\xbf", "\xbf\xba\xfe\xca"];
+const AR_MAGICS = ["!<arch>", "!<thin>"];
+
+/**
+ * The path of the first file of a patch (read as latin1, so every byte is one character) that is binary: a
+ * `GIT binary patch` hunk, git's `Binary files … differ`, or an added file whose content starts with an `ar` or Mach-O
+ * magic. Undefined for a text-only patch (spec goal 6.3).
+ */
+export function binaryInPatch(text: string): string | undefined {
+  for (const section of text.split(/^(?=diff --git )/m)) {
+    const file = /^diff --git a\/(.*?) b\/(.*)$/m.exec(section)?.[2];
+    if (file === undefined) continue;
+    if (/^GIT binary patch$/m.test(section) || /^Binary files .* differ$/m.test(section)) return file;
+    if (!/^new file mode /m.test(section)) continue;
+    const first = /^@@[^\n]*\n\+(.*)$/m.exec(section)?.[1] ?? "";
+    if ([...AR_MAGICS, ...BINARY_MAGICS].some((m) => first.startsWith(m))) return file;
+  }
+  return undefined;
+}
+
+/** The library's files in `patches/` (`<name with + for />+…`), with their bytes. */
+function libraryPatches(root: string, name: string): Map<string, Buffer> {
+  const dir = path.join(root, "patches");
+  const prefix = `${name.replace("/", "+")}+`;
+  const files = new Map<string, Buffer>();
+  try {
+    for (const f of readdirSync(dir)) if (f.startsWith(prefix)) files.set(f, readFileSync(path.join(dir, f)));
+  } catch {
+    // no patches/
+  }
+  return files;
+}
+
+/** Puts the library's patch files back as `before` holds them: new ones removed, changed ones rewritten. */
+function restorePatches(root: string, name: string, before: Map<string, Buffer>): void {
+  const dir = path.join(root, "patches");
+  for (const f of libraryPatches(root, name).keys()) if (!before.has(f)) rmSync(path.join(dir, f), { force: true });
+  if (before.size > 0) mkdirSync(dir, { recursive: true });
+  for (const [f, bytes] of before) writeFileSync(path.join(dir, f), bytes);
+}
+
 function firstLine(text: string): string {
   return text.split("\n").map((l) => l.trim()).find((l) => l !== "") ?? "";
 }
@@ -381,6 +423,8 @@ export async function runRnSpm(
   // Only what was scaffolded is persisted; a failed library stops the build before React Native runs again.
   for (const name of outcome?.scaffolded ?? names) {
     const [cmd, args] = persistScaffoldArgv(name);
+    // The library's patch as it was: put back when the new one would carry a binary file.
+    const before = libraryPatches(paths.root, name);
     let failure: string | undefined;
     let persisted = "";
     try {
@@ -396,7 +440,19 @@ export async function runRnSpm(
       );
       continue;
     }
-    log(`✔ scaffold — persisted ${createdPatchFile(persisted) ?? computedPatchFile(paths.root, name)}`);
+    const patchFile = createdPatchFile(persisted) ?? computedPatchFile(paths.root, name);
+    let binary: string | undefined;
+    try {
+      binary = binaryInPatch(readFileSync(path.join(paths.root, patchFile), "latin1"));
+    } catch {
+      // patch-package wrote no file under the name it printed: nothing to check.
+    }
+    if (binary !== undefined) {
+      restorePatches(paths.root, name, before);
+      log(`⚠ Did not persist ${name}'s scaffold: the patch would contain a binary file (${binary})`);
+      continue;
+    }
+    log(`✔ scaffold — persisted ${patchFile}`);
   }
   if (outcome !== undefined && outcome.failed.length > 0) throw new Error(scaffoldFailureMessage(outcome.failed));
   if (sc.exitCode !== 0) throw scaffoldFailed();
