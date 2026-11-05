@@ -708,15 +708,19 @@ checks, so it also runs on a machine without Swift or xtool. Run it from the pro
 - **podspecs** (information only): the podspec features the dependencies use that rn-xtool tracks (`subspecs`,
   `compiler_flags`, `header_dir`, `header_mappings_dir`, `vendored_frameworks`, `resource_bundles`), each with the
   packages that use it, or `no tracked podspec features in the dependencies`.
+- **pods** (only when a pin misses a requirement): one ⚠ line per pod whose version in the pod table is outside the
+  requirement of a library's podspec, the `build` line without its `⚠`: `AppAuth 3.0.0 (rn-xtool table) is outside
+  react-native-app-auth's requirement ">= 4.0"`. The build goes on with the pinned version.
 - **patches** (only when a patch's package is not installed): one ⚠ line per such patch in `patches/`, the `build` line
   without its `⚠`: `patches/<file> is for <package>, which is not installed; skipped. Delete it if you removed the
   library.` ([details](#build-and-patches)).
 - **known-limits**: the setups rn-xtool refuses before a build ([Unsupported setups](#unsupported-setups)). With none,
   it reads `none of the setups rn-xtool refuses early (CocoaPods-only libraries with prebuilt binaries, vendored C
-  sources or CocoaPods pods without a SwiftPM package, pnpm, Yarn PnP, hoisted packages)`. Otherwise there is one ✖ line per refusal, with its reason and a link
-  to its section, followed by `To build anyway, add "<name>" to knownLimits.allow in rn-xtool.config.json.` on the
-  next line, and `doctor --project` exits non-zero. A refusal that `knownLimits.allow` lets through is a ⚠ warning
-  instead, ending with `(allowed by rn-xtool.config.json knownLimits.allow; the build may fail later)`.
+  sources or CocoaPods pods without a SwiftPM package, pnpm, Yarn PnP, hoisted packages)`. Otherwise there is one ✖ line
+  per refusal, with its reason and a link to its section, followed by `To build anyway, add "<name>" to
+  knownLimits.allow in rn-xtool.config.json.` on the next line, and `doctor --project` exits non-zero. A refusal that
+  `knownLimits.allow` lets through is a ⚠ warning instead, ending with `(allowed by rn-xtool.config.json
+  knownLimits.allow; the build may fail later)`.
 
 The rn-scripts, rn-artifacts, expo-plugin and expo-modules lines are left out when the project has no react-native or
 no expo. On a version no line covers, the rn-scripts and rn-artifacts lines are information only, and they do not

@@ -15,7 +15,8 @@ import { orphanPatchLine, orphanPatches } from "../pipeline/patches.js";
 import { resolveRnDir, vendoredScriptsRoot } from "../pipeline/rnSpm.js";
 import { bareLines, compareVersions, expoPluginFor, releaseLine, rnLineStatus } from "../versions.js";
 import { DetectError, detectProjectKind } from "./detect.js";
-import { allowKnownLimits, earlyFailures, type EarlyFailure } from "./earlyChecks.js";
+import { allowKnownLimits, earlyFailures, podPinWarnings, type EarlyFailure } from "./earlyChecks.js";
+import { mergedPodTable } from "./podTable.js";
 import { attribute, dependencyDirs, podspecFiles, readJson } from "./podspecs.js";
 import { andList, expoPackageDir, installedExpoMajor, installedExpoVersion } from "./expo.js";
 import { scriptsCapability, type ScriptsCapability } from "./scriptsShape.js";
@@ -227,6 +228,8 @@ export interface Capabilities {
   limits?: EarlyFailure[];
   /** The `⚠` line for each of the project's patches whose package is not installed; detectCapabilities always sets it. */
   orphanPatches?: string[];
+  /** The `⚠` line for each pod pin that misses a library's podspec requirement; detectCapabilities always sets it. */
+  podPins?: string[];
 }
 
 /** The SwiftPM settings reader the build's plugin discovery uses (vendor/rn-spm/spm/swiftpm-config.js). */
@@ -302,12 +305,11 @@ export async function detectCapabilities(projectRoot: string, opts: ProbeOptions
   const kind = kindOf(root, config.projectKind);
   const rn = installedRn(root);
   const expoVersion = installedExpoVersion(root);
+  const libraryChecks = config.pods !== undefined ? { pods: config.pods } : {};
   const caps: Capabilities = {
     podspecs: podspecFeatures(root),
-    limits: allowKnownLimits(
-      earlyFailures(root, config.pods !== undefined ? { pods: config.pods } : {}),
-      config.knownLimits?.allow ?? [],
-    ),
+    limits: allowKnownLimits(earlyFailures(root, libraryChecks), config.knownLimits?.allow ?? []),
+    podPins: podPinWarnings(root, mergedPodTable(config.pods), libraryChecks),
     orphanPatches: orphanPatches(root).map(orphanPatchLine),
   };
   if (kind !== undefined) caps.kind = kind;

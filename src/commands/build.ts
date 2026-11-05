@@ -20,10 +20,12 @@ import {
   allowKnownLimits,
   installFailures,
   libraryFailures,
+  podPinWarnings,
   UnsupportedSetupError,
   type EarlyFailure,
   type LibraryCheckOptions,
 } from "../project/earlyChecks.js";
+import { mergedPodTable } from "../project/podTable.js";
 import { readProject, RN_CLI_MISSING, type ProjectInfo, type ProjectKind, type ReadProjectOptions } from "../project/index.js";
 import { appIconRecord } from "../generate/appIcon.js";
 import { readState, writeState, type BuildState } from "../state.js";
@@ -118,6 +120,8 @@ export interface BuildDeps {
    * checked with the installs.
    */
   libraryFailures: (root: string, opts: LibraryCheckOptions) => EarlyFailure[];
+  /** After the early checks: the `⚠` lines for pod pins that miss a library's podspec requirement. */
+  podPinWarnings: (root: string, opts: LibraryCheckOptions) => string[];
   readProject: (root: string, opts?: ReadProjectOptions) => Promise<ProjectInfo>;
   exists: (path: string) => boolean;
   /** Deletes a directory tree (no error when it is missing). */
@@ -157,6 +161,7 @@ const realDeps: BuildDeps = {
   loadConfig,
   installFailures: (root) => installFailures(root),
   libraryFailures: (root, opts) => libraryFailures(root, opts),
+  podPinWarnings: (root, opts) => podPinWarnings(root, mergedPodTable(opts.pods), opts),
   readProject,
   exists: existsSync,
   remove: (path) => rm(path, { recursive: true, force: true }),
@@ -213,6 +218,7 @@ export async function build(
   // minutes into rn-spm or SwiftPM. A Package.swift the project's patches/ create counts already, as in doctor.
   const libraryChecks: LibraryCheckOptions = config.pods !== undefined ? { pods: config.pods } : {};
   stopOnKnownLimits([...d.installFailures(root), ...d.libraryFailures(root, libraryChecks)]);
+  for (const line of d.podPinWarnings(root, libraryChecks)) d.log(line);
   const project = await d.readProject(root, { log: d.log });
   // Bare rn-spm runs RN's default autolinking config command, `npx --no-install @react-native-community/cli config`.
   if (project.kind === "bare" && project.hasRnCli === false) throw new Error(RN_CLI_MISSING);

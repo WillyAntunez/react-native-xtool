@@ -7,7 +7,8 @@ import { describe, expect, it, vi } from "vitest";
 import { build, buildSteps, chooseMetroPort, type BuildDeps } from "../src/commands/build.js";
 import { jsiRnHeaderDirs } from "../src/pipeline/jsi.js";
 import { fixLibraryManifests } from "../src/pipeline/manifests.js";
-import { libraryFailures as realLibraryFailures, UnsupportedSetupError, type EarlyFailure } from "../src/project/earlyChecks.js";
+import { libraryFailures as realLibraryFailures, podPinWarnings, UnsupportedSetupError, type EarlyFailure } from "../src/project/earlyChecks.js";
+import { mergedPodTable } from "../src/project/podTable.js";
 import { readState, writeState } from "../src/state.js";
 
 const expoFlags = { kind: "expo" as const, hasExpoModules: true, hasExpoConstants: true, rnArtifacts: false, expoPlugin: "installed" as const };
@@ -88,6 +89,7 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
     loadConfig: async () => ({ metroPort: 8081, ...over.cfg }),
     installFailures: over.installFailures ?? (() => []),
     libraryFailures: over.libraryFailures ?? (() => []),
+    podPinWarnings: () => [],
     readProject: async () =>
       ({
         kind: "expo",
@@ -551,6 +553,33 @@ describe("build", () => {
     await build(mapped.root, {}, mapped.deps);
     expect(mapped.calls).toEqual(buildSteps({ ...expoFlags, hasIos: true, clean: false }));
   });
+  it("logs the pod pins that miss a podspec's requirement after the early checks", async () => {
+    const pods = { AppAuth: { url: "https://github.com/openid/AppAuth-iOS", exact: "1.7.5", products: ["AppAuth"] } };
+    const seen: unknown[] = [];
+    const t = setup({ hasIos: true, cfg: { pods } });
+    const line = '⚠ AppAuth 1.7.5 (rn-xtool.config.json) is outside react-native-app-auth\'s requirement ">= 1.7.6"';
+    await build(t.root, {}, {
+      ...t.deps,
+      podPinWarnings: (root, opts) => {
+        seen.push(root, opts);
+        return [line];
+      },
+    });
+    expect(seen).toEqual([t.root, { pods }]);
+    expect(t.logs.indexOf(line)).toBeGreaterThanOrEqual(0);
+    expect(t.logs.indexOf(line)).toBeLessThan(t.logs.findIndex((l) => l.startsWith("▸")));
+
+    // The real check on a project with react-native-app-auth's shape.
+    const real = setup({ hasIos: true, cfg: { pods } });
+    const lib = join(real.root, "node_modules", "react-native-app-auth");
+    mkdirSync(lib, { recursive: true });
+    writeFileSync(join(real.root, "package.json"), JSON.stringify({ name: "app", dependencies: { "react-native-app-auth": "8.5.1" } }));
+    writeFileSync(join(lib, "package.json"), JSON.stringify({ name: "react-native-app-auth", version: "8.5.1" }));
+    writeFileSync(join(lib, "react-native-app-auth.podspec"), "Pod::Spec.new do |s|\n  s.dependency 'AppAuth', '>= 1.7.6'\nend\n");
+    await build(real.root, {}, { ...real.deps, podPinWarnings: (root, opts) => podPinWarnings(root, mergedPodTable(opts.pods), opts) });
+    expect(real.logs).toContain(line);
+  });
+
   it("warns and builds on when rn-xtool.config.json allows every refusal", async () => {
     const pnpm: EarlyFailure = { id: "pnpm", allowKey: "pnpm", reason: "This project was installed with pnpm." };
     const hoisted: EarlyFailure = { id: "hoisted", allowKey: "hoisted", reason: "react-native is hoisted." };

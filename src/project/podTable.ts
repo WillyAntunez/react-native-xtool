@@ -71,3 +71,59 @@ export function writePodTable(paths: ProjectPaths, table: PodTable): string {
   writeFileSync(file, `${JSON.stringify(table, null, 2)}\n`);
   return file;
 }
+
+/** A version's numeric segments (`3.0.0` → [3, 0, 0]); undefined when one is not a number (`1.0.0-beta`, `#{v}`). */
+function segments(version: string): number[] | undefined {
+  const parts = version.split(".");
+  return parts.every((p) => /^\d+$/.test(p)) ? parts.map(Number) : undefined;
+}
+
+/** -1, 0 or 1; a missing segment counts as 0. */
+function compareSegments(a: readonly number[], b: readonly number[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (a[i] ?? 0) - (b[i] ?? 0);
+    if (d !== 0) return Math.sign(d);
+  }
+  return 0;
+}
+
+/**
+ * Whether `version` meets every CocoaPods requirement in `requirements`: `= x` or a bare `x`, `!=`, `>`, `>=`, `<`, `<=`
+ * and `~> a.b` (>= a.b, < a+1) or `~> a.b.c` (>= a.b.c, < a.(b+1)). Items are trimmed and may hold several requirements
+ * separated by commas. Segments compare numerically. A requirement rn-xtool cannot read (an interpolation, a
+ * prerelease) is taken as met: the check warns only about a mismatch it can show.
+ */
+export function podRequirementSatisfied(version: string, requirements: readonly string[]): boolean {
+  const have = segments(version.trim());
+  if (have === undefined) return true;
+  return requirements
+    .flatMap((r) => r.split(","))
+    .map((r) => r.trim())
+    .filter((r) => r !== "")
+    .every((requirement) => {
+      const m = /^(=|!=|>=|<=|>|<|~>)?\s*(\S+)$/.exec(requirement);
+      const want = m === null ? undefined : segments(m[2]!);
+      if (m === null || want === undefined) return true;
+      const c = compareSegments(have, want);
+      switch (m[1] ?? "=") {
+        case "=":
+          return c === 0;
+        case "!=":
+          return c !== 0;
+        case ">":
+          return c > 0;
+        case ">=":
+          return c >= 0;
+        case "<":
+          return c < 0;
+        case "<=":
+          return c <= 0;
+        default: {
+          // `~>`: at least the version, below the next release of its second-to-last segment.
+          const upper = want.length > 1 ? want.slice(0, -1) : [...want];
+          upper[upper.length - 1]! += 1;
+          return c >= 0 && compareSegments(have, upper) < 0;
+        }
+      }
+    });
+}

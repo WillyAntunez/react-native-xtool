@@ -10,7 +10,7 @@ import path from "node:path";
 import type { PodEntry } from "../config.js";
 import { troubleshootingUrl } from "../docs.js";
 import { packageRoot } from "../tools/exec.js";
-import { mergedPodTable, type PodTable } from "./podTable.js";
+import { mergedPodTable, podRequirementSatisfied, type PodTable } from "./podTable.js";
 import { attribute, dependencyDirs, podDependencies, podspecFiles, unconditionalLines } from "./podspecs.js";
 
 export type EarlyCheckId = "vendored-binaries" | "vendored-sources" | "unmapped-pod" | "pnpm" | "yarn-pnp" | "hoisted";
@@ -460,6 +460,38 @@ export function libraryFailures(projectRoot: string, opts: LibraryCheckOptions =
       return [];
     }
   });
+}
+
+/**
+ * A `⚠` line for each pod a library rn-xtool would scaffold depends on (unconditional podspec lines) whose pinned
+ * version in `table` misses the podspec's requirement: the scaffold still pins it, and SwiftPM builds that version.
+ * The libraries are those `libraryFailures` checks. Never throws.
+ */
+export function podPinWarnings(projectRoot: string, table: PodTable, opts: LibraryCheckOptions = {}): string[] {
+  let libs: Libraries;
+  try {
+    libs = new Libraries(path.resolve(projectRoot), { ...opts, table });
+  } catch {
+    return [];
+  }
+  const lines: string[] = [];
+  for (const { name, dir } of libs.deps) {
+    try {
+      const lib = libs.library(name, dir);
+      if (lib === undefined || !libs.scaffolded(lib)) continue;
+      for (const dep of libs.podDependencies(lib)) {
+        const exact = table.pods[dep.pod]?.exact;
+        if (dep.kind !== "mapped" || exact === undefined || podRequirementSatisfied(exact, dep.requirements)) continue;
+        const source = table.source[dep.pod] === "config" ? "rn-xtool.config.json" : "rn-xtool table";
+        const line =
+          `⚠ ${dep.pod} ${exact} (${source}) is outside ${name}'s requirement "${dep.requirements.join(", ")}"`;
+        if (!lines.includes(line)) lines.push(line);
+      }
+    } catch {
+      // One unreadable package says nothing about the others.
+    }
+  }
+  return lines;
 }
 
 /** Where the parent-folder lookup stops (inclusive); `/` by default. Tests pass their own temp folder. */

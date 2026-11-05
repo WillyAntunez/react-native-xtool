@@ -608,6 +608,26 @@ describe("doctor --project", () => {
     expect(none.checks.some((c) => c.name === "patches")).toBe(false);
   });
 
+  it("--project warns when a pod pin misses the podspec's requirement", async () => {
+    const line = 'AppAuth 3.0.0 (rn-xtool table) is outside react-native-app-auth\'s requirement ">= 4.0"';
+    const r = await doctorWithProbes(
+      {
+        ...good,
+        capabilities: async () => ({ ...expo58Caps, podPins: [`⚠ ${line}`], orphanPatches: ["⚠ patches/x+1.0.0.patch is for x."] }),
+      },
+      "/proj",
+      { projectOnly: true },
+    );
+    expect(r.checks.filter((c) => c.name === "pods")).toEqual([{ name: "pods", status: "warn", detail: line }]);
+    expect(r.checks.map((c) => c.name).slice(-3)).toEqual(["podspecs", "pods", "patches"]);
+    expect(renderReport(r.checks)).toContain(`⚠ pods — ${line}`);
+    expect(r.ok).toBe(true);
+    const none = await doctorWithProbes({ ...good, capabilities: async () => ({ ...expo58Caps, podPins: [] }) }, "/proj", {
+      projectOnly: true,
+    });
+    expect(none.checks.some((c) => c.name === "pods")).toBe(false);
+  });
+
   it("plain doctor prints no capability lines", async () => {
     const called: string[] = [];
     const r = await doctorWithProbes(

@@ -1,11 +1,12 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { checkPodEntries } from "../src/config.js";
 import { projectPaths } from "../src/paths.js";
-import { POD_TABLE_ENV, mergedPodTable, writePodTable } from "../src/project/podTable.js";
+import { podPinWarnings } from "../src/project/earlyChecks.js";
+import { POD_TABLE_ENV, mergedPodTable, podRequirementSatisfied, writePodTable } from "../src/project/podTable.js";
 import { packageRoot } from "../src/tools/exec.js";
 
 const ROOT = packageRoot();
@@ -88,5 +89,68 @@ describe("the pod table", () => {
   it("package.json ships data/", () => {
     const pkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { files: string[] };
     expect(pkg.files).toContain("data");
+  });
+});
+
+describe("pod pins and podspec requirements", () => {
+  it.each<[string, string[], boolean]>([
+    ["3.0.0", [">= 1.7.6"], true],
+    ["3.0.0", ["~> 1.0"], false],
+    ["1.5.9", ["~> 1.5.0"], true],
+    ["1.6.0", ["~> 1.5.0"], false],
+    ["1.5.0", ["~> 1.5.0"], true],
+    ["1.4.9", ["~> 1.5.0"], false],
+    ["1.9.0", ["~> 1.0"], true],
+    ["2.0.0", ["~> 1"], false],
+    ["3.0.0", ["= 3.0.0"], true],
+    ["3.0.1", ["= 3.0.0"], false],
+    ["3.0.0", ["3.0"], true],
+    ["3.0.0", ["> 3"], false],
+    ["3.0.1", ["> 3"], true],
+    ["3.0.0", ["< 3"], false],
+    ["2.9.9", ["< 3"], true],
+    ["3.0.0", ["<= 3.0"], true],
+    ["3.0.0", ["!= 3.0.0"], false],
+    ["1.5.0", ["  >= 1.0", " < 2.0 "], true],
+    ["2.0.0", [">= 1.0", "< 2.0"], false],
+    ["1.5.0", [">= 1.0, < 2.0"], true],
+    ["1.5.0", [], true],
+    ["1.5.0", ["~> #{version}"], true],
+  ])("%s against %j: %s", (version, requirements, expected) => {
+    expect(podRequirementSatisfied(version, requirements)).toBe(expected);
+  });
+
+  /** A project with react-native-app-auth's shape; `requirement` is its AppAuth requirement. */
+  function appAuthProject(requirement: string, rnConfig?: string): string {
+    const root = mkdtempSync(path.join(tmpdir(), "rn-xtool-pins-"));
+    tmp.push(root);
+    const lib = path.join(root, "node_modules", "react-native-app-auth");
+    mkdirSync(lib, { recursive: true });
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "app", dependencies: { "react-native-app-auth": "8.5.1" } }));
+    writeFileSync(path.join(lib, "package.json"), JSON.stringify({ name: "react-native-app-auth", version: "8.5.1" }));
+    writeFileSync(
+      path.join(lib, "react-native-app-auth.podspec"),
+      `Pod::Spec.new do |s|\n  s.dependency 'React-Core'\n  s.dependency 'AppAuth', ${requirement}\nend\n`,
+    );
+    if (rnConfig !== undefined) writeFileSync(path.join(root, "react-native.config.js"), rnConfig);
+    return root;
+  }
+
+  it("warns when the pinned version misses the podspec's requirement", () => {
+    const root = appAuthProject("'>= 4.0'");
+    expect(podPinWarnings(root, mergedPodTable())).toEqual([
+      '⚠ AppAuth 3.0.0 (rn-xtool table) is outside react-native-app-auth\'s requirement ">= 4.0"',
+    ]);
+    const pods = { AppAuth: { url: "https://github.com/openid/AppAuth-iOS", exact: "3.1.0", products: ["AppAuth"] } };
+    expect(podPinWarnings(appAuthProject("'>= 1.7.6', '< 3.1'"), mergedPodTable(pods))).toEqual([
+      '⚠ AppAuth 3.1.0 (rn-xtool.config.json) is outside react-native-app-auth\'s requirement ">= 1.7.6, < 3.1"',
+    ]);
+  });
+
+  it("prints nothing when the requirement holds or the library is excluded", () => {
+    expect(podPinWarnings(appAuthProject("'>= 1.7.6'"), mergedPodTable())).toEqual([]);
+    expect(podPinWarnings(appAuthProject("'>= 4.0'"), mergedPodTable(), { exclude: ["react-native-app-auth"] })).toEqual([]);
+    const outOfIos = "module.exports = { dependencies: { 'react-native-app-auth': { platforms: { ios: null } } } };\n";
+    expect(podPinWarnings(appAuthProject("'>= 4.0'", outOfIos), mergedPodTable())).toEqual([]);
   });
 });

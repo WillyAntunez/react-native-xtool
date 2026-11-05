@@ -541,6 +541,23 @@ describe("detectCapabilities", () => {
     expect((await detect(dir)).limits).toEqual([]);
   });
 
+  it("carries the pod pin warnings", async () => {
+    const dir = await expo58();
+    expect((await detect(dir)).podPins).toEqual([]);
+    const pkg = JSON.parse(await readFile(path.join(dir, "package.json"), "utf8"));
+    pkg.dependencies["react-native-app-auth"] = "8.5.1";
+    await writeFile(path.join(dir, "package.json"), JSON.stringify(pkg));
+    await writePackage(path.join(dir, "node_modules", "react-native-app-auth"), { name: "react-native-app-auth", version: "8.5.1" }, {
+      "react-native-app-auth.podspec": "Pod::Spec.new do |s|\n  s.dependency 'AppAuth', '>= 1.7.6'\nend\n",
+    });
+    expect((await detect(dir)).podPins).toEqual([]);
+    const pods = { AppAuth: { url: "https://github.com/openid/AppAuth-iOS", exact: "1.7.5", products: ["AppAuth"] } };
+    await writeFile(path.join(dir, "rn-xtool.config.json"), JSON.stringify({ pods }));
+    expect((await detect(dir)).podPins).toEqual([
+      '⚠ AppAuth 1.7.5 (rn-xtool.config.json) is outside react-native-app-auth\'s requirement ">= 1.7.6"',
+    ]);
+  });
+
   it("leaves the React Native fields out without react-native", async () => {
     const c = await detect(await bare(null), noNetwork);
     expect(c.rnVersion).toBeUndefined();
