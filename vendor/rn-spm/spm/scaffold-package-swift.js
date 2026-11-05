@@ -763,8 +763,18 @@ const REACT_CORE_DEP_PREFIXES = [
   'ReactAppDependencyProvider',
 ];
 
-// Core pods whose name has no separator to match by prefix (`React-` etc.).
-const REACT_CORE_DEP_EXACT = ['React'];
+// Core pods whose name has no separator to match by prefix (`React-` etc.), and the other pods React Native ships
+// (FBLazyVector, ReactNativeDependencies, fast_float), generates (ReactCodegen, FBReactNativeSpec) or links
+// (SocketRocket): the prebuilt runtime provides them all.
+const REACT_CORE_DEP_EXACT = [
+  'React',
+  'ReactNativeDependencies',
+  'FBLazyVector',
+  'FBReactNativeSpec',
+  'fast_float',
+  'ReactCodegen',
+  'SocketRocket',
+];
 
 function isReactCoreDep(name /*: string */) /*: boolean */ {
   return (

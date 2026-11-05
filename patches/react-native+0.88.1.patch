@@ -1171,7 +1171,7 @@ index 8fcf04b..6dbb951 100644
    const name = field('name');
    const moduleName = field('module_name');
 diff --git a/node_modules/react-native/scripts/spm/scaffold-package-swift.js b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
-index cf7e587..18e4e4b 100644
+index cf7e587..f4340cc 100644
 --- a/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 +++ b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 @@ -54,6 +54,7 @@ const {
@@ -1788,16 +1788,26 @@ index cf7e587..18e4e4b 100644
  // Names of deps the scaffolder always refuses to touch — `react-native`
  // itself is handled by the xcframework subpackage, never as an autolinked
  // target.
-@@ -167,10 +760,17 @@ const REACT_CORE_DEP_PREFIXES = [
+@@ -167,10 +760,27 @@ const REACT_CORE_DEP_PREFIXES = [
    'DoubleConversion',
    'Yoga',
    'hermes-engine',
 +  'ReactAppDependencyProvider',
++];
++
++// Core pods whose name has no separator to match by prefix (`React-` etc.), and the other pods React Native ships
++// (FBLazyVector, ReactNativeDependencies, fast_float), generates (ReactCodegen, FBReactNativeSpec) or links
++// (SocketRocket): the prebuilt runtime provides them all.
++const REACT_CORE_DEP_EXACT = [
++  'React',
++  'ReactNativeDependencies',
++  'FBLazyVector',
++  'FBReactNativeSpec',
++  'fast_float',
++  'ReactCodegen',
++  'SocketRocket',
  ];
  
-+// Core pods whose name has no separator to match by prefix (`React-` etc.).
-+const REACT_CORE_DEP_EXACT = ['React'];
-+
  function isReactCoreDep(name /*: string */) /*: boolean */ {
 -  return REACT_CORE_DEP_PREFIXES.some(p => name.startsWith(p));
 +  return (
@@ -1807,7 +1817,7 @@ index cf7e587..18e4e4b 100644
  }
  
  // True when the dep ships a `codegenConfig` in package.json — RN's standard
-@@ -248,6 +848,12 @@ function translatePodspecToSpmTarget(
+@@ -248,6 +858,12 @@ function translatePodspecToSpmTarget(
    // npm name → resolved Swift name for every autolinked dep, so a sibling
    // reference honors that sibling's `spm.name` instead of re-deriving it.
    swiftNameByNpm /*: Map<string, string> */ = new Map(),
@@ -1820,7 +1830,7 @@ index cf7e587..18e4e4b 100644
  ) /*: SpmScaffoldSpec */ {
    const warnings = [...model.warnings];
  
-@@ -322,46 +928,83 @@ function translatePodspecToSpmTarget(
+@@ -322,46 +938,83 @@ function translatePodspecToSpmTarget(
      }
    }
  
@@ -1932,7 +1942,7 @@ index cf7e587..18e4e4b 100644
      }
    }
  
-@@ -427,15 +1070,55 @@ function translatePodspecToSpmTarget(
+@@ -427,15 +1080,55 @@ function translatePodspecToSpmTarget(
      f =>
        f !== SCAFFOLD_PREFIX_HEADER &&
        f !== 'Package.swift' &&
@@ -1990,7 +2000,7 @@ index cf7e587..18e4e4b 100644
    try {
      for (const f of expandSpmSourceGlobs(dep.root, model.publicHeaderFiles)) {
        if (/\.(h|hh|hpp)$/i.test(f)) headerFiles.push(f);
-@@ -497,6 +1180,51 @@ function translatePodspecToSpmTarget(
+@@ -497,6 +1190,51 @@ function translatePodspecToSpmTarget(
      }
    }
    let namespacedShimHeaders /*: Array<string> */ = [];
@@ -2042,7 +2052,7 @@ index cf7e587..18e4e4b 100644
    if (publicHeadersPath == null) {
      // Root-level podspecs (`s.source_files = "*.{h,m,mm}"`) keep their
      // headers in the package root. CocoaPods exposes them to dependents as
-@@ -518,6 +1246,101 @@ function translatePodspecToSpmTarget(
+@@ -518,6 +1256,101 @@ function translatePodspecToSpmTarget(
      );
    }
  
@@ -2144,7 +2154,7 @@ index cf7e587..18e4e4b 100644
    const siblingSwiftNames /*: {[npmName: string]: string} */ = {};
    for (const npmName of siblingNames) {
      const resolved = swiftNameByNpm.get(npmName);
-@@ -526,21 +1349,200 @@ function translatePodspecToSpmTarget(
+@@ -526,21 +1359,200 @@ function translatePodspecToSpmTarget(
      }
    }
  
@@ -2347,7 +2357,7 @@ index cf7e587..18e4e4b 100644
      warnings,
    };
  }
-@@ -629,10 +1631,25 @@ function emitScaffoldedPackageSwift(
+@@ -629,10 +1641,25 @@ function emitScaffoldedPackageSwift(
    const prefixFlag = spec.needsObjCPrefix
      ? `.unsafeFlags(["-include", "${SCAFFOLD_PREFIX_HEADER}"])`
      : '';
@@ -2374,7 +2384,7 @@ index cf7e587..18e4e4b 100644
        ...(customFlagsCxx.length > 0
          ? [`.unsafeFlags([${customFlagsCxx.join(', ')}])`]
          : []),
-@@ -723,6 +1740,13 @@ function emitScaffoldedPackageSwift(
+@@ -723,6 +1750,13 @@ function emitScaffoldedPackageSwift(
        `.product(name: "${swiftSibling}", package: "${swiftSibling}")`,
      );
    }
@@ -2388,7 +2398,7 @@ index cf7e587..18e4e4b 100644
  
    // sources: emit only when the podspec declared them. If empty (regex-fallback
    // podspec), no `sources:`/`exclude:` is emitted and SPM auto-scans the target
-@@ -740,6 +1764,11 @@ function emitScaffoldedPackageSwift(
+@@ -740,6 +1774,11 @@ function emitScaffoldedPackageSwift(
        ? `\n            publicHeadersPath: "${spec.publicHeadersPath}",`
        : '';
  
@@ -2400,7 +2410,7 @@ index cf7e587..18e4e4b 100644
    const resourcesLine =
      spec.resources.length > 0
        ? `\n            resources: [${spec.resources.map(r => `.copy("${r}")`).join(', ')}],`
-@@ -755,9 +1784,66 @@ function emitScaffoldedPackageSwift(
+@@ -755,9 +1794,66 @@ function emitScaffoldedPackageSwift(
        ? `\n            dependencies: [${targetDeps.join(', ')}],`
        : '';
  
@@ -2469,7 +2479,7 @@ index cf7e587..18e4e4b 100644
  // Edit the contents below if needed and re-run \`npx patch-package <dep-name>\`
  // to persist across \`npm install\`. To regenerate from the podspec, remove
  // this file (or just this marker) and re-run \`npx react-native spm scaffold\`.
-@@ -768,7 +1854,7 @@ ${SCAFFOLDER_MARKER}
+@@ -768,7 +1864,7 @@ ${SCAFFOLDER_MARKER}
  // (dropping the file) anyway.
  
  import PackageDescription
@@ -2478,7 +2488,7 @@ index cf7e587..18e4e4b 100644
  let package = Package(
      name: "${spec.swiftName}",
      platforms: [.iOS("${iosDeploymentTarget}")],
-@@ -778,13 +1864,13 @@ let package = Package(
+@@ -778,13 +1874,13 @@ let package = Package(
  ${packageDepsBlock}    targets: [
          .target(
              name: "${spec.swiftName}",${targetDepsLine}
@@ -2495,7 +2505,7 @@ index cf7e587..18e4e4b 100644
  )
  `;
  }
-@@ -844,6 +1930,65 @@ function reportSwiftName(
+@@ -844,6 +1940,65 @@ function reportSwiftName(
    }
  }
  
@@ -2561,7 +2571,7 @@ index cf7e587..18e4e4b 100644
  // ---------------------------------------------------------------------------
  // Per-dep orchestrator
  // ---------------------------------------------------------------------------
-@@ -953,7 +2098,11 @@ function scaffoldPackageSwiftForDep(
+@@ -953,7 +2108,11 @@ function scaffoldPackageSwiftForDep(
        // regenerating existing files; --force is not needed here.
        const vMatch = existing.match(SCAFFOLDER_VERSION_LINE_RE);
        const existingVersion = vMatch != null ? parseInt(vMatch[1], 10) : 1;
@@ -2574,7 +2584,7 @@ index cf7e587..18e4e4b 100644
        if (!ctx.force && !versionStale) {
          // Slot label change is the other auto-regen trigger — bumps SPM's
          // manifest hash so the cache-slot path gets re-resolved.
-@@ -970,7 +2119,7 @@ function scaffoldPackageSwiftForDep(
+@@ -970,7 +2129,7 @@ function scaffoldPackageSwiftForDep(
        }
        if (versionStale) {
          log(
@@ -2583,7 +2593,7 @@ index cf7e587..18e4e4b 100644
          );
        }
        // Fall through: regenerate (force, slot changed, or version bumped).
-@@ -998,9 +2147,44 @@ function scaffoldPackageSwiftForDep(
+@@ -998,9 +2157,44 @@ function scaffoldPackageSwiftForDep(
      };
    }
  
@@ -2628,7 +2638,7 @@ index cf7e587..18e4e4b 100644
    } catch (e) {
      return {
        depName,
-@@ -1012,35 +2196,17 @@ function scaffoldPackageSwiftForDep(
+@@ -1012,35 +2206,17 @@ function scaffoldPackageSwiftForDep(
    const spec = translatePodspecToSpmTarget(
      model,
      dep,
@@ -2673,7 +2683,7 @@ index cf7e587..18e4e4b 100644
  
    // Relative paths into the app, embedded in the scaffolded Package.swift.
    //
-@@ -1083,6 +2249,19 @@ function scaffoldPackageSwiftForDep(
+@@ -1083,6 +2259,19 @@ function scaffoldPackageSwiftForDep(
  
    if (!ctx.dryRun) {
      fs.writeFileSync(pkgSwiftPath, content, 'utf8');
@@ -2693,7 +2703,7 @@ index cf7e587..18e4e4b 100644
      // Emit the ambient-import prefix header next to the manifest when the
      // target has ObjC(++) sources (the manifest `-include`s it by bare name).
      if (spec.needsObjCPrefix) {
-@@ -1099,16 +2278,99 @@ function scaffoldPackageSwiftForDep(
+@@ -1099,16 +2288,99 @@ function scaffoldPackageSwiftForDep(
        const shimDir = path.join(dep.root, 'include', spec.swiftName);
        fs.mkdirSync(shimDir, {recursive: true});
        for (const header of spec.namespacedShimHeaders) {
@@ -2795,7 +2805,7 @@ index cf7e587..18e4e4b 100644
    }
  
    reportSwiftName(dep, spec.swiftName, model);
-@@ -1141,7 +2403,7 @@ function collectAutolinkedDeps(
+@@ -1141,7 +2413,7 @@ function collectAutolinkedDeps(
    opts /*: {
      autolinkingJsonPath: string,
      remote: ?{url: string, version: string, identity: string},
@@ -2804,7 +2814,7 @@ index cf7e587..18e4e4b 100644
    } */,
  ) /*: ?Array<AutolinkedDep> */ {
    const {autolinkingJsonPath, remote, onSkipped} = opts;
-@@ -1162,7 +2424,7 @@ function collectAutolinkedDeps(
+@@ -1162,7 +2434,7 @@ function collectAutolinkedDeps(
      const root = raw.root;
      const ios = raw.platforms?.ios;
      if (typeof root !== 'string' || ios == null) {
@@ -2813,7 +2823,7 @@ index cf7e587..18e4e4b 100644
        continue;
      }
      // $FlowFixMe[incompatible-type] `ios` shape is runtime-validated above
-@@ -1294,6 +2556,11 @@ type ScaffoldAllOptions = {
+@@ -1294,6 +2566,11 @@ type ScaffoldAllOptions = {
    // confirmation prompt for first-time scaffolds. Skipped deps still
    // appear in the returned results array with status='skipped-opt-out'.
    skipDeps?: ReadonlyArray<string>,
@@ -2825,7 +2835,7 @@ index cf7e587..18e4e4b 100644
  };
  */
  
-@@ -1323,6 +2590,17 @@ function scaffoldAll(
+@@ -1323,6 +2600,17 @@ function scaffoldAll(
    // scaffolded here — leaving `react-native spm scaffold` unable to clear the
    // autolinker's missing-manifest error.
    const results /*: Array<ScaffoldResult> */ = [];
@@ -2843,7 +2853,7 @@ index cf7e587..18e4e4b 100644
    // Outside collectAutolinkedDeps' own try: a malformed remote config
    // (RemoteVersionError) is a misconfiguration to surface, not an expansion
    // failure to degrade past.
-@@ -1330,24 +2608,23 @@ function scaffoldAll(
+@@ -1330,24 +2618,23 @@ function scaffoldAll(
    const allDeps = collectAutolinkedDeps({
      autolinkingJsonPath,
      remote,
@@ -2879,7 +2889,7 @@ index cf7e587..18e4e4b 100644
    for (const dep of allDeps) {
      const podspecPath = dep.platforms?.ios?.podspecPath;
      if (typeof podspecPath === 'string' && podspecPath.length > 0) {
-@@ -1386,6 +2663,9 @@ function scaffoldAll(
+@@ -1386,6 +2673,9 @@ function scaffoldAll(
    const skipSet /*: Set<string> */ = new Set(opts.skipDeps ?? []);
  
    for (const dep of allDeps) {
@@ -2889,7 +2899,7 @@ index cf7e587..18e4e4b 100644
      if (skipSet.has(dep.name)) {
        results.push({
          depName: dep.name,
-@@ -1404,6 +2684,9 @@ function scaffoldAll(
+@@ -1404,6 +2694,9 @@ function scaffoldAll(
  }
  
  module.exports = {

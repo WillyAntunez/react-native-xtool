@@ -12,7 +12,7 @@ import {
   scaffoldLibraries,
   withRnRoot,
 } from "./support/rnScaffold.js";
-import { needsTarball, packageFromTarball, patchedSpm } from "./support/tarballs.js";
+import { needsTarball, packageFromTarball, patchedSpm, tarballPath } from "./support/tarballs.js";
 import { SWIFT_TEST_TIMEOUT_MS, SWIFT_TIMEOUT_MS, hasTool, tool } from "./support/tools.js";
 
 // Exercises the PATCHED react-native SwiftPM scaffolder (patches/react-native+0.88.1.patch applied to the pristine
@@ -160,6 +160,9 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
     });
     it("scaffold-package-swift.js has the fix 25 hunk", () => {
       expect(src("scaffold-package-swift.js")).toContain("onlyDeps?: ReadonlyArray<string>");
+    });
+    it("scaffold-package-swift.js has the React Native core pods hunk", () => {
+      expect(src("scaffold-package-swift.js")).toMatch(/const REACT_CORE_DEP_EXACT = \[[^\]]*'ReactNativeDependencies'/);
     });
     it("scaffold-package-swift.js has the pod header forwarder hunk", () => {
       expect(src("scaffold-package-swift.js")).toContain("const POD_HEADERS_DIR = 'rn-spm-pod-headers'");
@@ -2178,4 +2181,40 @@ describe("scaffolder fix 13: the pod table (vendor/rn-spm)", () => {
     );
     expect(withTable(undefined, loadPodTable)).toEqual(KNOWN_POD_SPM_PACKAGES);
   });
+});
+
+describe("React Native's own pods are core (vendor/rn-spm)", () => {
+  type Classify = (depName: string, ctx: object) => { kind: string };
+  const classify = (name: string): string =>
+    (createRequire(import.meta.url)(path.join(VENDORED_RN_SPM, "scaffold-package-swift.js")) as { classifyPodDependency: Classify })
+      .classifyPodDependency(name, { selfPodName: "Foo", ownNpm: "foo", podToNpm: new Map(), linkedNpm: new Set(), table: {} }).kind;
+
+  it.each(["ReactNativeDependencies", "FBLazyVector", "FBReactNativeSpec", "fast_float", "ReactCodegen", "SocketRocket"])(
+    "%s is core",
+    (name) => {
+      expect(classify(name)).toBe("core");
+    },
+  );
+
+  // A drift guard: every pod React Native itself ships is provided by its prebuilt runtime, so a library that depends
+  // on one must never read as an unmapped CocoaPods pod (C5 would refuse it).
+  for (const spec of ["react-native@0.85.0", "react-native@0.86.3", "react-native@0.87.1", "react-native@0.88.0", "react-native@0.88.1"]) {
+    const needs = needsTarball(spec);
+    it.skipIf(needs !== "")(`classifies every podspec name in ${spec} as core${needs}`, () => {
+      const tgz = tarballPath(spec)!;
+      const listed = tool("tar", ["-tzf", tgz]).stdout.split("\n").filter((f) => f.endsWith(".podspec"));
+      expect(listed.length).toBeGreaterThan(50);
+      const dir = tempDir();
+      expect(tool("tar", ["-xzf", tgz, "-C", dir, ...listed]).status).toBe(0);
+      const names: string[] = [];
+      for (const rel of listed) {
+        for (const m of readFileSync(path.join(dir, rel), "utf8").matchAll(/^\s*\w+\.name\s*=\s*(.+)$/gm)) {
+          const literal = /^(["'])([^"'#]+)\1\s*$/.exec(m[1]!.trim());
+          names.push(literal ? literal[2]! : `${rel}: ${m[1]}`);
+        }
+      }
+      expect(names.length).toBeGreaterThanOrEqual(listed.length);
+      expect(names.filter((name) => classify(name) !== "core")).toEqual([]);
+    });
+  }
 });

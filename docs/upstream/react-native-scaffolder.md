@@ -492,7 +492,11 @@ banner. An unmapped pod gets one warning per pod (subspecs collapse to the root 
 CocoaPods pod with no known SwiftPM equivalent; the scaffolded package may fail to build — add it under "pods" in
 rn-xtool.config.json: { "pods": { "<pod>": { "url": "<git URL>", "exact": "<version>", "products": ["<product>"] } }
 }`. Expo-named pods
-(`expo-*`, `Expo*`, `EX*`) keep the old "Unknown dependency" warning. A remote package makes the first build
+(`expo-*`, `Expo*`, `EX*`) keep the old "Unknown dependency" warning. React Native's own pods are core, not
+CocoaPods pods: besides the `React-`, `RCT`, `ReactCommon`, `glog`, `boost`, `fmt`, `DoubleConversion`, `Yoga` and
+`hermes-engine` prefixes, the names `React`, `ReactNativeDependencies`, `FBLazyVector`, `FBReactNativeSpec`,
+`fast_float`, `ReactCodegen` and `SocketRocket` (the prebuilt runtime provides them); a test reads every podspec name
+in the cached react-native tarballs and expects each to be core. A remote package makes the first build
 of a clean `.build` need network (SwiftPM clones it). Verified on react-native-pager-view 9.0.7: re-scaffolded
 from scratch, it builds with no hand edit.
 
