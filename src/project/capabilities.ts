@@ -5,19 +5,32 @@
  * Only `probeArtifacts` reaches the network (bounded HEAD requests), and only when the slots are not cached and it is
  * not run offline.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { configFileOf, loadConfig } from "../config.js";
-import { projectPaths } from "../paths.js";
+import { podsCacheDir, projectPaths } from "../paths.js";
+import { PodsNetworkError, type CdnOptions } from "../pods/cdn.js";
+import { cachedArchive, headSize } from "../pods/fetch.js";
+import { formatSize } from "../pods/format.js";
+import { PODS_LOCK, lockedVersions, readPodsLock, unusedLockEntries, type PodsLock } from "../pods/lock.js";
+import { resolveBinaryPods } from "../pods/resolve.js";
 import { rawSlotComplete, rnArtifactsCacheRoot, type Flavor } from "../pipeline/rnArtifactsStep.js";
 import { orphanPatchLine, orphanPatches, scaffoldPinWarnings } from "../pipeline/patches.js";
 import { resolveRnDir, vendoredScriptsRoot } from "../pipeline/rnSpm.js";
 import { bareLines, compareVersions, expoPluginFor, releaseLine, rnLineStatus } from "../versions.js";
 import { DetectError, detectProjectKind } from "./detect.js";
-import { allowKnownLimits, earlyFailures, excludeLines, podPinWarnings, type EarlyFailure, type LibraryCheckOptions } from "./earlyChecks.js";
+import {
+  allowKnownLimits,
+  binaryPodCandidates,
+  earlyFailures,
+  excludeLines,
+  podPinWarnings,
+  type EarlyFailure,
+  type LibraryCheckOptions,
+} from "./earlyChecks.js";
 import { entitlementsCapability, type EntitlementsCapability } from "./entitlements.js";
-import { mergedPodTable } from "./podTable.js";
+import { mergedPodTable, type PodTable } from "./podTable.js";
 import { attribute, dependencyDirs, podspecFiles, readJson } from "./podspecs.js";
 import { andList, expoPackageDir, installedExpoMajor, installedExpoVersion } from "./expo.js";
 import { scriptsCapability, type ScriptsCapability } from "./scriptsShape.js";
@@ -30,8 +43,16 @@ export interface ProbeOptions {
   cacheRoot?: string;
   head?: HeadProbe;
   timeoutMs?: number;
-  /** Read the cache only: no HEAD request is made. */
+  /** Read the cache only: no HEAD request is made, and no binary pod is probed. */
   offline?: boolean;
+  /** The binary pods' cache; `podsCacheDir()` by default. */
+  podsCache?: string;
+  /** The CocoaPods CDN the binary-pod probe reads (a test seam). */
+  podsCdnBase?: string;
+  /** The fetch the binary-pod probe uses (a test seam). */
+  podsFetch?: typeof fetch;
+  /** Whether `unzip` is on PATH (a test seam). */
+  hasUnzip?: () => boolean;
 }
 
 export interface ArtifactsCapability {
@@ -240,6 +261,11 @@ export interface Capabilities {
   scaffoldPins?: string[];
   /** The app's entitlements (`entitlementsCapability`); undefined when CODE_SIGN_ENTITLEMENTS is unset. */
   entitlements?: EntitlementsCapability;
+  /**
+   * The binary CocoaPods pods' lines (`✔`/`ℹ`/`⚠`/`✖ pods — …`): what the lock and the cache hold, or what the probe
+   * found, the lock entries no library needs, and unzip; [] without binary pods. detectCapabilities always sets it.
+   */
+  binaryPods?: string[];
 }
 
 /** The SwiftPM settings reader the build's plugin discovery uses (vendor/rn-spm/spm/swiftpm-config.js). */
@@ -322,7 +348,10 @@ export async function detectCapabilities(projectRoot: string, opts: ProbeOptions
     ...(config.exclude !== undefined ? { exclude: config.exclude } : {}),
     ...(kind !== undefined ? { kind } : {}),
   };
+  if (opts.podsCache !== undefined) libraryChecks.podsCache = opts.podsCache;
   const podTable = mergedPodTable(config.pods);
+  // Started now, so its probe runs alongside the rn-artifacts probe, within the same budget.
+  const binaryPods = binaryPodsLines(root, libraryChecks, podTable, opts);
   const caps: Capabilities = {
     podspecs: podspecFeatures(root),
     excluded: excludeLines(root, config.exclude ?? [], { kind, file: configFileOf(config, "exclude") }),
@@ -353,7 +382,147 @@ export async function detectCapabilities(projectRoot: string, opts: ProbeOptions
       ? { status: "local", version: rn.version, missing: [], detail: config.rnArtifactsDir }
       : await probeArtifacts(rn.rnDir, rn.version, opts);
   }
+  caps.binaryPods = await binaryPods;
   return caps;
+}
+
+/** Whether an executable `unzip` is on PATH. */
+function unzipOnPath(): boolean {
+  return (process.env.PATH ?? "").split(path.delimiter).some((dir) => {
+    if (dir === "") return false;
+    try {
+      accessSync(path.join(dir, "unzip"), constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
+const zipUrl = (url: string): boolean => {
+  try {
+    return new URL(url).pathname.toLowerCase().endsWith(".zip");
+  } catch {
+    return false;
+  }
+};
+
+/** "a", "a and b", "a, b and c" */
+const listOf = (items: readonly string[]): string =>
+  items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+
+/** One pod the libraries need now: its version, URL, whether it is cached, and its size when known. */
+interface NeededPod {
+  pod: string;
+  version: string;
+  url: string;
+  cached: boolean;
+  size?: number;
+}
+
+/** `✔ … in rn-xtool's cache and in the lock`, or `ℹ … ${k} to download from ${hosts} (${size})`. */
+function neededLine(pods: readonly NeededPod[], libs: readonly string[]): string {
+  const n = pods.length;
+  const what = `${n} CocoaPods binar${n === 1 ? "y" : "ies"} for ${listOf(libs)}`;
+  const missing = pods.filter((p) => !p.cached);
+  if (missing.length === 0) return `✔ pods — ${what}, in rn-xtool's cache and in ${PODS_LOCK}`;
+  const hosts = [...new Set(missing.map((p) => new URL(p.url).host))].sort();
+  const sizes = missing.map((p) => p.size);
+  const size = sizes.some((s) => s === undefined) ? formatSize(undefined) : formatSize(sizes.reduce<number>((a, s) => a + s!, 0));
+  return `ℹ pods — ${what}, ${missing.length} to download from ${listOf(hosts)} (${size})`;
+}
+
+/**
+ * Spec goal 5.2, `doctor --project`'s binary pods: from the lock and the cache when the lock names every pod the
+ * libraries depend on; otherwise (open question 6) the CDN's specs and HEAD sizes, within `timeoutMs` (10 s), never
+ * with `offline`. Then the lock entries no library needs (row 67), and unzip when a pod is a zip (row 24). Never throws.
+ */
+async function binaryPodsLines(root: string, checks: LibraryCheckOptions, table: PodTable, opts: ProbeOptions): Promise<string[]> {
+  const roots = binaryPodCandidates(root, checks);
+  let lock: PodsLock;
+  try {
+    lock = readPodsLock(root);
+  } catch (e) {
+    return [`⚠ pods — not checked: ${e instanceof Error ? e.message : String(e)}`];
+  }
+  if (roots.length === 0 && Object.keys(lock.pods).length === 0) return [];
+  const cache = opts.podsCache ?? podsCacheDir();
+  const libs = [...new Set(roots.map((r) => r.library))].sort();
+  const lines: string[] = [];
+  const fromLock = (): NeededPod[] =>
+    Object.entries(lock.pods)
+      .filter(([, e]) => e.neededBy.some((l) => libs.includes(l)))
+      .map(([pod, e]) => ({
+        pod,
+        version: e.version,
+        url: e.url,
+        cached: cachedArchive(cache, e.sha256, zipUrl(e.url) ? "zip" : "tar.gz") !== undefined,
+        size: e.size,
+      }));
+  let needed: NeededPod[] = [];
+  if (roots.length > 0) {
+    const podOf = (dependency: string): string => dependency.split("/")[0]!;
+    if (roots.every((r) => lock.pods[podOf(r.dependency)] !== undefined)) {
+      needed = fromLock();
+      lines.push(neededLine(needed, libs));
+    } else if (opts.offline) {
+      needed = fromLock();
+      lines.push("ℹ pods — not checked (offline)");
+    } else {
+      const timeoutMs = opts.timeoutMs ?? 10_000;
+      const signal = AbortSignal.timeout(timeoutMs);
+      const base = opts.podsFetch ?? fetch;
+      const bounded = ((input: string | URL | Request, init?: RequestInit) =>
+        base(input, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal })) as typeof fetch;
+      const cdn: CdnOptions = {
+        ...(opts.podsCdnBase !== undefined ? { base: opts.podsCdnBase } : {}),
+        cache,
+        fetch: bounded,
+        timeoutMs,
+        neededBy: (pod) => (roots.find((r) => podOf(r.dependency) === pod) ?? roots[0]!).library,
+      };
+      try {
+        const probe = async (): Promise<NeededPod[]> => {
+          const resolution = await resolveBinaryPods(roots, { table, locked: lockedVersions(lock), cdn });
+          return Promise.all(
+            resolution.binary.map(async (b) => {
+              const url = b.spec.source.http ?? "";
+              const locked = lock.pods[b.pod];
+              const zip = b.spec.source.type === "zip" || (b.spec.source.type === undefined && zipUrl(url));
+              const cached =
+                locked !== undefined && locked.version === b.version && cachedArchive(cache, locked.sha256, zip ? "zip" : "tar.gz") !== undefined;
+              const size = cached ? locked.size : await headSize(url, { fetch: bounded });
+              return { pod: b.pod, version: b.version, url, cached, ...(size !== undefined ? { size } : {}) };
+            }),
+          );
+        };
+        needed = await untilAborted(probe(), signal);
+        lines.push(neededLine(needed, libs));
+      } catch (e) {
+        const reason = signal.aborted
+          ? `timed out after ${timeoutMs / 1000} s`
+          : e instanceof PodsNetworkError || e instanceof Error
+            ? e.message
+            : String(e);
+        lines.push(`⚠ pods — not checked: ${reason}`);
+        needed = fromLock();
+      }
+    }
+  }
+  const unused = unusedLockEntries(lock, new Set(needed.map((p) => p.pod)));
+  if (unused.length > 0) {
+    lines.push(`ℹ pods — ${PODS_LOCK} also records ${listOf(unused)}, which no library needs now; rn-xtool keeps these entries`);
+  }
+  const zipped = [
+    ...needed.filter((p) => zipUrl(p.url)).map((p) => `${p.pod} ${p.version}`),
+    ...Object.entries(lock.pods)
+      .filter(([, e]) => zipUrl(e.url))
+      .map(([pod, e]) => `${pod} ${e.version}`),
+  ];
+  if (zipped.length > 0 && !(opts.hasUnzip ?? unzipOnPath)()) {
+    lines.push(`✖ pods — ${zipped[0]} is a .zip download, and unzip is not installed. Install it (sudo apt install unzip) and build again.`);
+  }
+  return lines;
 }
 
 const SCRIPTS_TEXT: Record<ScriptsCapability["shape"], string> = {

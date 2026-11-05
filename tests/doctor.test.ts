@@ -653,6 +653,30 @@ describe("doctor --project", () => {
     expect(none.checks.some((c) => c.name === "pods")).toBe(false);
   });
 
+  it("--project prints the binary pods' lines before the pin lines", async () => {
+    const lib = "@react-native-ml-kit/text-recognition";
+    const binaryPods = [
+      `✔ pods — 10 CocoaPods binaries for ${lib}, in rn-xtool's cache and in rn-xtool-pods.lock.json`,
+      "ℹ pods — rn-xtool-pods.lock.json also records MLKitFoo 1.0.0, which no library needs now; rn-xtool keeps these entries",
+      "⚠ pods — not checked: timed out after 10 s",
+      "✖ pods — MLKitFoo 1.0.0 is a .zip download, and unzip is not installed. Install it (sudo apt install unzip) and build again.",
+    ];
+    const pin = 'AppAuth 3.0.0 (rn-xtool table) is outside react-native-app-auth\'s requirement ">= 4.0"';
+    const r = await doctorWithProbes({ ...good, capabilities: async () => ({ ...expo58Caps, binaryPods, podPins: [`⚠ ${pin}`] }) }, "/proj", {
+      projectOnly: true,
+    });
+    expect(r.checks.filter((c) => c.name === "pods")).toEqual([
+      { name: "pods", status: "ok", detail: binaryPods[0]!.slice("✔ pods — ".length) },
+      { name: "pods", status: "info", detail: binaryPods[1]!.slice("ℹ pods — ".length) },
+      { name: "pods", status: "warn", detail: "not checked: timed out after 10 s" },
+      { name: "pods", status: "fail", detail: binaryPods[3]!.slice("✖ pods — ".length) },
+      { name: "pods", status: "warn", detail: pin },
+    ]);
+    expect(r.ok).toBe(false);
+    const none = await doctorWithProbes({ ...good, capabilities: async () => ({ ...expo58Caps, binaryPods: [] }) }, "/proj", { projectOnly: true });
+    expect(none.checks.some((c) => c.name === "pods")).toBe(false);
+  });
+
   it("--project shows a checked pod pin as info", async () => {
     const line = 'GoogleToolboxForMac 6.0.1 (rn-xtool table) is outside lib\'s requirement "~> 4.2": checked';
     const r = await doctorWithProbes({ ...good, capabilities: async () => ({ ...expo58Caps, podPins: [`ℹ ${line}`] }) }, "/proj", {

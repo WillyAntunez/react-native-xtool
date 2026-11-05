@@ -16,6 +16,11 @@ import { makeFakeSlot088 } from "./support/fakeSlots.js";
 import { fakeRnScripts } from "./support/rnScripts.js";
 import { plistOf, withEntitlements } from "./support/entitlements.js";
 import { useGitSpecCache } from "./support/podsCache.js";
+import { podShard } from "../src/pods/cdn.js";
+import { formatSize } from "../src/pods/format.js";
+import { PODS_LOCK } from "../src/pods/lock.js";
+import { podsCdnRoutes } from "./support/podFixtures.js";
+import { closedPortBase, startPodsServer, type PodsServer } from "./support/podsServer.js";
 
 // Unmapped pods read as git sources from a cache of their own, never the machine's.
 useGitSpecCache();
@@ -663,6 +668,144 @@ describe("detectCapabilities", () => {
       vendored_frameworks: [],
       resource_bundles: [],
     });
+  });
+});
+
+describe("binary pods", () => {
+  const LIB = "@react-native-ml-kit/text-recognition";
+  const NAME = "rn-xtool-pods.lock.json";
+  const VERSIONS: Record<string, string> = {
+    GoogleMLKit: "8.0.0",
+    MLImage: "1.0.0-beta7",
+    MLKitCommon: "13.0.0",
+    MLKitTextRecognition: "6.0.0",
+    MLKitTextRecognitionChinese: "5.0.0",
+    MLKitTextRecognitionDevanagari: "5.0.0",
+    MLKitTextRecognitionJapanese: "5.0.0",
+    MLKitTextRecognitionKorean: "5.0.0",
+    MLKitTextRecognitionCommon: "5.0.0",
+    MLKitVision: "9.0.0",
+  };
+  const entry = (pod: string, sha: string, o: { size?: number; ext?: string; neededBy?: string[] } = {}) => ({
+    version: VERSIONS[pod] ?? "1.0.0",
+    subspecs: [],
+    url: `https://example.invalid/dl/${pod}.${o.ext ?? "tar.gz"}`,
+    size: o.size ?? 7000,
+    sha256: sha.repeat(64),
+    neededBy: o.neededBy ?? [LIB],
+  });
+  let server: PodsServer | undefined;
+  afterEach(async () => {
+    await server?.close();
+    server = undefined;
+  });
+
+  /** A project with the ML Kit library, `lock` as its lock, and an empty pods cache. */
+  async function mlKitProject(lock?: Record<string, unknown>, o: { exclude?: string[] } = {}) {
+    const dir = await tempDir("rn-xtool-caps-pods-");
+    await writePackage(dir, { name: "app", dependencies: { [LIB]: "2.0.0" } });
+    await writePackage(path.join(dir, "node_modules", LIB), { name: LIB, version: "2.0.0" }, {
+      "RNMLKitTextRecognition.podspec": "Pod::Spec.new do |s|\n  s.dependency 'React'\n  s.dependency 'GoogleMLKit/TextRecognition', '8.0.0'\nend\n",
+    });
+    if (lock !== undefined) await writeFile(path.join(dir, PODS_LOCK), JSON.stringify({ lockfileVersion: 1, pods: lock }));
+    if (o.exclude !== undefined) await writeFile(path.join(dir, "rn-xtool.config.json"), JSON.stringify({ exclude: o.exclude }));
+    const podsCache = await tempDir("rn-xtool-caps-podcache-");
+    return { dir, podsCache };
+  }
+  const cacheFile = async (podsCache: string, sha: string, ext = "tar.gz") => {
+    await mkdir(path.join(podsCache, "downloads"), { recursive: true });
+    await writeFile(path.join(podsCache, "downloads", `${sha.repeat(64)}.${ext}`), "x");
+  };
+  const noFetch = (() => {
+    throw new Error("no network in this test");
+  }) as unknown as typeof fetch;
+
+  it("reports cached binaries", async () => {
+    const { dir, podsCache } = await mlKitProject({ GoogleMLKit: entry("GoogleMLKit", "a"), MLKitCommon: entry("MLKitCommon", "b") });
+    await cacheFile(podsCache, "a");
+    await cacheFile(podsCache, "b");
+    const caps = await detectCapabilities(dir, { podsCache, podsFetch: noFetch });
+    expect(caps.binaryPods).toEqual([`✔ pods — 2 CocoaPods binaries for ${LIB}, in rn-xtool's cache and in ${NAME}`]);
+  });
+
+  it("reports what is left to download, with its size", async () => {
+    const { dir, podsCache } = await mlKitProject({ GoogleMLKit: entry("GoogleMLKit", "a"), MLKitCommon: entry("MLKitCommon", "b", { size: 2_500_000 }) });
+    await cacheFile(podsCache, "a");
+    const caps = await detectCapabilities(dir, { podsCache, podsFetch: noFetch });
+    expect(caps.binaryPods).toEqual([`ℹ pods — 2 CocoaPods binaries for ${LIB}, 1 to download from example.invalid (2.5 MB)`]);
+  });
+
+  it("probes unresolved pods within the budget", async () => {
+    const { dir, podsCache } = await mlKitProject();
+    server = await startPodsServer(podsCdnRoutes(Object.fromEntries(Object.entries(VERSIONS).map(([p, v]) => [p, [v]])), podShard));
+    for (const pod of Object.keys(VERSIONS)) server.routes[`/dl/${pod}-${VERSIONS[pod]}.tar.gz`] = { body: Buffer.alloc(1000) };
+    const base = server.base;
+    const podsFetch = ((input: string | URL | Request, init?: RequestInit) => {
+      const u = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+      return fetch(u.hostname === "example.invalid" ? `${base}${u.pathname}` : input, init);
+    }) as typeof fetch;
+    const caps = await detectCapabilities(dir, { podsCache, podsCdnBase: base, podsFetch });
+    // TextRecognition (Latin) alone: GoogleMLKit, MLImage, MLKitCommon, MLKitTextRecognition(Common) and MLKitVision.
+    expect(caps.binaryPods).toEqual([`ℹ pods — 6 CocoaPods binaries for ${LIB}, 6 to download from example.invalid (${formatSize(6000)})`]);
+    expect(server.requests.filter((r) => r.startsWith("GET /dl/"))).toEqual([]);
+    expect(server.requests.filter((r) => r.startsWith("HEAD /dl/"))).toHaveLength(6);
+  });
+
+  it("warns not checked when the probe fails", async () => {
+    const { dir, podsCache } = await mlKitProject();
+    const closed = await closedPortBase();
+    const caps = await detectCapabilities(dir, { podsCache, podsCdnBase: closed });
+    expect(caps.binaryPods).toEqual([
+      `⚠ pods — not checked: Cannot reach ${new URL(closed).host} (connect ECONNREFUSED) to read the versions of GoogleMLKit`,
+    ]);
+    server = await startPodsServer({});
+    server.routes[`/all_pods_versions_${podShard("GoogleMLKit").join("_")}.txt`] = { hang: true };
+    const slow = await detectCapabilities(dir, { podsCache, podsCdnBase: server.base, timeoutMs: 300 });
+    expect(slow.binaryPods).toEqual(["⚠ pods — not checked: timed out after 0.3 s"]);
+  });
+
+  it("does not probe with --offline", async () => {
+    const { dir, podsCache } = await mlKitProject();
+    const caps = await detectCapabilities(dir, { podsCache, podsFetch: noFetch, offline: true });
+    expect(caps.binaryPods).toEqual(["ℹ pods — not checked (offline)"]);
+  });
+
+  it("lists the lock entries no library needs", async () => {
+    const lock = {
+      GoogleMLKit: entry("GoogleMLKit", "a"),
+      MLKitFoo: entry("MLKitFoo", "c", { neededBy: ["other-lib"] }),
+      MLKitBar: entry("MLKitBar", "d", { neededBy: ["other-lib"] }),
+    };
+    const { dir, podsCache } = await mlKitProject(lock);
+    await cacheFile(podsCache, "a");
+    const caps = await detectCapabilities(dir, { podsCache, podsFetch: noFetch });
+    expect(caps.binaryPods).toEqual([
+      `✔ pods — 1 CocoaPods binary for ${LIB}, in rn-xtool's cache and in ${NAME}`,
+      `ℹ pods — ${NAME} also records MLKitBar 1.0.0 and MLKitFoo 1.0.0, which no library needs now; rn-xtool keeps these entries`,
+    ]);
+    const excluded = await mlKitProject(lock, { exclude: [LIB] });
+    expect((await detectCapabilities(excluded.dir, { podsCache: excluded.podsCache, podsFetch: noFetch })).binaryPods).toEqual([
+      `ℹ pods — ${NAME} also records GoogleMLKit 8.0.0, MLKitBar 1.0.0 and MLKitFoo 1.0.0, which no library needs now; rn-xtool keeps these entries`,
+    ]);
+  });
+
+  it("adds the unzip line only when a lock entry is a zip", async () => {
+    const lock = { GoogleMLKit: entry("GoogleMLKit", "a"), MLKitFoo: entry("MLKitFoo", "c", { ext: "zip" }) };
+    const { dir, podsCache } = await mlKitProject(lock);
+    await cacheFile(podsCache, "a");
+    await cacheFile(podsCache, "c", "zip");
+    const unzip = "✖ pods — MLKitFoo 1.0.0 is a .zip download, and unzip is not installed. Install it (sudo apt install unzip) and build again.";
+    expect((await detectCapabilities(dir, { podsCache, podsFetch: noFetch, hasUnzip: () => false })).binaryPods).toContain(unzip);
+    expect((await detectCapabilities(dir, { podsCache, podsFetch: noFetch, hasUnzip: () => true })).binaryPods).not.toContain(unzip);
+    const tars = await mlKitProject({ GoogleMLKit: entry("GoogleMLKit", "a") });
+    const lines = (await detectCapabilities(tars.dir, { podsCache: tars.podsCache, podsFetch: noFetch, hasUnzip: () => false })).binaryPods;
+    expect(lines?.some((l) => l.includes("unzip"))).toBe(false);
+  });
+
+  it("prints no pods line for a project without binary pods", async () => {
+    const dir = await tempDir("rn-xtool-caps-nopods-");
+    await writePackage(dir, { name: "app", dependencies: {} });
+    expect((await detectCapabilities(dir, { podsFetch: noFetch })).binaryPods).toEqual([]);
   });
 });
 
