@@ -311,6 +311,10 @@ describe("runPodsStep", () => {
     expect(existsSync(path.join(root, PODS_LOCK))).toBe(false);
   });
 
+  it("counts 8 bytes of disk per downloaded byte, as measured with the per-app copies (row 59)", () => {
+    expect(POD_DISK_FACTOR).toBe(8);
+  });
+
   it("stops before the first download when the cache's filesystem is short", async () => {
     const run = runPodsStep(root, ROOTS, table(), deps({ filesystemOf: async () => ({ dev: 1, freeBytes: 1000 }) }));
     await expect(run).rejects.toThrow(

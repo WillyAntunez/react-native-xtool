@@ -36,10 +36,11 @@ import { sweepStaleTemps } from "./sweep.js";
 import { wrapPod, type WrappedPod } from "./wrap.js";
 
 /**
- * The cache's growth per downloaded byte: the download, its extracted tree and its wrapped copies (spec goal 5.5;
- * about 6× for ML Kit, measured again in the build-only proof).
+ * The disk a downloaded byte takes: the download, its extracted tree and its wrapped copies in the cache, and the
+ * app's copies in ios/build/pod-binaries and ios-xtool/Resources (spec goal 5.5, row 59; 7.5× for ML Kit in the
+ * build-only proof).
  */
-export const POD_DISK_FACTOR = 6;
+export const POD_DISK_FACTOR = 8;
 
 /** What the step hands to staging and to `build`: the binary pods as the scaffolder takes them, the lock, the bundles. */
 export interface PodsStepResult extends PodsResult {
