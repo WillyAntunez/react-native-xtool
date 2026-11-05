@@ -1,8 +1,12 @@
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { firstRunChecklist, install } from "../src/commands/install.js";
+import { projectPaths } from "../src/paths.js";
+import { EMPTY_TARGETS_DIR, emptyArm64Object } from "../src/pods/emptyTargets.js";
+import { IOS_MIN } from "../src/versions.js";
 
 const APP_ID_LIMIT = readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "xtool-errors", "app-id-limit.txt"),
@@ -369,6 +373,28 @@ describe("install", () => {
   });
 });
 
+describe("install over USB with empty targets", () => {
+  it("writes the empty target objects the build recorded before xtool dev run (row 90)", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "install-empty-usb-"));
+    const object = path.join(projectPaths(root).iosXtool, ...EMPTY_TARGETS_DIR, "GTMDefines.o");
+    const seen: boolean[] = [];
+    await install(root, {
+      xtool: {
+        loadConfig: async () => ({}),
+        bin: () => "/bin/xtool",
+        authStatus: async () => ({ loggedIn: true, teamId: "TEAM", appleId: "a@b.c" }),
+        listDevices: async () => [{ name: "Phone", udid: "u", transport: "usb" }],
+        readState: async () => ({ bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20", emptyTargets: ["GTMDefines"] }),
+        devRun: async () => void seen.push(existsSync(object)),
+        writeState: async () => {},
+      },
+      log: () => {},
+    });
+    expect(seen).toEqual([true]);
+    rmSync(root, { recursive: true, force: true });
+  });
+});
+
 describe("install --network", () => {
   const UD = "00008030-0000000012345678";
   const record = { HostID: "H", SystemBUID: "B", HostCertificate: Buffer.from("c"), HostPrivateKey: Buffer.from("k") };
@@ -408,6 +434,19 @@ describe("install --network", () => {
     };
     return { d, logs, calls };
   };
+
+  it("writes the empty target objects the build recorded before xtool builds the ipa (row 90)", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "install-empty-net-"));
+    const object = path.join(projectPaths(root).iosXtool, ...EMPTY_TARGETS_DIR, "GTMDefines.o");
+    const { d, calls } = deps({ state: { emptyTargets: ["GTMDefines"] } });
+    calls.devBuildIpa.mockImplementation(async () => {
+      expect(readFileSync(object)).toEqual(emptyArm64Object(IOS_MIN));
+      return "/p/ios-xtool/xtool/App.ipa";
+    });
+    await install(root, d, { network: true });
+    expect(calls.devBuildIpa).toHaveBeenCalledTimes(1);
+    rmSync(root, { recursive: true, force: true });
+  });
 
   it("builds a signed ipa, installs it over Wi‑Fi without USB and remembers the iPhone", async () => {
     const { d, logs, calls } = deps({ state: { deviceIp: "192.168.1.9", deviceUdid: UD, hasDevClient: true } });

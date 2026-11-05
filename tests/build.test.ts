@@ -438,9 +438,12 @@ describe("build", () => {
     await build(t.root, {}, t.deps);
     expect((t.writeIosXtool.mock.calls[0] as unknown[])[0]).toMatchObject({ emptyTargets: ["GTMDefines"] });
     expect(seen).toEqual([{ X: { url: "https://example.invalid/x", exact: "1.0.0", products: ["X"] } }]);
+    // Row 90: install writes them again before its own xtool build.
+    expect((await readState(join(t.root, "ios-xtool")))?.emptyTargets).toEqual(["GTMDefines"]);
     const plain = setup();
     await build(plain.root, {}, plain.deps);
     expect((plain.writeIosXtool.mock.calls[0] as unknown[])[0]).not.toHaveProperty("emptyTargets");
+    expect(await readState(join(plain.root, "ios-xtool"))).not.toHaveProperty("emptyTargets");
   });
 
   it("runs steps in order, passes port/ip and writes state", async () => {

@@ -21,6 +21,8 @@ import {
 } from "../device/wifiInstall.js";
 import { detectLanRoute, isPrivateIpv4, looksLikeTunnel, type LanRoute } from "../net.js";
 import { projectPaths } from "../paths.js";
+import { writeEmptyTargetObjects } from "../pods/emptyTargets.js";
+import { IOS_MIN } from "../versions.js";
 import { readState, rememberDevice, writeState, type BuildState } from "../state.js";
 import {
   authStatus,
@@ -46,6 +48,8 @@ export interface InstallDeps {
     writeState?: (iosXtoolDir: string, state: BuildState) => Promise<void>;
     devRun?: (bin: string, iosXtoolDir: string) => Promise<void>;
     devBuildIpa?: (bin: string, iosXtoolDir: string) => Promise<string>;
+    /** Before xtool builds: the empty objects of the targets the state records (row 90). */
+    writeEmptyTargets?: (iosXtoolDir: string, targets: readonly string[]) => Promise<unknown>;
   };
   wifi?: {
     /** This computer's default route (address + interface), unless `lanIp` is configured. */
@@ -170,6 +174,16 @@ async function authenticated(
   return { config, bin, auth: auth as AuthStatus & { teamId: string } };
 }
 
+/**
+ * Row 90: xtool links the empty objects of the targets without sources from `.build`, which may be gone since the
+ * build (deleted by hand, or a clean): `install` writes them again before xtool builds, as generate does.
+ */
+async function emptyObjects(x: NonNullable<InstallDeps["xtool"]>, iosXtool: string, state: InstallState): Promise<void> {
+  const targets = state.emptyTargets ?? [];
+  if (targets.length === 0) return;
+  await (x.writeEmptyTargets ?? ((dir, t) => writeEmptyTargetObjects(dir, t, IOS_MIN)))(iosXtool, targets);
+}
+
 export async function install(root: string, deps: InstallDeps = {}, opts: InstallOptions = {}): Promise<void> {
   if (opts.network !== undefined && opts.network !== false) return installNetwork(root, deps, opts);
   const x = deps.xtool ?? {};
@@ -186,6 +200,7 @@ export async function install(root: string, deps: InstallDeps = {}, opts: Instal
   const iosXtool = projectPaths(root).iosXtool;
   const state = await (x.readState ?? readState)(iosXtool).catch(() => undefined);
   if (!state) throw new Error("No build found. Run `rn-xtool build` first.");
+  await emptyObjects(x, iosXtool, state);
   await explainingXtool(() => (x.devRun ?? devRun)(bin, iosXtool));
   const id = installedBundleId(auth.teamId, state.bundleIdentifier);
   // Which iPhone got this build: `run` must not skip the install for a different one. The id is the one xtool signs
@@ -208,6 +223,7 @@ async function installNetwork(root: string, deps: InstallDeps, opts: InstallOpti
   const state = await (x.readState ?? readState)(iosXtool).catch(() => undefined);
   if (!state) throw new Error("No build found. Run `rn-xtool build` first.");
 
+  await emptyObjects(x, iosXtool, state);
   const ipa = await explainingXtool(() => (x.devBuildIpa ?? devBuildIpa)(bin, iosXtool));
   const bundleId = installedBundleId(auth.teamId, state.bundleIdentifier);
   const route: LanRoute = config.lanIp

@@ -475,6 +475,7 @@ export async function build(
   }
 
   const depsFingerprint = await d.depsFingerprint(paths.root);
+  const emptyTargets = [...new Set([...d.emptyTargets(root, libraryChecks), ...(staged?.links.emptyTargets ?? [])])].sort();
   // Written without the fingerprint first: a failed xtool-build must not look up to date.
   const state: BuildState = {
     version: 1,
@@ -496,8 +497,8 @@ export async function build(
       signedIdOf(previousState.installedBundleId, project.bundleIdentifier) && {
         installedBundleId: previousState.installedBundleId,
       }),
+    ...(emptyTargets.length > 0 && { emptyTargets }),
   };
-  const emptyTargets = [...new Set([...d.emptyTargets(root, libraryChecks), ...(staged?.links.emptyTargets ?? [])])].sort();
   await step("generate", async () => {
     await d.writeIosXtool({
       project,

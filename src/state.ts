@@ -34,6 +34,8 @@ export interface BuildState {
   /** The app config icon the last `expo prebuild` run by `build` turned into the icon set: its path from the
    *  project root and the sha256 of its content (absent when the config named no readable icon). */
   prebuildIcon?: { path?: string; sha256?: string };
+  /** The SwiftPM targets without sources whose empty objects generate wrote; `install` writes them again (row 90). */
+  emptyTargets?: string[];
 }
 
 const STATE_FILE = ".rn-xtool-state.json";
