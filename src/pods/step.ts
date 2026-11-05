@@ -64,7 +64,10 @@ export interface PodsStepDeps {
   podsFile?: string;
   /** The config's `knownLimits.allow`: a source pod only these libraries reach is left out with a warning (row 12). */
   allowed?: readonly string[];
-  /** Whether the early checks already printed the allowed warning for this library and pod. */
+  /**
+   * Whether the early checks already printed the allowed warning for this library and pod (its cached spec is a git
+   * source): the step leaves the pod out before any CDN read and does not warn again (rows 12 and 91).
+   */
   warned?: (library: string, pod: string) => boolean;
   log: (l: string) => void;
 }
@@ -174,15 +177,18 @@ function stopOf(err: unknown, cache: string): unknown {
   return err instanceof PodsNetworkError ? new PodsError(offlineText(err, cache)) : err;
 }
 
-export async function runPodsStep(root: string, roots: readonly PodRoot[], table: PodTable, d: PodsStepDeps): Promise<PodsStepResult> {
+export async function runPodsStep(root: string, candidates: readonly PodRoot[], table: PodTable, d: PodsStepDeps): Promise<PodsStepResult> {
   const cache = d.cache ?? podsCacheDir();
   const lock = readPodsLock(root);
+  const podOf = (dependency: string): string => dependency.split("/")[0]!;
+  // Row 91: the git-source pods the early checks allowed are left out before any CDN read, so a build with the lock and a
+  // full cache makes no request.
+  const roots = candidates.filter((r) => d.warned?.(r.library, podOf(r.dependency)) !== true);
   const empty: Resolution = { binary: [], sources: [], roots: [], changed: [] };
   if (roots.length === 0) return { resolution: empty, wrapped: [], binary: {}, lock, bundles: [] };
   // Row 73: what a crashed build left behind.
   await sweepStaleTemps(cache);
 
-  const podOf = (dependency: string): string => dependency.split("/")[0]!;
   const cdn: CdnOptions = {
     ...(d.cdnBase !== undefined ? { base: d.cdnBase } : {}),
     cache,

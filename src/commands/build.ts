@@ -304,7 +304,7 @@ export async function build(
   const stopOnKnownLimits = (failures: EarlyFailure[]): void => {
     const marked = allowKnownLimits(failures, config.knownLimits?.allow ?? []);
     for (const f of marked) if (f.allowed) d.log(`⚠ known-limits — ${allowedLimitText(f)}`);
-    // The pods step does not warn again for these (row 12).
+    // The pods step leaves these out before any CDN read and does not warn again (rows 12 and 91).
     for (const f of marked) if (f.allowed) for (const pod of f.pods ?? []) allowedPods.add(`${f.allowKey}\0${pod}`);
     const refused = marked.filter((f) => !f.allowed);
     if (refused.length > 0) throw new UnsupportedSetupError(refused);

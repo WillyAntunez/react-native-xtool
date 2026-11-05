@@ -411,6 +411,32 @@ describe("runPodsStep", () => {
       expect(existsSync(path.join(root, PODS_LOCK))).toBe(false);
     });
 
+    it("leaves out a pod the early checks allowed before any CDN read (row 91)", async () => {
+      const early = { allowed: ["react-native-git"], warned: (l: string, p: string) => l === "react-native-git" && p === "GitPod" };
+      await runPodsStep(root, [...ROOTS, GIT_ROOT], table(), deps(early));
+      expect(server.requests.some((r) => r.includes("GitPod"))).toBe(false);
+      // Offline, with the lock and a full cache: no request, and the other pods come from the cache.
+      server.requests.length = 0;
+      logs = [];
+      vi.unstubAllGlobals();
+      routeTo(await closedPortBase());
+      const again = await runPodsStep(root, [...ROOTS, GIT_ROOT], table(), deps({ ...early, cdnBase: await closedPortBase() }));
+      expect(server.requests).toEqual([]);
+      expect(again.wrapped.map((w) => w.pod)).toEqual(BINARY);
+      expect(logs.filter((l) => l.startsWith("⚠ "))).toEqual([]);
+    });
+
+    it("needs no CDN when the early checks allowed every pod", async () => {
+      const result = await runPodsStep(
+        root,
+        [GIT_ROOT],
+        table(),
+        deps({ cdnBase: await closedPortBase(), allowed: ["react-native-git"], warned: (l, p) => l === "react-native-git" && p === "GitPod" }),
+      );
+      expect(result.wrapped).toEqual([]);
+      expect(server.requests).toEqual([]);
+    });
+
     it("stops with block 2's text when the library is not allowed", async () => {
       await expect(runPodsStep(root, [GIT_ROOT], table(), deps())).rejects.toThrow(allowedLine.slice("⚠ known-limits — ".length, allowedLine.indexOf(" (allowed")));
     });
