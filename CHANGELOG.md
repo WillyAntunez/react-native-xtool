@@ -5,6 +5,8 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 
 ## [Unreleased]
 
+## [0.1.0-alpha.6] - 2026-11-05
+
 ### Upgrading from 0.1.0-alpha.5
 - `rn-xtool run` rebuilds and reinstalls the app after this upgrade, which gives it the app icon and, for apps without
   expo-dev-client, the reload after Allow.
@@ -487,7 +489,8 @@ First public release, as `react-native-xtool` (command `rn-xtool`).
 - No Xcode tools on Linux: asset catalogs, storyboards and Metal shaders are skipped; library resource bundles and
   vendored xcframeworks are not supported yet.
 
-[Unreleased]: https://github.com/WillyAntunez/react-native-xtool/compare/v0.1.0-alpha.5...HEAD
+[Unreleased]: https://github.com/WillyAntunez/react-native-xtool/compare/v0.1.0-alpha.6...HEAD
+[0.1.0-alpha.6]: https://github.com/WillyAntunez/react-native-xtool/compare/v0.1.0-alpha.5...v0.1.0-alpha.6
 [0.1.0-alpha.5]: https://github.com/WillyAntunez/react-native-xtool/compare/v0.1.0-alpha.4...v0.1.0-alpha.5
 [0.1.0-alpha.4]: https://github.com/WillyAntunez/react-native-xtool/compare/v0.1.0-alpha.3...v0.1.0-alpha.4
 [0.1.0-alpha.3]: https://github.com/WillyAntunez/react-native-xtool/compare/v0.1.0-alpha.2...v0.1.0-alpha.3
