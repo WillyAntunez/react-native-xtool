@@ -183,6 +183,24 @@ describe("parsePodSpec", () => {
       [],
       { kind: "other", what: "comes from a svn source, which rn-xtool cannot download" },
     ],
+    [
+      "a framework with glue sources",
+      spec({ source_files: ["Sources/*.{h,m}"] }),
+      [],
+      { kind: "other", what: "compiles sources (Sources/*.{h,m})" },
+    ],
+    [
+      "a framework with a vendored library",
+      spec({ vendored_libraries: "Libraries/libExample.a" }),
+      [],
+      { kind: "other", what: "ships vendored libraries (Libraries/libExample.a)" },
+    ],
+    [
+      "a framework with header source_files",
+      spec({ source_files: "Frameworks/Example.framework/Headers/*.h" }),
+      [],
+      { kind: "binary", headersOnly: false },
+    ],
     ["GTMSessionFetcher", fixture("GTMSessionFetcher", "3.5.0"), ["Core"], { kind: "source" }],
     ["a zip", fixture("MLKitFoo", "1.0.0"), [], { kind: "binary", headersOnly: false }],
     [

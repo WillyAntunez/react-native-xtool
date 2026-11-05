@@ -325,9 +325,9 @@ function urlExtension(file: string): string {
 }
 
 /**
- * http source (type absent, "tgz" or "zip"; a URL ending in .tar.gz, .tgz or .zip): vendored_frameworks → binary;
- * else vendored_libraries → other; else a non-header source_files entry (.m .mm .c .cc .cpp .swift) → other; else
- * binary, headersOnly. A git source → source. Anything else → other.
+ * http source (type absent, "tgz" or "zip"; a URL ending in .tar.gz, .tgz or .zip): vendored_libraries → other; else
+ * a non-header source_files entry (.m .mm .c .cc .cpp .swift) → other; else vendored_frameworks → binary; else binary,
+ * headersOnly. A git source → source. Anything else → other.
  */
 export function podRoute(spec: PodSpec, layers: readonly SpecLayer[]): PodRoute {
   const { source } = spec;
@@ -335,12 +335,12 @@ export function podRoute(spec: PodSpec, layers: readonly SpecLayer[]): PodRoute 
     const file = urlPath(source.http);
     const archive = source.type === undefined ? /\.(tar\.gz|tgz|zip)$/.test(file) : ["tgz", "zip"].includes(source.type);
     if (!archive) return { kind: "other", what: `is a ${source.type ?? urlExtension(file)} download (${source.http})` };
-    if (layers.some((l) => l.vendoredFrameworks.length > 0)) return { kind: "binary", headersOnly: false };
+    // Vendored libraries and compiled sources come first: a framework beside them would leave them out of the link.
     const library = layers.flatMap((l) => l.vendoredLibraries)[0];
     if (library !== undefined) return { kind: "other", what: `ships vendored libraries (${library})` };
     const compiled = layers.flatMap((l) => l.sourceFiles).find(compilesSources);
     if (compiled !== undefined) return { kind: "other", what: `compiles sources (${compiled})` };
-    return { kind: "binary", headersOnly: true };
+    return { kind: "binary", headersOnly: !layers.some((l) => l.vendoredFrameworks.length > 0) };
   }
   if (source.git !== undefined) return { kind: "source" };
   return { kind: "other", what: `comes from a ${source.other ?? "missing"} source, which rn-xtool cannot download` };
