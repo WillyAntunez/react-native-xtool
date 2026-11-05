@@ -21,6 +21,11 @@ export interface ExpoXtoolConfig {
    * keeps the shipped entry's others (an empty `forwardHeaders` or `subspecs` removes them).
    */
   pods?: Record<string, PodEntry>;
+  /**
+   * npm packages to leave out of rn-xtool's iOS builds: the autolinking JSON rn-xtool reads gets `platforms.ios: null`
+   * for each, as `react-native.config.js` would set it, without changing that file for Xcode, CocoaPods or Android.
+   */
+  exclude?: string[];
 }
 
 /** A CocoaPods pod's SwiftPM package, pinned to one version. `product` is read as `products: [product]`. */
@@ -111,6 +116,14 @@ function checkPods(file: string, config: Partial<ExpoXtoolConfig> | undefined): 
   checkPodEntries(file, config.pods);
 }
 
+function checkExclude(file: string, config: Partial<ExpoXtoolConfig> | undefined): void {
+  if (config === null || typeof config !== "object" || !("exclude" in config)) return;
+  const exclude: unknown = config.exclude;
+  if (!Array.isArray(exclude) || !exclude.every((name) => typeof name === "string" && name !== "")) {
+    throw new ConfigError(`${file}: exclude must be a list of package names`);
+  }
+}
+
 /** The config of a project without rn-xtool.config.json or rn-xtool.config.js. */
 export const DEFAULT_CONFIG: Readonly<ExpoXtoolConfig> = { metroPort: 8081 };
 
@@ -129,6 +142,7 @@ export async function loadConfig(projectRoot: string): Promise<ExpoXtoolConfig> 
     }
     checkKnownLimits("rn-xtool.config.json", parsed);
     checkPods("rn-xtool.config.json", parsed);
+    checkExclude("rn-xtool.config.json", parsed);
     config = { ...config, ...parsed };
   }
 
@@ -137,6 +151,7 @@ export async function loadConfig(projectRoot: string): Promise<ExpoXtoolConfig> 
     const mod = (await import(pathToFileURL(jsPath).href)) as { default?: Partial<ExpoXtoolConfig> };
     checkKnownLimits("rn-xtool.config.js", mod.default);
     checkPods("rn-xtool.config.js", mod.default);
+    checkExclude("rn-xtool.config.js", mod.default);
     config = { ...config, ...mod.default };
   }
 

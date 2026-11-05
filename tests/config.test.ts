@@ -128,6 +128,30 @@ describe("loadConfig", () => {
     expect(() => checkPodEntries("data/pods.json", pods)).toThrow(`data/pods.json: ${message}`);
   });
 
+  it("reads exclude", async () => {
+    await writeFile(join(dir, "rn-xtool.config.json"), JSON.stringify({ exclude: ["react-native-vision-camera", "@scope/lib"] }));
+    expect(await loadConfig(dir)).toEqual({ metroPort: 8081, exclude: ["react-native-vision-camera", "@scope/lib"] });
+    await writeFile(join(dir, "rn-xtool.config.json"), JSON.stringify({ exclude: [] }));
+    expect(await loadConfig(dir)).toEqual({ metroPort: 8081, exclude: [] });
+  });
+
+  it.each([
+    ["a string", "react-native-vision-camera"],
+    ["a number list", [1, 2]],
+    ["an empty string", [""]],
+    ["an object", { "react-native-vision-camera": true }],
+    ["null", null],
+  ])("names an exclude of the wrong shape: %s", async (_name, exclude) => {
+    const message = "exclude must be a list of package names";
+    await writeFile(join(dir, "rn-xtool.config.json"), JSON.stringify({ exclude }));
+    const error = await loadConfig(dir).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConfigError);
+    expect((error as ConfigError).message).toBe(`rn-xtool.config.json: ${message}`);
+    await rm(join(dir, "rn-xtool.config.json"));
+    await writeFile(join(dir, "rn-xtool.config.js"), `export default { exclude: ${JSON.stringify(exclude)} };\n`);
+    await expect(loadConfig(dir)).rejects.toThrow(`rn-xtool.config.js: ${message}`);
+  });
+
   it("rejects when rn-xtool.config.js exists but fails to load", async () => {
     await writeFile(join(dir, "rn-xtool.config.js"), 'import "nonexistent-module-xyz";\nexport default {};\n');
     await expect(loadConfig(dir)).rejects.toThrow();
