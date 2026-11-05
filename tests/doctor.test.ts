@@ -652,9 +652,11 @@ describe("doctor --project", () => {
       { projectOnly: true },
     );
     expect(r.checks.filter((c) => c.name === "exclude")).toEqual([
-      { name: "exclude", status: "info", detail: info },
+      { name: "exclude", status: "info", detail: info.replace(/^exclude — /, "") },
       { name: "exclude", status: "warn", detail: warn },
     ]);
+    // The rendered line names the check once.
+    expect(renderReport(r.checks.filter((c) => c.name === "exclude")).split("\n")[0]).toBe(`ℹ ${info}`);
     const names = r.checks.map((c) => c.name);
     expect(names.indexOf("exclude")).toBeGreaterThan(names.indexOf("podspecs"));
     expect(r.ok).toBe(true);

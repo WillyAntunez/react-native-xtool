@@ -406,7 +406,8 @@ export function capabilityChecks(c: Capabilities, projectError?: unknown): Docto
     ...(c.excluded ?? []).map((line) => ({
       name: "exclude",
       status: line.startsWith("⚠ ") ? ("warn" as const) : ("info" as const),
-      detail: line.replace(/^[ℹ⚠] /, ""),
+      // The ℹ line starts with the check's own name, which the report prints already.
+      detail: line.replace(/^[ℹ⚠] /, "").replace(/^exclude — /, ""),
     })),
     ...(c.podPins ?? []).map((line) => ({ name: "pods", status: "warn" as const, detail: line.replace(/^⚠ /, "") })),
     ...[...(c.orphanPatches ?? []), ...(c.scaffoldPins ?? [])].map((line) => ({
