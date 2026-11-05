@@ -80,6 +80,17 @@ describe("pbxproj reader", () => {
     expect(resolveSetting(p, "ONLY_INHERITS")).toBe("x");
   });
 
+  it("resolves $(SRCROOT) and $(PROJECT_DIR) to ios/", async () => {
+    const marker = "83CBBA201A601CBA00E9B192 /* Debug */ = {";
+    const src = await templatePbxproj();
+    const at = src.indexOf("buildSettings = {", src.indexOf(marker)) + "buildSettings = {".length;
+    const edited = `${src.slice(0, at)}\n\t\t\t\tFROM_SRCROOT = "$(SRCROOT)/A/B.h";\n\t\t\t\tFROM_PROJECT_DIR = "$(PROJECT_DIR)/C.h";${src.slice(at)}`;
+    const ios = await iosWith(["HelloWorld"], edited);
+    const p = openPbxproj(ios);
+    expect(resolveSetting(p, "FROM_SRCROOT")).toBe(`${ios}/A/B.h`);
+    expect(resolveSetting(p, "FROM_PROJECT_DIR")).toBe(`${ios}/C.h`);
+  });
+
   it("reports a missing ios directory", () => {
     expect(() => openPbxproj("/nonexistent/ios")).toThrow(/nonexistent/);
   });

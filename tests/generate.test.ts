@@ -434,14 +434,19 @@ describe("writeIosXtool", () => {
   describe("the Expo prebuild's bridging header", () => {
     const DEFAULT_HEADER = "//\n// Use this file to import your target's public headers that you would like to expose to Swift.\n//\n";
     /** An Expo app laid out as expo prebuild writes it: ios/LibApp.xcodeproj and the target folder ios/LibApp. */
-    async function libApp(header: string | undefined, entitlements = plistOf("<dict/>")) {
+    async function libApp(
+      header: string | undefined,
+      entitlements = plistOf("<dict/>"),
+      pbxproj: (src: string) => string = (src) => src,
+    ) {
       const root = await mkdtemp(join(tmpdir(), "xt7-libapp-"));
       tmps.push(root);
       const ios = join(root, "ios");
       const target = join(ios, "LibApp");
       await mkdir(join(ios, "LibApp.xcodeproj"), { recursive: true });
       await cp(new URL("./fixtures/ios-target", import.meta.url).pathname, target, { recursive: true });
-      await cp(new URL("./fixtures/pbxproj/expo-libapp.pbxproj", import.meta.url).pathname, join(ios, "LibApp.xcodeproj", "project.pbxproj"));
+      const src = await readFile(new URL("./fixtures/pbxproj/expo-libapp.pbxproj", import.meta.url), "utf8");
+      await writeFile(join(ios, "LibApp.xcodeproj", "project.pbxproj"), pbxproj(src));
       if (header !== undefined) await writeFile(join(target, "LibApp-Bridging-Header.h"), header);
       await writeFile(join(target, "LibApp.entitlements"), entitlements);
       const project: ProjectInfo = {
@@ -482,6 +487,46 @@ describe("writeIosXtool", () => {
       await writeIosXtool(ctx);
       expect(plist.parse(await readFile(join(paths.iosXtool, "App.entitlements"), "utf8"))).toEqual({ "aps-environment": "development" });
       expect(await readFile(join(paths.iosXtool, "xtool.yml"), "utf8")).toContain("\ninfoPath: Info.plist\nentitlementsPath: App.entitlements\n");
+    });
+
+    it("resolves $(SRCROOT) and $(PROJECT_DIR) in the bridging header setting", async () => {
+      const header = `${DEFAULT_HEADER}#import "RNAppAuthAuthorizationFlowManager.h"\n`;
+      for (const builtin of ["$(SRCROOT)", "$(PROJECT_DIR)"]) {
+        const { paths, ctx } = await libApp(header, undefined, (src) =>
+          src.replaceAll('SWIFT_OBJC_BRIDGING_HEADER = "LibApp/', `SWIFT_OBJC_BRIDGING_HEADER = "${builtin}/LibApp/`),
+        );
+        await writeIosXtool(ctx);
+        expect(await readFile(join(paths.sources, "LibApp-Bridging-Header.h"), "utf8")).toBe(header);
+      }
+    });
+
+    it("builds on without the bridging header and entitlements when ios/ holds two Xcode projects", async () => {
+      const header = `${DEFAULT_HEADER}#import "RNAppAuthAuthorizationFlowManager.h"\n`;
+      const { paths, ctx } = await libApp(header);
+      await mkdir(join(paths.ios, "Other.xcodeproj"), { recursive: true });
+      await cp(join(paths.ios, "LibApp.xcodeproj", "project.pbxproj"), join(paths.ios, "Other.xcodeproj", "project.pbxproj"));
+      const logs: string[] = [];
+      await writeIosXtool({ ...ctx, log: (l: string) => logs.push(l) });
+      expect(await readdir(paths.sources)).not.toContain("LibApp-Bridging-Header.h");
+      expect(await readdir(paths.iosXtool)).not.toContain("App.entitlements");
+      expect(logs).toContainEqual(expect.stringMatching(/^⚠ .*holds more than one \.xcodeproj \(LibApp\.xcodeproj, Other\.xcodeproj\).*; rn-xtool reads no bridging header or entitlements from it$/));
+    });
+
+    it("builds on when the Xcode project has a second application target", async () => {
+      const { paths, ctx } = await libApp(DEFAULT_HEADER);
+      await cp(new URL("./fixtures/pbxproj/two-apps.pbxproj", import.meta.url).pathname, join(paths.ios, "LibApp.xcodeproj", "project.pbxproj"));
+      const logs: string[] = [];
+      await writeIosXtool({ ...ctx, log: (l: string) => logs.push(l) });
+      expect(logs).toContainEqual(expect.stringMatching(/more than one application target \(HelloWorld, HelloWorldTwo\).*; rn-xtool reads no bridging header or entitlements from it$/));
+    });
+
+    it("names the bridging header setting when it cannot be resolved", async () => {
+      const { ctx } = await libApp(DEFAULT_HEADER, undefined, (src) =>
+        src.replaceAll('SWIFT_OBJC_BRIDGING_HEADER = "LibApp/', 'SWIFT_OBJC_BRIDGING_HEADER = "$(NO_SUCH_SETTING)/'),
+      );
+      await expect(writeIosXtool(ctx)).rejects.toThrow(
+        'SWIFT_OBJC_BRIDGING_HEADER in ios/LibApp.xcodeproj could not be read: Cannot resolve build setting $(NO_SUCH_SETTING) in "$(NO_SUCH_SETTING)/LibApp-Bridging-Header.h"',
+      );
     });
 
     it("names a missing bridging header", async () => {

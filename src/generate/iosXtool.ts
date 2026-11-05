@@ -7,7 +7,7 @@ import { swiftHeadersDir, type ProjectPaths } from "../paths.js";
 import { transformInfoPlist } from "../plist.js";
 import { buildVars, type ProjectInfo } from "../project/index.js";
 import { readEntitlements } from "../project/entitlements.js";
-import { openPbxproj, resolveSetting } from "../project/pbxproj.js";
+import { AmbiguousProjectError, openPbxproj, resolveSetting, type Pbxproj } from "../project/pbxproj.js";
 import { packageRoot } from "../tools/exec.js";
 import { IOS_MIN } from "../versions.js";
 import { APP_ICON_FILE, findAppIcon, type IconRecord } from "./appIcon.js";
@@ -120,7 +120,7 @@ async function writeAppSources(ctx: GenerateContext, headersDir: string, resourc
       );
     }
   }
-  const bridgingHeader = await expoBridgingHeader(paths.ios, paths.sources);
+  const bridgingHeader = await expoBridgingHeader(paths.ios, paths.sources, ctx.log ?? console.log);
   return {
     app: {
       mixed: false,
@@ -142,19 +142,36 @@ function hasDeclarations(text: string): boolean {
  * The Expo prebuild's bridging header (`SWIFT_OBJC_BRIDGING_HEADER` of the app target, Debug, relative to ios/),
  * copied into Sources/App for Swift when it holds more than comments: a config plugin adds imports to it
  * (react-native-app-auth's `RNAppAuthAuthorizationFlowManager.h`). The prebuild's default holds only a comment and is
- * not passed, so such an app's manifest stays as it was. Undefined without an Xcode project or the setting; a setting
- * naming a missing file throws.
+ * not passed, so such an app's manifest stays as it was. Undefined without an Xcode project or the setting, and with a
+ * ⚠ line when ios/ holds several Xcode projects or application targets; a setting naming a missing file, or one that
+ * cannot be resolved, throws naming the setting.
  */
-async function expoBridgingHeader(iosDir: string, sourcesDir: string): Promise<string | undefined> {
+async function expoBridgingHeader(iosDir: string, sourcesDir: string, log: (s: string) => void): Promise<string | undefined> {
   let projects: string[];
   try {
-    projects = readdirSync(iosDir).filter((n) => n.endsWith(".xcodeproj"));
+    projects = readdirSync(iosDir).filter((n) => n.endsWith(".xcodeproj")).sort();
   } catch {
     return undefined;
   }
   if (projects.length === 0) return undefined;
-  const p = openPbxproj(iosDir);
-  const rel = resolveSetting(p, "SWIFT_OBJC_BRIDGING_HEADER")?.trim();
+  const unreadable = (where: string, e: unknown) =>
+    new Error(`SWIFT_OBJC_BRIDGING_HEADER in ${where} could not be read: ${e instanceof Error ? e.message : String(e)}`);
+  let p: Pbxproj;
+  try {
+    p = openPbxproj(iosDir);
+  } catch (e) {
+    if (e instanceof AmbiguousProjectError) {
+      log(`⚠ ${e.what}; rn-xtool reads no bridging header or entitlements from it`);
+      return undefined;
+    }
+    throw unreadable(`ios/${projects[0]}`, e);
+  }
+  let rel: string | undefined;
+  try {
+    rel = resolveSetting(p, "SWIFT_OBJC_BRIDGING_HEADER")?.trim();
+  } catch (e) {
+    throw unreadable(`ios/${p.projectName}.xcodeproj`, e);
+  }
   if (!rel) return undefined;
   const text = await readOptional(resolve(iosDir, rel));
   if (text === undefined) {

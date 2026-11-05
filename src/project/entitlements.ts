@@ -8,7 +8,15 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import * as plist from "plist";
 import { ENTITLEMENT_TABLE, GENERIC_PHRASE } from "./entitlementTable.js";
-import { buildSetting, openPbxproj, resolveBuildSettingValue, resolveSetting, type Pbxproj } from "./pbxproj.js";
+import {
+  AmbiguousProjectError,
+  buildSetting,
+  builtinSetting,
+  openPbxproj,
+  resolveBuildSettingValue,
+  resolveSetting,
+  type Pbxproj,
+} from "./pbxproj.js";
 import type { ProjectInfo, ProjectKind } from "./types.js";
 
 /** A refusal: xtool cannot sign the app with the file `CODE_SIGN_ENTITLEMENTS` names. */
@@ -32,17 +40,13 @@ const SIGNING_REFERENCES = new Set(["AppIdentifierPrefix", "TeamIdentifierPrefix
 const REFERENCE = /\$\(([A-Za-z_][A-Za-z0-9_]*)(?::[A-Za-z0-9]+)?\)/g;
 
 /**
- * A setting's value resolved like Xcode would: `$(SRCROOT)` and `$(PROJECT_DIR)` are ios/, `$(PRODUCT_BUNDLE_IDENTIFIER)`
- * the app's bundle id (the one xtool signs), the rest from the pbxproj.
+ * A setting's value resolved like Xcode would: `$(PRODUCT_BUNDLE_IDENTIFIER)` is the app's bundle id (the one xtool
+ * signs), Xcode's own settings (`$(SRCROOT)` is ios/) and the rest come from the pbxproj.
  */
-function resolveIn(p: Pbxproj, iosDir: string, raw: string, bundleId: string): string {
-  return resolveBuildSettingValue(raw, (name) => {
-    if (name === "SRCROOT" || name === "PROJECT_DIR") return iosDir;
-    if (name === "PRODUCT_BUNDLE_IDENTIFIER") return bundleId;
-    if (name === "TARGET_NAME") return p.appTarget.name;
-    if (name === "PROJECT_NAME") return p.projectName;
-    return resolveSetting(p, name);
-  });
+function resolveIn(p: Pbxproj, raw: string, bundleId: string): string {
+  return resolveBuildSettingValue(raw, (name) =>
+    name === "PRODUCT_BUNDLE_IDENTIFIER" ? bundleId : (builtinSetting(p, name) ?? resolveSetting(p, name)),
+  );
 }
 
 /** Each `$(NAME)` the pbxproj answers, resolved; signing references and unknown settings are kept as written. */
@@ -61,7 +65,7 @@ function isDict(value: unknown): value is Record<string, unknown> {
 
 /**
  * The entitlements of the app target's Debug configuration; undefined when ios/ holds no Xcode project or the setting
- * is unset or empty. The path resolves against ios/. Values' `$(PRODUCT_BUNDLE_IDENTIFIER)` (the app's bundle id) and
+ * is unset or empty, or when ios/ holds several Xcode projects or application targets. The path resolves against ios/. Values' `$(PRODUCT_BUNDLE_IDENTIFIER)` (the app's bundle id) and
  * other build settings are resolved from the pbxproj; `$(AppIdentifierPrefix)` and `$(TeamIdentifierPrefix)` are kept,
  * since xtool rewrites them. Throws an EntitlementsError when the file is missing or not a property list dictionary.
  */
@@ -73,10 +77,17 @@ export function readEntitlements(project: Pick<ProjectInfo, "root" | "bundleIden
     return undefined;
   }
   if (projects.length === 0) return undefined;
-  const p = openPbxproj(iosDir);
+  let p: Pbxproj;
+  try {
+    p = openPbxproj(iosDir);
+  } catch (e) {
+    // Which project or target is the app's is unknown: the generate step says so (an Expo prebuild never writes this).
+    if (e instanceof AmbiguousProjectError) return undefined;
+    throw e;
+  }
   const raw = buildSetting(p, "CODE_SIGN_ENTITLEMENTS")?.trim();
   if (!raw) return undefined;
-  const setting = resolveIn(p, iosDir, raw, project.bundleIdentifier).trim();
+  const setting = resolveIn(p, raw, project.bundleIdentifier).trim();
   if (setting === "") return undefined;
   const file = path.resolve(iosDir, setting);
   const rel = path.relative(project.root, file).split(path.sep).join("/");
@@ -99,7 +110,7 @@ export function readEntitlements(project: Pick<ProjectInfo, "root" | "bundleIden
   }
   const resolve = (reference: string): string | undefined => {
     try {
-      return resolveIn(p, iosDir, reference, project.bundleIdentifier);
+      return resolveIn(p, reference, project.bundleIdentifier);
     } catch {
       return undefined;
     }
@@ -164,7 +175,13 @@ export function entitlementsCapability(root: string, kind: ProjectKind | undefin
   }
   if (!hasProject) return kind === "expo" ? { pending: true } : undefined;
   try {
-    const p = openPbxproj(iosDir);
+    let p: Pbxproj;
+    try {
+      p = openPbxproj(iosDir);
+    } catch (e) {
+      if (e instanceof AmbiguousProjectError) return undefined;
+      throw e;
+    }
     let bundleId = "$(PRODUCT_BUNDLE_IDENTIFIER)";
     try {
       bundleId = resolveSetting(p, "PRODUCT_BUNDLE_IDENTIFIER") ?? bundleId;

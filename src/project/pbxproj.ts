@@ -20,6 +20,20 @@ export interface Pbxproj {
   project: any;
 }
 
+/**
+ * ios/ holds more than one Xcode project, or its project more than one application target: rn-xtool cannot tell which
+ * one is the app's. `what` says so relative to the project root (`ios/ holds more than one .xcodeproj (A.xcodeproj,
+ * B.xcodeproj)`).
+ */
+export class AmbiguousProjectError extends DetectError {
+  readonly what: string;
+  constructor(message: string, what: string) {
+    super(message);
+    this.name = "AmbiguousProjectError";
+    this.what = what;
+  }
+}
+
 /** Strips one pair of surrounding double quotes. */
 function unquote(value: string): string {
   return value.length >= 2 && value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1) : value;
@@ -49,7 +63,10 @@ export function openPbxproj(iosDir: string): Pbxproj {
   const projects = entries.filter((n) => n.endsWith(".xcodeproj")).sort();
   if (projects.length === 0) throw new DetectError(`${iosDir} has no .xcodeproj`);
   if (projects.length > 1) {
-    throw new DetectError(`${iosDir} holds more than one .xcodeproj (${projects.join(", ")}); rn-xtool needs exactly one`);
+    throw new AmbiguousProjectError(
+      `${iosDir} holds more than one .xcodeproj (${projects.join(", ")}); rn-xtool needs exactly one`,
+      `ios/ holds more than one .xcodeproj (${projects.join(", ")})`,
+    );
   }
   const file = path.join(iosDir, projects[0]!, "project.pbxproj");
   const project = xcode.project(file);
@@ -64,7 +81,11 @@ export function openPbxproj(iosDir: string): Pbxproj {
     throw new DetectError(`${file} has no application target (targets: ${targets.map((t) => t.name).join(", ") || "none"})`);
   }
   if (apps.length > 1) {
-    throw new DetectError(`${file} has more than one application target (${apps.map((t) => t.name).join(", ")}); rn-xtool needs exactly one`);
+    const names = apps.map((t) => t.name).join(", ");
+    throw new AmbiguousProjectError(
+      `${file} has more than one application target (${names}); rn-xtool needs exactly one`,
+      `ios/${projects[0]} has more than one application target (${names})`,
+    );
   }
   return { path: file, projectName: projects[0]!.slice(0, -".xcodeproj".length), appTarget: apps[0]!, targets, project };
 }
@@ -122,13 +143,17 @@ export function resolveBuildSettingValue(value: string, lookup: (key: string) =>
   return out;
 }
 
+/** The settings Xcode defines itself: TARGET_NAME, PROJECT_NAME, and SRCROOT and PROJECT_DIR (the folder of the .xcodeproj, ios/). */
+export function builtinSetting(p: Pbxproj, name: string): string | undefined {
+  if (name === "TARGET_NAME") return p.appTarget.name;
+  if (name === "PROJECT_NAME") return p.projectName;
+  if (name === "SRCROOT" || name === "PROJECT_DIR") return path.dirname(path.dirname(p.path));
+  return undefined;
+}
+
 /** Resolved value of `key`; see `resolveBuildSettingValue`. `$(inherited)` is the project-level value of the same key (empty at the top of the chain). */
 export function resolveSetting(p: Pbxproj, key: string, configuration = "Debug"): string | undefined {
-  const builtin = (name: string): string | undefined => {
-    if (name === "TARGET_NAME") return p.appTarget.name;
-    if (name === "PROJECT_NAME") return p.projectName;
-    return undefined;
-  };
+  const builtin = (name: string): string | undefined => builtinSetting(p, name);
   const expand = (raw: string, k: string, inherited: string, stack: string[]): string =>
     resolveBuildSettingValue(raw, (name) =>
       name === "inherited" ? inherited : (builtin(name) ?? resolveKey(name, [...stack, k])),
