@@ -344,8 +344,9 @@ async function checkRoute(
     );
   }
   if (route.kind === "other") {
+    const why = route.noIos === true ? ", so an iPhone app cannot use it." : "; rn-xtool links static CocoaPods binaries only.";
     throw new PodsError(
-      `${pod} ${version} (needed by ${first.library}) ${route.what}; rn-xtool links static CocoaPods binaries only. Leave the library out with "exclude" in rn-xtool.config.json. See ${PODS_LINK}`,
+      `${pod} ${version} (needed by ${first.library}) ${route.what}${why} Leave the library out with "exclude" in rn-xtool.config.json. See ${PODS_LINK}`,
     );
   }
 }

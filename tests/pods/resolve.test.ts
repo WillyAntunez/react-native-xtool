@@ -246,6 +246,27 @@ describe("resolveBinaryPods", () => {
     );
   });
 
+  it("stops on a pod whose platforms lack iOS, with its own text", async () => {
+    const pod = "MLKitMac";
+    server.routes[`/all_pods_versions_${podShard(pod).join("_")}.txt`] = { body: `${pod}/1.0.0\n` };
+    server.routes[`/Specs/${podShard(pod).join("/")}/${pod}/1.0.0/${pod}.podspec.json`] = {
+      body: JSON.stringify({
+        name: pod,
+        version: "1.0.0",
+        homepage: "https://example.invalid/pod",
+        license: { type: "Copyright", text: "Copyright 2026 Example" },
+        authors: "Example",
+        source: { http: `https://example.invalid/dl/${pod}-1.0.0.tar.gz` },
+        platforms: { osx: "10.13", tvos: "13.0" },
+        vendored_frameworks: `Frameworks/${pod}.framework`,
+      }),
+    };
+    const roots: PodRoot[] = [{ library: "react-native-mac", libraryVersion: "1.0.0", dependency: pod, requirements: [] }];
+    await expect(resolveBinaryPods(roots, ctx())).rejects.toThrow(
+      `MLKitMac 1.0.0 (needed by react-native-mac) does not support iOS (its platforms: osx, tvos), so an iPhone app cannot use it. Leave the library out with "exclude" in rn-xtool.config.json. See ${LINK}`,
+    );
+  });
+
   it("refreshes the version index once when no cached version satisfies", async () => {
     const index = `/all_pods_versions_${podShard("MLKitCommon").join("_")}.txt`;
     const file = path.join(cache, "specs", "index", index.slice(1));

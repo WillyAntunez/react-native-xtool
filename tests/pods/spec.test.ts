@@ -222,7 +222,7 @@ describe("parsePodSpec", () => {
       "a pod without iOS in its platforms",
       spec({ platforms: { osx: "10.13", tvos: "13.0" } }),
       [],
-      { kind: "other", what: "does not support iOS (its platforms: osx, tvos)" },
+      { kind: "other", what: "does not support iOS (its platforms: osx, tvos)", noIos: true },
     ],
     ["GTMSessionFetcher", fixture("GTMSessionFetcher", "3.5.0"), ["Core"], { kind: "source" }],
     ["a zip", fixture("MLKitFoo", "1.0.0"), [], { kind: "binary", headersOnly: false }],

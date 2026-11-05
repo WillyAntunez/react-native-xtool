@@ -285,7 +285,11 @@ export function selectedLayers(spec: PodSpec, subspecs: readonly string[]): { la
   return { layers, used: [...used].sort() };
 }
 
-export type PodRoute = { kind: "binary"; headersOnly: boolean } | { kind: "source" } | { kind: "other"; what: string };
+export type PodRoute =
+  | { kind: "binary"; headersOnly: boolean }
+  | { kind: "source" }
+  /** `noIos`: the spec's platforms lack iOS, a stop of its own. */
+  | { kind: "other"; what: string; noIos?: true };
 
 /** `a{b,c}d` → [abd, acd], nested braces included; a pattern without braces is itself. */
 function expandBraces(pattern: string): string[] {
@@ -345,7 +349,9 @@ function urlExtension(file: string): string {
  */
 export function podRoute(spec: PodSpec, layers: readonly SpecLayer[]): PodRoute {
   const { source } = spec;
-  if (!spec.supportsIos) return { kind: "other", what: `does not support iOS (its platforms: ${(spec.platforms ?? []).join(", ")})` };
+  if (!spec.supportsIos) {
+    return { kind: "other", what: `does not support iOS (its platforms: ${(spec.platforms ?? []).join(", ")})`, noIos: true };
+  }
   if (source.http !== undefined) {
     const file = urlPath(source.http);
     const archive = source.type === undefined ? /\.(tar\.gz|tgz|zip)$/.test(file) : ["tgz", "zip"].includes(source.type);
