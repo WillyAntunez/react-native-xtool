@@ -243,6 +243,12 @@ describe("build", () => {
     await build(t.root, {}, { ...t.deps, runRnSpm });
     expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ pods }));
   });
+  it("passes the config's exclude to runRnSpm", async () => {
+    const t = setup({ cfg: { exclude: ["react-native-vision-camera"] }, project: { kind: "bare" } });
+    const runRnSpm = vi.fn(async () => {});
+    await build(t.root, {}, { ...t.deps, runRnSpm });
+    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ exclude: ["react-native-vision-camera"] }));
+  });
   it("passes the scripts source to runRnSpm", async () => {
     const t = setup({ project: { kind: "bare", rnScripts: "vendored" } });
     const runRnSpm = vi.fn(async () => {});

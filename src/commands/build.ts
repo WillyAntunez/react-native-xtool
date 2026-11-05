@@ -135,7 +135,14 @@ export interface BuildDeps {
   prepareRnArtifacts: (paths: ProjectPaths, rnVersion: string) => Promise<string>;
   runRnSpm: (
     paths: ProjectPaths,
-    opts: { rnArtifactsDir?: string; kind: ProjectKind; rnScripts: RnScripts; expoPlugin: ExpoPlugin; pods?: Record<string, PodEntry> },
+    opts: {
+      rnArtifactsDir?: string;
+      kind: ProjectKind;
+      rnScripts: RnScripts;
+      expoPlugin: ExpoPlugin;
+      pods?: Record<string, PodEntry>;
+      exclude?: readonly string[];
+    },
   ) => Promise<void>;
   buildJsi: (paths: ProjectPaths, opts?: { rnHeaders?: JsiRnHeaders; headersXcframework?: boolean }) => Promise<RuntimeFramework>;
   generateAppConfig: (paths: ProjectPaths) => Promise<void>;
@@ -289,6 +296,7 @@ export async function build(
       rnScripts: project.rnScripts,
       expoPlugin: project.expoPlugin,
       ...(config.pods !== undefined ? { pods: config.pods } : {}),
+      ...(config.exclude !== undefined ? { exclude: config.exclude } : {}),
     }),
   );
   const resources = unbundledResourcesLine(d.unbundledResources(paths.root));

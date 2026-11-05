@@ -4,6 +4,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { streamingRunner } from "../src/pipeline/rnSpm.js";
 import {
   AUTOLINKING_CONFIG_COMMAND,
+  configCommandFor,
   parseMissingPackageSwift,
   persistScaffoldArgv,
   rnSpmArgs,
@@ -687,6 +688,95 @@ describe("a failed scaffold comes first", () => {
       "React Native spm scaffold failed (exit 1):\nrn-spm-generate: boom",
     );
     expect(h.calls).toHaveLength(2);
+  });
+});
+
+describe("exclude", () => {
+  const FILTER = path.join(packageRoot(), "scripts", "exclude-config-command.js");
+  const EXCLUDE = ["react-native-vision-camera", "@scope/lib"];
+  const wrapped = (inner: string[]) => [process.execPath, FILTER, "--exclude", JSON.stringify(EXCLUDE), "--", ...inner];
+  const roots: string[] = [];
+  afterAll(() => {
+    for (const r of roots) rmSync(r, { recursive: true, force: true });
+  });
+  /** A project whose @react-native-community/cli names its bin, as the CLI's package.json does. */
+  function cliProject(): string {
+    const root = mkdtempSync(path.join(tmpdir(), "rn-xtool-exclude-"));
+    roots.push(root);
+    const cli = path.join(root, "node_modules", "@react-native-community", "cli");
+    mkdirSync(cli, { recursive: true });
+    writeFileSync(path.join(cli, "package.json"), JSON.stringify({ name: "@react-native-community/cli", bin: { "rnc-cli": "build/bin.js" } }));
+    return root;
+  }
+  const BARE_INNER = (root: string) => [process.execPath, path.join(root, "node_modules", "@react-native-community", "cli", "build/bin.js"), "config"];
+  const configOf = (args: string[]) => {
+    const i = args.indexOf("--config-command");
+    return i === -1 ? undefined : (JSON.parse(args[i + 1]!) as string[]);
+  };
+
+  it("configCommandFor wraps the project's config command, and keeps today's without exclude", () => {
+    const root = cliProject();
+    expect(configCommandFor(root, "bare", [])).toBeUndefined();
+    expect(configCommandFor(root, "expo", [])).toEqual(AUTOLINKING_CONFIG_COMMAND);
+    expect(configCommandFor(root, "bare", EXCLUDE)).toEqual(wrapped(BARE_INNER(root)));
+    expect(configCommandFor(root, "expo", EXCLUDE)).toEqual(wrapped(AUTOLINKING_CONFIG_COMMAND));
+  });
+
+  it("wraps RN's environment override on bare, as RN would run it", () => {
+    const root = cliProject();
+    const before = process.env.RCT_SPM_AUTOLINKING_CONFIG_COMMAND;
+    process.env.RCT_SPM_AUTOLINKING_CONFIG_COMMAND = JSON.stringify(["yarn", "react-native", "config"]);
+    try {
+      expect(configCommandFor(root, "bare", EXCLUDE)).toEqual(wrapped(["yarn", "react-native", "config"]));
+    } finally {
+      if (before === undefined) delete process.env.RCT_SPM_AUTOLINKING_CONFIG_COMMAND;
+      else process.env.RCT_SPM_AUTOLINKING_CONFIG_COMMAND = before;
+    }
+  });
+
+  const scaffoldRun = () => [
+    { exitCode: 2, output: missing("lib-a") },
+    { exitCode: 0, output: "" },
+    { exitCode: 0, output: "" },
+    { exitCode: 0, output: "" },
+  ];
+
+  it("wraps the config command when exclude is set, on bare and Expo", async () => {
+    const root = cliProject();
+    const p = projectPaths(root);
+    const runs = {
+      bare: { kind: "bare", rnScripts: "vendored", expoPlugin: "installed" },
+      expo57: { kind: "expo", rnScripts: "vendored", expoPlugin: "vendored" },
+      expo58: { kind: "expo", rnScripts: "installed", expoPlugin: "installed" },
+    } as const;
+    for (const [name, opts] of Object.entries(runs)) {
+      const h = harness(scaffoldRun());
+      await runRnSpm(p, { ...opts, exclude: EXCLUDE }, h.deps);
+      const inner = name === "bare" ? BARE_INNER(root) : AUTOLINKING_CONFIG_COMMAND;
+      // The generate (or Expo 58's add|update) run, the scaffold run and the retry.
+      for (const i of [0, 1, 3]) expect([name, i, configOf(h.calls[i]!.args)]).toEqual([name, i, wrapped(inner)]);
+      expect(h.calls[1]!.args).toContain("--scaffold");
+      if (name === "expo58") expect(h.calls[0]!.args[1]).toBe("add");
+    }
+  });
+
+  it("leaves every argv unchanged without exclude", async () => {
+    const root = cliProject();
+    const p = projectPaths(root);
+    for (const opts of [
+      { kind: "bare", rnScripts: "vendored", expoPlugin: "installed" },
+      { kind: "bare", rnScripts: "installed", expoPlugin: "installed" },
+      { kind: "expo", rnScripts: "vendored", expoPlugin: "vendored" },
+      { kind: "expo", rnScripts: "installed", expoPlugin: "installed" },
+    ] as const) {
+      const without = harness(scaffoldRun());
+      await runRnSpm(p, opts, without.deps);
+      const empty = harness(scaffoldRun());
+      await runRnSpm(p, { ...opts, exclude: [] }, empty.deps);
+      expect(empty.calls).toEqual(without.calls);
+      expect(without.calls.map((c) => c.args.join(" ")).join("\n")).not.toContain("exclude-config-command");
+      if (opts.kind === "bare") expect(configOf(without.calls[0]!.args)).toBeUndefined();
+    }
   });
 });
 
