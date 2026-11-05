@@ -19,3 +19,28 @@ export function fixturePods(): Record<string, string[]> {
     ]),
   );
 }
+
+/**
+ * The routes of a CDN that lists `index` (pod → versions) in its sharded version files and serves every fixture spec
+ * at its CDN path.
+ */
+export function podsCdnRoutes(
+  index: Record<string, string[]>,
+  shard: (pod: string) => [string, string, string],
+): Record<string, { body: string }> {
+  const routes: Record<string, { body: string }> = {};
+  const files = new Map<string, string[]>();
+  for (const [pod, versions] of Object.entries(index)) {
+    const file = `/all_pods_versions_${shard(pod).join("_")}.txt`;
+    files.set(file, [...(files.get(file) ?? []), [pod, ...versions].join("/")]);
+  }
+  for (const [file, lines] of files) routes[file] = { body: `${lines.join("\n")}\n` };
+  for (const [pod, versions] of Object.entries(fixturePods())) {
+    for (const version of versions) {
+      routes[`/Specs/${shard(pod).join("/")}/${pod}/${version}/${pod}.podspec.json`] = {
+        body: JSON.stringify(fixtureSpec(pod, version)),
+      };
+    }
+  }
+  return routes;
+}
