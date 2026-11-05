@@ -766,6 +766,35 @@ describe("unmapped pods", () => {
     expect(libraryFailures(scaffolded, { table: NO_POD_TABLE }).map((f) => f.id)).toEqual(["unmapped-pod"]);
   });
 
+  it("does not refuse a sibling installed as a peer, outside package.json (reanimated 4.3.4 and worklets 0.8.3)", async () => {
+    // npm installs react-native-worklets as reanimated's peer; autolinking links it, and the scaffolder wires
+    // RNWorklets as a sibling, so the pod name is an installed package's, not a CocoaPods pod.
+    const reanimated = {
+      "package.json": JSON.stringify({ name: "react-native-reanimated", version: "4.3.4", peerDependencies: { "react-native-worklets": ">=0.8.0" } }),
+      "RNReanimated.podspec":
+        'Pod::Spec.new do |s|\n  s.name         = "RNReanimated"\n  s.source_files = "apple/**/*.{mm,h,m}"\n' +
+        '  s.dependency "RNWorklets"\n  install_modules_dependencies(s)\n  s.dependency \'React-jsi\'\nend\n',
+    };
+    const root = await project({ "react-native-reanimated": reanimated });
+    await writeFiles(path.join(root, "node_modules", "react-native-worklets"), {
+      "package.json": JSON.stringify({ name: "react-native-worklets", version: "0.8.3" }),
+      "RNWorklets.podspec": 'Pod::Spec.new do |s|\n  s.name         = "RNWorklets"\n  install_modules_dependencies(s)\nend\n',
+    });
+    expect(libraryFailures(root, { table: NO_POD_TABLE })).toEqual([]);
+    // A scoped package's podspec counts too.
+    const scoped = await project({
+      "react-native-reanimated": { ...reanimated, "RNReanimated.podspec": reanimated["RNReanimated.podspec"].replace("RNWorklets", "ScopedPeer") },
+    });
+    await writeFiles(path.join(scoped, "node_modules", "@scope", "peer"), {
+      "package.json": JSON.stringify({ name: "@scope/peer", version: "1.0.0" }),
+      "ios/ScopedPeer.podspec": "Pod::Spec.new do |s|\nend\n",
+    });
+    expect(libraryFailures(scoped, { table: NO_POD_TABLE })).toEqual([]);
+    // Not installed at all: still read as a CocoaPods pod (preflight P9's accepted remainder).
+    const missing = await project({ "react-native-reanimated": reanimated });
+    expect(libraryFailures(missing, { table: NO_POD_TABLE }).map((f) => f.id)).toEqual(["unmapped-pod"]);
+  });
+
   it("skips the packages the config leaves out", async () => {
     const root = await project({ "react-native-app-auth": appAuth(), "@react-native-ml-kit/text-recognition": mlKit() });
     expect(libraryFailures(root, { table: NO_POD_TABLE, exclude: ["react-native-app-auth"] }).map((f) => f.allowKey)).toEqual([

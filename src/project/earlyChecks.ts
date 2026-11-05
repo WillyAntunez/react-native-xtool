@@ -358,7 +358,8 @@ class Libraries {
 
   /**
    * Each pod dependency on the unconditional lines of the library's podspecs, as the scaffolder classifies it: the
-   * pod-name index covers every direct dependency's podspecs (those left out of iOS too), and the linked packages are the
+   * pod-name index covers the podspecs of every package installed at the top of node_modules and of every direct
+   * dependency (those left out of iOS too), and the linked packages are the
    * dependencies with a podspec or a Package.swift that the project keeps on iOS.
    */
   podDependencies(lib: Library): (PodClassification & { name: string; requirements: string[] })[] {
@@ -386,6 +387,11 @@ class Libraries {
   private index(): { podToNpm: Map<string, string>; linkedNpm: Set<string> } {
     const podToNpm = new Map<string, string>();
     const linkedNpm = new Set<string>();
+    // Every installed package's pod names: autolinking links peers and transitive dependencies too (react-native-worklets
+    // as reanimated's peer), and the scaffolder wires such a pod name as a sibling, never as a CocoaPods pod.
+    for (const { name, dir } of installedPackages(this.root)) {
+      for (const file of podspecFiles(dir)) if (existsSync(file)) podToNpm.set(path.basename(file, ".podspec"), name);
+    }
     for (const { name, dir } of this.deps) {
       const podspecs = podspecFiles(dir).filter((file) => existsSync(file));
       for (const file of podspecs) podToNpm.set(path.basename(file, ".podspec"), name);
@@ -394,6 +400,23 @@ class Libraries {
     }
     return { podToNpm, linkedNpm };
   }
+}
+
+/** The packages at the top level of the project's node_modules (`<name>` and `@scope/<name>`), with their folders. */
+function installedPackages(root: string): { name: string; dir: string }[] {
+  const modules = path.join(root, "node_modules");
+  const entries = (dir: string): string[] => {
+    try {
+      return readdirSync(dir).filter((n) => !n.startsWith("."));
+    } catch {
+      return [];
+    }
+  };
+  return entries(modules).flatMap((n) =>
+    n.startsWith("@")
+      ? entries(path.join(modules, n)).map((m) => ({ name: `${n}/${m}`, dir: path.join(modules, n, m) }))
+      : [{ name: n, dir: path.join(modules, n) }],
+  );
 }
 
 /** "a", "a and b", "a, b and c" */
