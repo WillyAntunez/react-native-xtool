@@ -50,10 +50,11 @@ scaffolded libraries); [recipe.md](recipe.md) has every step with file locations
      resources only Xcode's tools compile (asset catalogs, storyboards); refuses modules built from vendored C sources
      such as expo-sqlite ([upstream/expo-spm-plugin-mixed-modules.md](upstream/expo-spm-plugin-mixed-modules.md)).
    - **React Native** (`patches/react-native+0.88.1.patch`, and its identical copy `react-native+0.88.0.patch` for bare
-     0.88.0; about 1.95k lines across 3 files under
-     `react-native/scripts/spm/`: `read-podspec.js`, `scaffold-package-swift.js`, `spm-utils.js`): 17 generic fixes to
+     0.88.0; about 2.8k lines across 3 files under
+     `react-native/scripts/spm/`: `read-podspec.js`, `scaffold-package-swift.js`, `spm-utils.js`): 23 generic fixes to
      the `spm scaffold` podspec reader and `Package.swift` generator, including mixed Swift + Objective-C/C++ targets,
-     known CocoaPods dependencies mapped to SwiftPM packages and the Swift importer paths of mixed targets, plus one to
+     known CocoaPods dependencies mapped to SwiftPM packages, the Swift importer paths of mixed targets, dependencies on
+     packages that are not installed left out, the Swift 5 language mode and Swift compilation conditions, plus two to
      the per-app header farm ([upstream/react-native-scaffolder.md](upstream/react-native-scaffolder.md)).
 
    Then, in the same step, rn-xtool makes the libraries' own `Package.swift` files portable to Linux, because SwiftPM
@@ -89,7 +90,7 @@ Xcode project, ExpoModulesJSI only with Expo modules): see [bare-react-native.md
 ## Vendored SwiftPM scripts
 
 React Native 0.85 and 0.86 ship no SwiftPM scripts, and 0.87's lack exports and an option rn-xtool's driver calls.
-Rather than patching those installs, rn-xtool bundles the 0.88.0 scripts in `vendor/rn-spm/` (the 19 scaffolder fixes
+Rather than patching those installs, rn-xtool bundles the 0.88.0 scripts in `vendor/rn-spm/` (the 25 scaffolder fixes
 already applied; provenance and how it is checked in [vendor/rn-spm/README.md](../vendor/rn-spm/README.md)) and the
 driver is given `--scripts-root` pointing at them. Expo SDK 57 (React Native 0.86.3) uses them too. The installed React
 Native keeps its own codegen. Five edits to the vendored copy:
@@ -157,6 +158,13 @@ longer accepted: npm no longer resolves it on its own (`expo@58.0.19` now pulls 
 second expo-modules-jsi). Hybrid apps (bare React Native with Expo modules) run the same checks; they need React
 Native 0.88.1 and Expo SDK 58. SDK 59 and newer have no verified set yet: they are not checked against one, and G4
 is their only check.
+
+**Scaffolding.** A CocoaPods-only library goes through rn-xtool's driver, as on bare apps
+([CocoaPods-only libraries](#cocoapods-only-libraries)): `scripts/rn-spm-generate.js --scaffold` runs on the installed,
+patched React Native scripts, with Expo's autolinking command (`npx expo-modules-autolinking react-native-config --json
+--platform ios`) as its config command, and scaffolds only the libraries React Native named. Expo's own modules are
+left to its plugin. `setup-apple-spm.js add` (or `update`) then runs again. React Native's own `setup-apple-spm.js
+scaffold` is not used.
 
 **Patches on a newer 58.x.** Every package gets the patch for its installed version, else the highest bundled patch of
 its release line (packages other than react-native then fall back to the highest bundled one), so a newer 58.x gets the
@@ -313,9 +321,30 @@ and `Package@swift-6.5.swift` (the same with tools-version 6.5 and no flag, SE-0
 Libraries with no `Package.swift` get one generated automatically by React Native's `spm scaffold`. The React Native
 patch above is what makes that scaffolder work for real-world podspecs.
 
+- The scaffold step runs inside `rn-spm` when React Native reports libraries without a `Package.swift`
+  (`▸ scaffold — generating Package.swift for: <libraries>`), and it scaffolds only those: rn-xtool's driver
+  (`scripts/rn-spm-generate.js --scaffold`) passes each name as `--only <name>`, and nothing is forced. Every other
+  library's `Package.swift`, persisted in `patches/` or edited by hand, stays as it is. A library is scaffolded again
+  only once its `Package.swift` is gone ([troubleshooting.md](troubleshooting.md#scaffolded-libraries)). Bare apps,
+  Expo SDK 57 and Expo SDK 58 all go through this driver; on SDK 58 it uses Expo's autolinking command
+  ([Expo SDK 58](#expo-sdk-58)).
+- The driver writes what it did for each library to `ios/build/rn-xtool-scaffold-results.json`
+  (`{"results": [{"depName", "status", "reason", "warnings", "root"}]}`; `reason`, `warnings` and `root` when there are
+  any). rn-xtool deletes the file before each scaffold run, so it never reads an older run's results.
+- A named library counts as scaffolded when its `Package.swift` exists and carries the scaffolder's banner. rn-xtool
+  persists the libraries that scaffolded; then, if any named library did not, the build stops with
+  `Scaffolding <library> failed: <reason>`, followed by that library's own warnings, one block per failed library.
+  Nothing is persisted for a failed library, and React Native does not run a second time
+  ([troubleshooting.md](troubleshooting.md#scaffolded-libraries)).
+- After `rn-spm`, `build` prints one `ℹ Not copied into the app: …` line naming the scaffolded libraries whose podspec
+  declares resources (`resource_bundles`, `resources`): the scaffolded `Package.swift` holds no resources, and
+  rn-xtool copies no bundle into `App.app`.
+
 - rn-xtool persists the generated file in your project's `patches/` with patch-package: commit those files.
 - On every build the `patches` step applies rn-xtool's own patches and then your project's `patches/` (when present),
-  so a fresh `node_modules` gets those Package.swift files back. To also restore them on a plain `npm install`, add
+  so a fresh `node_modules` gets those Package.swift files back. A patch whose package is not installed is left out
+  with a `⚠` line, and the others apply
+  ([troubleshooting.md](troubleshooting.md#build-and-patches)). To also restore them on a plain `npm install`, add
   `"postinstall": "patch-package"` to your `package.json` scripts and `patch-package` to your devDependencies.
 - If persisting a scaffolded package fails (no lockfile, no network, ...), rn-xtool prints a warning and keeps
   building; the package is simply re-scaffolded after the next fresh install.

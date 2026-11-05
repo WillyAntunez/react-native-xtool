@@ -440,10 +440,15 @@ function hasShadowingSubspec(source /*: string */) /*: boolean */ {
  * ENV[], $config[:...]) and most interpolation are not evaluated — a warning
  * is appended so the caller can surface it. Known limits: nested subspecs,
  * heredocs, `{ |x| … }` brace blocks and conditionals are not understood.
- * Always returns a RawSpec; pure-JS, no Ruby dep required.
+ * Always returns a RawSpec; pure-JS, no Ruby dep required. The subspecs named in
+ * `opts.dropSubspecs` are left out, as if the podspec did not declare them.
  */
-function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+function regexPodspec(
+  podspecPath /*: string */,
+  opts /*:: ?: {dropSubspecs?: ReadonlyArray<string>} */,
+) /*: RawSpec */ {
   const content = readPodspecSource(podspecPath);
+  const dropped = new Set(opts?.dropSubspecs ?? []);
   const mainName = mainReceiverName(content);
   const MAIN_RECV = mainRecvPattern(mainName);
   const warnings /*: Array<string> */ = [];
@@ -669,6 +674,22 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
     return out;
   }
 
+  // Literal `'SWIFT_ACTIVE_COMPILATION_CONDITIONS' => '...'` entries from any
+  // xcconfig hash, space-joined. A double-quoted value may hold `#{...}` with
+  // its own quotes (react-native-vision-camera: `#{enableLocation ? "X" :
+  // ""}`), so the scan steps over it as a unit; flattenSubspecs drops it.
+  function getSwiftConditionsXcconfig(text /*: string */) /*: string */ {
+    const out /*: Array<string> */ = [];
+    const re =
+      /["']SWIFT_ACTIVE_COMPILATION_CONDITIONS["']\s*=>\s*(?:"((?:[^"\\\n#]|\\.|#\{[^}\n]*\}|#(?!\{))*)"|'((?:[^'\\\n]|\\.)*)')/g;
+    while (true) {
+      const m = re.exec(text);
+      if (m == null) break;
+      out.push(m[1] ?? m[2] ?? '');
+    }
+    return out.join(' ');
+  }
+
   // Surface known unparseable constructs so the caller can warn the user.
   if (shadowedIdentity) {
     warnings.push(
@@ -701,11 +722,13 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
   const none = new RegExp(
     `${MAIN_RECV}\\.default_subspecs?\\s*=\\s*:none\\b`,
   ).test(main);
-  const subspecs = none
-    ? []
-    : defaults.size > 0
-      ? allSubspecs.filter(sub => defaults.has(sub.name))
-      : allSubspecs;
+  const subspecs = (
+    none
+      ? []
+      : defaults.size > 0
+        ? allSubspecs.filter(sub => defaults.has(sub.name))
+        : allSubspecs
+  ).filter(sub => !dropped.has(sub.name));
   // Layer 0 is the main spec; the rest are the selected subspecs, each read
   // with the same helpers anchored on its own block variable.
   const layers = [
@@ -746,6 +769,10 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
       HEADER_SEARCH_PATHS: unionOf(text => getHeaderSearchPaths(text)),
       ...layers.reduce((acc, l) => {
         const found = getDefineXcconfig(l.text);
+        const conditions = getSwiftConditionsXcconfig(l.text);
+        if (conditions.length > 0) {
+          found.SWIFT_ACTIVE_COMPILATION_CONDITIONS = conditions;
+        }
         for (const k of Object.keys(found)) {
           acc[k] = acc[k] != null ? `${acc[k]} ${found[k]}` : found[k];
         }
@@ -753,6 +780,11 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
       }, ({} /*: {[string]: string} */)),
     },
     resources: arrayUnion('resources'),
+    // `swift_version` and `swift_versions` from every layer, literal only.
+    swift_versions: unionOf((t, r) => [
+      ...getArrayField('swift_versions', t, r),
+      ...getArrayField('swift_version', t, r),
+    ]),
     requires_arc: layers.some(l =>
       new RegExp(`${l.recv}\\.requires_arc\\s*=\\s*true`).test(l.text),
     ),
@@ -765,6 +797,14 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
         headerMappingsDir: getStringField('header_mappings_dir', l.text, l.recv),
         sourceFiles: getArrayField('source_files', l.text, l.recv),
       })),
+    ),
+    // Each selected subspec's own dependencies, so a caller can tell which
+    // subspec declares a dependency (flattenSubspecs: subspecDependencies).
+    __subspec_dependencies__: Object.fromEntries(
+      layers.slice(1).map((l, i) => [
+        subspecs[i].name,
+        getDependencies(l.text, l.recv),
+      ]),
     ),
     __regex_partial__: true,
     __warnings__: warnings,
@@ -884,8 +924,16 @@ function headerDirScopes(
  *   - String fields → top-level wins; if absent, take the first subspec's value
  *   - pod_target_xcconfig HEADER_SEARCH_PATHS → array-union across all selected subspecs
  *   - dependencies  → array-union of name strings (version constraints dropped)
+ *
+ * The subspecs named in `opts.dropSubspecs` are left out (their sources,
+ * headers, settings and dependencies), and so are the spec's references to
+ * them (`<Pod>/<subspec>`).
  */
-function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+function flattenSubspecs(
+  rawSpec /*: RawSpec */,
+  opts /*:: ?: {dropSubspecs?: ReadonlyArray<string>} */,
+) /*: PodspecModel */ {
+  const dropped = new Set(opts?.dropSubspecs ?? []);
   const warnings /*: Array<string> */ = [];
   // $FlowFixMe[prop-missing] dynamic shape
   const partial /*: boolean */ = rawSpec.__regex_partial__ === true;
@@ -915,6 +963,10 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
       return name != null && wanted.has(name);
     });
   }
+  selected = selected.filter(
+    // $FlowFixMe[prop-missing] dynamic shape
+    s => !(s != null && typeof s.name === 'string' && dropped.has(s.name)),
+  );
   const layers = [rawSpec, ...selected];
 
   function mergeArrayField(key /*: string */) /*: Array<string> */ {
@@ -1133,21 +1185,84 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
     return out;
   }
 
+  // A layer's dependency names. pod ipc returns deps as
+  // {name: [versionConstraint, ...], ...}, the regex reader as [name, ...].
+  // A reference to a dropped subspec (`<Pod>/<subspec>`) is left out.
+  const ownName = specStringField('name');
+  const refersToDropped = (d /*: string */) /*: boolean */ => {
+    const [pod, sub] = d.split('/');
+    return sub != null && dropped.has(sub) && (ownName == null || pod === ownName);
+  };
+  function dependencyNames(deps /*: unknown */) /*: Array<string> */ {
+    const out /*: Array<string> */ = [];
+    if (Array.isArray(deps)) {
+      for (const d of deps) {
+        if (typeof d === 'string') out.push(d);
+      }
+    } else if (deps != null && typeof deps === 'object') {
+      out.push(...Object.keys(deps));
+    }
+    return out.filter(d => !refersToDropped(d));
+  }
+
   function mergeDependencies() /*: Array<string> */ {
     const out /*: Array<string> */ = [];
     for (const layer of layers) {
       // $FlowFixMe[incompatible-use] layer narrowed from `mixed`; runtime-validated below
-      const deps = layer != null ? layer.dependencies : null;
-      if (deps == null) continue;
-      // pod ipc returns deps as: {name: [versionConstraint, ...], ...}
-      // regex returns deps as: [name, name, ...]
-      if (Array.isArray(deps)) {
-        for (const d of deps) {
-          if (typeof d === 'string') out.push(d);
-        }
-      } else if (typeof deps === 'object') {
-        for (const name of Object.keys(deps)) {
-          out.push(name);
+      out.push(...dependencyNames(layer != null ? layer.dependencies : null));
+    }
+    return Array.from(new Set(out));
+  }
+
+  // Each selected subspec's own dependencies, by subspec name.
+  function subspecDependencies() /*: {[string]: Array<string>} */ {
+    const out /*: {[string]: Array<string>} */ = {};
+    // $FlowFixMe[prop-missing] dynamic shape
+    const fromRegex = rawSpec.__subspec_dependencies__;
+    if (fromRegex != null && typeof fromRegex === 'object') {
+      for (const name of Object.keys(fromRegex)) {
+        if (!dropped.has(name)) out[name] = dependencyNames(fromRegex[name]);
+      }
+      return out;
+    }
+    for (const sub of selected) {
+      // $FlowFixMe[prop-missing] dynamic shape
+      if (sub == null || typeof sub.name !== 'string') continue;
+      // $FlowFixMe[prop-missing] dynamic shape
+      out[sub.name] = dependencyNames(sub.dependencies);
+    }
+    return out;
+  }
+
+  // SWIFT_ACTIVE_COMPILATION_CONDITIONS tokens from every layer's xcconfig
+  // hashes, each once. `$(inherited)`, an Xcode `$(...)` token and a Ruby
+  // interpolation are left out, as for the C defines.
+  function mergeSwiftConditions() /*: Array<string> */ {
+    const out /*: Array<string> */ = [];
+    const XCCONFIG_KEYS = [
+      'pod_target_xcconfig',
+      'xcconfig',
+      'user_target_xcconfig',
+    ];
+    for (const layer of layers) {
+      if (layer == null || typeof layer !== 'object') continue;
+      for (const xcKey of XCCONFIG_KEYS) {
+        // $FlowFixMe[incompatible-use] layer narrowed from `mixed`
+        const xc = layer[xcKey];
+        if (xc == null || typeof xc !== 'object') continue;
+        const val = xc.SWIFT_ACTIVE_COMPILATION_CONDITIONS;
+        const strs =
+          typeof val === 'string'
+            ? [val]
+            : Array.isArray(val)
+              ? val.filter(v => typeof v === 'string')
+              : [];
+        for (const str of strs) {
+          // An interpolation stays one token that is never a valid name.
+          const tokens = str.replace(/#\{[^}]*\}/g, '#{}').split(/\s+/);
+          for (const tok of tokens) {
+            if (/^[A-Za-z_]\w*$/.test(tok)) out.push(tok);
+          }
         }
       }
     }
@@ -1246,10 +1361,21 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
     weakFrameworks: mergeArrayField('weak_frameworks'),
     libraries: mergeArrayField('libraries'),
     dependencies: mergeDependencies(),
+    subspecDependencies: subspecDependencies(),
     preprocessorDefines,
+    swiftConditions: mergeSwiftConditions(),
     compilerFlags,
     headerSearchPaths: mergeHeaderSearchPaths(),
     resources: mergeArrayField('resources'),
+    // The Swift versions the spec and its selected subspecs declare
+    // (`swift_version` / `swift_versions`). A value Ruby would interpolate is
+    // left out: an unreadable value counts as none, as in CocoaPods.
+    swiftVersions: Array.from(
+      new Set([
+        ...mergeArrayField('swift_versions'),
+        ...mergeArrayField('swift_version'),
+      ]),
+    ).filter(v => !v.includes('#{')),
     requiresArc,
     warnings,
     partial,
@@ -1270,15 +1396,18 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
  * Throws when the file doesn't exist. Otherwise always returns a
  * PodspecModel — warnings on the model surface partial parses to the
  * caller, who can decide whether to proceed or abort scaffolding for that
- * dep.
+ * dep. The subspecs named in `opts.dropSubspecs` are left out.
  */
-function readPodspec(podspecPath /*: string */) /*: PodspecModel */ {
+function readPodspec(
+  podspecPath /*: string */,
+  opts /*:: ?: {dropSubspecs?: ReadonlyArray<string>} */,
+) /*: PodspecModel */ {
   if (!fs.existsSync(podspecPath)) {
     throw new Error(`readPodspec: file does not exist: ${podspecPath}`);
   }
   const podIpc = runPodIpcSpec(podspecPath);
-  const raw = podIpc != null ? podIpc : regexPodspec(podspecPath);
-  const model = flattenSubspecs(raw);
+  const raw = podIpc != null ? podIpc : regexPodspec(podspecPath, opts);
+  const model = flattenSubspecs(raw, opts);
   // Record whether the podspec calls `install_modules_dependencies(s)`. We
   // strip that helper before `pod ipc` and the regex parser can't expand it,
   // so the React-Core family it injects never lands in `model.dependencies`.
@@ -1326,15 +1455,20 @@ const podspecModels /*: Map<string, PodspecModel> */ = new Map();
  * readPodspec memoized on the resolved path. `pod ipc spec` costs a process
  * spawn, and one autolinking run reads the same podspec from several sites
  * (name resolution, header search paths, scaffolding). The model is shared, so
- * callers must treat it as read-only.
+ * callers must treat it as read-only. The key is the resolved path plus the
+ * sorted `opts.dropSubspecs`.
  */
-function readPodspecCached(podspecPath /*: string */) /*: PodspecModel */ {
-  const key = path.resolve(podspecPath);
+function readPodspecCached(
+  podspecPath /*: string */,
+  opts /*:: ?: {dropSubspecs?: ReadonlyArray<string>} */,
+) /*: PodspecModel */ {
+  const drop = [...(opts?.dropSubspecs ?? [])].sort();
+  const key = [path.resolve(podspecPath), ...drop].join('\0');
   const cached = podspecModels.get(key);
   if (cached != null) {
     return cached;
   }
-  const model = readPodspec(podspecPath);
+  const model = readPodspec(podspecPath, {dropSubspecs: drop});
   podspecModels.set(key, model);
   return model;
 }

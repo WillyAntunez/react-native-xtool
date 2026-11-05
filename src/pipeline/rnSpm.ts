@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { execa } from "execa";
 import { installedVersion, patchPackageScript } from "./patches.js";
 import { createRequire } from "node:module";
@@ -71,12 +71,14 @@ export function rnSpmArgs(
  * same codegen, autolinking and artifact steps, minus the injection into the user's xcodeproj
  * (which `add` refuses anyway on a CocoaPods-integrated pbxproj). Only `ios/build/` is written.
  * Expo SDK 57 (the vendored Expo plugin) runs the driver too, with Expo's autolinking config command.
+ * Expo SDK 58 (kind "expo", the installed plugin) gets the same config command, for its scaffold step.
  */
 export function rnSpmGenerateArgs(
   paths: ProjectPaths,
-  opts: { rnArtifactsDir?: string; rnScripts: RnScripts; expoPlugin?: ExpoPlugin },
+  opts: { rnArtifactsDir?: string; rnScripts: RnScripts; expoPlugin?: ExpoPlugin; kind?: ProjectKind },
   rnDir: string = resolveRnDir(paths),
 ): string[] {
+  const expo = opts.expoPlugin === "vendored" || opts.kind === "expo";
   return [
     path.join(packageRoot(), "scripts", "rn-spm-generate.js"),
     "--rn-dir",
@@ -85,25 +87,95 @@ export function rnSpmGenerateArgs(
     paths.root,
     "--scripts-root",
     opts.rnScripts === "vendored" ? vendoredScriptsRoot() : path.join(rnDir, "scripts"),
-    ...(opts.expoPlugin === "vendored"
-      ? [
-          "--config-command",
-          JSON.stringify(AUTOLINKING_CONFIG_COMMAND),
-          "--expo-plugin",
-          vendoredExpoPlugin(),
-        ]
-      : []),
+    ...(expo ? ["--config-command", JSON.stringify(AUTOLINKING_CONFIG_COMMAND)] : []),
+    ...(opts.expoPlugin === "vendored" ? ["--expo-plugin", vendoredExpoPlugin()] : []),
     ...(opts.rnArtifactsDir ? ["--artifacts", opts.rnArtifactsDir] : []),
   ];
 }
 
-/** The driver's `scaffold` step alone: RN's `setup-apple-spm.js scaffold` would go on to inject into the xcodeproj. */
+/**
+ * The driver's `scaffold` step alone, for the libraries React Native named and no other: RN's
+ * `setup-apple-spm.js scaffold` would force every library's scaffold and go on to inject into the
+ * xcodeproj. Every project kind scaffolds through the driver, Expo SDK 58 included.
+ */
 export function rnSpmScaffoldArgs(
   paths: ProjectPaths,
-  opts: { rnArtifactsDir?: string; rnScripts: RnScripts; expoPlugin?: ExpoPlugin },
+  opts: { rnArtifactsDir?: string; rnScripts: RnScripts; expoPlugin?: ExpoPlugin; kind: ProjectKind },
+  names: readonly string[],
   rnDir: string = resolveRnDir(paths),
 ): string[] {
-  return [...rnSpmGenerateArgs(paths, opts, rnDir), "--scaffold"];
+  return [
+    ...rnSpmGenerateArgs(paths, opts, rnDir),
+    "--scaffold",
+    "--results",
+    paths.scaffoldResults,
+    ...names.flatMap((n) => ["--only", n]),
+  ];
+}
+
+/** The scaffolder's banner (SCAFFOLDER_MARKER in vendor/rn-spm/spm/scaffold-package-swift.js). */
+const SCAFFOLDER_BANNER = "AUTO-SCAFFOLDED by react-native spm scaffold";
+
+export interface ScaffoldOutcome {
+  scaffolded: string[];
+  failed: { name: string; reason: string; warnings: string[] }[];
+}
+
+interface ScaffoldResultEntry {
+  depName?: unknown;
+  status?: unknown;
+  reason?: unknown;
+  warnings?: unknown;
+  root?: unknown;
+}
+
+/**
+ * What the scaffold step did for each library React Native named, from the driver's results file; undefined without a
+ * readable one. A named library counts as scaffolded when its result is not an error (a scaffold that throws may have
+ * written its manifest already) and its `Package.swift` exists and carries the scaffolder's banner (its root from the
+ * results, else `node_modules/<name>`); otherwise it failed, with the scaffolder's reason, or
+ * "no Package.swift was written" when it gave none, or, without any result for it, that the scaffolder did not find it.
+ */
+export function scaffoldOutcome(paths: ProjectPaths, names: readonly string[]): ScaffoldOutcome | undefined {
+  let entries: ScaffoldResultEntry[];
+  try {
+    const parsed = JSON.parse(readFileSync(paths.scaffoldResults, "utf8")) as { results?: unknown };
+    if (!Array.isArray(parsed.results)) return undefined;
+    entries = parsed.results as ScaffoldResultEntry[];
+  } catch {
+    return undefined;
+  }
+  const outcome: ScaffoldOutcome = { scaffolded: [], failed: [] };
+  for (const name of names) {
+    const entry = entries.find((e) => e.depName === name);
+    const root = typeof entry?.root === "string" ? entry.root : path.join(paths.root, "node_modules", name);
+    let manifest = "";
+    try {
+      manifest = readFileSync(path.join(root, "Package.swift"), "utf8");
+    } catch {
+      // none written
+    }
+    if (entry?.status !== "error" && manifest.includes(SCAFFOLDER_BANNER)) {
+      outcome.scaffolded.push(name);
+      continue;
+    }
+    const reason =
+      entry === undefined
+        ? `the scaffolder did not find ${name} among the autolinked iOS libraries`
+        : typeof entry.reason === "string" && entry.reason !== ""
+          ? entry.reason
+          : "no Package.swift was written";
+    const warnings = Array.isArray(entry?.warnings) ? entry.warnings.filter((w): w is string => typeof w === "string") : [];
+    outcome.failed.push({ name, reason, warnings });
+  }
+  return outcome;
+}
+
+/** One block per failed library: the scaffolder's reason first, then that library's own warnings. */
+function scaffoldFailureMessage(failed: ScaffoldOutcome["failed"]): string {
+  return failed
+    .map((f) => [`Scaffolding ${f.name} failed: ${f.reason}`, ...f.warnings.map((w) => `  ! ${w}`)].join("\n"))
+    .join("\n\n");
 }
 
 /**
@@ -183,17 +255,6 @@ export function parseMissingPackageSwift(output: string): string[] {
   return names;
 }
 
-/** Same argv as the add/update run (incl. offline artifact flags) with only the action swapped. */
-export function scaffoldArgv(
-  paths: ProjectPaths,
-  opts: { rnArtifactsDir?: string },
-  rnDir: string = resolveRnDir(paths),
-): string[] {
-  const args = rnSpmArgs(paths, opts, rnDir);
-  args[1] = "scaffold";
-  return args;
-}
-
 /**
  * `--patch-dir patches` is relative to the project root: the user's patches, not rn-xtool's.
  * `--exclude` replaces patch-package's default (`package\.json$`): it also drops SwiftPM build
@@ -264,17 +325,15 @@ export async function runRnSpm(
     );
 
   log(`▸ scaffold — generating Package.swift for: ${names.join(", ")}`);
-  const scArgs = driver ? rnSpmScaffoldArgs(paths, opts, rnDir) : scaffoldArgv(paths, opts, rnDir);
-  const sc = await runner("node", scArgs, {
-    cwd: paths.ios,
-    env,
-  });
-  if (sc.exitCode !== 0)
-    throw new Error(
-      `React Native spm scaffold failed (exit ${sc.exitCode}):\n${tail(sc.output)}`,
-    );
+  // A file a previous run left must never stand for this run's.
+  rmSync(paths.scaffoldResults, { force: true });
+  const sc = await runner("node", rnSpmScaffoldArgs(paths, opts, names, rnDir), { cwd: paths.ios, env });
+  const scaffoldFailed = () => new Error(`React Native spm scaffold failed (exit ${sc.exitCode}):\n${tail(sc.output)}`);
+  const outcome = scaffoldOutcome(paths, names);
+  if (outcome === undefined && sc.exitCode !== 0) throw scaffoldFailed();
 
-  for (const name of names) {
+  // Only what was scaffolded is persisted; a failed library stops the build before React Native runs again.
+  for (const name of outcome?.scaffolded ?? names) {
     const [cmd, args] = persistScaffoldArgv(name);
     let failure: string | undefined;
     let persisted = "";
@@ -293,6 +352,8 @@ export async function runRnSpm(
     }
     log(`✔ scaffold — persisted ${createdPatchFile(persisted) ?? computedPatchFile(paths.root, name)}`);
   }
+  if (outcome !== undefined && outcome.failed.length > 0) throw new Error(scaffoldFailureMessage(outcome.failed));
+  if (sc.exitCode !== 0) throw scaffoldFailed();
 
   const second = await runner("node", rnArgs, { cwd: paths.ios, env });
   if (second.exitCode !== 0) {

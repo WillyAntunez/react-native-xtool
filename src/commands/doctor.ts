@@ -384,8 +384,9 @@ function knownLimitsChecks(limits: NonNullable<Capabilities["limits"]>): DoctorC
 
 /**
  * `doctor --project`'s capability lines, in order: versions, rn-scripts, rn-artifacts, expo-plugin, expo-modules,
- * podspecs and known-limits. The four in between are left out when the project has no such field (no react-native, no
- * expo), and known-limits when `limits` is undefined. `projectError` is why the project could not be read; a
+ * podspecs, patches and known-limits. The four in between are left out when the project has no such field (no
+ * react-native, no expo), patches unless a patch's package is not installed (one warning each, the build's line without
+ * its `⚠ `), and known-limits when `limits` is undefined. `projectError` is why the project could not be read; a
  * `VersionGateError` fails the versions line.
  */
 export function capabilityChecks(c: Capabilities, projectError?: unknown): DoctorCheck[] {
@@ -400,6 +401,7 @@ export function capabilityChecks(c: Capabilities, projectError?: unknown): Docto
   ];
   return [
     ...lines.flatMap(([name, result]) => (result === undefined ? [] : [{ name, ...result }])),
+    ...(c.orphanPatches ?? []).map((line) => ({ name: "patches", status: "warn" as const, detail: line.replace(/^⚠ /, "") })),
     ...(c.limits === undefined ? [] : knownLimitsChecks(c.limits)),
   ];
 }

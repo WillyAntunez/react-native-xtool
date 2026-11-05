@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { mkdir, readFile, realpath, rm, symlink } from "node:fs/promises";
+import { copyFile, mkdir, readFile, realpath, rm, symlink } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { execa } from "execa";
@@ -297,13 +297,66 @@ export function hasProjectPatches(projectRoot: string): boolean {
   }
 }
 
+/**
+ * The package directory a patch file is for, read the way patch-package reads it: `<pkg>+<version>[+<seq>[+<name>]]`,
+ * `.dev` before `.patch`, a scope as `@scope+name`, and a nested package as `<parent>++<child>`. `file` is relative to
+ * `patches/`, and its folders are part of the name, as patch-package 8 parses the whole relative path:
+ * `@scope/name+1.0.0.patch` is for `@scope/name`. Undefined for a name patch-package does not take as a patch (it warns
+ * about those itself).
+ */
+function patchTarget(file: string): { pkg: string; dir: string } | undefined {
+  const parts = file
+    .split(path.sep)
+    .join("/")
+    .replace(/(\.dev)?\.patch$/, "")
+    .split("++")
+    .map((part) => {
+      const tokens = part.split("+").map((t) => t.trim()).filter(Boolean);
+      const at = tokens.findIndex((t) => /^\d+\.\d+\.\d+/.test(t));
+      const names = at < 0 ? tokens.slice(0, 2) : tokens.slice(0, at);
+      return { name: names.length === 1 || names.length === 2 ? names.join("/") : undefined, versioned: at >= 0 };
+    });
+  if (parts.some((p) => p.name === undefined) || parts.at(-1)?.versioned !== true) return undefined;
+  const names = parts.map((p) => p.name!);
+  return { pkg: names.join(" => "), dir: path.join("node_modules", names.join("/node_modules/")) };
+}
+
+/** The project's `patches/**\/*.patch`, relative to `patches/`, sorted (patch-package reads subfolders too). */
+function projectPatchFiles(projectRoot: string): string[] {
+  const dir = path.join(projectRoot, "patches");
+  try {
+    return readdirSync(dir, { recursive: true, withFileTypes: true })
+      .filter((e) => e.isFile() && e.name.endsWith(".patch"))
+      .map((e) => path.relative(dir, path.join(e.parentPath, e.name)))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The project's patches whose package has no `node_modules/<pkg>/package.json`, the condition patch-package fails on
+ * (left after `npm uninstall`). `file` is relative to `patches/`. A package installed at another version is not one.
+ */
+export function orphanPatches(projectRoot: string): { file: string; pkg: string }[] {
+  return projectPatchFiles(projectRoot).flatMap((file) => {
+    const target = patchTarget(file);
+    if (target === undefined || existsSync(path.join(projectRoot, target.dir, "package.json"))) return [];
+    return [{ file, pkg: target.pkg }];
+  });
+}
+
+export function orphanPatchLine(o: { file: string; pkg: string }): string {
+  return `⚠ patches/${o.file} is for ${o.pkg}, which is not installed; skipped. Delete it if you removed the library.`;
+}
+
 /** rn-xtool's scaffold marker; `expo-xtool-scaffold-revision` is its name before the rename (pre-release apps). */
 const SCAFFOLD_MARKER_RE = /(?:rn|expo)-xtool-scaffold-revision/;
 const SLOT_LABEL_RE = /^\+\/\/ Cache slot: (\S+)\/dual-flavor\s*$/m;
 const REVISION_RE = /^\+\/\/ (?:rn|expo)-xtool-scaffold-revision: (\d+)\s*$/m;
 
 /** The scaffolder's RN_XTOOL_SCAFFOLD_REVISION (patches/react-native+0.88.{0,1}.patch and vendor/rn-spm). */
-export const SCAFFOLD_REVISION = 3;
+export const SCAFFOLD_REVISION = 4;
 
 /**
  * Warnings for the project's persisted scaffold patches (`patches/*.patch` with rn-xtool's scaffold marker): their
@@ -320,6 +373,9 @@ export function scaffoldPatchWarnings(projectRoot: string): string[] {
   } catch {
     return [];
   }
+  // An orphan gets orphanPatchLine instead: it is not applied at all.
+  const orphans = new Set(orphanPatches(projectRoot).map((o) => o.file));
+  names = names.filter((n) => !orphans.has(n));
   const warnings: string[] = [];
   for (const name of names) {
     let text: string;
@@ -548,13 +604,39 @@ export async function applyPatches(
   const log = opts.log ?? ((line: string) => console.log(line));
   const replaced = await refreshStaleScaffolds(projectRoot, log);
   if (!hasProjectPatches(projectRoot)) return;
+  const orphans = orphanPatches(projectRoot);
+  for (const orphan of orphans) log(orphanPatchLine(orphan));
   for (const warning of scaffoldPatchWarnings(projectRoot)) log(warning);
-  const [pcmd, pargs] = projectPatchesArgv();
+  let [pcmd, pargs] = projectPatchesArgv();
+  const staging = projectPaths(projectRoot).projectPatchesDir;
+  await rm(staging, { recursive: true, force: true });
+  if (orphans.length > 0) {
+    // patch-package stops on a patch whose package is missing: it gets the others, staged without the orphans.
+    const left = new Set(orphans.map((o) => o.file));
+    const kept = projectPatchFiles(projectRoot).filter((file) => !left.has(file));
+    if (kept.length === 0) {
+      for (const line of replaced) log(line);
+      return;
+    }
+    for (const file of kept) {
+      await mkdir(path.dirname(path.join(staging, file)), { recursive: true });
+      await copyFile(path.join(projectRoot, "patches", file), path.join(staging, file));
+    }
+    [pcmd, pargs] = applyPatchesArgv(projectRoot, staging);
+  }
   const pr = await exec(pcmd, pargs, projectRoot);
-  const poutput = pr.all ?? `${pr.stdout}\n${pr.stderr}`;
+  let poutput = pr.all ?? `${pr.stdout}\n${pr.stderr}`;
   if (pr.exitCode === 0 && !pr.failed && !patchPackageOutputFailed(poutput)) {
     for (const line of replaced) log(line);
     return;
+  }
+  if (orphans.length > 0) {
+    // The staged copy is rebuilt on every run: name the patch the user keeps, under patches/.
+    poutput = poutput
+      .split(`${staging}${path.sep}`)
+      .join(`${path.join(projectRoot, "patches")}${path.sep}`)
+      .split(`${path.relative(projectRoot, staging)}${path.sep}`)
+      .join(`patches${path.sep}`);
   }
   throw new Error(`Applying the project's patches/ failed.\n${genericPatchFailureMessage(pr, poutput)}`);
 }

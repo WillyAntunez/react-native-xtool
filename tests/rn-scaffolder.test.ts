@@ -129,13 +129,36 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
       expect(src("read-podspec.js")).toContain("function rnPodEnvTernary");
       expect(src("read-podspec.js")).toContain("env: {...process.env, ...RN_POD_ENV}");
       const f = src("scaffold-package-swift.js");
-      expect(f).toContain("RN_XTOOL_SCAFFOLD_REVISION = 3");
+      expect(f).toContain("RN_XTOOL_SCAFFOLD_REVISION = 4");
       expect(f).toContain("rn-xtool-swift-importer-paths");
       expect(f).toContain("function importsOwnSwiftHeader");
       expect(f).toContain("function clangModuleExcludes");
     });
     it("spm-utils.js has the header-less ReactAppHeaders module map hunk", () => {
       expect(src("spm-utils.js")).toContain("module ReactAppHeaders {");
+    });
+    it("scaffold-package-swift.js has the fix 20 hunk", () => {
+      expect(src("scaffold-package-swift.js")).toContain("function classifyPodDependency");
+    });
+    it("read-podspec.js has the fix 20 hunk", () => {
+      expect(src("read-podspec.js")).toContain("dropSubspecs");
+    });
+    it("scaffold-package-swift.js has the fix 22 hunk", () => {
+      expect(src("scaffold-package-swift.js")).toContain("umbrellaDirNextToSubdirs");
+    });
+    it("spm-utils.js has the fix 23 hunk", () => {
+      expect(src("spm-utils.js")).toContain("function writeCodegenForwarders");
+    });
+    it("the scaffolder has the fix 24 hunk", () => {
+      expect(src("read-podspec.js")).toContain("swiftConditions");
+      expect(src("scaffold-package-swift.js")).toContain("swiftConditionDefines");
+    });
+    it("the scaffolder has the fix 21 hunk", () => {
+      expect(src("read-podspec.js")).toContain("swiftVersions");
+      expect(src("scaffold-package-swift.js")).toContain("swiftLanguageModes: [.v5]");
+    });
+    it("scaffold-package-swift.js has the fix 25 hunk", () => {
+      expect(src("scaffold-package-swift.js")).toContain("onlyDeps?: ReadonlyArray<string>");
     });
   });
 
@@ -1028,7 +1051,7 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
 
       it("emits the rn-xtool-scaffold-revision marker next to AUTO-SCAFFOLDED-VERSION", () => {
         const pkg = readFileSync(path.join(fresh(), "Package.swift"), "utf8");
-        expect(pkg).toMatch(/^\/\/ AUTO-SCAFFOLDED-VERSION: \d+\n\/\/ rn-xtool-scaffold-revision: 3$/m);
+        expect(pkg).toMatch(/^\/\/ AUTO-SCAFFOLDED-VERSION: \d+\n\/\/ rn-xtool-scaffold-revision: 4$/m);
       });
 
       it("keeps a scaffold that carries the current marker", () => {
@@ -1041,14 +1064,14 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
         writeFileSync(file, readFileSync(file, "utf8").replace(/^\/\/ rn-xtool-scaffold-revision: \d+\n/m, "").replace("exact:", "from:"));
         expect(scaffoldAgain(root)).toBe("written");
         const pkg = readFileSync(file, "utf8");
-        expect(pkg).toContain("rn-xtool-scaffold-revision: 3");
+        expect(pkg).toContain("rn-xtool-scaffold-revision: 4");
         expect(pkg).toContain('exact: "1.5.0"');
       });
 
       it("regenerates a scaffold whose marker is lower than the current revision", () => {
         const root = fresh();
         const file = path.join(root, "Package.swift");
-        writeFileSync(file, readFileSync(file, "utf8").replace("revision: 3", "revision: 2"));
+        writeFileSync(file, readFileSync(file, "utf8").replace("revision: 4", "revision: 3"));
         expect(scaffoldAgain(root)).toBe("written");
       });
     });
@@ -1133,7 +1156,7 @@ describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
       // Mixed (pager-view) or clang-only, each of these targets searches beyond its public headers path, so each
       // manifest records its importer paths right after the revision line.
       for (const k of manifests) {
-        expect(now.files[k], k).toMatch(/^\/\/ rn-xtool-scaffold-revision: 3\n\/\/ rn-xtool-swift-importer-paths: \[.+\]$/m);
+        expect(now.files[k], k).toMatch(/^\/\/ rn-xtool-scaffold-revision: 4\n\/\/ rn-xtool-swift-importer-paths: \[.+\]$/m);
       }
       expect(now.files).toEqual(golden.files);
     },
@@ -1234,7 +1257,7 @@ describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
   it("17: records the Swift importer paths", () => {
     for (const manifest of ["Package.swift", "Package@swift-6.5.swift"]) {
       const pkg = file(`react-native-screens/${manifest}`);
-      expect(pkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 3\n\/\/ rn-xtool-swift-importer-paths: \[.*\]$/m);
+      expect(pkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 4\n\/\/ rn-xtool-swift-importer-paths: \[.*\]$/m);
       const paths = JSON.parse(pkg.match(IMPORTER)![1]!) as string[];
       expect(paths).toContain(".");
       expect(paths).toContain("ios/bridging");
@@ -1249,7 +1272,7 @@ describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
     expect(pkg.split("\n")[0]).toBe("// swift-tools-version: 6.0");
     expect(files["react-native-screens/Package@swift-6.5.swift"]).toBeUndefined();
     expect(pkg).toContain('publicHeadersPath: "ios",');
-    expect(pkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 3\n\/\/ rn-xtool-swift-importer-paths: \[.*\]$/m);
+    expect(pkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 4\n\/\/ rn-xtool-swift-importer-paths: \[.*\]$/m);
     const paths = JSON.parse(pkg.match(IMPORTER)![1]!) as string[];
     expect(paths).toContain("ios/utils");
     expect(paths).toEqual(searchPaths(pkg));
@@ -1471,5 +1494,462 @@ describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
   it("gesture-handler 2.32.0 scaffolds", () => {
     expect(run().statuses["react-native-gesture-handler"]).toBe("written");
     expect(run().results.filter((r) => r.status === "error")).toEqual([]);
+  });
+});
+
+// Fixes 20–25 (React Native 0.88.0 patch), exercised on the vendored copy, so they never skip. The podspec fixtures are
+// written in each library's shape (react-native-vision-camera 4.7.3, react-native-video 6.19.3,
+// react-native-device-info 15.0.2, @react-native-community/netinfo 11.5.2), not copied from the libraries.
+describe("scaffolder fixes 20–25 (vendor/rn-spm)", () => {
+  const req = createRequire(import.meta.url);
+  const load = <T>(f: string) => req(path.join(VENDORED_RN_SPM, f)) as T;
+  /** A library with the given files and podspec body, as a temp dir. */
+  function lib(files: Record<string, string>, podBody: string, name = "Foo", npm = "foo"): string {
+    const root = tempDir();
+    for (const [f, text] of Object.entries({ "package.json": JSON.stringify({ name: npm, version: "1.0.0" }), ...files })) {
+      mkdirSync(path.dirname(path.join(root, f)), { recursive: true });
+      writeFileSync(path.join(root, f), text);
+    }
+    writeFileSync(path.join(root, `${name}.podspec`), `Pod::Spec.new do |s|\n  s.name = "${name}"\n${podBody}\nend\n`);
+    return root;
+  }
+  const warningsOf = (run: ReturnType<typeof scaffoldLibraries>, name: string) =>
+    run.results.find((r) => r.depName === name)?.warnings ?? [];
+  const MISSING = (dep: string) =>
+    `Dependency "${dep}" is not installed (or not linked for iOS); left out, as CocoaPods leaves it out.`;
+  const MISSING_WITH_SUBSPEC = (dep: string, subspec: string) =>
+    `Dependency "${dep}" is not installed (or not linked for iOS); left out with the subspec "${subspec}" that declares it (its sources, headers, settings and dependencies), as CocoaPods leaves it out.`;
+
+  describe("20: a dependency on a package that is not installed", () => {
+    // react-native-vision-camera 4.7.3's shape: the FrameProcessors subspec exists only `if enableFrameProcessors`,
+    // which the podspec turns off when react-native-worklets-core does not resolve. The regex reader sees it anyway.
+    const VISION_CAMERA = [
+      "  s.requires_arc = true",
+      "  s.subspec 'Core' do |core|",
+      '    core.source_files = ["ios/Core/**/*.swift"]',
+      "  end",
+      "  s.subspec 'React' do |core|",
+      '    core.source_files = ["ios/React/**/*.swift", "ios/React/**/*.{h,m}"]',
+      '    core.public_header_files = ["ios/React/CameraBridge.h"]',
+      '    core.dependency "React-Core"',
+      "    if enableFrameProcessors",
+      '      core.dependency "VisionCamera/FrameProcessors"',
+      "    end",
+      "  end",
+      "  if enableFrameProcessors",
+      "    s.subspec 'FrameProcessors' do |fp|",
+      '      fp.source_files = ["ios/FrameProcessors/**/*.{h,m,mm}"]',
+      '      fp.public_header_files = ["ios/FrameProcessors/Frame.h"]',
+      '      fp.pod_target_xcconfig = {"CLANG_CXX_LANGUAGE_STANDARD" => "c++17", "GCC_PREPROCESSOR_DEFINITIONS" => "$(inherited) FP_ENABLED=1"}',
+      '      fp.frameworks = "Accelerate"',
+      '      fp.dependency "React-callinvoker"',
+      '      fp.dependency "react-native-worklets-core"',
+      "    end",
+      "  end",
+    ].join("\n");
+    const visionCamera = () =>
+      lib(
+        {
+          "ios/Core/CameraSession.swift": "import Foundation\n",
+          "ios/React/CameraView.swift": "import Foundation\n",
+          "ios/React/CameraBridge.h": "#import <Foundation/Foundation.h>\n",
+          "ios/React/CameraViewManager.m": '#import "CameraBridge.h"\n',
+          "ios/FrameProcessors/Frame.h": "#import <Foundation/Foundation.h>\n",
+          "ios/FrameProcessors/Frame.m": '#import "Frame.h"\n',
+          "ios/FrameProcessors/VisionCameraInstaller.mm": '#import "Frame.h"\n',
+        },
+        VISION_CAMERA,
+        "VisionCamera",
+        "react-native-vision-camera",
+      );
+
+    it("drops the subspec that declares a missing sibling, with its sources, headers and settings", () => {
+      const run = scaffoldLibraries(VENDORED_RN_SPM, { "react-native-vision-camera": visionCamera() });
+      expect(run.statuses["react-native-vision-camera"]).toBe("written");
+      const pkg = run.files["react-native-vision-camera/Package.swift"]!;
+      expect(pkg).not.toContain("react-native-worklets-core");
+      expect(pkg).not.toContain("ios/FrameProcessors/");
+      expect(pkg).not.toContain('.define("FP_ENABLED"');
+      expect(pkg).not.toContain('"Accelerate"');
+      expect(pkg).toContain('"ios/React/CameraView.swift",');
+      expect(pkg).toContain('"ios/Core/CameraSession.swift",');
+      expect(run.files["react-native-vision-camera/rn-spm-swift/umbrella.h"]).not.toContain("FrameProcessors");
+      expect(warningsOf(run, "react-native-vision-camera")).toContain(
+        MISSING_WITH_SUBSPEC("react-native-worklets-core", "FrameProcessors"),
+      );
+      expect(warningsOf(run, "react-native-vision-camera")).not.toContain(MISSING("react-native-worklets-core"));
+    });
+
+    it("drops a main-spec dependency alone and keeps its sources", () => {
+      const root = lib(
+        { "ios/Foo.h": "", "ios/Foo.m": '#import "Foo.h"\n' },
+        '  s.source_files = "ios/**/*.{h,m}"\n  s.dependency "react-native-missing"',
+        "Foo",
+        "react-native-foo",
+      );
+      const run = scaffoldLibraries(VENDORED_RN_SPM, { "react-native-foo": root });
+      expect(run.statuses["react-native-foo"]).toBe("written");
+      const pkg = run.files["react-native-foo/Package.swift"]!;
+      expect(pkg).not.toContain("react-native-missing");
+      expect(pkg).toContain('"ios/Foo.h",');
+      expect(pkg).toContain('"ios/Foo.m",');
+      expect(warningsOf(run, "react-native-foo")).toContain(MISSING("react-native-missing"));
+    });
+
+    it("a pod-style dependency on a package autolinking lists without iOS is a missing sibling", () => {
+      const a = lib({ "ios/A.h": "", "ios/A.m": "" }, '  s.source_files = "ios/**/*.{h,m}"\n  s.dependency "RNB"', "A", "a");
+      const b = lib({ "ios/B.h": "", "ios/B.m": "" }, '  s.source_files = "ios/**/*.{h,m}"', "RNB", "b");
+      const run = scaffoldLibraries(VENDORED_RN_SPM, { a, b }, { noIos: ["b"] });
+      expect(run.statuses).toEqual({ a: "written", b: "skipped-no-ios" });
+      expect(warningsOf(run, "a")).toContain(MISSING("RNB"));
+      expect(warningsOf(run, "a").filter((w) => w.includes("no known SwiftPM equivalent"))).toEqual([]);
+      expect(run.files["a/Package.swift"]).not.toContain("RNB");
+    });
+
+    it("an autolinked sibling is still wired", () => {
+      const a = lib({ "ios/A.h": "", "ios/A.m": "" }, '  s.source_files = "ios/**/*.{h,m}"\n  s.dependency "react-native-b"', "A", "react-native-a");
+      const b = lib({ "ios/B.h": "", "ios/B.m": "" }, '  s.source_files = "ios/**/*.{h,m}"', "B", "react-native-b");
+      const run = scaffoldLibraries(VENDORED_RN_SPM, { "react-native-a": a, "react-native-b": b });
+      expect(run.statuses).toEqual({ "react-native-a": "written", "react-native-b": "written" });
+      const pkg = run.files["react-native-a/Package.swift"]!;
+      expect(pkg).toContain('.package(name: "B", path: "../B")');
+      expect(pkg).toContain('.product(name: "B", package: "B")');
+      expect(warningsOf(run, "react-native-a").filter((w) => w.includes("not installed"))).toEqual([]);
+    });
+
+    it("a react-native-* pod name of an installed scoped package is wired to that package", () => {
+      // @react-native-community/netinfo's podspec is react-native-netinfo.podspec.
+      const a = lib(
+        { "ios/A.h": "", "ios/A.m": "" },
+        '  s.source_files = "ios/**/*.{h,m}"\n  s.dependency "react-native-netinfo"',
+        "A",
+        "react-native-a",
+      );
+      const n = lib({ "ios/N.h": "", "ios/N.m": "" }, '  s.source_files = "ios/**/*.{h,m}"', "react-native-netinfo", "@scope/netinfo");
+      const run = scaffoldLibraries(VENDORED_RN_SPM, { "react-native-a": a, "@scope/netinfo": n });
+      expect(run.statuses).toEqual({ "react-native-a": "written", "@scope/netinfo": "written" });
+      const pkg = run.files["react-native-a/Package.swift"]!;
+      expect(pkg).toContain('.package(name: "react-native-netinfo", path: "../react-native-netinfo")');
+      expect(pkg).toContain('.product(name: "react-native-netinfo", package: "react-native-netinfo")');
+      expect(warningsOf(run, "react-native-a").filter((w) => w.includes("not installed"))).toEqual([]);
+    });
+
+    type Classify = (
+      depName: string,
+      ctx: { selfPodName: string; ownNpm: string; podToNpm: Map<string, string>; linkedNpm: Set<string>; table: object },
+    ) => { kind: string; pod: string; npm?: string; entry?: object };
+    const table = { SwiftUIIntrospect: { url: "https://github.com/siteline/swiftui-introspect", exact: "1.5.0", product: "SwiftUIIntrospect" } };
+    it.each([
+      ["Foo/Sub", "subspec", undefined],
+      ["React-Core", "core", undefined],
+      ["ExpoModulesCore", "expo", undefined],
+      ["react-native-x", "sibling", "react-native-x"],
+      ["react-native-y/Sub", "missing-sibling", "react-native-y"],
+      ["RNX", "sibling", "react-native-x"],
+      ["RNZ", "missing-sibling", "react-native-z"],
+      ["react-native-n", "sibling", "@scope/n"],
+      ["SwiftUIIntrospect", "mapped", undefined],
+      ["MMKV", "unmapped", undefined],
+    ])("classifyPodDependency(%s) is %s", (depName, kind, npm) => {
+      const classify = load<{ classifyPodDependency: Classify }>("scaffold-package-swift.js").classifyPodDependency;
+      const got = classify(depName, {
+        selfPodName: "Foo",
+        ownNpm: "react-native-foo",
+        podToNpm: new Map([
+          ["RNX", "react-native-x"],
+          ["RNZ", "react-native-z"],
+          ["react-native-n", "@scope/n"],
+        ]),
+        linkedNpm: new Set(["react-native-foo", "react-native-x", "@scope/n"]),
+        table,
+      });
+      expect(got.kind).toBe(kind);
+      expect(got.pod).toBe(depName.split("/")[0]);
+      expect(got.npm).toBe(npm);
+      if (kind === "mapped") expect(got.entry).toEqual(table.SwiftUIIntrospect);
+    });
+  });
+
+  describe("21: Swift 5 language mode unless the podspec asks for 6", () => {
+    const MODE = "    swiftLanguageModes: [.v5],\n    cxxLanguageStandard: .cxx20\n";
+    const scaffold = (files: Record<string, string>, podBody: string) => {
+      const run = scaffoldLibraries(VENDORED_RN_SPM, { foo: lib(files, podBody) });
+      expect(run.statuses["foo"]).toBe("written");
+      return run.files;
+    };
+    const mixed = (podExtra = "") =>
+      scaffold(
+        { "ios/Video.swift": "import Foundation\n", "ios/RCTVideo.h": "", "ios/RCTVideo.m": '#import "RCTVideo.h"\n' },
+        `  s.source_files = "ios/**/*.{h,m,swift}"${podExtra}`,
+      );
+    const pureSwift = (podExtra = "") => scaffold({ "ios/Foo.swift": "import Foundation\n" }, `  s.source_files = "ios/**/*.swift"${podExtra}`);
+
+    it("puts a mixed target in the Swift 5 language mode (react-native-video's shape)", () => {
+      const files = mixed();
+      for (const manifest of ["Package.swift", "Package@swift-6.5.swift"]) {
+        expect(files[`foo/${manifest}`], manifest).toContain(MODE);
+      }
+    });
+
+    it("a pure-Swift target too", () => {
+      const pkg = pureSwift()["foo/Package.swift"]!;
+      expect(pkg.split("\n")[0]).toBe("// swift-tools-version: 6.0");
+      expect(pkg).toContain(MODE);
+    });
+
+    it.each([`\n  s.swift_version = '6.0'`, `\n  s.swift_versions = ['5.9', '6.0']`, `\n  s.ios.swift_version = '6.0'`])(
+      "keeps Swift 6 when the podspec asks for it:%s",
+      (extra) => {
+        expect(mixed(extra)["foo/Package.swift"]).not.toContain("swiftLanguageModes");
+        expect(pureSwift(extra)["foo/Package.swift"]).not.toContain("swiftLanguageModes");
+      },
+    );
+
+    it("reads a subspec's swift_version", () => {
+      const files = mixed(`\n  s.subspec "core" do |ss|\n    ss.swift_version = "6.0"\n  end`);
+      expect(files["foo/Package.swift"]).not.toContain("swiftLanguageModes");
+    });
+
+    it("reads 5.x as Swift 5", () => {
+      expect(mixed(`\n  s.swift_versions = ['5.0', '5.9']`)["foo/Package.swift"]).toContain(MODE);
+    });
+
+    it.each([`\n  s.swift_version = "#{v}"`, `\n  s.swift_version = SWIFT_VERSION`])(
+      "an interpolated or computed swift_version counts as absent:%s",
+      (extra) => {
+        expect(mixed(extra)["foo/Package.swift"]).toContain(MODE);
+      },
+    );
+
+    it("no language mode for a target without Swift", () => {
+      const files = scaffold({ "ios/Foo.h": "", "ios/Foo.m": '#import "Foo.h"\n' }, '  s.source_files = "ios/**/*.{h,m}"');
+      expect(files["foo/Package.swift"]).not.toContain("swiftLanguageModes");
+    });
+
+    it("reads swift_version and swift_versions from pod ipc spec's JSON", () => {
+      const { flattenSubspecs } = load<{ flattenSubspecs(raw: object): { swiftVersions: string[] } }>("read-podspec.js");
+      const model = withRnRoot("0.86.3", () =>
+        flattenSubspecs({ name: "Foo", swift_versions: ["5.0"], subspecs: [{ name: "core", swift_version: "6.0" }] }),
+      );
+      expect(model.swiftVersions).toEqual(["5.0", "6.0"]);
+    });
+  });
+
+  describe("22: the umbrella-directory layout", () => {
+    // react-native-device-info 15.0.2: ios/RNDeviceInfo/RNDeviceInfo.h next to ios/RNDeviceInfo.xcodeproj.
+    const deviceInfo = (withXcodeproj: boolean) =>
+      lib(
+        {
+          "ios/RNDeviceInfo/RNDeviceInfo.h": "#import <Foundation/Foundation.h>\n",
+          "ios/RNDeviceInfo/RNDeviceInfo.m": '#import "RNDeviceInfo.h"\n#import "DeviceUID.h"\n',
+          "ios/RNDeviceInfo/DeviceUID.h": "#import <Foundation/Foundation.h>\n",
+          ...(withXcodeproj ? { "ios/RNDeviceInfo.xcodeproj/project.pbxproj": "// !$*UTF8*$!\n" } : {}),
+        },
+        '  s.source_files = "ios/**/*.{h,m}"',
+        "RNDeviceInfo",
+        "react-native-device-info",
+      );
+
+    it("shims <ph>/<Name>/<Name>.h next to another directory (react-native-device-info's layout)", () => {
+      const run = scaffoldLibraries(VENDORED_RN_SPM, { "react-native-device-info": deviceInfo(true) });
+      expect(run.statuses["react-native-device-info"]).toBe("written");
+      expect(run.files["react-native-device-info/Package.swift"]).toContain('publicHeadersPath: "include",');
+      expect(run.files["react-native-device-info/include/RNDeviceInfo/RNDeviceInfo.h"]).toContain(
+        '#import "../../ios/RNDeviceInfo/RNDeviceInfo.h"',
+      );
+      expect(run.files["react-native-device-info/include/RNDeviceInfo/DeviceUID.h"]).toContain(
+        '#import "../../ios/RNDeviceInfo/DeviceUID.h"',
+      );
+    });
+
+    it("leaves a lone <Name>/ directory as it is", () => {
+      const run = scaffoldLibraries(VENDORED_RN_SPM, { "react-native-device-info": deviceInfo(false) });
+      expect(run.files["react-native-device-info/Package.swift"]).toContain('publicHeadersPath: "ios",');
+      expect(Object.keys(run.files).filter((k) => k.includes("/include/"))).toEqual([]);
+    });
+
+    it("scaffolds a library whose public headers path is a header file at the package root", () => {
+      const root = lib({ "Foo.h": "", "Foo.m": '#import "Foo.h"\n' }, '  s.source_files = "Foo.m"\n  s.public_header_files = "Foo.h"');
+      const run = scaffoldLibraries(VENDORED_RN_SPM, { foo: root });
+      expect(run.results.find((r) => r.depName === "foo")?.reason).toBeUndefined();
+      expect(run.statuses["foo"]).toBe("written");
+    });
+  });
+
+  describe("23: the codegen header's bare spelling (per-app header tree)", () => {
+    // @react-native-community/netinfo 11.5.2: ios/RNCNetInfo.mm does `#import "RNCNetInfoSpec.h"`, and codegen writes
+    // build/generated/ios/ReactCodegen/RNCNetInfoSpec/RNCNetInfoSpec.h.
+    const buildTree = (codegen: Record<string, string>) => {
+      const appRoot = tempDir();
+      for (const [f, text] of Object.entries(codegen)) {
+        const file = path.join(appRoot, "build", "generated", "ios", "ReactCodegen", f);
+        mkdirSync(path.dirname(file), { recursive: true });
+        writeFileSync(file, text);
+      }
+      const { buildPerAppHeaderTree } = load<{ buildPerAppHeaderTree(root: string): { path: string } }>("spm-utils.js");
+      return { appRoot, farm: buildPerAppHeaderTree(appRoot).path };
+    };
+    const SPEC = "#pragma once\n#define RNC_NET_INFO_SPEC 1\n";
+
+    it("forwards the bare codegen header from the root of the tree (netinfo's shape)", () => {
+      const { farm } = buildTree({ "RNCNetInfoSpec/RNCNetInfoSpec.h": SPEC, "RNCNetInfoSpec/RNCNetInfoSpec-generated.mm": "" });
+      expect(readFileSync(path.join(farm, "RNCNetInfoSpec", "RNCNetInfoSpec.h"), "utf8")).toBe(SPEC);
+      expect(readFileSync(path.join(farm, "RNCNetInfoSpec.h"), "utf8")).toBe(
+        "// AUTO-SCAFFOLDED by react-native spm scaffold — the bare \"RNCNetInfoSpec.h\" spelling\n" +
+          "// CocoaPods' header search paths resolve to the codegen header.\n" +
+          "#import <RNCNetInfoSpec/RNCNetInfoSpec.h>\n",
+      );
+    });
+
+    it("the forwarder holds no absolute path", () => {
+      const { appRoot, farm } = buildTree({ "RNCNetInfoSpec/RNCNetInfoSpec.h": SPEC });
+      const text = readFileSync(path.join(farm, "RNCNetInfoSpec.h"), "utf8");
+      expect(text).not.toContain(appRoot);
+      expect(text).not.toMatch(/["<]\//);
+      expect(text).not.toContain("..");
+    });
+
+    it("nothing for a codegen directory without its own header, and never over a header the tree already has", () => {
+      const { farm } = buildTree({
+        "react/renderer/components/rnfoo/Props.h": "",
+        "rnfoo/rnfoo.h": "",
+        "rnfooJSI.h": "",
+        "Taken/Taken.h": "",
+        "Taken.h": "// the codegen root's own\n",
+      });
+      expect(existsSync(path.join(farm, "react.h"))).toBe(false);
+      expect(existsSync(path.join(farm, "rnfoo.h"))).toBe(true);
+      expect(readFileSync(path.join(farm, "Taken.h"), "utf8")).toBe("// the codegen root's own\n");
+    });
+
+    it("no forwarder when a library's own header has the name, with a warning", () => {
+      const appRoot = tempDir();
+      const put = (rel: string, text: string) => {
+        mkdirSync(path.dirname(path.join(appRoot, rel)), { recursive: true });
+        writeFileSync(path.join(appRoot, rel), text);
+      };
+      put("build/generated/ios/ReactCodegen/FooSpec/FooSpec.h", SPEC);
+      put("build/generated/ios/ReactCodegen/BarSpec/BarSpec.h", SPEC);
+      put("build/generated/autolinking/headers/Foo/FooSpec.h", "// Foo's own\n");
+      const logs: string[] = [];
+      const { buildPerAppHeaderTree } = load<{ buildPerAppHeaderTree(root: string, l: object): { path: string } }>("spm-utils.js");
+      const farm = buildPerAppHeaderTree(appRoot, { log: (m: string) => logs.push(m) }).path;
+      expect(existsSync(path.join(farm, "FooSpec.h"))).toBe(false);
+      expect(readFileSync(path.join(farm, "Foo", "FooSpec.h"), "utf8")).toBe("// Foo's own\n");
+      expect(existsSync(path.join(farm, "BarSpec.h"))).toBe(true);
+      expect(logs).toContain(
+        'WARNING: merged headers: no bare "FooSpec.h" forwarder to <FooSpec/FooSpec.h>: Foo/FooSpec.h has that name and keeps it',
+      );
+    });
+
+    const clang = [path.join(homedir(), ".local/share/swiftly/bin/clang"), "clang"].find((c) => hasTool(c));
+    it.skipIf(clang === undefined)("clang finds the bare include through the tree root (needs clang)", () => {
+      const { farm } = buildTree({ "RNCNetInfoSpec/RNCNetInfoSpec.h": SPEC });
+      const src = path.join(tempDir(), "RNCNetInfo.m");
+      writeFileSync(src, '#import "RNCNetInfoSpec.h"\nint spec = RNC_NET_INFO_SPEC;\n');
+      const compile = () => tool(clang!, ["-fsyntax-only", "-x", "objective-c", "-I", farm, src]);
+      const ok = compile();
+      expect(ok.status, ok.stderr).toBe(0);
+      rmSync(path.join(farm, "RNCNetInfoSpec.h"));
+      expect(compile().stderr).toContain("'RNCNetInfoSpec.h' file not found");
+    });
+  });
+
+  describe("24: Swift compilation conditions", () => {
+    const swiftSettingsOf = (pkg: string) => pkg.split("\n").find((l) => l.trim().startsWith("swiftSettings:"))?.trim();
+    const scaffold = (files: Record<string, string>, podBody: string) => {
+      const run = scaffoldLibraries(VENDORED_RN_SPM, { foo: lib(files, podBody) });
+      expect(run.statuses["foo"]).toBe("written");
+      return run.files["foo/Package.swift"]!;
+    };
+    const MIXED = { "ios/Foo.swift": "import Foundation\n", "ios/Foo.h": "", "ios/Foo.m": '#import "Foo.h"\n' };
+    const SWIFT = { "ios/Foo.swift": "import Foundation\n" };
+    const CLANG = { "ios/Foo.h": "", "ios/Foo.m": '#import "Foo.h"\n' };
+    const conditions = (value: string) => `\n  s.pod_target_xcconfig = { "SWIFT_ACTIVE_COMPILATION_CONDITIONS" => ${value} }`;
+
+    it("carries literal Swift compilation conditions into swiftSettings", () => {
+      const xc = conditions('"$(inherited) FOO BAR"');
+      expect(swiftSettingsOf(scaffold(MIXED, `  s.source_files = "ios/**/*.{h,m,swift}"${xc}`))).toBe(
+        'swiftSettings: [.unsafeFlags(["-import-objc-header", rnSpmBridgingHeader]), .define("FOO"), .define("BAR")],',
+      );
+      expect(swiftSettingsOf(scaffold(SWIFT, `  s.source_files = "ios/**/*.swift"${xc}`))).toBe(
+        'swiftSettings: [.define("FOO"), .define("BAR")],',
+      );
+    });
+
+    it("reads every layer and a single-quoted value", () => {
+      const pkg = scaffold(
+        SWIFT,
+        `  s.source_files = "ios/**/*.swift"${conditions("'$(inherited) FOO'")}\n` +
+          `  s.subspec "core" do |ss|\n    ss.pod_target_xcconfig = { 'SWIFT_ACTIVE_COMPILATION_CONDITIONS' => '$(inherited) CORE' }\n  end`,
+      );
+      expect(swiftSettingsOf(pkg)).toBe('swiftSettings: [.define("FOO"), .define("CORE")],');
+    });
+
+    it("drops interpolated and ternary tokens (vision-camera's shape)", () => {
+      const xc = conditions('"$(inherited) #{enableLocation ? "VISION_CAMERA_ENABLE_LOCATION" : ""} $(OTHER) A_#{x}"');
+      const mixed = scaffold(MIXED, `  s.source_files = "ios/**/*.{h,m,swift}"${xc}`);
+      expect(swiftSettingsOf(mixed)).toBe('swiftSettings: [.unsafeFlags(["-import-objc-header", rnSpmBridgingHeader])],');
+      expect(scaffold(SWIFT, `  s.source_files = "ios/**/*.swift"${xc}`)).not.toContain("swiftSettings");
+    });
+
+    it("none for a clang-only target", () => {
+      const pkg = scaffold(CLANG, `  s.source_files = "ios/**/*.{h,m}"${conditions('"$(inherited) FOO"')}`);
+      expect(pkg).not.toContain("swiftSettings");
+      expect(pkg).not.toContain('.define("FOO")');
+    });
+
+    it("reads them from pod ipc spec's JSON", () => {
+      const { flattenSubspecs } = load<{ flattenSubspecs(raw: object): { swiftConditions: string[] } }>("read-podspec.js");
+      const model = withRnRoot("0.86.3", () =>
+        flattenSubspecs({
+          name: "Foo",
+          pod_target_xcconfig: { SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) LOCATION" },
+          subspecs: [{ name: "core", xcconfig: { SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(FOO) CORE" } }],
+        }),
+      );
+      expect(model.swiftConditions).toEqual(["LOCATION", "CORE"]);
+    });
+  });
+
+  describe("25: only the named deps", () => {
+    const SWIFT = { "ios/Foo.swift": "import Foundation\n" };
+    const POD = `  s.source_files = "ios/**/*.swift"`;
+    const twoLibs = (options: Record<string, unknown>) =>
+      scaffoldLibraries(VENDORED_RN_SPM, { a: lib(SWIFT, POD, "A", "a"), b: lib(SWIFT, POD, "B", "b") }, { options });
+
+    it("25: onlyDeps scaffolds only the named deps", () => {
+      const run = twoLibs({ onlyDeps: ["a"], force: false });
+      expect(run.results.map((r) => [r.depName, r.status])).toEqual([["a", "written"]]);
+      expect(existsSync(path.join(run.roots["b"]!, "Package.swift"))).toBe(false);
+    });
+
+    it("25: onlyDeps leaves a named dep's current scaffold alone without force", () => {
+      const run = twoLibs({ onlyDeps: ["a"], force: false });
+      const manifest = path.join(run.roots["a"]!, "Package.swift");
+      const edited = `${readFileSync(manifest, "utf8")}// a hand fix\n`;
+      writeFileSync(manifest, edited);
+      expect(run.rerun({ onlyDeps: ["a"], force: false }).map((r) => [r.depName, r.status])).toEqual([
+        ["a", "skipped-scaffolder-marker"],
+      ]);
+      expect(readFileSync(manifest, "utf8")).toBe(edited);
+    });
+
+    it("25: a dep left out of onlyDeps gets no result, even without iOS; skipDeps still wins", () => {
+      const run = scaffoldLibraries(
+        VENDORED_RN_SPM,
+        { a: lib(SWIFT, POD, "A", "a"), b: lib(SWIFT, POD, "B", "b"), c: lib(SWIFT, POD, "C", "c") },
+        { noIos: ["c"], options: { onlyDeps: ["a", "b"], skipDeps: ["b"] } },
+      );
+      expect(run.results.map((r) => [r.depName, r.status])).toEqual([
+        ["a", "written"],
+        ["b", "skipped-opt-out"],
+      ]);
+    });
+
+    it("25: without onlyDeps every dep, as before", () => {
+      const run = twoLibs({ force: false });
+      expect(run.statuses).toEqual({ a: "written", b: "written" });
+    });
   });
 });

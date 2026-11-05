@@ -1,7 +1,7 @@
 /**
  * Runs React Native's SwiftPM scaffolder (`scripts/spm/scaffold-package-swift.js`, whichever copy a
- * test loads) over real libraries, the way rn-xtool's driver does (`scaffoldAll`, `force`, a cache
- * slot label), and collects what it wrote.
+ * test loads) over real libraries, the way rn-xtool's driver does (`scaffoldAll`, a cache slot label;
+ * forced by default, so every copy is scaffolded afresh), and collects what it wrote.
  */
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -74,12 +74,21 @@ export function withRnRoot<T>(version: string, run: () => T): T {
  * Copies each library (`name` → its source dir) into a temp `node_modules`, drops the scaffolder's
  * earlier output (a persisted scaffold patch), runs `scaffoldAll` over them with `spmDir`, and
  * returns each library's status and every file the run created or changed, keyed
- * `<name>/<relative path>`, with the temp root replaced by `<tmp>`.
+ * `<name>/<relative path>`, with the temp root replaced by `<tmp>`. The libraries in `noIos` are listed
+ * without an iOS platform, as autolinking lists a package a config takes out of iOS. `options` are passed
+ * to `scaffoldAll` over the defaults (`force: true` among them), and `rerun` runs it again on the same copies.
  */
 export function scaffoldLibraries(
   spmDir: string,
   libs: Record<string, string>,
-): { statuses: Record<string, string>; results: ScaffoldResult[]; files: Record<string, string>; roots: Record<string, string> } {
+  { noIos = [], options = {} }: { noIos?: string[]; options?: Record<string, unknown> } = {},
+): {
+  statuses: Record<string, string>;
+  results: ScaffoldResult[];
+  files: Record<string, string>;
+  roots: Record<string, string>;
+  rerun: (options: Record<string, unknown>) => ScaffoldResult[];
+} {
   const base = mkTmp("rn-scaffold-");
   const projectRoot = path.join(base, "app");
   const appRoot = path.join(projectRoot, "ios");
@@ -111,7 +120,9 @@ export function scaffoldLibraries(
       root,
       name,
       platforms: {
-        ios: { podspecPath: podspec ? path.join(root, podspec) : null, version, configurations: [], scriptPhases: [] },
+        ios: noIos.includes(name)
+          ? null
+          : { podspecPath: podspec ? path.join(root, podspec) : null, version, configurations: [], scriptPhases: [] },
       },
     };
   }
@@ -120,17 +131,20 @@ export function scaffoldLibraries(
   writeFileSync(autolinkingJsonPath, JSON.stringify({ root: projectRoot, dependencies }, null, 2));
 
   const { scaffoldAll } = createRequire(import.meta.url)(path.join(spmDir, "scaffold-package-swift.js")) as ScaffoldAll;
-  const results = withRnRoot("0.86.3", () =>
-    scaffoldAll({
-      appRoot,
-      projectRoot,
-      reactNativeRoot: path.join(base, "node_modules", "react-native"),
-      autolinkingJsonPath,
-      iosDeploymentTarget: "16.4",
-      cacheSlotLabel: "0.86.3/dual-flavor",
-      force: true,
-    }),
-  );
+  const run = (over: Record<string, unknown>) =>
+    withRnRoot("0.86.3", () =>
+      scaffoldAll({
+        appRoot,
+        projectRoot,
+        reactNativeRoot: path.join(base, "node_modules", "react-native"),
+        autolinkingJsonPath,
+        iosDeploymentTarget: "16.4",
+        cacheSlotLabel: "0.86.3/dual-flavor",
+        force: true,
+        ...over,
+      }),
+    );
+  const results = run(options);
 
   const files: Record<string, string> = {};
   for (const [name, root] of Object.entries(roots)) {
@@ -141,7 +155,7 @@ export function scaffoldLibraries(
     }
   }
   const statuses = Object.fromEntries(results.map((r) => [r.depName, r.status]));
-  return { statuses, results, files, roots };
+  return { statuses, results, files, roots, rerun: run };
 }
 
 /** The golden files written by {@link scaffoldLibraries} for {@link GOLDEN_LIBS}. */

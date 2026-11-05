@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 const DRIVER = path.resolve(import.meta.dirname, "../scripts/rn-spm-generate.js");
 const USAGE =
-  "Usage: node scripts/rn-spm-generate.js --rn-dir <abs> --app-root <abs> --scripts-root <abs> [--artifacts <root>] [--config-command <json>] [--expo-plugin <abs>] [--scaffold]";
+  "Usage: node scripts/rn-spm-generate.js --rn-dir <abs> --app-root <abs> --scripts-root <abs> [--artifacts <root>] [--config-command <json>] [--expo-plugin <abs>] [--scaffold [--results <abs>] [--only <name>]...]";
 
 const tmp: string[] = [];
 afterAll(() => {
@@ -62,7 +62,11 @@ module.exports = {
   parseConfigCommandJson(raw, label) { return JSON.parse(raw); },
   generateAutolinkingConfig(opts) {
     record('generateAutolinkingConfig', opts.projectRoot, opts.configCommand ?? null);
-    return {outputPath: opts.projectRoot + '/ios/build/generated/autolinking/autolinking.json', config: {}, rawJson: '{}'};
+    const outputPath = opts.projectRoot + '/ios/build/generated/autolinking/autolinking.json';
+    fs.mkdirSync(require('node:path').dirname(outputPath), {recursive: true});
+    const dependencies = {'lib-a': {root: '/nm/lib-a'}, 'lib-b': {root: '/nm/lib-b'}};
+    fs.writeFileSync(outputPath, JSON.stringify({dependencies}));
+    return {outputPath, config: {}, rawJson: '{}'};
   },
 };`,
     "spm/scaffold-package-swift.js": `
@@ -124,6 +128,10 @@ describe("rn-spm-generate.js", () => {
       ["--rn-dir", "/rn", "--app-root", "/app", "--scripts-root", "/s", "--bogus"],
       ["--rn-dir", "/rn", "--app-root", "/app", "--scripts-root", "/s", "extra"],
       ["--rn-dir", "/rn", "--app-root", "/app", "--scripts-root", "/s", "--scaffold=yes"],
+      ["--rn-dir", "/rn", "--app-root", "/app", "--scripts-root", "/s", "--only", "lib-a"],
+      ["--rn-dir", "/rn", "--app-root", "/app", "--scripts-root", "/s", "--scaffold", "--only"],
+      ["--rn-dir", "/rn", "--app-root", "/app", "--scripts-root", "/s", "--results", "/r.json"],
+      ["--rn-dir", "/rn", "--app-root", "/app", "--scripts-root", "/s", "--scaffold", "--results", "r.json"],
     ]) {
       const r = await driver(args);
       expect(r.exitCode, args.join(" ")).toBe(1);
@@ -295,7 +303,19 @@ describe("rn-spm-generate.js", () => {
   it("--scaffold writes RN's scaffolded manifests and runs no other pipeline step", async () => {
     const rn = fakeRn();
     const ios = path.join(rn.appRoot, "ios");
-    const r = await driver(["--rn-dir", rn.rnDir, "--scripts-root", rn.scriptsRoot, "--app-root", rn.appRoot, "--scaffold"]);
+    const r = await driver([
+      "--rn-dir",
+      rn.rnDir,
+      "--scripts-root",
+      rn.scriptsRoot,
+      "--app-root",
+      rn.appRoot,
+      "--scaffold",
+      "--only",
+      "lib-a",
+      "--only",
+      "lib-b",
+    ]);
     expect(r.exitCode, r.all).toBe(0);
     expect(rn.calls()).toEqual([
       ["generateAutolinkingConfig", rn.appRoot, null],
@@ -311,7 +331,7 @@ describe("rn-spm-generate.js", () => {
           autolinkingJsonPath: path.join(ios, "build/generated/autolinking/autolinking.json"),
           cacheSlotLabel: "0.88.0-slot/dual-flavor",
           iosDeploymentTarget: "15.1",
-          force: true,
+          onlyDeps: ["lib-a", "lib-b"],
         },
       ],
     ]);
@@ -320,6 +340,47 @@ describe("rn-spm-generate.js", () => {
     expect(r.stdout).toContain("  ! lib-a: check the header paths");
     expect(r.stderr).toContain("  ! lib-b: no podspec readable");
     expect(r.all).not.toContain("lib-c");
+  });
+
+  it("--scaffold passes --only as onlyDeps and never forces", async () => {
+    const rn = fakeRn(true);
+    const base = ["--rn-dir", rn.rnDir, "--app-root", rn.appRoot, "--scripts-root", rn.scriptsRoot, "--scaffold"];
+    const scaffoldOpts = () => rn.calls().filter((c) => c[0] === "scaffoldAll").map((c) => c[1] as Record<string, unknown>);
+    const only = await driver([...base, "--only", "lib-a", "--only", "lib-b"]);
+    expect(only.exitCode, only.all).toBe(0);
+    expect(scaffoldOpts()[0]!.onlyDeps).toEqual(["lib-a", "lib-b"]);
+    expect(Object.keys(scaffoldOpts()[0]!)).not.toContain("force");
+    const every = await driver(base);
+    expect(every.exitCode, every.all).toBe(0);
+    expect(Object.keys(scaffoldOpts()[1]!)).not.toContain("onlyDeps");
+    expect(Object.keys(scaffoldOpts()[1]!)).not.toContain("force");
+  });
+
+  it("--scaffold writes the results file", async () => {
+    const rn = fakeRn(true);
+    const results = path.join(rn.appRoot, "ios", "build", "rn-xtool-scaffold-results.json");
+    const base = ["--rn-dir", rn.rnDir, "--app-root", rn.appRoot, "--scripts-root", rn.scriptsRoot, "--scaffold"];
+    const r = await driver([...base, "--results", results, "--only", "lib-a"]);
+    expect(r.exitCode, r.all).toBe(0);
+    expect(JSON.parse(readFileSync(results, "utf8"))).toEqual({
+      results: [
+        { depName: "lib-a", status: "written", warnings: ["check the header paths"], root: "/nm/lib-a" },
+        { depName: "lib-b", status: "error", reason: "no podspec readable", root: "/nm/lib-b" },
+        { depName: "lib-c", status: "already-set" },
+      ],
+    });
+  });
+
+  it("--scaffold writes no results file when scaffolding throws", async () => {
+    const rn = fakeRn(true);
+    const results = path.join(rn.appRoot, "ios", "build", "rn-xtool-scaffold-results.json");
+    const r = await execa(
+      process.execPath,
+      [DRIVER, "--rn-dir", rn.rnDir, "--app-root", rn.appRoot, "--scripts-root", rn.scriptsRoot, "--scaffold", "--results", results],
+      { reject: false, all: true, env: { FAIL_AT: "scaffoldAll" } },
+    );
+    expect(r.exitCode).toBe(1);
+    expect(existsSync(results)).toBe(false);
   });
 
   it("--scaffold still scaffolds without a cache slot label, and exits 1 when scaffolding throws", async () => {

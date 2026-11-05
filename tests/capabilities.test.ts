@@ -413,6 +413,19 @@ describe("detectCapabilities", () => {
     return detectCapabilities(root, { cacheRoot: await tempDir("rn-xtool-caps-cache-"), head });
   }
 
+  it("names the project's patches for packages that are not installed", async () => {
+    const dir = await bare("0.88.1", "0.88");
+    expect((await detect(dir)).orphanPatches).toEqual([]);
+    await writePackage(path.join(dir, "node_modules", "a"), { name: "a", version: "1.0.0" }, {});
+    await mkdir(path.join(dir, "patches"), { recursive: true });
+    await writeFile(path.join(dir, "patches", "a+1.0.0.patch"), "");
+    await writeFile(path.join(dir, "patches", "react-native-device-info+15.0.2.patch"), "");
+    expect((await detect(dir)).orphanPatches).toEqual([
+      "⚠ patches/react-native-device-info+15.0.2.patch is for react-native-device-info, which is not installed; skipped. " +
+        "Delete it if you removed the library.",
+    ]);
+  });
+
   it("detects an Expo SDK 58 project", async () => {
     const c = await detect(await expo58());
     expect(c).toMatchObject({

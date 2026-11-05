@@ -1,6 +1,7 @@
 /**
- * Reading the project's dependencies and their podspecs as text: where each dependency is installed and which podspec
- * files autolinking would read. A leaf module, shared by capabilities.ts and earlyChecks.ts. Nothing is evaluated.
+ * Reading the project's dependencies and their podspecs as text: where each dependency is installed, which podspec
+ * files autolinking would read, and the lines that always apply. A leaf module, shared by capabilities.ts,
+ * earlyChecks.ts and the pipeline's scaffoldResources.ts. Nothing is evaluated.
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -71,4 +72,60 @@ export function dependencyDirs(root: string): { name: string; dir: string }[] {
     const dir = packageDir(root, name);
     return dir === undefined ? [] : [{ name, dir }];
   });
+}
+
+/** Comments and string contents blanked, so neither is read as code. */
+export function rubyCode(line: string): string {
+  return line.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""').replace(/#.*$/, "");
+}
+
+const COND_OPENER = /^\s*(?:if|unless|case|while|until)\b|=\s*(?:if|unless|case)\b/;
+const OTHER_OPENER = /^\s*(?:begin|def|class|module)\b/;
+const HEREDOC = /<<[-~]?(["']?)([A-Za-z_]\w*)\1/;
+
+/**
+ * The podspec lines that always apply: lines inside a `test_spec` block or a Ruby condition (`if`, `unless`, `case`,
+ * `while`, `until`), lines carrying an `if`/`unless` modifier or a ternary, and heredoc bodies are left out. Block depth
+ * is counted from `do`, those keywords and `end`, as an approximation; nothing is evaluated. Each line comes as code
+ * (comments and string contents blanked), or with `"source"` as it is written, for reading the strings it holds.
+ */
+export function unconditionalLines(text: string, form: "code" | "source" = "code"): string[] {
+  const lines = podspecLines(text);
+  return unconditionalLineIndexes(text).map((i) => (form === "code" ? rubyCode(lines[i]!) : lines[i]!));
+}
+
+/** The podspec's lines, as `unconditionalLineIndexes` counts them. */
+export function podspecLines(text: string): string[] {
+  return text.replace(/\r\n/g, "\n").split("\n");
+}
+
+/** True when a line of code (`rubyCode`) carries an `if`/`unless` modifier. */
+export function carriesModifier(code: string): boolean {
+  return /\S\s+(?:if|unless)\s/.test(code.replace(COND_OPENER, ""));
+}
+
+/** The indexes in `podspecLines(text)` of the lines `unconditionalLines` keeps. */
+export function unconditionalLineIndexes(text: string): number[] {
+  const stack: boolean[] = []; // true: a frame whose lines may not apply
+  const kept: number[] = [];
+  let heredoc: string | undefined;
+  for (const [at, raw] of podspecLines(text).entries()) {
+    if (heredoc !== undefined) {
+      if (raw.trim() === heredoc) heredoc = undefined;
+      continue;
+    }
+    const code = rubyCode(raw);
+    heredoc = HEREDOC.exec(raw)?.[2];
+    const opensCondition = COND_OPENER.test(code);
+    const testSpec = /\.test_spec\b/.test(code);
+    const modifier = carriesModifier(code);
+    const ternary = /=(?!=)[^?]*\?\s[^:]*:/.test(code);
+    if (!stack.some(Boolean) && !opensCondition && !testSpec && !modifier && !ternary) kept.push(at);
+    const dos = (code.match(/\bdo\b/g) ?? []).length;
+    if (opensCondition) stack.push(true);
+    else if (OTHER_OPENER.test(code)) stack.push(false);
+    for (let i = 0; i < dos; i++) stack.push(testSpec);
+    for (let i = (code.match(/\bend\b/g) ?? []).length; i > 0 && stack.length > 0; i--) stack.pop();
+  }
+  return kept;
 }

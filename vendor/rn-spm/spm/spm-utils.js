@@ -557,6 +557,64 @@ type HeaderTreeResult = {path: ?string, virtualPaths: Set<string>};
 */
 
 /**
+ * rn-xtool: a library's sources may include its codegen spec header by its bare
+ * name (@react-native-community/netinfo's `#import "RNCNetInfoSpec.h"`), which
+ * CocoaPods' header search paths resolve. The farm vends it only as
+ * `<X/X.h>`, so for each codegen directory ReactCodegen/X that holds X/X.h, a
+ * forwarder X.h at the farm root imports it under that spelling. A header the
+ * farm already has at its root is left as it is, and so is the name when a
+ * library's own header in the farm has it (`<SwiftName>/X.h`): the forwarder
+ * could shadow that header on a search path, so it is not written, with a
+ * warning. Returns the forwarders' names.
+ */
+function writeCodegenForwarders(
+  codegenRoot /*: string */,
+  outDir /*: string */,
+  seen /*: Map<string, string> */,
+  logger /*: {log: (msg: string) => void} */,
+) /*: Array<string> */ {
+  let entries = [];
+  try {
+    entries = fs.readdirSync(codegenRoot, {withFileTypes: true});
+  } catch {
+    return [];
+  }
+  const written = [];
+  for (const e of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    const name = `${e.name}.h`;
+    if (
+      !e.isDirectory() ||
+      !seen.has(`${e.name}/${name}`) ||
+      seen.has(name) ||
+      fs.existsSync(path.join(outDir, name))
+    ) {
+      continue;
+    }
+    // The farm holds the codegen header under more than one path; any other
+    // file of that name is a library's own.
+    const spec = seen.get(`${e.name}/${name}`);
+    const own = [...seen]
+      .filter(([v, real]) => path.basename(v) === name && real !== spec)
+      .map(([v]) => v)
+      .sort();
+    if (own.length > 0) {
+      logger.log(
+        `WARNING: merged headers: no bare "${name}" forwarder to <${e.name}/${name}>: ${own[0]} has that name and keeps it`,
+      );
+      continue;
+    }
+    fs.writeFileSync(
+      path.join(outDir, name),
+      `// AUTO-SCAFFOLDED by react-native spm scaffold — the bare "${name}" spelling\n` +
+        "// CocoaPods' header search paths resolve to the codegen header.\n" +
+        `#import <${e.name}/${name}>\n`,
+    );
+    written.push(name);
+  }
+  return written;
+}
+
+/**
  * Materializes the PER-APP header tree at
  * <appRoot>/build/xcframeworks/ReactAppHeaders: autolinking dep headers + codegen
  * output. Per-app because it depends on which libraries the app links and the
@@ -585,6 +643,12 @@ function buildPerAppHeaderTree(
   linker.foldDir(path.join(appRoot, 'build', 'generated', 'ios'));
   linker.foldDir(
     path.join(appRoot, 'build', 'generated', 'ios', 'ReactCodegen'),
+  );
+  const forwarders = writeCodegenForwarders(
+    path.join(appRoot, 'build', 'generated', 'ios', 'ReactCodegen'),
+    tmpDir,
+    linker.seen,
+    logger,
   );
 
   // Stub source so the farm is a valid SPM target (vended headers-only —
@@ -615,7 +679,10 @@ function buildPerAppHeaderTree(
         : '') +
       ')',
   );
-  return {path: outDir, virtualPaths: new Set(linker.seen.keys())};
+  return {
+    path: outDir,
+    virtualPaths: new Set([...linker.seen.keys(), ...forwarders]),
+  };
 }
 
 /**

@@ -121,8 +121,11 @@ const SCAFFOLDER_VERSION_LINE_RE = /^\/\/ AUTO-SCAFFOLDED-VERSION: (\d+)$/m;
 // evaluated, header_mappings_dir under header_dir, and the Swift importer
 // paths marker (IMPORTER_PATHS_MARKER). Revision 3: that marker on clang-only
 // targets too, and their module map without the headers they leave out
-// (CLANG_MODULE_MAP).
-const RN_XTOOL_SCAFFOLD_REVISION = 3;
+// (CLANG_MODULE_MAP). Revision 4 (fixes 20–24): dependencies on packages that
+// are not linked for iOS left out, with the subspecs that declare them; the
+// Swift 5 language mode; the umbrella-directory shim; the codegen header's
+// bare spelling; and Swift compilation conditions.
+const RN_XTOOL_SCAFFOLD_REVISION = 4;
 const RN_XTOOL_SCAFFOLD_REVISION_RE = /^\/\/ rn-xtool-scaffold-revision: (\d+)$/m;
 
 // An importer (Swift, or a Clang module) builds the target's module from its
@@ -155,6 +158,96 @@ const KNOWN_POD_SPM_PACKAGES /*: {[pod: string]: {url: string, exact: string, pr
 // Pods that belong to Expo's own SwiftPM graph, never a CocoaPods-only pod.
 function isExpoModuleDep(depName /*: string */) /*: boolean */ {
   return /^(expo-|Expo[A-Z]|EX[A-Z])/.test(depName);
+}
+
+/*::
+type PodDependencyKind =
+  | 'subspec'
+  | 'core'
+  | 'expo'
+  | 'sibling'
+  | 'missing-sibling'
+  | 'mapped'
+  | 'unmapped';
+*/
+
+/**
+ * What a podspec `s.dependency "<name>"` is, checked in this order:
+ *   - 'subspec': `<own pod>/<subspec>`, a reference inside the same podspec;
+ *   - 'core': React Native core (React-Core, RCT-Folly, ...);
+ *   - 'sibling': an npm package that is autolinked for iOS (`linkedNpm`),
+ *     named by a pod name `podToNpm` maps to it, else as `react-native-*`;
+ *   - 'missing-sibling': the same, for a package that is not installed or not
+ *     linked for iOS. CocoaPods would not have it either;
+ *   - 'expo': an Expo module's pod;
+ *   - 'mapped': a CocoaPods pod with a SwiftPM package in `table`;
+ *   - 'unmapped': any other CocoaPods pod.
+ * `pod` is the name before any `/<subspec>`.
+ */
+function classifyPodDependency(
+  depName /*: string */,
+  ctx /*: {
+    selfPodName: ?string,
+    ownNpm: string,
+    podToNpm: Map<string, string>,
+    linkedNpm: Set<string>,
+    table: {[pod: string]: {...}},
+  } */,
+) /*: {kind: PodDependencyKind, pod: string, npm?: string, entry?: {...}} */ {
+  const pod = depName.split('/')[0];
+  if (
+    ctx.selfPodName != null &&
+    ctx.selfPodName !== '' &&
+    depName.startsWith(`${ctx.selfPodName}/`)
+  ) {
+    return {kind: 'subspec', pod};
+  }
+  if (isReactCoreDep(depName)) {
+    return {kind: 'core', pod};
+  }
+  // The pod-name index first: a `react-native-*` pod name can belong to a
+  // package published under another npm name (a scoped one).
+  const podSibling = ctx.podToNpm.get(pod);
+  const npm =
+    podSibling != null && podSibling !== ctx.ownNpm
+      ? podSibling
+      : pod.startsWith('react-native-')
+        ? pod
+        : null;
+  if (npm != null) {
+    return {
+      kind: ctx.linkedNpm.has(npm) ? 'sibling' : 'missing-sibling',
+      pod,
+      npm,
+    };
+  }
+  if (isExpoModuleDep(depName)) {
+    return {kind: 'expo', pod};
+  }
+  if (Object.hasOwn(ctx.table, pod)) {
+    return {kind: 'mapped', pod, entry: ctx.table[pod]};
+  }
+  return {kind: 'unmapped', pod};
+}
+
+// The dependencies of a podspec model that are npm packages not linked for
+// iOS (fix 20), each once.
+function missingSiblings(
+  model /*: PodspecModel */,
+  dep /*: AutolinkedDep */,
+  podToNpm /*: Map<string, string> */,
+  linkedNpm /*: Set<string> */,
+) /*: Array<string> */ {
+  const ctx = {
+    selfPodName: model.name,
+    ownNpm: dep.name,
+    podToNpm,
+    linkedNpm,
+    table: KNOWN_POD_SPM_PACKAGES,
+  };
+  return model.dependencies.filter(
+    d => classifyPodDependency(d, ctx).kind === 'missing-sibling',
+  );
 }
 
 function spmPackageIdentity(url /*: string */) /*: string */ {
@@ -672,62 +765,65 @@ function translatePodspecToSpmTarget(
     }
   }
 
-  // Bucket dependencies. React-Core / React-jsi / RCT-Folly / glog etc. ALL
-  // collapse to the invariant React header products
+  // Bucket dependencies (classifyPodDependency). React-Core / React-jsi /
+  // RCT-Folly / glog etc. ALL collapse to the invariant React header products
   // reference because they're bundled in the prebuilt React.xcframework.
   // Sibling RN libs (autolinked or self-managed deps) flow through the
-  // existing spm-deps mechanism. Unknown names are dropped with a warning.
+  // existing spm-deps mechanism; a pod-style name (reanimated's `s.dependency
+  // "RNWorklets"`) is wired to its sibling's npm package through podToNpm.
+  // A sibling that is not linked for iOS is left out, as CocoaPods leaves it
+  // out. Unknown names are dropped with a warning.
   let coreReactNative = false;
   const siblingNames /*: Array<string> */ = [];
   const externalPackages /*: Array<{pod: string, url: string, exact: string, product: string, package: string}> */ = [];
   const unmappedPods /*: Array<string> */ = [];
-  const selfPodspecName = model.name;
+  const leftOut /*: Array<string> */ = [];
+  // Every iOS-autolinked dep has a resolved Swift name.
+  const linkedNpm /*: Set<string> */ = new Set(swiftNameByNpm.keys());
   for (const depName of model.dependencies) {
-    // Cross-subspec refs like "react-native-safe-area-context/common" are a
-    // CocoaPods construct for one subspec depending on another from the
-    // SAME podspec. After flattenSubspecs has merged everything into one
-    // target the subspec ref is meaningless — drop silently.
-    if (depName.includes('/') && depName.startsWith(`${selfPodspecName}/`)) {
+    const {kind, pod, npm, entry} = classifyPodDependency(depName, {
+      selfPodName: model.name,
+      ownNpm: dep.name,
+      podToNpm,
+      linkedNpm,
+      table: KNOWN_POD_SPM_PACKAGES,
+    });
+    if (kind === 'subspec') {
+      // Cross-subspec refs like "react-native-safe-area-context/common" are a
+      // CocoaPods construct for one subspec depending on another from the
+      // SAME podspec. After flattenSubspecs has merged everything into one
+      // target the subspec ref is meaningless — drop silently.
       continue;
-    }
-    const podSibling = podToNpm.get(depName.split('/')[0]);
-    if (isReactCoreDep(depName)) {
+    } else if (kind === 'core') {
       coreReactNative = true;
-    } else if (depName.startsWith('react-native-')) {
-      // Generic cross-subspec ref guard for any "package/subspec" form.
-      const baseName = depName.split('/')[0];
-      if (!siblingNames.includes(baseName)) {
-        siblingNames.push(baseName);
+    } else if (kind === 'sibling' && npm != null) {
+      if (!siblingNames.includes(npm)) {
+        siblingNames.push(npm);
       }
-    } else if (podSibling != null && podSibling !== dep.name) {
-      // A pod-style dependency name (e.g. reanimated's `s.dependency
-      // "RNWorklets"`) that resolves to an autolinked sibling's npm package
-      // (react-native-worklets). Wire it as a sibling .package/.product so
-      // the dep's cross-package includes (`<worklets/...>`) resolve.
-      if (!siblingNames.includes(podSibling)) {
-        siblingNames.push(podSibling);
+    } else if (kind === 'missing-sibling') {
+      if (!leftOut.includes(pod)) {
+        leftOut.push(pod);
+        warnings.push(
+          `Dependency "${pod}" is not installed (or not linked for iOS); left out, as CocoaPods leaves it out.`,
+        );
       }
-    } else if (isExpoModuleDep(depName)) {
+    } else if (kind === 'expo') {
       warnings.push(
         `Unknown dependency "${depName}" — not wired into the scaffolded Package.swift. Edit manually if needed.`,
       );
-    } else {
-      // A CocoaPods pod ("SwiftUIIntrospect", "MMKV"): wire it to its SwiftPM
-      // package when the map knows one, else say loudly that the build may fail.
-      const pod = depName.split('/')[0];
-      const known = Object.hasOwn(KNOWN_POD_SPM_PACKAGES, pod)
-        ? KNOWN_POD_SPM_PACKAGES[pod]
-        : null;
-      if (known != null) {
-        if (!externalPackages.some(e => e.pod === pod)) {
-          externalPackages.push({pod, ...known, package: spmPackageIdentity(known.url)});
-        }
-      } else if (!unmappedPods.includes(pod)) {
-        unmappedPods.push(pod);
-        warnings.push(
-          `Dependency "${pod}" is a CocoaPods pod with no known SwiftPM equivalent; the scaffolded package may fail to build — add it to the pod→SwiftPM map in scaffold-package-swift.js`,
-        );
+    } else if (kind === 'mapped' && entry != null) {
+      // A CocoaPods pod ("SwiftUIIntrospect") wired to its SwiftPM package.
+      if (!externalPackages.some(e => e.pod === pod)) {
+        // $FlowFixMe[incompatible-type] KNOWN_POD_SPM_PACKAGES entry
+        const known /*: {url: string, exact: string, product: string} */ = entry;
+        externalPackages.push({pod, ...known, package: spmPackageIdentity(known.url)});
       }
+    } else if (!unmappedPods.includes(pod)) {
+      // Any other CocoaPods pod ("MMKV"): say loudly that the build may fail.
+      unmappedPods.push(pod);
+      warnings.push(
+        `Dependency "${pod}" is a CocoaPods pod with no known SwiftPM equivalent; the scaffolded package may fail to build — add it to the pod→SwiftPM map in scaffold-package-swift.js`,
+      );
     }
   }
 
@@ -905,15 +1001,26 @@ function translatePodspecToSpmTarget(
   let namespacedShimHeaders /*: Array<string> */ = [];
   // SwiftPM rejects a publicHeadersPath that holds the umbrella header
   // `<SwiftName>.h` next to subdirectories ("invalid header layout: umbrella
-  // header found ... but directories exist next to it"). Fall back to the
-  // generated include/<SwiftName>/ shim, fed with every header among the
-  // sources; the header search paths above keep bare `#import "X.h"` working.
+  // header found ... but directories exist next to it"), and the umbrella
+  // directory layout `<SwiftName>/<SwiftName>.h` next to any other directory
+  // ("more than one directory exists next to its parent directory";
+  // react-native-device-info's ios/RNDeviceInfo/ next to
+  // ios/RNDeviceInfo.xcodeproj/). Fall back to the generated
+  // include/<SwiftName>/ shim, fed with every header among the sources; the
+  // header search paths above keep bare `#import "X.h"` working. A lone
+  // `<SwiftName>/` directory is SwiftPM's own layout and stays as it is.
   if (publicHeadersPath != null) {
     const phDir = path.join(dep.root, publicHeadersPath);
+    // The first glob segment can be a header file at the package root.
+    const phDirs = fs.statSync(phDir).isDirectory()
+      ? fs.readdirSync(phDir, {withFileTypes: true}).filter(e => e.isDirectory())
+      : [];
     const umbrellaNextToSubdirs =
-      fs.existsSync(path.join(phDir, `${swiftName}.h`)) &&
-      fs.readdirSync(phDir, {withFileTypes: true}).some(e => e.isDirectory());
-    if (umbrellaNextToSubdirs) {
+      fs.existsSync(path.join(phDir, `${swiftName}.h`)) && phDirs.length > 0;
+    const umbrellaDirNextToSubdirs =
+      fs.existsSync(path.join(phDir, swiftName, `${swiftName}.h`)) &&
+      phDirs.some(e => e.name !== swiftName);
+    if (umbrellaNextToSubdirs || umbrellaDirNextToSubdirs) {
       // On a basename collision keep the shallowest path (fewest '/'), then
       // the lexicographically first, so the choice is deterministic.
       const byDepth = [...headerFiles].sort(
@@ -1186,6 +1293,19 @@ function translatePodspecToSpmTarget(
     }
   }
 
+  // CocoaPods compiles a pod's Swift in the Swift 5 language mode unless the
+  // podspec declares swift_version 6 or higher; every SwiftPM tools version
+  // from 6.0 up defaults to Swift 6 (react-native-video 6.19: strict
+  // concurrency errors). A target with Swift sources gets the Swift 5 mode
+  // unless the highest declared major version is 6 or higher.
+  const declaredSwiftMajors = (model.swiftVersions ?? [])
+    .map(v => /^\s*(\d+)/.exec(v))
+    .filter(Boolean)
+    .map(m => Number(m[1]));
+  const swiftLanguageModeV5 =
+    expandedSources.some(isSwiftSource) &&
+    (declaredSwiftMajors.length === 0 || Math.max(...declaredSwiftMajors) < 6);
+
   // A clang-only target's module (see CLANG_MODULE_MAP).
   let clangModuleMap = null;
   if (
@@ -1236,6 +1356,8 @@ function translatePodspecToSpmTarget(
     headerDirShims,
     resources,
     excludePaths,
+    swiftLanguageModeV5,
+    swiftConditions: model.swiftConditions ?? [],
     warnings,
   };
 }
@@ -1490,9 +1612,21 @@ let rnSpmSwiftHeadersDir = Context.environment["${SWIFT_HEADERS_DIR_ENV}"]
 let rnSpmBridgingHeader = Context.packageDirectory + "/${mixed.bridgingHeader}"
 `
       : '';
+  // A target with Swift sources gets the podspec's literal
+  // SWIFT_ACTIVE_COMPILATION_CONDITIONS as `.define(...)`, after a mixed
+  // target's bridging header. A clang-only target gets none.
+  const swiftConditionDefines = spec.sources.some(isSwiftSource)
+    ? (spec.swiftConditions ?? []).map(c => `.define(${JSON.stringify(c)})`)
+    : [];
+  const swiftSettings = [
+    ...(mixed != null
+      ? ['.unsafeFlags(["-import-objc-header", rnSpmBridgingHeader])']
+      : []),
+    ...swiftConditionDefines,
+  ];
   const swiftSettingsLine =
-    mixed != null
-      ? `\n            swiftSettings: [.unsafeFlags(["-import-objc-header", rnSpmBridgingHeader])],`
+    swiftSettings.length > 0
+      ? `\n            swiftSettings: [${swiftSettings.join(', ')}],`
       : '';
   const importerPaths = spec.headerSearchPaths.filter(
     p => !path.posix.isAbsolute(p) && !p.split('/').includes('..'),
@@ -1506,6 +1640,10 @@ let rnSpmBridgingHeader = Context.packageDirectory + "/${mixed.bridgingHeader}"
     (!pureSwift && importerPaths.some(p => p !== publicHeaders))
       ? `\n${IMPORTER_PATHS_MARKER}${JSON.stringify(importerPaths)}`
       : '';
+
+  // The Swift 5 language mode (see swiftLanguageModeV5 in translate).
+  const swiftLanguageModesLine =
+    spec.swiftLanguageModeV5 === true ? '    swiftLanguageModes: [.v5],\n' : '';
 
   return `${toolsVersionLine}
 ${SCAFFOLDER_MARKER}
@@ -1537,7 +1675,7 @@ ${packageDepsBlock}    targets: [
             linkerSettings: [${linkerEntries.join(', ')}]
         ),
     ],
-    cxxLanguageStandard: .cxx20
+${swiftLanguageModesLine}    cxxLanguageStandard: .cxx20
 )
 `;
 }
@@ -1814,9 +1952,37 @@ function scaffoldPackageSwiftForDep(
     };
   }
 
+  const podToNpm = ctx.podToNpm ?? new Map();
+  const swiftNameByNpm = ctx.swiftNameByNpm ?? new Map();
   let model;
+  // A subspec that declares a dependency on a package that is not linked for
+  // iOS goes with it, as CocoaPods leaves it out (react-native-vision-camera's
+  // FrameProcessors without react-native-worklets-core). The podspec is read
+  // again without those subspecs; a dependency the main spec declares too is
+  // still there afterwards, and translate leaves it out alone.
+  const subspecWarnings /*: Array<string> */ = [];
   try {
     model = readPodspecCached(podspecPath);
+    const missing = missingSiblings(
+      model,
+      dep,
+      podToNpm,
+      new Set(swiftNameByNpm.keys()),
+    );
+    const subspecDeps = model.subspecDependencies ?? {};
+    const drop = Object.keys(subspecDeps).filter(sub =>
+      subspecDeps[sub].some(d => missing.includes(d)),
+    );
+    if (drop.length > 0) {
+      for (const sub of drop) {
+        for (const d of subspecDeps[sub].filter(x => missing.includes(x))) {
+          subspecWarnings.push(
+            `Dependency "${d.split('/')[0]}" is not installed (or not linked for iOS); left out with the subspec "${sub}" that declares it (its sources, headers, settings and dependencies), as CocoaPods leaves it out.`,
+          );
+        }
+      }
+      model = readPodspecCached(podspecPath, {dropSubspecs: drop});
+    }
   } catch (e) {
     return {
       depName,
@@ -1828,10 +1994,11 @@ function scaffoldPackageSwiftForDep(
   const spec = translatePodspecToSpmTarget(
     model,
     dep,
-    ctx.podToNpm ?? new Map(),
-    ctx.swiftNameByNpm ?? new Map(),
+    podToNpm,
+    swiftNameByNpm,
     reactIncludeRoots(ctx.appRoot),
   );
+  spec.warnings.push(...subspecWarnings);
 
   // Mixed Swift + C-family sources used to be skipped here ("SPM cannot
   // compile them in one target"). SwiftPM >= 6.4 can, so translate emits a
@@ -2016,7 +2183,7 @@ function collectAutolinkedDeps(
   opts /*: {
     autolinkingJsonPath: string,
     remote: ?{url: string, version: string, identity: string},
-    onSkipped?: (name: string) => void,
+    onSkipped?: (name: string, root: ?string) => void,
   } */,
 ) /*: ?Array<AutolinkedDep> */ {
   const {autolinkingJsonPath, remote, onSkipped} = opts;
@@ -2037,7 +2204,7 @@ function collectAutolinkedDeps(
     const root = raw.root;
     const ios = raw.platforms?.ios;
     if (typeof root !== 'string' || ios == null) {
-      onSkipped?.(name);
+      onSkipped?.(name, typeof root === 'string' ? root : null);
       continue;
     }
     // $FlowFixMe[incompatible-type] `ios` shape is runtime-validated above
@@ -2169,6 +2336,11 @@ type ScaffoldAllOptions = {
   // confirmation prompt for first-time scaffolds. Skipped deps still
   // appear in the returned results array with status='skipped-opt-out'.
   skipDeps?: ReadonlyArray<string>,
+  // npm dep names to scaffold, direct or transitive: the deps the autolinker
+  // reported without a Package.swift. The others get no result entry and are
+  // not touched, so their scaffolds (hand-edited or not) stay as they are.
+  // skipDeps still wins over it.
+  onlyDeps?: ReadonlyArray<string>,
 };
 */
 
@@ -2198,6 +2370,17 @@ function scaffoldAll(
   // scaffolded here — leaving `react-native spm scaffold` unable to clear the
   // autolinker's missing-manifest error.
   const results /*: Array<ScaffoldResult> */ = [];
+  const onlySet /*: ?Set<string> */ =
+    opts.onlyDeps != null ? new Set(opts.onlyDeps) : null;
+  const named = (name /*: string */) => onlySet == null || onlySet.has(name);
+  // Index every autolinked dep's podspec name → its npm name, so a dep that
+  // depends on a sibling by its pod name (reanimated's `s.dependency
+  // "RNWorklets"`) can be wired to the sibling's package (react-native-worklets).
+  // The podspec file basename is the pod name for RN-ecosystem libs (and is
+  // cheap — no `pod ipc` pre-pass). The deps autolinking lists without iOS are
+  // indexed too, so a pod-style dependency on one of them is a sibling that is
+  // not linked (left out), not an unknown CocoaPods pod.
+  const podToNpm /*: Map<string, string> */ = new Map();
   // Outside collectAutolinkedDeps' own try: a malformed remote config
   // (RemoteVersionError) is a misconfiguration to surface, not an expansion
   // failure to degrade past.
@@ -2205,24 +2388,23 @@ function scaffoldAll(
   const allDeps = collectAutolinkedDeps({
     autolinkingJsonPath,
     remote,
-    onSkipped: name => {
-      results.push({
-        depName: name,
-        status: 'skipped-no-ios',
-        reason: 'no iOS platform in autolinking.json',
-      });
+    onSkipped: (name, root) => {
+      if (named(name)) {
+        results.push({
+          depName: name,
+          status: 'skipped-no-ios',
+          reason: 'no iOS platform in autolinking.json',
+        });
+      }
+      for (const found of root != null ? findPodspecs(root) : []) {
+        podToNpm.set(path.basename(found, '.podspec'), name);
+      }
     },
   });
   if (allDeps == null) {
     return results;
   }
 
-  // Index every autolinked dep's podspec name → its npm name, so a dep that
-  // depends on a sibling by its pod name (reanimated's `s.dependency
-  // "RNWorklets"`) can be wired to the sibling's package (react-native-worklets).
-  // The podspec file basename is the pod name for RN-ecosystem libs (and is
-  // cheap — no `pod ipc` pre-pass).
-  const podToNpm /*: Map<string, string> */ = new Map();
   for (const dep of allDeps) {
     const podspecPath = dep.platforms?.ios?.podspecPath;
     if (typeof podspecPath === 'string' && podspecPath.length > 0) {
@@ -2261,6 +2443,9 @@ function scaffoldAll(
   const skipSet /*: Set<string> */ = new Set(opts.skipDeps ?? []);
 
   for (const dep of allDeps) {
+    if (!named(dep.name)) {
+      continue;
+    }
     if (skipSet.has(dep.name)) {
       results.push({
         depName: dep.name,
@@ -2279,6 +2464,7 @@ function scaffoldAll(
 }
 
 module.exports = {
+  classifyPodDependency,
   refreshScaffoldedPlatformFloors,
   scaffoldAll,
   scaffoldPackageSwiftForDep,

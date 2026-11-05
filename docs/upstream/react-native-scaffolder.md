@@ -598,8 +598,141 @@ gem is on `PATH`, runs `pod ipc spec` with the same two values in its environmen
 `RCT_NEW_ARCH_ENABLED`, and only when the environment did not. Any other `ENV[...]` condition, and every `if`, is
 still not evaluated. The scaffolded worklets target then gets
 `.define("HERMES_V1_ENABLED")` in its C and C++ settings, and 0.8.3 builds on React Native 0.85.0. worklets 0.10.1
-(the Expo SDK 57 pin) gets the same define in a new scaffold; a scaffold persisted earlier keeps its manifest, since
-`RN_XTOOL_SCAFFOLD_REVISION` stays 3.
+(the Expo SDK 57 pin) gets the same define in a new scaffold; a scaffold persisted earlier keeps its manifest
+until `RN_XTOOL_SCAFFOLD_REVISION` 4 (fixes 20 to 24) marks it as older.
+
+## 20. `scripts/spm/*`: a dependency on a package that is not installed stops the scaffold
+
+react-native-vision-camera 4.7.3 defines its `FrameProcessors` subspec (Objective-C++ sources and
+`fp.dependency "react-native-worklets-core"`) only `if enableFrameProcessors`, and the podspec sets that to false when
+react-native-worklets-core does not resolve. The regex reader evaluates no condition and merges every subspec (fix 4),
+and the dependency loop makes any `react-native-*` dependency a sibling, so the emitter threw and no manifest was
+written:
+
+```
+react-native spm scaffold: no resolved Swift name for the sibling 'react-native-worklets-core'. expandSpmDependencies must resolve every dep's name before a manifest is written.
+```
+
+React Native then reported `"react-native-vision-camera" has mixed Swift + Objective-C/C++ sources`, which hid the
+cause.
+
+Fix: `classifyPodDependency` names what a dependency is (a subspec of the same pod, React Native core, an Expo module,
+an autolinked sibling, a sibling that is not linked for iOS, a mapped or an unmapped CocoaPods pod), in the order the
+dependency loop always checked. A sibling is a pod name that the index of the autolinked podspecs maps to an npm
+package, else an npm package named `react-native-*`. The index comes first because a `react-native-*` pod name can
+belong to a scoped package (@react-native-community/netinfo's pod is `react-native-netinfo`). The index also holds the
+packages autolinking lists without iOS, so a pod-style dependency on one of those is a sibling too, not an unknown pod.
+A sibling that is not linked for iOS is left out, as CocoaPods leaves it out:
+
+- declared by the main spec, the dependency alone is left out, and every source stays:
+  `Dependency "<name>" is not installed (or not linked for iOS); left out, as CocoaPods leaves it out.`
+- declared by a subspec, the subspec goes with it. The podspec is read again without that subspec
+  (`readPodspecCached(path, {dropSubspecs})`, on both the regex and the `pod ipc spec` path): its sources, excludes,
+  public headers, `header_dir`, `header_mappings_dir`, frameworks, libraries, xcconfig defines and dependencies, and the
+  spec's `<Pod>/<subspec>` references to it.
+  `Dependency "<name>" is not installed (or not linked for iOS); left out with the subspec "<subspec>" that declares it
+  (its sources, headers, settings and dependencies), as CocoaPods leaves it out.`
+
+The model keeps each selected subspec's own dependencies (`subspecDependencies`) for this. Not covered: a pod-style name
+of an npm package that is not installed at all cannot be told from a CocoaPods pod, and is warned about as an unmapped
+pod; CocoaPods fails on it too. Found on react-native-vision-camera 4.7.3 without react-native-worklets-core: it
+scaffolds without Frame Processors, as CocoaPods builds it. Ships with `RN_XTOOL_SCAFFOLD_REVISION` 4.
+
+## 21. `scripts/spm/*`: scaffolded Swift compiles in the Swift 6 language mode
+
+A mixed scaffold uses `// swift-tools-version: 6.4;(experimentalMultiLang)` (6.5 in `Package@swift-6.5.swift`), and a
+pure-Swift one `6.0`. Every tools version from 6.0 up defaults to the Swift 6 language mode (`-swift-version 6` on the
+compile line), while CocoaPods compiles a pod in Swift 5 unless its podspec declares `swift_version`. react-native-video
+6.19.3 failed with seven strict-concurrency errors:
+
+```
+AudioSessionManager.swift:5:16: error: static property 'shared' is not concurrency-safe because non-'Sendable' type 'AudioSessionManager' may have shared mutable state
+```
+
+react-native-vision-camera 4.7.3 fails the same way (`GlobalReferenceHolder.swift:11:22`, `CameraView.swift:23:40`).
+
+Fix: the reader reads `swift_version` and `swift_versions` (a string or an array, `ios`-scoped too, from the main spec
+and every selected subspec, on both the regex and the `pod ipc spec` path) into `swiftVersions`. A value Ruby would
+interpolate, or an identifier the reader cannot resolve, counts as absent. A target with Swift sources (mixed or pure
+Swift) gets `swiftLanguageModes: [.v5]` at package level, in both manifests, unless the highest declared major version
+is 6 or higher. Not covered: a library that declares Swift 6 but is not Swift 6 clean fails as it does under CocoaPods.
+Found on react-native-video 6.19.3 and react-native-vision-camera 4.7.3: with the Swift 5 mode set by hand, both built
+with warnings only. On the reference app's libraries only react-native-pager-view 9.0.7 (mixed, no `swift_version`)
+changes. Ships with `RN_XTOOL_SCAFFOLD_REVISION` 4.
+
+## 22. `scripts/spm/scaffold-package-swift.js`: invalid header layout for an umbrella directory
+
+react-native-device-info 15.0.2 gets `publicHeadersPath: "ios"`, and `ios/` holds `RNDeviceInfo/RNDeviceInfo.h`
+(SwiftPM's umbrella-directory layout) next to `RNDeviceInfo.xcodeproj/`. SwiftPM refuses it:
+
+```
+target 'RNDeviceInfo' has invalid header layout: umbrella header found at '…/ios/RNDeviceInfo/RNDeviceInfo.h', but more than one directory exists next to its parent directory: …/ios/RNDeviceInfo.xcodeproj; consider reducing them to one
+```
+
+Fix 2 checks only `<publicHeadersPath>/<SwiftName>.h`. Fix: the `include/<SwiftName>/` shim of fix 2 is also used
+when `<publicHeadersPath>/<SwiftName>/<SwiftName>.h` exists and the public headers directory holds any other
+directory. The shim is fed with every header among the sources, and the basename-collision warning is fix 2's,
+unchanged. A lone `<SwiftName>/` directory is left as it is: SwiftPM accepts it. Found on react-native-device-info
+15.0.2, which built by hand with `publicHeadersPath: "ios/RNDeviceInfo"`. Ships with `RN_XTOOL_SCAFFOLD_REVISION` 4.
+
+## 23. `scripts/spm/spm-utils.js`: a bare include of a library's codegen header does not resolve
+
+@react-native-community/netinfo 11.5.2's `ios/RNCNetInfo.mm` does `#import "RNCNetInfoSpec.h"` under
+`RCT_NEW_ARCH_ENABLED`, which the scaffold defines. Codegen writes
+`build/generated/ios/ReactCodegen/RNCNetInfoSpec/RNCNetInfoSpec.h`, and the per-app header farm (`ReactAppHeaders`,
+fix 12) vends it only as `<RNCNetInfoSpec/RNCNetInfoSpec.h>`, the spelling react-native-localize and
+react-native-webview use. CocoaPods' header search paths make the bare spelling work too; SwiftPM failed:
+
+```
+ios/RNCNetInfo.mm:12:9: fatal error: 'RNCNetInfoSpec.h' file not found
+```
+
+Fix: `buildPerAppHeaderTree` writes a forwarder `X.h` at the root of the farm for each codegen directory
+`ReactCodegen/X` that holds `X/X.h` (every library with `codegenConfig.name` X gets one), with the scaffolder banner
+and `#import <X/X.h>`. A header the farm already has at its root is left as it is. When a library's own header in the
+farm is named `X.h` too (`<SwiftName>/X.h`), no forwarder is written, so it cannot shadow that header on a search path,
+and the build log says so: `WARNING: merged headers: no bare "X.h" forwarder to <X/X.h>: <SwiftName>/X.h has that name
+and keeps it`. Every library that depends on React core already has the farm on its header search path, so the
+scaffolded manifests do not change, and the forwarder, rebuilt with the farm on every run, holds no path at all.
+
+A search path in the manifest was tried first: `Context.packageDirectory + "/../../../ios/ReactCodegen/X"`, relative
+to the `libs/<SwiftName>` symlink the autolinker references the package through. SwiftPM does evaluate
+`Context.packageDirectory` as the symlink path, but the compiler resolves `..` after following the symlink, from the
+library's real directory in `node_modules`, so the path missed the codegen directory and the include still failed.
+Found on @react-native-community/netinfo 11.5.2, which built by hand with an absolute `-I` to the codegen directory.
+Ships with `RN_XTOOL_SCAFFOLD_REVISION` 4, though it changes no manifest.
+
+## 24. `scripts/spm/*`: Swift compilation conditions are not carried
+
+`SWIFT_ACTIVE_COMPILATION_CONDITIONS` in a podspec's xcconfig is how a pod switches Swift code on and off (`#if X`),
+and the scaffold never passed it to `swiftSettings`, so such code was always compiled out.
+
+Fix: the reader collects the tokens of literal `'SWIFT_ACTIVE_COMPILATION_CONDITIONS' => '…'` entries from any xcconfig
+hash of every layer (`swiftConditions`, on both the regex and the `pod ipc spec` path). `$(inherited)`, Xcode `$(…)`
+tokens and Ruby interpolations are left out, the same rule as for the C defines (fix 7). A target with Swift sources
+gets `.define("<X>")` in `swiftSettings` for each: after the bridging-header flag on a mixed target, in a new
+`swiftSettings:` line on a pure-Swift one. A clang-only target gets nothing. Conditions in `user_target_xcconfig` are
+carried too, though CocoaPods applies that hash to the app target and not to the pod: the C defines (fix 7) are read
+from it the same way. Not covered: react-native-vision-camera 4.7.3 switches its location tagging with a Ruby ternary
+(`"$(inherited) #{enableLocation ? "VISION_CAMERA_ENABLE_LOCATION" : ""}"`), which the regex reader cannot evaluate, so
+location tagging stays compiled out there; CocoaPods enables it by default. On the reference app's libraries nothing
+changes. Found on react-native-vision-camera 4.7.3. Ships with `RN_XTOOL_SCAFFOLD_REVISION` 4.
+
+## 25. `scripts/spm/scaffold-package-swift.js`: `scaffoldAll` cannot scaffold only the deps the autolinker reported
+
+`scaffoldAll` walks every autolinked dep, and `setup-apple-spm.js scaffold` runs it with `force: true` ("Always force a
+re-render so re-running after editing a podspec picks up the new content"). Every scaffold run therefore rewrote every
+library's `Package.swift`, those the autolinker had not reported included. That breaks the promise of the marker every
+scaffold carries, that the file is safe to edit and persist with patch-package: a hand fix to one library was gone as
+soon as another library was installed and scaffolded. `skipDeps` names deps to leave out, but nothing names the only
+deps to scaffold.
+
+Fix: `ScaffoldAllOptions` gains `onlyDeps`, the dual of `skipDeps`. When it is set, only those npm names are scaffolded
+(direct or transitive); the others get no result entry and are not touched. `skipDeps` still wins over it. The caller
+passes the names the autolinker reported without a `Package.swift`, and no `force`: the skip rule still regenerates a
+named dep whose scaffold has an older revision or another cache slot. The podspec-name index of siblings still covers
+every autolinked dep. Found when a scaffold run for react-native-vision-camera 4.7.3 rewrote react-native-device-info
+15.0.2's hand-fixed `Package.swift`. Changes no manifest, so no revision bump.
 
 ## Known limitation (deferred): pure-Swift packages importing a mixed Expo module
 
@@ -615,7 +748,7 @@ every generated or scaffolded Swift target that depends on a mixed module the sa
 
 `tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks the
 fixes against fixtures (skipped when the reference app is not present; set `RN_XTOOL_REF_APP` to point at it). It also
-asserts that each hunk is present in the installed RN files. Fixes 14 to 19 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
+asserts that each hunk is present in the installed RN files. Fixes 14 to 25 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
 against podspec fixtures from the SDK 57 pins in `tests/fixtures/podspecs/` (worklets 0.10.1, reanimated 4.5.1,
 screens 4.26.2, gesture-handler 2.32.0), from screens 4.30.1 (the clang-only importer paths and module map) and from
 worklets 0.8.3 (the `RCT_HERMES_V1_ENABLED` ternary). A golden test re-scaffolds the reference app's libraries and compares them
