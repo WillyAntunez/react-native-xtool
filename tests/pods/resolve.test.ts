@@ -260,6 +260,21 @@ describe("resolveBinaryPods", () => {
     expect(server.requests.filter((q) => q.includes("all_pods_versions"))).toEqual([`GET ${index}`]);
   });
 
+  it("reads the version index again on a pod's first resolution, and not for a locked pod", async () => {
+    servePod("PodC", { "1.0.0": {}, "2.0.0": {} });
+    const index = `/all_pods_versions_${podShard("PodC").join("_")}.txt`;
+    const file = path.join(cache, "specs", "index", index.slice(1));
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, "PodC/1.0.0\n");
+    const roots: PodRoot[] = [{ library: "lib-c", libraryVersion: "1.0.0", dependency: "PodC", requirements: [">= 1.0"] }];
+    const locked = await resolveBinaryPods(roots, ctx({ locked: { PodC: "1.0.0" } }));
+    expect(locked.binary.map((b) => `${b.pod} ${b.version}`)).toEqual(["PodC 1.0.0"]);
+    expect(server.requests.filter((q) => q.includes("all_pods_versions"))).toEqual([]);
+    const first = await resolveBinaryPods(roots, ctx());
+    expect(first.binary.map((b) => `${b.pod} ${b.version}`)).toEqual(["PodC 2.0.0"]);
+    expect(server.requests.filter((q) => q.includes("all_pods_versions"))).toEqual([`GET ${index}`]);
+  });
+
   it("makes no request when the lock and the cache hold everything", async () => {
     const locked = Object.fromEntries((await resolveBinaryPods(ML_KIT_ROOTS, ctx())).binary.map((b) => [b.pod, b.version]));
     server.requests.length = 0;
