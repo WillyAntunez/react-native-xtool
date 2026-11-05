@@ -435,6 +435,14 @@ describe("runRnSpm", () => {
     expect(h.calls[0]!.env?.["RN_SPM_POD_TABLE"]).toBe(POD_TABLE);
   });
 
+  it("passes the binary pods to the scaffolder in the table file", async () => {
+    const binary = { GoogleMLKit: { product: "GoogleMLKit" } };
+    const h = harness([{ exitCode: 0, output: "" }]);
+    await runRnSpm(paths, { kind: "bare", rnScripts: "vendored", expoPlugin: "installed", binary }, h.deps);
+    expect(h.tables).toEqual([mergedPodTable(undefined, binary)]);
+    expect(h.tables[0]!.binary).toEqual(binary);
+  });
+
   it("forwards artifact flags to the scaffold run", async () => {
     const h = harness([
       { exitCode: 1, output: missing("lib-a") },

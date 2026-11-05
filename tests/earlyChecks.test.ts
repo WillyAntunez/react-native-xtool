@@ -637,6 +637,16 @@ describe("unmapped pods", () => {
       "end\n",
   });
 
+  it("classifies a pod the binary map names as binary, never unmapped", async () => {
+    const root = await project({ "@react-native-ml-kit/text-recognition": mlKit() });
+    const binary = { GoogleMLKit: { product: "GoogleMLKit" } };
+    expect(libraryFailures(root, { binary })).toEqual([]);
+    expect(podPinWarnings(root, mergedPodTable(undefined, binary), { binary })).toEqual([]);
+    expect(scaffoldedPods(root, mergedPodTable(undefined, binary))).toEqual(new Map([["@react-native-ml-kit/text-recognition", ["GoogleMLKit"]]]));
+    // Without the map, the pod stays unmapped.
+    expect(libraryFailures(root).map((f) => f.id)).toEqual(["unmapped-pod"]);
+  });
+
   it("refuses AppAuth's shape without a table entry", async () => {
     const root = await project({ "react-native-app-auth": appAuth() });
     expect(libraryFailures(root, { table: NO_POD_TABLE })).toEqual([

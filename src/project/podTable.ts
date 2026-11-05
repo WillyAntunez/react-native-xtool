@@ -16,9 +16,15 @@ export const POD_TABLE_ENV = "RN_SPM_POD_TABLE";
 
 /** Where an entry of the merged table comes from. */
 export type PodSource = "scaffolder" | "rn-xtool" | "config";
+/** A binary pod the `pods` step resolved: the product of `ios/build/pod-binaries` that links it. */
+export interface PodBinary {
+  product: string;
+}
 export interface PodTable {
   pods: Record<string, PodEntry>;
   source: Record<string, PodSource>;
+  /** The binary pods, none of which `pods` maps; absent without any. */
+  binary?: Record<string, PodBinary>;
 }
 
 function scaffolderBaseline(): Record<string, PodEntry> {
@@ -50,9 +56,10 @@ function mergePodEntry(base: PodEntry | undefined, over: PodEntry): PodEntry {
 
 /**
  * The scaffolder's baseline, then data/pods.json, then the config's pods. Per pod, a later entry overrides the fields it
- * names and keeps the others: pinning AppAuth to another version keeps its forwardHeaders.
+ * names and keeps the others: pinning AppAuth to another version keeps its forwardHeaders. `binary`: the binary pods
+ * the `pods` step resolved; a pod the table maps is never binary (the table wins, spec goal 1.2).
  */
-export function mergedPodTable(configPods?: Record<string, PodEntry>): PodTable {
+export function mergedPodTable(configPods?: Record<string, PodEntry>, binary?: Record<string, PodBinary>): PodTable {
   const table: PodTable = { pods: {}, source: {} };
   const layers: [PodSource, Record<string, PodEntry>][] = [
     ["scaffolder", scaffolderBaseline()],
@@ -65,14 +72,24 @@ export function mergedPodTable(configPods?: Record<string, PodEntry>): PodTable 
       table.source[pod] = source;
     }
   }
+  const binaryPods = Object.entries(binary ?? {}).filter(([pod]) => table.pods[pod] === undefined);
+  if (binaryPods.length > 0) table.binary = Object.fromEntries(binaryPods.map(([pod, b]) => [pod, { product: b.product }]));
   return table;
 }
 
-/** Writes the table to `ios/build/rn-xtool-pods.json` and returns that path. */
+/** The table's pods as the scaffolder reads them: each entry, and `{ binary: { product } }` for each binary pod. */
+export function scaffolderPods(table: PodTable): Record<string, PodEntry | { binary: PodBinary }> {
+  return { ...table.pods, ...Object.fromEntries(Object.entries(table.binary ?? {}).map(([pod, b]) => [pod, { binary: b }])) };
+}
+
+/**
+ * Writes the table to `ios/build/rn-xtool-pods.json` and returns that path. Its `pods` holds the entries and the
+ * binary pods (`scaffolderPods`).
+ */
 export function writePodTable(paths: ProjectPaths, table: PodTable): string {
   const file = path.join(paths.iosBuild, "rn-xtool-pods.json");
   mkdirSync(paths.iosBuild, { recursive: true });
-  writeFileSync(file, `${JSON.stringify(table, null, 2)}\n`);
+  writeFileSync(file, `${JSON.stringify({ ...table, pods: scaffolderPods(table) }, null, 2)}\n`);
   return file;
 }
 

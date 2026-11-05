@@ -11,7 +11,7 @@ import type { PodEntry } from "../config.js";
 import type { ProjectKind } from "./types.js";
 import { troubleshootingUrl } from "../docs.js";
 import { packageRoot } from "../tools/exec.js";
-import { mergedPodTable, pinLine, pinSource, podRequirementSatisfied, type PodTable } from "./podTable.js";
+import { mergedPodTable, pinLine, pinSource, podRequirementSatisfied, scaffolderPods, type PodBinary, type PodTable } from "./podTable.js";
 import {
   attribute,
   dependencyDirs,
@@ -94,7 +94,7 @@ function expoSpmReaders(): ExpoSpmReaders {
 
 /** What the scaffolder makes of a podspec's `s.dependency` (classifyPodDependency in scaffold-package-swift.js). */
 interface PodClassification {
-  kind: "subspec" | "core" | "expo" | "sibling" | "missing-sibling" | "mapped" | "unmapped";
+  kind: "subspec" | "core" | "expo" | "sibling" | "missing-sibling" | "mapped" | "binary" | "unmapped";
   /** The name before any `/<subspec>`. */
   pod: string;
   /** For a sibling or a missing sibling: its npm package. */
@@ -108,7 +108,7 @@ type ClassifyPodDependency = (
     ownNpm: string;
     podToNpm: Map<string, string>;
     linkedNpm: Set<string>;
-    table: Record<string, PodEntry>;
+    table: Record<string, PodEntry | { binary: PodBinary }>;
   },
 ) => PodClassification;
 
@@ -323,8 +323,10 @@ export interface LibraryCheckOptions {
   podsFile?: string;
   /** Packages the config leaves out of the iOS build: skipped, like those taken out of iOS autolinking. */
   exclude?: readonly string[];
-  /** The pod table to classify with, instead of `mergedPodTable(pods)` (a test seam). */
+  /** The pod table to classify with, instead of `mergedPodTable(pods, binary)` (a test seam). */
   table?: PodTable;
+  /** The binary pods rn-xtool resolved (the `pods` step; offline, from the lock): classified `binary`, not `unmapped`. */
+  binary?: Record<string, PodBinary>;
   /**
    * The project kind. On bare, a pod sibling that is installed but not listed in package.json is not linked by the
    * community CLI, so it is refused (`unlisted-sibling`); Expo's autolinking links such a package.
@@ -418,7 +420,7 @@ class Libraries {
     // On bare, the scaffolder knows only the pod names of the packages the CLI links (those package.json lists): a
     // sibling installed outside package.json reads to it as a CocoaPods pod it cannot map.
     const classify = (name: string, selfPodName: string): DependencyClassification => {
-      const ctx = { selfPodName, ownNpm: lib.name, linkedNpm, table: table.pods };
+      const ctx = { selfPodName, ownNpm: lib.name, linkedNpm, table: scaffolderPods(table) };
       const c = classifier(name, { ...ctx, podToNpm });
       if (!bare || c.kind !== "missing-sibling" || c.npm === undefined || this.listed.has(c.npm)) return c;
       return classifier(name, { ...ctx, podToNpm: listedPodToNpm }).kind === "unmapped" ? { ...c, kind: "unlisted-sibling" } : c;
@@ -446,7 +448,7 @@ class Libraries {
 
   /** The pod table the checks classify with. */
   table(): PodTable {
-    return (this.podTable ??= this.opts.table ?? mergedPodTable(this.opts.pods));
+    return (this.podTable ??= this.opts.table ?? mergedPodTable(this.opts.pods, this.opts.binary));
   }
 
   private index(): { podToNpm: Map<string, string>; linkedNpm: Set<string>; listedPodToNpm: Map<string, string> } {
@@ -609,7 +611,7 @@ export function podPinWarnings(projectRoot: string, table: PodTable, opts: Libra
 
 /**
  * For each library rn-xtool would scaffold (those `libraryFailures` checks), the pods its unconditional podspec lines
- * depend on that `table` maps, in podspec order: the pods its scaffold pins. Never throws.
+ * depend on that `table` maps or names as binary pods, in podspec order: the pods its scaffold records. Never throws.
  */
 export function scaffoldedPods(projectRoot: string, table: PodTable, opts: LibraryCheckOptions = {}): Map<string, string[]> {
   const pods = new Map<string, string[]>();
@@ -623,7 +625,8 @@ export function scaffoldedPods(projectRoot: string, table: PodTable, opts: Libra
     try {
       const lib = libs.library(name, dir);
       if (lib === undefined || !libs.scaffolded(lib)) continue;
-      const mapped = [...new Set(libs.podDependencies(lib).filter((d) => d.kind === "mapped").map((d) => d.pod))];
+      const deps = libs.podDependencies(lib).filter((d) => d.kind === "mapped" || d.kind === "binary");
+      const mapped = [...new Set(deps.map((d) => d.pod))];
       if (mapped.length > 0) pods.set(name, mapped);
     } catch {
       // One unreadable package says nothing about the others.

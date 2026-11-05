@@ -376,6 +376,8 @@ function recordedPins(line: string | undefined): Map<string, string> {
 
 interface PinChange {
   pod: string;
+  /** A binary pod the scaffold does not record as `<pod>=binary`. */
+  binary?: true;
   /** The version the scaffold pins; undefined when it does not pin the pod. */
   pinned?: string;
   now: string;
@@ -390,15 +392,25 @@ interface PinChange {
 function pinChanges(recorded: Map<string, string>, expected: readonly string[], table: PodTable): PinChange[] {
   const changes: PinChange[] = [];
   for (const [pod, pinned] of recorded) {
+    // `<pod>=binary` records a binary pod, whose versions live in the lock: never a version.
+    if (pinned === BINARY_PIN) continue;
     const now = table.pods[pod]?.exact;
     if (now !== undefined && now !== pinned) changes.push({ pod, pinned, now, source: table.source[pod]! });
   }
   for (const pod of expected) {
     const now = table.pods[pod]?.exact;
     if (now !== undefined && !recorded.has(pod)) changes.push({ pod, now, source: table.source[pod]! });
+    if (table.binary?.[pod] !== undefined && recorded.get(pod) !== BINARY_PIN) {
+      changes.push({ pod, binary: true, now: BINARY_PIN, source: "rn-xtool" });
+    }
   }
   return changes;
 }
+
+/** What the rn-xtool-pods line records for a binary pod (scaffolder fix 27). */
+const BINARY_PIN = "binary";
+/** Why a scaffold does not link a binary pod, after `patches/<name> ` or `node_modules/<pkg>/Package.swift `. */
+const notLinked = (pod: string): string => `does not link ${pod}'s CocoaPods binaries`;
 
 /** "the config says 3.1.0", "rn-xtool's table says 3.0.0" */
 const says = (c: PinChange): string => `${c.source === "config" ? "the config" : "rn-xtool's table"} says ${c.now}`;
@@ -461,8 +473,10 @@ function scaffoldPatchFindings(
     for (const c of pinChanges(recordedPins(PATCH_PODS_RE.exec(text)?.[1]), wanted, table)) {
       findings.push({
         kind: "pins",
-        line:
-          c.pinned !== undefined
+        line: c.binary
+          ? `⚠ patches/${name} ${notLinked(c.pod)}: it was scaffolded before rn-xtool resolved them; delete it so rn-xtool ` +
+            `regenerates it ${tail}`
+          : c.pinned !== undefined
             ? `⚠ patches/${name} pins ${c.pod} ${c.pinned}, ${says(c)}; delete it so rn-xtool regenerates it ${tail}`
             : `⚠ patches/${name} does not pin ${c.pod}, ${says(c)}: it was scaffolded without rn-xtool's pod table (not ` +
               `through rn-xtool build); delete it so rn-xtool regenerates it ${tail}`,
@@ -614,7 +628,13 @@ export async function refreshStaleScaffolds(
       } else if (table !== undefined) {
         expected ??= scaffoldedPods(projectRoot, table, { exclude, ...(kind !== undefined ? { kind } : {}) });
         const [c] = pinChanges(recordedPins(MANIFEST_PODS_RE.exec(manifest)?.[1]), expected.get(pkg) ?? [], table);
-        if (c !== undefined) why = c.pinned !== undefined ? `pins ${c.pod} ${c.pinned}, not ${c.now}` : `does not pin ${c.pod}, ${says(c)}`;
+        if (c !== undefined) {
+          why = c.binary
+            ? notLinked(c.pod)
+            : c.pinned !== undefined
+              ? `pins ${c.pod} ${c.pinned}, not ${c.now}`
+              : `does not pin ${c.pod}, ${says(c)}`;
+        }
       }
       if (why === undefined) continue;
       await rm(path.join(dir, "Package.swift"), { force: true });

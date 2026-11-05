@@ -8,7 +8,7 @@ import type { ProjectKind } from "../project/index.js";
 import type { ExpoPlugin, RnScripts } from "../versions.js";
 import { packageRoot, runArgv, toolEnv } from "../tools/exec.js";
 import type { PodEntry } from "../config.js";
-import { POD_TABLE_ENV, mergedPodTable, writePodTable, type PodTable } from "../project/podTable.js";
+import { POD_TABLE_ENV, mergedPodTable, writePodTable, type PodBinary, type PodTable } from "../project/podTable.js";
 
 export const AUTOLINKING_CONFIG_COMMAND = [
   "npx",
@@ -331,6 +331,8 @@ export async function runRnSpm(
     pods?: Record<string, PodEntry>;
     /** The config's exclude: left out of the autolinking JSON every run reads (configCommandFor). */
     exclude?: readonly string[];
+    /** The binary pods the `pods` step resolved, handed to the scaffolder in the table file (fix 27). */
+    binary?: Record<string, PodBinary>;
   },
   deps: Partial<RnSpmDeps> = {},
 ): Promise<void> {
@@ -356,7 +358,7 @@ export async function runRnSpm(
   const driver = opts.kind === "bare" || opts.expoPlugin === "vendored";
   const rnArgs = driver ? rnSpmGenerateArgs(paths, opts, rnDir) : rnSpmArgs(paths, opts, rnDir);
   // Every run gets the table: the scaffold step reads it, whichever project kind runs it.
-  const podTableFile = (deps.writePodTable ?? writePodTable)(paths, mergedPodTable(opts.pods));
+  const podTableFile = (deps.writePodTable ?? writePodTable)(paths, mergedPodTable(opts.pods, opts.binary));
   const env = rnSpmEnv(paths, opts.expoPlugin, podTableFile);
 
   const first = await runner("node", rnArgs, { cwd: paths.ios, env });

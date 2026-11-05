@@ -138,6 +138,35 @@ describe("the pod table", () => {
     expect(POD_TABLE_ENV).toBe("RN_SPM_POD_TABLE");
   });
 
+  it("writes the binary pods into the table file", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "rn-xtool-pods-"));
+    tmp.push(root);
+    const table = mergedPodTable(undefined, { GoogleMLKit: { product: "GoogleMLKit" } });
+    expect(table.binary).toEqual({ GoogleMLKit: { product: "GoogleMLKit" } });
+    const file = writePodTable(projectPaths(root), table);
+    const written = JSON.parse(readFileSync(file, "utf8")) as { pods: Record<string, unknown> };
+    expect(written.pods["GoogleMLKit"]).toEqual({ binary: { product: "GoogleMLKit" } });
+    expect(written.pods["AppAuth"]).toEqual(APPAUTH);
+    const { loadPodTable } = createRequire(import.meta.url)(SCAFFOLDER) as { loadPodTable(): Record<string, unknown> };
+    const saved = process.env[POD_TABLE_ENV];
+    process.env[POD_TABLE_ENV] = file;
+    try {
+      expect(loadPodTable()["GoogleMLKit"]).toEqual({ binary: { product: "GoogleMLKit" } });
+    } finally {
+      if (saved === undefined) delete process.env[POD_TABLE_ENV];
+      else process.env[POD_TABLE_ENV] = saved;
+    }
+  });
+
+  it("a table entry wins over a binary pod", () => {
+    const table = mergedPodTable(undefined, { GoogleToolboxForMac: { product: "GoogleToolboxForMac" }, MLKitVision: { product: "MLKitVision" } });
+    expect(table.binary).toEqual({ MLKitVision: { product: "MLKitVision" } });
+    expect(table.pods.GoogleToolboxForMac).toEqual(ML_KIT_SOURCES.GoogleToolboxForMac);
+    // A config entry wins too.
+    const mine = { url: "https://github.com/example/mlkit-vision", exact: "1.0.0", products: ["MLKitVision"] };
+    expect(mergedPodTable({ MLKitVision: mine }, { MLKitVision: { product: "MLKitVision" } }).binary).toBeUndefined();
+  });
+
   it("package.json ships data/", () => {
     const pkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { files: string[] };
     expect(pkg.files).toContain("data");
