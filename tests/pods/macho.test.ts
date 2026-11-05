@@ -45,6 +45,14 @@ describe("arm64Slice", () => {
     expect(arm64Slice(arArchive([{ name: "a.o", data: x86 }]))).toEqual({ missing: true, arches: ["x86_64"] });
   });
 
+  it("has no arm64 slice in an archive without a Mach-O member (row 26)", () => {
+    // LLVM bitcode from an LTO build, and an empty archive: nothing lld could link as arm64.
+    const bitcode = arArchive([{ name: "bitcode.o", data: Buffer.from("BC\xc0\xde\x35\x14\x00\x00", "latin1") }], { symdef: true });
+    expect(arm64Slice(bitcode)).toEqual({ missing: true, arches: [] });
+    expect(arm64Slice(fat([{ cpu: "arm64", data: bitcode }]))).toEqual({ missing: true, arches: [] });
+    expect(arm64Slice(Buffer.from("!<arch>\n", "latin1"))).toEqual({ missing: true, arches: [] });
+  });
+
   it("calls a fat file whose slice lies outside it unknown", () => {
     const file = fat([{ cpu: "arm64", data: arm }]).subarray(0, 40);
     expect(readBinary(file)).toEqual({ shape: "unknown", magic: "0xcafebabe" });

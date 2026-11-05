@@ -162,6 +162,12 @@ describe("wrapPod", () => {
     ["x86_64", fat([{ cpu: "x86_64", data: lib("x86_64") }]), "x86_64"],
     ["arm64e", fat([{ cpu: "arm64e", data: obj("arm64e") }, { cpu: "x86_64", data: obj("x86_64") }]), "arm64e, x86_64"],
     ["a thin x86_64 object", obj("x86_64"), "x86_64"],
+    [
+      "an archive of LLVM bitcode only",
+      fat([{ cpu: "arm64", data: arArchive([{ name: "bitcode.o", data: Buffer.from("BC\xc0\xde\x35\x14\x00\x00", "latin1") }]) }]),
+      "no architecture",
+    ],
+    ["an empty archive", Buffer.from("!<arch>\n", "latin1"), "no architecture"],
   ])("stops on a framework without an arm64 device slice (%s)", async (_what, binary, arches) => {
     framework("Frameworks/MLKitFoo.framework", binary);
     await expect(wrap("MLKitFoo", ["Frameworks/MLKitFoo.framework"])).rejects.toThrow(

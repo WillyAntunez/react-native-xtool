@@ -217,19 +217,23 @@ export function readBinary(buf: Buffer): BinaryShape {
 
 /**
  * The arm64 device slice: from a fat file, the slice with CPU_TYPE_ARM64 and subtype ALL (capability bits masked;
- * arm64e is not arm64); a thin arm64 Mach-O, or an archive whose Mach-O members are all arm64, as it is.
+ * arm64e is not arm64); a thin arm64 Mach-O, or an archive with Mach-O members that are all arm64, as it is.
  */
 export function arm64Slice(buf: Buffer): Buffer | { missing: true; arches: string[] } {
   const arches = fatArches(buf);
   if (arches !== undefined) {
     const arm = arches.find((a) => a.isArm64);
-    return arm === undefined ? { missing: true, arches: arches.map((a) => a.cpu) } : buf.subarray(arm.offset, arm.offset + arm.size);
+    if (arm === undefined) return { missing: true, arches: arches.map((a) => a.cpu) };
+    const slice = buf.subarray(arm.offset, arm.offset + arm.size);
+    // An archive slice must hold arm64 objects, as a thin archive must.
+    return readBinary(slice).shape === "ar" ? arm64Slice(slice) : slice;
   }
   const shape = readBinary(buf);
   if (shape.shape === "macho") return shape.info.cpu === "arm64" ? buf : { missing: true, arches: [shape.info.cpu] };
   if (shape.shape === "ar") {
+    // Row 26: an archive without any Mach-O member (LLVM bitcode, or empty) has nothing lld could link as arm64.
     const cpus = [...new Set(shape.members.flatMap((m) => (m.info === undefined ? [] : [m.info.cpu])))];
-    return cpus.every((c) => c === "arm64") ? buf : { missing: true, arches: cpus };
+    return cpus.length > 0 && cpus.every((c) => c === "arm64") ? buf : { missing: true, arches: cpus };
   }
   return { missing: true, arches: [] };
 }
