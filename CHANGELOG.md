@@ -23,8 +23,48 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   is the version the patch is for, but its files match neither the original package nor the patched one.": this
   release changes the bundled react-native patch, and `node_modules/react-native` still holds 0.1.0-alpha.5's. Run
   `rm -rf node_modules/react-native && npm install`, then build again.
+- CocoaPods binaries need nothing from you, unless your `patches/` hold a scaffold of a library that depends on them
+  (@react-native-ml-kit/text-recognition) persisted without them, under `knownLimits.allow`: `build` then warns "⚠
+  patches/<file> does not link GoogleMLKit's CocoaPods binaries: it was scaffolded before rn-xtool resolved them;
+  delete it so rn-xtool regenerates it (also remove node_modules/<package> and reinstall: that copy still has the old
+  Package.swift)". Do what it says. (A scaffold persisted by 0.1.0-alpha.5 gets the revision warning above instead.)
+- The first build of an app with @react-native-ml-kit/text-recognition downloads 40.3 MB from dl.google.com, after the
+  line that announces it, and writes `rn-xtool-pods.lock.json` at the project root: commit it.
 
 ### Added
+- Binary CocoaPods pods: a library's dependency on pods that ship prebuilt static frameworks is resolved and linked,
+  with no CocoaPods or Ruby. rn-xtool reads the pods' specs from the CocoaPods CDN, picks the newest versions that meet
+  every requirement, downloads the files on your machine into `~/.cache/rn-xtool/pods`, wraps each framework for
+  SwiftPM (a headers-only xcframework, and its arm64 archive linked once with `-force_load`), and writes the local
+  package `ios/build/pod-binaries` that the scaffold links. @react-native-ml-kit/text-recognition 2.0.0 builds this way
+  on bare React Native 0.88.1 (checked by building on 2026-11-05; not run on a device yet): ten Google pods, their
+  five OCR model bundles at the root of `App.app`, and GoogleToolboxForMac, GoogleUtilities, GoogleDataTransport and
+  GTMSessionFetcher from their SwiftPM packages through the pod table. The app grows by about 53 MB. Other shapes
+  (dynamic or Swift frameworks, vendored libraries, compiled sources) stop with a message naming the pod. See
+  [troubleshooting.md](docs/troubleshooting.md#cocoapods-binaries).
+- `rn-xtool-pods.lock.json`, at the project root, records each binary pod's version, URL, size and sha256: "ℹ pods —
+  recorded the sha256 of 10 downloads in rn-xtool-pods.lock.json; commit it, so other machines check that they get the
+  same files." Later builds keep the locked versions and check every download against it; a file with another sha256
+  stops the build with what to do. With the lock and a full cache, the step makes no request.
+- Before the first download, `build` says what it downloads, how much, from where and whose: "ℹ pods —
+  @react-native-ml-kit/text-recognition needs 10 CocoaPods binaries that are not in rn-xtool's cache, 40.3 MB from
+  dl.google.com: … From Google, Inc. (…; terms: https://developers.google.com/ml-kit/terms). rn-xtool keeps them in
+  ~/.cache/rn-xtool/pods and does not copy them into the project." The terms page comes from `data/pod-terms.json`.
+  rn-xtool does not accept the terms on your behalf, and its package holds none of these files.
+- Scaffolded libraries' `resource_bundles` reach the app: each unconditional entry whose name and globs are plain
+  strings becomes `<name>.bundle` at the root of `App.app`, as CocoaPods places it, with `.lproj` folders kept.
+  react-native-svg gets `RNSVGFilters.bundle` with its prebuilt Metal filters, and react-native-device-info its
+  privacy bundle (checked by building; svg's filters are not checked on a device yet).
+- `doctor --project` has a `pods` line for binary pods, from the lock and the cache, or probed online within its 10 s
+  budget: "✔ pods — 10 CocoaPods binaries for @react-native-ml-kit/text-recognition, in rn-xtool's cache and in
+  rn-xtool-pods.lock.json", "ℹ pods — …, 10 to download from dl.google.com (40.3 MB)", and the lock entries no library
+  needs. `doctor` has an `llvm-ar` line: binary pods are wrapped with the Swift toolchain's `llvm-ar`.
+- A pod table entry can carry `outsideRequirement`, a sentence that turns the `⚠` for a pin outside a requirement into
+  one `ℹ` line ("ℹ GoogleToolboxForMac 6.0.1 (rn-xtool table) is outside MLKitCommon's and MLKitVision's requirement
+  ">= 4.2.1, < 5.0": 4.x ships no Package.swift; 6.0.1 keeps the GTMLogger API ML Kit links against"), and
+  `emptyTargets`, the package's targets without sources, for which rn-xtool writes an empty object before the build
+  (GoogleToolboxForMac's `GTMDefines`, which Swift Build lists at link anyway). A config entry that pins another
+  `exact` or `url` drops both; `"emptyTargets": []` clears the list for the same pin.
 - CocoaPods pods with a SwiftPM package: a scaffolded library's dependency on a CocoaPods pod becomes a
   `.package(url:exact:)` dependency when the pod table names the pod. rn-xtool's table maps AppAuth to AppAuth-iOS
   3.0.0, so react-native-app-auth 8.5.1 builds on bare React Native 0.88.1 and on Expo SDK 58 (both checked by building
@@ -37,8 +77,8 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   [troubleshooting.md](docs/troubleshooting.md#libraries-that-depend-on-cocoapods-pods).
 - `doctor --project` and `build` refuse early a CocoaPods-only library that depends on a pod the pod table does not
   map, naming the pod and the `pods` entry to add: "<package> <version>: its podspec depends on the CocoaPods pod <pod>,
-  which has no SwiftPM package rn-xtool knows. …". @react-native-ml-kit/text-recognition 2.0.0 is refused this way
-  (GoogleMLKit ships prebuilt binaries). Before, the scaffold was persisted without the pod and the build failed at
+  which has no SwiftPM package rn-xtool knows. …", for a pod whose spec is a git source (a pod of prebuilt binaries is
+  linked, above). Before, the scaffold was persisted without the pod and the build failed at
   compile time. A library that depends on a sibling by its pod name (react-native-reanimated's `RNWorklets`) is not
   refused when the sibling is installed as a peer, outside package.json, on Expo, whose autolinking links it.
 - `"exclude": ["<package>"]` in `rn-xtool.config.json` leaves native modules out of rn-xtool's iOS builds, as
@@ -91,13 +131,35 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   (also worklets 0.10.x when it is scaffolded again), so it no longer looks for the legacy Hermes inspector headers.
   0.85.1 and 0.85.2 build with a warning that says to move to 0.85.3. The daily drift watch checks 0.85, and the
   weekly exploration covers 0.81–0.84. See [bare-react-native.md](docs/bare-react-native.md#react-native-085).
-- `build` names the resources of scaffolded libraries that do not reach the app, in one line after `rn-spm`, for
-  example "ℹ Not copied into the app: react-native-svg (RNSVGFilters.bundle). Code that loads them at run time does
-  not find them." When every resource is a privacy manifest, the line ends "Development builds run without them;
-  privacy manifests are read only at App Store submission." It reads the podspec's `resource_bundles` and
-  `resources`. See [troubleshooting.md](docs/troubleshooting.md#scaffolded-libraries).
+- `build` names the resources of scaffolded libraries that do not reach the app (plain `resources`, and bundles written
+  as Ruby code), in one line after `rn-spm`, for example "ℹ Not copied into the app: <library> (<name>.bundle). Code
+  that loads them at run time does not find them." When every resource is a privacy manifest, the line ends
+  "Development builds run without them; privacy manifests are read only at App Store submission." It reads the
+  podspec's `resource_bundles` and `resources`. See [troubleshooting.md](docs/troubleshooting.md#scaffolded-libraries).
+- After `xtool-build`, with binary pods, rn-xtool checks the packed app: each pod's resource bundle with its
+  `Info.plist`, no binary pod embedded as a dynamic framework, and every Objective-C class a force-loaded archive
+  defines in the App binary. A failure removes `App.app` and stops: "The packed app is not what the CocoaPods binaries
+  need, so rn-xtool removed it and does not install it: …".
 
 ### Changed
+- The early checks read a pod's route offline, from `rn-xtool-pods.lock.json` or a spec in rn-xtool's cache, and
+  refuse only a git-source pod with no SwiftPM package. A pod they cannot route gets "ℹ pods — <pod> (from
+  <library>) is not resolved yet; rn-xtool build reads its spec from the CocoaPods CDN.", and the new `pods` step, the
+  first step of `build`, decides before anything changes in the project. For a library in `knownLimits.allow`, the
+  `pods` step leaves such a pod out with "⚠ known-limits — <the refusal> (allowed by rn-xtool.config.json
+  knownLimits.allow; the build may fail later)", and the build goes on. Once a build has cached that pod's spec, the
+  step leaves the pod out before any CDN read, so the library builds offline too; a machine that never read the spec
+  stops offline with "Cannot reach cdn.cocoapods.org (<reason>) to read the versions of <pod>, which are not in
+  rn-xtool's cache (~/.cache/rn-xtool/pods). …". In
+  `doctor --project`, such a refusal is "✖ pods — …", and "⚠ pods — not checked: …" means only that the host could not
+  be reached, the 10 s budget ran out or the lock could not be read.
+- `doctor --project`'s `podspecs` line lists under `resource_bundles` only the packages with a bundle rn-xtool does not
+  build (one under a Ruby condition, or written as Ruby code).
+- With binary pods, `install` (over USB and with `--network`, so `run` too) has xtool build the app first and runs the
+  same checks on it before it installs anything: an app the checks refuse is removed and not installed. It also writes
+  the empty objects the build recorded (`GTMDefines.o`), so it works after `ios-xtool/.build` was deleted, and stages
+  `ios/build/pod-binaries` and the pods' bundles again from the lock and the cache when they are gone since the build
+  (a hand-run `npx expo prebuild --clean`, `rm -rf ios/build`).
 - The first-run checklist line about the red screen now reads: "On the first launch iOS asks for Local Network access,
   and the red screen "No script URL provided" may show behind it: tap Allow, and the app reloads by itself." For apps
   with expo-dev-client: "On the first launch the dev launcher asks for Local Network access: tap Allow, then open the
@@ -127,6 +189,9 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   resolve, instead of stopping a bare build with `Cannot resolve build setting`.
 
 ### Fixed
+- When persisting a scaffold to `patches/` fails, "⚠ Could not persist <library>'s Package.swift to patches/
+  (<reason>). …" gives patch-package's error as the reason, for example "Installing <library>@<version> with npm
+  failed (status 254)", instead of its banner, "patch-package 8.0.1".
 - react-native-vision-camera 4.7.3, react-native-video 6.19.3, react-native-device-info 15.0.2 and
   @react-native-community/netinfo 11.5.2 build without hand fixes on bare React Native 0.88.1, and device-info on Expo
   SDK 58 (checked by building only, on 2026-11-04). On bare React Native 0.88.1 the four also work on a device

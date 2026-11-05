@@ -97,11 +97,31 @@ rn-xtool's table says <new>` line until they regenerate it, so name the change i
 
 ## Binary pods
 
-The pods cache keeps extracted and wrapped trees across releases, named by their archive and their stamp. When a
-change alters what `extractPod` (`src/pods/archive.ts`) or `wrapPod` (`src/pods/wrap.ts`) writes into a tree, bump
-`EXTRACTOR_VERSION` (for `extractPod`) or `WRAPPER_VERSION` (for `wrapPod`) in the same commit. Users' trees made by
-the old code are then rebuilt instead of reused; a wrapped tree's key holds `EXTRACTOR_VERSION` too, so an extractor
-bump rebuilds both. A change that alters no tree content keeps the version.
+**The cache's versions.** The pods cache keeps extracted and wrapped trees across releases, named by their archive and
+their stamp. When a change alters what `extractPod` (`src/pods/archive.ts`) or `wrapPod` (`src/pods/wrap.ts`) writes
+into a tree, bump `EXTRACTOR_VERSION` (for `extractPod`) or `WRAPPER_VERSION` (for `wrapPod`) in the same commit.
+Users' trees made by the old code are then rebuilt instead of reused; a wrapped tree's key holds `EXTRACTOR_VERSION`
+too, so an extractor bump rebuilds both. A change that alters no tree content keeps the version. The old trees stay in
+users' caches until they delete `~/.cache/rn-xtool/pods`, which the troubleshooting page says is safe.
+
+**The source pods in `data/pods.json`.** A binary pod's git-source dependencies (ML Kit's GTMSessionFetcher,
+GoogleUtilities, GoogleDataTransport and GoogleToolboxForMac) are pod table entries like any other, pinned to the
+newest tag the binary pods' requirements accept that ships a `Package.swift`. When no such tag exists
+(GoogleToolboxForMac 4.x has none), pin the nearest one that does only after a build proves the binaries link against
+it (the post-pack checks pass and the symbols the binaries need are in the App binary), and give the entry an
+`outsideRequirement` sentence saying why: the pin check then prints that one `ℹ` line instead of the `⚠`. A target
+the package declares without sources, which Swift Build lists at link anyway (`GTMDefines`), goes in the entry's
+`emptyTargets`. A changed pin is a changed table entry, so the scaffolder section's CHANGELOG note applies.
+
+**`data/pod-terms.json`** maps a spec's `homepage` to the vendor's terms page, which the line before the first
+download names (`terms: …`). Both are https URLs (the `podTerms` test in `tests/pods/step.test.ts` checks the
+shape). When rn-xtool links binary pods of a new vendor, check the terms page and add its entry; a homepage the file
+does not list gets no `terms:` part, and the line still names the vendor, the licenses and the homepage from the
+spec.
+
+**CocoaPods trunk is read-only from 2026-12-02.** No version is added or changed after that date, so the specs
+rn-xtool caches per version stay valid, and a pin or a fixture taken from the CDN does not move. The CDN stays up as
+long as GitHub and jsDelivr do; a machine with the cache and the lock keeps building if it goes away.
 
 ## Drift watch
 
