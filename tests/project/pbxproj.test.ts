@@ -91,6 +91,15 @@ describe("pbxproj reader", () => {
     expect(resolveSetting(p, "FROM_PROJECT_DIR")).toBe(`${ios}/C.h`);
   });
 
+  it("resolves $(CONFIGURATION) to the configuration read, Debug by default", async () => {
+    const marker = "83CBBA201A601CBA00E9B192 /* Debug */ = {";
+    const src = await templatePbxproj();
+    const at = src.indexOf("buildSettings = {", src.indexOf(marker)) + "buildSettings = {".length;
+    const edited = `${src.slice(0, at)}\n\t\t\t\tPER_CONFIGURATION = "$(CONFIGURATION)/App.entitlements";${src.slice(at)}`;
+    const p = openPbxproj(await iosWith(["HelloWorld"], edited));
+    expect(resolveSetting(p, "PER_CONFIGURATION")).toBe("Debug/App.entitlements");
+  });
+
   it("reports a missing ios directory", () => {
     expect(() => openPbxproj("/nonexistent/ios")).toThrow(/nonexistent/);
   });

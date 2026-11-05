@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as plist from "plist";
 import { afterEach, describe, expect, it } from "vitest";
 import { entitlementLines, EntitlementsError, readEntitlements, type AppEntitlements } from "../src/project/entitlements.js";
 import { GENERIC_PHRASE } from "../src/project/entitlementTable.js";
@@ -97,6 +98,34 @@ describe("readEntitlements", () => {
     expect(readEntitlements(project, ios)?.dict).toEqual({
       "keychain-access-groups": ["$(AppIdentifierPrefix)com.example.app", "$(TeamIdentifierPrefix)shared"],
       "com.apple.security.application-groups": ["group.com.example.app", "group.HelloWorld.$(UNKNOWN_SETTING)"],
+    });
+  });
+
+  it("resolves $(CONFIGURATION) as Debug", async () => {
+    const { ios, project } = await bare('"$(SRCROOT)/HelloWorld/$(CONFIGURATION).entitlements"');
+    await writeFile(join(ios, "HelloWorld", "Debug.entitlements"), plistOf("<dict>\n<key>get-task-allow</key>\n<true/>\n</dict>"));
+    expect(readEntitlements(project, ios)?.dict).toEqual({ "get-task-allow": true });
+  });
+
+  it("names the setting when its value cannot be resolved", async () => {
+    const { ios, project } = await bare('"$(UNKNOWN_DIR)/HelloWorld.entitlements"');
+    expect(() => readEntitlements(project, ios)).toThrow(
+      new EntitlementsError(
+        'CODE_SIGN_ENTITLEMENTS in ios/HelloWorld.xcodeproj could not be read: Cannot resolve build setting $(UNKNOWN_DIR) ' +
+          'in "$(UNKNOWN_DIR)/HelloWorld.entitlements"',
+      ),
+    );
+  });
+
+  it("reads a binary property list", async () => {
+    const { ios, project } = await bare("HelloWorld/HelloWorld.entitlements");
+    await writeFile(
+      join(ios, "HelloWorld", "HelloWorld.entitlements"),
+      Buffer.from(plist.buildBinary({ "aps-environment": "development", "keychain-access-groups": ["$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)"] })),
+    );
+    expect(readEntitlements(project, ios)?.dict).toEqual({
+      "aps-environment": "development",
+      "keychain-access-groups": ["$(AppIdentifierPrefix)com.example.app"],
     });
   });
 

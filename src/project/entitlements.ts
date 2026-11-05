@@ -70,7 +70,8 @@ function isDict(value: unknown): value is Record<string, unknown> {
  * The entitlements of the app target's Debug configuration; undefined when ios/ holds no Xcode project or the setting
  * is unset or empty, or when ios/ holds several Xcode projects or application targets. The path resolves against ios/. Values' `$(PRODUCT_BUNDLE_IDENTIFIER)` (the app's bundle id) and
  * other build settings are resolved from the pbxproj; `$(AppIdentifierPrefix)` and `$(TeamIdentifierPrefix)` are kept,
- * since xtool rewrites them. Throws an EntitlementsError when the file is missing or not a property list dictionary.
+ * since xtool rewrites them. The file may be an XML or a binary property list. Throws an EntitlementsError when the
+ * setting cannot be resolved, or the file is missing or not a property list dictionary.
  */
 export function readEntitlements(project: Pick<ProjectInfo, "root" | "bundleIdentifier">, iosDir: string): AppEntitlements | undefined {
   let projects: string[];
@@ -88,15 +89,23 @@ export function readEntitlements(project: Pick<ProjectInfo, "root" | "bundleIden
     if (e instanceof AmbiguousProjectError) return undefined;
     throw e;
   }
-  const raw = buildSetting(p, "CODE_SIGN_ENTITLEMENTS")?.trim();
-  if (!raw) return undefined;
-  const setting = resolveIn(p, raw, project.bundleIdentifier).trim();
+  let setting: string;
+  try {
+    const raw = buildSetting(p, "CODE_SIGN_ENTITLEMENTS")?.trim();
+    if (!raw) return undefined;
+    setting = resolveIn(p, raw, project.bundleIdentifier).trim();
+  } catch (e) {
+    const xcodeproj = path.relative(project.root, path.dirname(p.path)).split(path.sep).join("/");
+    throw new EntitlementsError(
+      `CODE_SIGN_ENTITLEMENTS in ${xcodeproj} could not be read: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
   if (setting === "") return undefined;
   const file = path.resolve(iosDir, setting);
   const rel = path.relative(project.root, file).split(path.sep).join("/");
-  let text: string;
+  let bytes: Buffer;
   try {
-    text = readFileSync(file, "utf8");
+    bytes = readFileSync(file);
   } catch {
     throw new EntitlementsError(
       `CODE_SIGN_ENTITLEMENTS names ${rel}, which does not exist; xtool cannot sign the app without it. Fix the setting or create the file.`,
@@ -104,7 +113,9 @@ export function readEntitlements(project: Pick<ProjectInfo, "root" | "bundleIden
   }
   let parsed: unknown;
   try {
-    parsed = plist.parse(text);
+    // Xcode saves XML, and accepts a binary property list (bplist00) too.
+    const binary = bytes.subarray(0, 6).toString("latin1") === "bplist";
+    parsed = binary ? plist.parseBinary(new Uint8Array(bytes)) : plist.parse(bytes.toString("utf8"));
   } catch {
     parsed = undefined;
   }

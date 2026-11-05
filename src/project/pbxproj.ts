@@ -143,8 +143,12 @@ export function resolveBuildSettingValue(value: string, lookup: (key: string) =>
   return out;
 }
 
-/** The settings Xcode defines itself: TARGET_NAME, PROJECT_NAME, and SRCROOT and PROJECT_DIR (the folder of the .xcodeproj, ios/). */
-export function builtinSetting(p: Pbxproj, name: string): string | undefined {
+/**
+ * The settings Xcode defines itself: TARGET_NAME, PROJECT_NAME, SRCROOT and PROJECT_DIR (the folder of the .xcodeproj,
+ * ios/), and CONFIGURATION (the configuration read, Debug by default: rn-xtool builds Debug).
+ */
+export function builtinSetting(p: Pbxproj, name: string, configuration = "Debug"): string | undefined {
+  if (name === "CONFIGURATION") return configuration;
   if (name === "TARGET_NAME") return p.appTarget.name;
   if (name === "PROJECT_NAME") return p.projectName;
   if (name === "SRCROOT" || name === "PROJECT_DIR") return path.dirname(path.dirname(p.path));
@@ -153,7 +157,7 @@ export function builtinSetting(p: Pbxproj, name: string): string | undefined {
 
 /** Resolved value of `key`; see `resolveBuildSettingValue`. `$(inherited)` is the project-level value of the same key (empty at the top of the chain). */
 export function resolveSetting(p: Pbxproj, key: string, configuration = "Debug"): string | undefined {
-  const builtin = (name: string): string | undefined => builtinSetting(p, name);
+  const builtin = (name: string): string | undefined => builtinSetting(p, name, configuration);
   const expand = (raw: string, k: string, inherited: string, stack: string[]): string =>
     resolveBuildSettingValue(raw, (name) =>
       name === "inherited" ? inherited : (builtin(name) ?? resolveKey(name, [...stack, k])),
