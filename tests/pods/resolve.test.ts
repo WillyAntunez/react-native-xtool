@@ -237,6 +237,69 @@ describe("resolveBinaryPods", () => {
     );
   });
 
+  it("drops a source pod every library that reaches it is allowed for, with block 2's text", async () => {
+    const { GoogleToolboxForMac: _left, ...pods } = TABLE_PODS;
+    const roots: PodRoot[] = [
+      { library: "react-native-gtm", libraryVersion: "0.1.0", dependency: "GoogleToolboxForMac/Logger", requirements: ["~> 4.2"] },
+      { library: "react-native-image", libraryVersion: "1.0.0", dependency: "MLImage", requirements: ["1.0.0-beta7"] },
+    ];
+    const r = await resolveBinaryPods(roots, { ...ctx({ table: table(pods) }), allowed: (l: string) => l === "react-native-gtm" });
+    expect(r.binary.map((b) => `${b.pod} ${b.version}`)).toEqual(["MLImage 1.0.0-beta7"]);
+    expect(r.roots).toEqual([{ pod: "MLImage", libraries: ["react-native-image"] }]);
+    expect(r.dropped).toEqual([
+      {
+        pod: "GoogleToolboxForMac",
+        version: "4.2.1",
+        libraries: ["react-native-gtm"],
+        reason: `react-native-gtm 0.1.0: its podspec depends on the CocoaPods pod GoogleToolboxForMac, which has no SwiftPM package rn-xtool knows. Add one under "pods" in rn-xtool.config.json: { "pods": { "GoogleToolboxForMac": { "url": "<git URL>", "exact": "<version>", "products": ["<product>"] } } }, or leave the library out with "exclude". See ${troubleshootingUrl("libraries-that-depend-on-cocoapods-pods")}`,
+      },
+    ]);
+  });
+
+  it("drops a source pod reached through binary pods of an allowed library", async () => {
+    const { GoogleToolboxForMac: _left, ...pods } = TABLE_PODS;
+    const r = await resolveBinaryPods(ML_KIT_ROOTS, { ...ctx({ table: table(pods) }), allowed: (l: string) => l === LIB });
+    expect(r.binary).toHaveLength(10);
+    expect(r.sources.map((s) => s.pod)).not.toContain("GoogleToolboxForMac");
+    expect(r.dropped?.map((d) => [d.pod, d.libraries])).toEqual([["GoogleToolboxForMac", [LIB]]]);
+    expect(r.dropped?.[0]!.reason).toContain("(GoogleMLKit 8.0.0 → MLKitCommon 13.0.0) on the CocoaPods pod GoogleToolboxForMac");
+  });
+
+  it("does not walk the dependencies of a dropped source pod", async () => {
+    const pod = "GitPod";
+    server.routes[`/all_pods_versions_${podShard(pod).join("_")}.txt`] = { body: `${pod}/1.0.0\n` };
+    server.routes[`/Specs/${podShard(pod).join("/")}/${pod}/1.0.0/${pod}.podspec.json`] = {
+      body: JSON.stringify({
+        name: pod,
+        version: "1.0.0",
+        homepage: "https://example.invalid/pod",
+        license: "MIT",
+        authors: "Example",
+        source: { git: "https://example.invalid/git/pod.git", tag: "1.0.0" },
+        platforms: { ios: "15.5" },
+        source_files: "Sources/**/*.m",
+        dependencies: { MLImage: [] },
+      }),
+    };
+    const roots: PodRoot[] = [{ library: "react-native-git", libraryVersion: "1.0.0", dependency: pod, requirements: [] }];
+    const r = await resolveBinaryPods(roots, { ...ctx(), allowed: () => true });
+    expect(r.binary).toEqual([]);
+    expect(r.roots).toEqual([]);
+    expect(r.dropped?.map((d) => d.pod)).toEqual([pod]);
+    expect(server.requests.some((q) => q.includes("MLImage"))).toBe(false);
+  });
+
+  it("still stops on a source pod a library that is not allowed reaches too", async () => {
+    const { GoogleToolboxForMac: _left, ...pods } = TABLE_PODS;
+    const roots: PodRoot[] = [
+      { library: "react-native-gtm", libraryVersion: "0.1.0", dependency: "GoogleToolboxForMac/Logger", requirements: ["~> 4.2"] },
+      { library: "react-native-gtm2", libraryVersion: "0.2.0", dependency: "GoogleToolboxForMac", requirements: ["~> 4.2"] },
+    ];
+    await expect(
+      resolveBinaryPods(roots, { ...ctx({ table: table(pods) }), allowed: (l: string) => l === "react-native-gtm" }),
+    ).rejects.toThrow("react-native-gtm 0.1.0: its podspec depends on the CocoaPods pod GoogleToolboxForMac, which has no SwiftPM package");
+  });
+
   it("stops on a pod in a shape rn-xtool does not cover", async () => {
     const roots: PodRoot[] = [
       { library: "react-native-legacy", libraryVersion: "1.0.0", dependency: "MLKitLegacy", requirements: ["~> 1.0"] },

@@ -9,6 +9,7 @@ import path from "node:path";
 import { filesystemOf as realFilesystemOf, sdkBundle, tilde } from "../commands/setup.js";
 import { podsCacheDir } from "../paths.js";
 import type { BundleSource } from "../pipeline/resourceBundles.js";
+import { allowedLimitText } from "../project/earlyChecks.js";
 import type { PodTable } from "../project/podTable.js";
 import { packageRoot } from "../tools/exec.js";
 import { makeArRunner, type ArRunner } from "./ar.js";
@@ -60,6 +61,10 @@ export interface PodsStepDeps {
   terms?: Record<string, string>;
   /** The config file the config's pods come from, for the pin lines. */
   podsFile?: string;
+  /** The config's `knownLimits.allow`: a source pod only these libraries reach is left out with a warning (row 12). */
+  allowed?: readonly string[];
+  /** Whether the early checks already printed the allowed warning for this library and pod. */
+  warned?: (library: string, pod: string) => boolean;
   log: (l: string) => void;
 }
 
@@ -185,9 +190,19 @@ export async function runPodsStep(root: string, roots: readonly PodRoot[], table
   };
   let resolution: Resolution;
   try {
-    resolution = await resolveBinaryPods(roots, { table, locked: lockedVersions(lock), cdn });
+    const allowed = d.allowed ?? [];
+    resolution = await resolveBinaryPods(roots, {
+      table,
+      locked: lockedVersions(lock),
+      cdn,
+      ...(allowed.length > 0 ? { allowed: (library: string) => allowed.includes(library) } : {}),
+    });
   } catch (err) {
     throw stopOf(err, cache);
+  }
+  for (const dropped of resolution.dropped ?? []) {
+    if (dropped.libraries.every((library) => d.warned?.(library, dropped.pod) === true)) continue;
+    d.log(`⚠ known-limits — ${allowedLimitText(dropped)}`);
   }
   checkSdk(resolution.binary, d.sdkDir ?? defaultSdkDir());
 

@@ -48,7 +48,7 @@ import { emptyTargetsOf } from "../pods/emptyTargets.js";
 import type { PodRoot } from "../pods/resolve.js";
 import { postPackChecks, postPackPods, type PostPackPods } from "../pods/postPack.js";
 import { stagePodBinaries, type StagedPods } from "../pods/stage.js";
-import { runPodsStep, type PodsStepResult } from "../pods/step.js";
+import { runPodsStep, type PodsStepDeps, type PodsStepResult } from "../pods/step.js";
 
 export const BUILD_STEP_NAMES = [
   "patches",
@@ -202,7 +202,12 @@ export interface BuildDeps {
   /** The binary CocoaPods pods the scaffolded libraries depend on (`unmapped` dependencies; excluded libraries skipped). */
   binaryPodCandidates: (root: string, opts: LibraryCheckOptions) => PodRoot[];
   /** The `pods` step: resolve, announce, download, verify, wrap, record the lock. */
-  pods: (root: string, roots: PodRoot[], table: PodTable, opts: { podsFile?: string; log: (s: string) => void }) => Promise<PodsStepResult>;
+  pods: (
+    root: string,
+    roots: PodRoot[],
+    table: PodTable,
+    opts: Pick<PodsStepDeps, "podsFile" | "allowed" | "warned" | "log">,
+  ) => Promise<PodsStepResult>;
   /** The `pod-binaries` step: ios/build/pod-binaries, rebuilt on every build. */
   stagePods: (paths: ProjectPaths, result: PodsStepResult) => Promise<StagedPods>;
   /** After xtool-build, with binary pods: the packed app's bundles, frameworks and force-loaded classes (spec goal 7). */
@@ -247,7 +252,7 @@ const realDeps: BuildDeps = {
   resourceBundles: scaffoldedResourceBundles,
   binaryPodCandidates: (root, opts) => binaryPodCandidates(root, opts),
   unresolvedPodLines: (root, opts) => unresolvedPodLines(root, opts),
-  pods: (root, roots, table, opts) => runPodsStep(root, roots, table, { ...(opts.podsFile !== undefined ? { podsFile: opts.podsFile } : {}), log: opts.log }),
+  pods: (root, roots, table, opts) => runPodsStep(root, roots, table, opts),
   stagePods: (paths, result) => stagePodBinaries(paths, result),
   postPack: (appBundle, pods) => postPackChecks(appBundle, pods, makeNmRunner()),
   emptyTargets: (root, opts) => {
@@ -289,9 +294,12 @@ export async function build(
   }
   const config = await d.loadConfig(root);
   // Known limits the config allows are warnings; the others stop the build.
+  const allowedPods = new Set<string>();
   const stopOnKnownLimits = (failures: EarlyFailure[]): void => {
     const marked = allowKnownLimits(failures, config.knownLimits?.allow ?? []);
     for (const f of marked) if (f.allowed) d.log(`⚠ known-limits — ${allowedLimitText(f)}`);
+    // The pods step does not warn again for these (row 12).
+    for (const f of marked) if (f.allowed) for (const pod of f.pods ?? []) allowedPods.add(`${f.allowKey}\0${pod}`);
     const refused = marked.filter((f) => !f.allowed);
     if (refused.length > 0) throw new UnsupportedSetupError(refused);
   };
@@ -346,7 +354,14 @@ export async function build(
   // Before anything changes in the project: an unreachable host, a changed file or a short disk stops here.
   const table = mergedPodTable(config.pods);
   const pods = planned("pods")
-    ? await step("pods", () => d.pods(paths.root, podRoots, table, { ...(podsFile !== undefined ? { podsFile } : {}), log: d.log }))
+    ? await step("pods", () =>
+        d.pods(paths.root, podRoots, table, {
+          ...(podsFile !== undefined ? { podsFile } : {}),
+          allowed: config.knownLimits?.allow ?? [],
+          warned: (library, pod) => allowedPods.has(`${library}\0${pod}`),
+          log: d.log,
+        }),
+      )
     : undefined;
   const binary = pods !== undefined && Object.keys(pods.binary).length > 0 ? pods.binary : undefined;
 

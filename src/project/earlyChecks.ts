@@ -46,6 +46,8 @@ export interface EarlyFailure {
   reason: string;
   /** Set when rn-xtool.config.json's `knownLimits.allow` names `allowKey`: a warning, not a refusal. */
   allowed?: true;
+  /** `unmapped-pod`: the pods it names, so the `pods` step does not warn for them again. */
+  pods?: string[];
 }
 
 /** The sentence every refusal ends with: how to build anyway. */
@@ -59,7 +61,7 @@ export function refusalText(f: EarlyFailure, indent = ""): string {
 }
 
 /** An allowed refusal as doctor's and build's warning reads it. */
-export function allowedLimitText(f: EarlyFailure): string {
+export function allowedLimitText(f: Pick<EarlyFailure, "reason">): string {
   return `${f.reason} (allowed by rn-xtool.config.json knownLimits.allow; the build may fail later)`;
 }
 
@@ -558,6 +560,7 @@ function unmappedFailure(libs: Libraries, lib: Library): EarlyFailure | undefine
   return {
     id: "unmapped-pod",
     allowKey: lib.name,
+    pods,
     reason:
       `${lib.name} ${lib.version}: its podspec depends on the CocoaPods ${several ? "pods" : "pod"} ${andList(pods)}, ` +
       `which ${several ? "have" : "has"} no SwiftPM package rn-xtool knows. Add ${several ? "them" : "one"} under "pods" ` +

@@ -14,7 +14,7 @@ import { PodsNetworkError, type CdnOptions } from "../pods/cdn.js";
 import { cachedArchive, headSize } from "../pods/fetch.js";
 import { formatSize } from "../pods/format.js";
 import { PODS_LOCK, lockedVersions, readPodsLock, unusedLockEntries, type PodsLock } from "../pods/lock.js";
-import { resolveBinaryPods } from "../pods/resolve.js";
+import { SourcePodError, resolveBinaryPods } from "../pods/resolve.js";
 import { rawSlotComplete, rnArtifactsCacheRoot, type Flavor } from "../pipeline/rnArtifactsStep.js";
 import { orphanPatchLine, orphanPatches, scaffoldPinWarnings } from "../pipeline/patches.js";
 import { resolveRnDir, vendoredScriptsRoot } from "../pipeline/rnSpm.js";
@@ -22,6 +22,7 @@ import { bareLines, compareVersions, expoPluginFor, releaseLine, rnLineStatus } 
 import { DetectError, detectProjectKind } from "./detect.js";
 import {
   allowKnownLimits,
+  allowedLimitText,
   binaryPodCandidates,
   earlyFailures,
   excludeLines,
@@ -350,12 +351,14 @@ export async function detectCapabilities(projectRoot: string, opts: ProbeOptions
   };
   if (opts.podsCache !== undefined) libraryChecks.podsCache = opts.podsCache;
   const podTable = mergedPodTable(config.pods);
+  const allowed = config.knownLimits?.allow ?? [];
+  const limits = allowKnownLimits(earlyFailures(root, libraryChecks), allowed);
   // Started now, so its probe runs alongside the rn-artifacts probe, within the same budget.
-  const binaryPods = binaryPodsLines(root, libraryChecks, podTable, opts);
+  const binaryPods = binaryPodsLines(root, libraryChecks, podTable, opts, { allowed, limits });
   const caps: Capabilities = {
     podspecs: podspecFeatures(root),
     excluded: excludeLines(root, config.exclude ?? [], { kind, file: configFileOf(config, "exclude") }),
-    limits: allowKnownLimits(earlyFailures(root, libraryChecks), config.knownLimits?.allow ?? []),
+    limits,
     podPins: podPinWarnings(root, podTable, libraryChecks),
     orphanPatches: orphanPatches(root).map(orphanPatchLine),
     scaffoldPins: scaffoldPinWarnings(root, podTable, config.exclude, kind),
@@ -435,9 +438,17 @@ function neededLine(pods: readonly NeededPod[], libs: readonly string[]): string
 /**
  * Spec goal 5.2, `doctor --project`'s binary pods: from the lock and the cache when the lock names every pod the
  * libraries depend on; otherwise (open question 6) the CDN's specs and HEAD sizes, within `timeoutMs` (10 s), never
- * with `offline`. Then the lock entries no library needs (row 67), and unzip when a pod is a zip (row 24). Never throws.
+ * with `offline`. A refusal of the resolver fails; an unreachable host or the budget gives `not checked`. A source pod
+ * only libraries `knownLimits.allow` names reach is a warning, unless an allowed early refusal names it already (row
+ * 12). Then the lock entries no library needs (row 67), and unzip when a pod is a zip (row 24). Never throws.
  */
-async function binaryPodsLines(root: string, checks: LibraryCheckOptions, table: PodTable, opts: ProbeOptions): Promise<string[]> {
+async function binaryPodsLines(
+  root: string,
+  checks: LibraryCheckOptions,
+  table: PodTable,
+  opts: ProbeOptions,
+  known: { allowed: readonly string[]; limits: readonly EarlyFailure[] },
+): Promise<string[]> {
   const roots = binaryPodCandidates(root, checks);
   let lock: PodsLock;
   try {
@@ -481,9 +492,23 @@ async function binaryPodsLines(root: string, checks: LibraryCheckOptions, table:
         timeoutMs,
         neededBy: (pod) => (roots.find((r) => podOf(r.dependency) === pod) ?? roots[0]!).library,
       };
+      // Whether an early refusal of the library (allowed or not) names the pod already: the line would say it again.
+      const early = (library: string, pod: string): boolean =>
+        known.limits.some((f) => f.id === "unmapped-pod" && f.allowKey === library && (f.pods ?? []).includes(pod));
+      const droppedLines: string[] = [];
+      let neededLibs = libs;
       try {
         const probe = async (): Promise<NeededPod[]> => {
-          const resolution = await resolveBinaryPods(roots, { table, locked: lockedVersions(lock), cdn });
+          const resolution = await resolveBinaryPods(roots, {
+            table,
+            locked: lockedVersions(lock),
+            cdn,
+            ...(known.allowed.length > 0 ? { allowed: (library: string) => known.allowed.includes(library) } : {}),
+          });
+          for (const dropped of resolution.dropped ?? []) {
+            if (!dropped.libraries.every((library) => early(library, dropped.pod))) droppedLines.push(`⚠ pods — ${allowedLimitText(dropped)}`);
+          }
+          neededLibs = [...new Set(resolution.binary.flatMap((b) => b.neededBy))].sort();
           return Promise.all(
             resolution.binary.map(async (b) => {
               const url = b.spec.source.http ?? "";
@@ -497,14 +522,15 @@ async function binaryPodsLines(root: string, checks: LibraryCheckOptions, table:
           );
         };
         needed = await untilAborted(probe(), signal);
-        lines.push(neededLine(needed, libs));
+        lines.push(...droppedLines);
+        if (needed.length > 0) lines.push(neededLine(needed, neededLibs));
       } catch (e) {
-        const reason = signal.aborted
-          ? `timed out after ${timeoutMs / 1000} s`
-          : e instanceof PodsNetworkError || e instanceof Error
-            ? e.message
-            : String(e);
-        lines.push(`⚠ pods — not checked: ${reason}`);
+        // What the build would stop on fails here; only a host the probe could not reach, or the budget, is unknown.
+        if (signal.aborted) lines.push(`⚠ pods — not checked: timed out after ${timeoutMs / 1000} s`);
+        else if (e instanceof PodsNetworkError) lines.push(`⚠ pods — not checked: ${e.message}`);
+        else if (e instanceof SourcePodError && e.libraries.every((library) => early(library, e.pod))) {
+          // known-limits fails with the same refusal.
+        } else lines.push(`✖ pods — ${e instanceof Error ? e.message : String(e)}`);
         needed = fromLock();
       }
     }

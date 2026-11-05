@@ -336,6 +336,48 @@ describe("runPodsStep", () => {
     expect(logs.some((l) => l.startsWith("ℹ GoogleToolboxForMac 6.0.1 (rn-xtool table) is outside"))).toBe(true);
   });
 
+  describe("a git-source pod of a library knownLimits.allow names", () => {
+    const GIT_ROOT: PodRoot = { library: "react-native-git", libraryVersion: "1.0.0", dependency: "GitPod", requirements: [] };
+    const allowedLine =
+      `⚠ known-limits — react-native-git 1.0.0: its podspec depends on the CocoaPods pod GitPod, which has no SwiftPM package rn-xtool knows. ` +
+      `Add one under "pods" in rn-xtool.config.json: { "pods": { "GitPod": { "url": "<git URL>", "exact": "<version>", "products": ["<product>"] } } }, ` +
+      `or leave the library out with "exclude". See ${troubleshootingUrl("libraries-that-depend-on-cocoapods-pods")} ` +
+      "(allowed by rn-xtool.config.json knownLimits.allow; the build may fail later)";
+    beforeEach(() => {
+      server.routes[`/all_pods_versions_${podShard("GitPod").join("_")}.txt`] = { body: "GitPod/1.0.0\n" };
+      server.routes[`/Specs/${podShard("GitPod").join("/")}/GitPod/1.0.0/GitPod.podspec.json`] = {
+        body: JSON.stringify({
+          name: "GitPod",
+          version: "1.0.0",
+          homepage: "https://example.invalid/pod",
+          license: "MIT",
+          authors: "Example",
+          source: { git: "https://example.invalid/git/pod.git", tag: "1.0.0" },
+          platforms: { ios: "15.5" },
+          source_files: "Sources/**/*.m",
+        }),
+      };
+    });
+
+    it("leaves it out with the allowed warning, and takes the other pods", async () => {
+      const result = await runPodsStep(root, [...ROOTS, GIT_ROOT], table(), deps({ allowed: ["react-native-git"] }));
+      expect(logs).toContain(allowedLine);
+      expect(result.wrapped.map((w) => w.pod)).toEqual(BINARY);
+      expect(result.binary).toEqual({ GoogleMLKit: { product: "GoogleMLKit" } });
+      expect(Object.keys(readPodsLock(root).pods)).not.toContain("GitPod");
+    });
+
+    it("does not warn again for a pod the early checks already allowed", async () => {
+      await runPodsStep(root, [GIT_ROOT], table(), deps({ allowed: ["react-native-git"], warned: (l, p) => l === "react-native-git" && p === "GitPod" }));
+      expect(logs.filter((l) => l.startsWith("⚠ "))).toEqual([]);
+      expect(existsSync(path.join(root, PODS_LOCK))).toBe(false);
+    });
+
+    it("stops with block 2's text when the library is not allowed", async () => {
+      await expect(runPodsStep(root, [GIT_ROOT], table(), deps())).rejects.toThrow(allowedLine.slice("⚠ known-limits — ".length, allowedLine.indexOf(" (allowed")));
+    });
+  });
+
   it("keeps lock entries no library needs", async () => {
     const extra = {
       version: "1.0.0",

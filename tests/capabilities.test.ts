@@ -16,7 +16,9 @@ import { makeFakeSlot088 } from "./support/fakeSlots.js";
 import { fakeRnScripts } from "./support/rnScripts.js";
 import { plistOf, withEntitlements } from "./support/entitlements.js";
 import { useGitSpecCache } from "./support/podsCache.js";
+import { troubleshootingUrl } from "../src/docs.js";
 import { podShard } from "../src/pods/cdn.js";
+import { allowedLimitText } from "../src/project/earlyChecks.js";
 import { formatSize } from "../src/pods/format.js";
 import { PODS_LOCK } from "../src/pods/lock.js";
 import { podsCdnRoutes } from "./support/podFixtures.js";
@@ -762,6 +764,59 @@ describe("binary pods", () => {
     server.routes[`/all_pods_versions_${podShard("GoogleMLKit").join("_")}.txt`] = { hang: true };
     const slow = await detectCapabilities(dir, { podsCache, podsCdnBase: server.base, timeoutMs: 300 });
     expect(slow.binaryPods).toEqual(["⚠ pods — not checked: timed out after 0.3 s"]);
+  });
+
+  describe("a git-source pod without a table entry", () => {
+    const GIT_LIB = "react-native-git";
+    const refusal =
+      `${GIT_LIB} 1.0.0: its podspec depends on the CocoaPods pod GitPod, which has no SwiftPM package rn-xtool knows. ` +
+      `Add one under "pods" in rn-xtool.config.json: { "pods": { "GitPod": { "url": "<git URL>", "exact": "<version>", "products": ["<product>"] } } }, ` +
+      `or leave the library out with "exclude". See ${troubleshootingUrl("libraries-that-depend-on-cocoapods-pods")}`;
+    async function gitProject(allow?: string[]) {
+      const dir = await tempDir("rn-xtool-caps-gitpod-");
+      await writePackage(dir, { name: "app", dependencies: { [GIT_LIB]: "1.0.0" } });
+      await writePackage(path.join(dir, "node_modules", GIT_LIB), { name: GIT_LIB, version: "1.0.0" }, {
+        "RNGit.podspec": "Pod::Spec.new do |s|\n  s.dependency 'GitPod'\nend\n",
+      });
+      if (allow !== undefined) await writeFile(path.join(dir, "rn-xtool.config.json"), JSON.stringify({ knownLimits: { allow } }));
+      server = await startPodsServer({
+        [`/all_pods_versions_${podShard("GitPod").join("_")}.txt`]: { body: "GitPod/1.0.0\n" },
+        [`/Specs/${podShard("GitPod").join("/")}/GitPod/1.0.0/GitPod.podspec.json`]: {
+          body: JSON.stringify({
+            name: "GitPod",
+            version: "1.0.0",
+            homepage: "https://example.invalid/pod",
+            license: "MIT",
+            authors: "Example",
+            source: { git: "https://example.invalid/git/pod.git", tag: "1.0.0" },
+            platforms: { ios: "15.5" },
+            source_files: "Sources/**/*.m",
+          }),
+        },
+      });
+      return { dir, podsCache: await tempDir("rn-xtool-caps-podcache-") };
+    }
+
+    it("fails with the resolver's refusal, not a not-checked warning", async () => {
+      const { dir, podsCache } = await gitProject();
+      const caps = await detectCapabilities(dir, { podsCache, podsCdnBase: server!.base });
+      expect(caps.binaryPods).toEqual([`✖ pods — ${refusal}`]);
+      // The spec is cached now: the early checks refuse it, and the pods line does not repeat it.
+      const again = await detectCapabilities(dir, { podsCache, podsCdnBase: server!.base });
+      expect(again.limits?.map((f) => [f.allowed, f.reason])).toEqual([[undefined, refusal]]);
+      expect(again.binaryPods).toEqual([]);
+    });
+
+    it("warns once for a library knownLimits.allow names", async () => {
+      const { dir, podsCache } = await gitProject([GIT_LIB]);
+      const allowed = `${refusal} (allowed by rn-xtool.config.json knownLimits.allow; the build may fail later)`;
+      const first = await detectCapabilities(dir, { podsCache, podsCdnBase: server!.base });
+      expect(first.binaryPods).toEqual([`⚠ pods — ${allowed}`]);
+      // The spec is cached now: the early checks' allowed line says it, and the pods line does not repeat it.
+      const again = await detectCapabilities(dir, { podsCache, podsCdnBase: server!.base });
+      expect(again.limits?.map((f) => (f.allowed ? allowedLimitText(f) : f.reason))).toEqual([allowed]);
+      expect(again.binaryPods).toEqual([]);
+    });
   });
 
   it("does not probe with --offline", async () => {

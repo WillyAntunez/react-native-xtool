@@ -285,6 +285,19 @@ describe("build", () => {
       expect(seen).toEqual([{ exclude: ["other-lib"] }]);
     });
 
+    it("hands knownLimits.allow to the pods step, with the pods the early checks already allowed", async () => {
+      const allowedFailure: EarlyFailure = { id: "unmapped-pod", allowKey: LIB, reason: `${LIB} 2.0.0: GitPod.`, pods: ["GitPod"] };
+      const other: EarlyFailure = { id: "vendored-binaries", allowKey: "react-native-other", reason: "react-native-other 1.0.0: binaries." };
+      const t = withPods({ cfg: { knownLimits: { allow: [LIB, "react-native-other"] } }, libraryFailures: () => [allowedFailure, other] });
+      let opts: Parameters<BuildDeps["pods"]>[3] | undefined;
+      await build(t.root, {}, { ...t.deps, pods: async (_root, _roots, _table, o) => ((opts = o), RESULT) });
+      expect(opts?.allowed).toEqual([LIB, "react-native-other"]);
+      expect(opts?.warned?.(LIB, "GitPod")).toBe(true);
+      expect(opts?.warned?.(LIB, "OtherPod")).toBe(false);
+      expect(opts?.warned?.("react-native-other", "GitPod")).toBe(false);
+      expect(t.calls).toContain("rn-spm");
+    });
+
     it("stops on an unreachable CDN before anything changes", async () => {
       const t = withPods();
       const pods = async () => {

@@ -53,6 +53,31 @@ export interface Resolution {
   roots: { pod: string; libraries: string[] }[];
   /** Locked versions that moved. */
   changed: { pod: string; from: string; to: string; requirement: string; by: string }[];
+  /**
+   * Source pods without a table entry that only libraries in `knownLimits.allow` reach: left out, with block 2's
+   * refusal as `reason`, and their dependencies not walked. Sorted by pod.
+   */
+  dropped?: DroppedPod[];
+}
+
+export interface DroppedPod {
+  pod: string;
+  version: string;
+  /** The libraries that reach it, sorted. */
+  libraries: string[];
+  reason: string;
+}
+
+/** Block 2's refusal of a source pod without a table entry, with the pod and the libraries that reach it. */
+export class SourcePodError extends PodsError {
+  constructor(
+    message: string,
+    readonly pod: string,
+    readonly libraries: string[],
+  ) {
+    super(message);
+    this.name = "SourcePodError";
+  }
 }
 
 const MAX_ROUNDS = 20;
@@ -89,6 +114,8 @@ export async function resolveBinaryPods(
     table: PodTable;
     locked: Record<string, string>;
     cdn: CdnOptions;
+    /** Whether `knownLimits.allow` names the library: a source pod only such libraries reach is dropped, not refused. */
+    allowed?: (library: string) => boolean;
     /** Called at the start of each round (a test seam: the cycle check ends long before the round limit). */
     onRound?: (round: number) => void;
   },
@@ -130,10 +157,12 @@ export async function resolveBinaryPods(
   let choices = new Map<string, string>();
   const seen = new Set<string>();
   let lastFailures: Error[] = [];
+  let dropped = new Map<string, DroppedPod>();
   for (let round = 0; ; round++) {
     ctx.onRound?.(round);
     graph = await collect(roots, choices, ctx.table, specOf);
     const next = new Map<string, string>();
+    dropped = new Map();
     // A round reads its requirements from the previous round's choices, so a failure may come from a choice this
     // round moves: failures are collected, and the first is thrown only in a round where no choice moved.
     const failures: Error[] = [];
@@ -154,7 +183,16 @@ export async function resolveBinaryPods(
           version = newestSatisfying(listed, reqs);
           if (version === undefined) throw new PodsError(conflictText(pod, graph.needs.get(pod) ?? [], describe));
         }
-        await checkRoute(pod, version, graph, specOf);
+        const refusal = await checkRoute(pod, version, graph, specOf);
+        if (refusal !== undefined) {
+          const libraries = sorted(graph.libraries.get(pod) ?? []);
+          if (ctx.allowed === undefined || libraries.length === 0 || !libraries.every(ctx.allowed)) {
+            throw new SourcePodError(refusal, pod, libraries);
+          }
+          // Not a choice: the next round does not walk its dependencies.
+          dropped.set(pod, { pod, version, libraries, reason: refusal });
+          continue;
+        }
         next.set(pod, version);
       } catch (err) {
         if (!(err instanceof PodsError || err instanceof PodSpecError)) throw err;
@@ -194,6 +232,7 @@ export async function resolveBinaryPods(
       sources.push({ pod, subspecs, entry, requiredBy });
       continue;
     }
+    if (dropped.has(pod)) continue;
     const version = choices.get(pod)!;
     const spec = await specOf(pod, version);
     const { layers, used } = selectedLayers(spec, subspecNames(spec, graph.subspecs.get(pod)));
@@ -220,7 +259,7 @@ export async function resolveBinaryPods(
   const rootPods = new Map<string, Set<string>>();
   for (const root of roots) {
     const pod = podOf(root.dependency);
-    if (ctx.table.pods[pod] !== undefined) continue;
+    if (ctx.table.pods[pod] !== undefined || dropped.has(pod)) continue;
     rootPods.set(pod, (rootPods.get(pod) ?? new Set()).add(root.library));
   }
   return {
@@ -228,6 +267,7 @@ export async function resolveBinaryPods(
     sources,
     roots: sorted(rootPods.keys()).map((pod) => ({ pod, libraries: sorted(rootPods.get(pod)!) })),
     changed,
+    ...(dropped.size > 0 ? { dropped: sorted(dropped.keys()).map((pod) => dropped.get(pod)!) } : {}),
   };
 }
 
@@ -330,13 +370,16 @@ async function collect(
   return g;
 }
 
-/** Stops on a pod without a table entry whose spec is not a binary rn-xtool covers. */
+/**
+ * Block 2's refusal for a pod without a table entry whose spec is a source pod (the caller stops or drops it); stops on
+ * one in another shape rn-xtool does not cover.
+ */
 async function checkRoute(
   pod: string,
   version: string,
   g: Graph,
   specOf: (pod: string, version: string) => Promise<PodSpec>,
-): Promise<void> {
+): Promise<string | undefined> {
   const spec = await specOf(pod, version);
   const route = podRoute(spec, selectedLayers(spec, subspecNames(spec, g.subspecs.get(pod))).layers);
   const first = g.firstLibrary.get(pod)!;
@@ -347,10 +390,10 @@ async function checkRoute(
       chain.length === 0
         ? `the CocoaPods pod ${pod}`
         : `the CocoaPods pod ${podOf(chain[0]!.split(" ")[0]!)}, and through it (${chain.join(" → ")}) on the CocoaPods pod ${pod}`;
-    throw new PodsError(
+    return (
       `${first.library} ${first.libraryVersion}: its podspec depends on ${through}, which has no SwiftPM package rn-xtool knows. ` +
-        `Add one under "pods" in rn-xtool.config.json: ${snippet}, or leave the library out with "exclude". ` +
-        `See ${troubleshootingUrl("libraries-that-depend-on-cocoapods-pods")}`,
+      `Add one under "pods" in rn-xtool.config.json: ${snippet}, or leave the library out with "exclude". ` +
+      `See ${troubleshootingUrl("libraries-that-depend-on-cocoapods-pods")}`
     );
   }
   if (route.kind === "other") {
@@ -359,6 +402,7 @@ async function checkRoute(
       `${pod} ${version} (needed by ${first.library}) ${route.what}${why} Leave the library out with "exclude" in rn-xtool.config.json. See ${PODS_LINK}`,
     );
   }
+  return undefined;
 }
 
 /** One round's choices as a string, pods sorted. */

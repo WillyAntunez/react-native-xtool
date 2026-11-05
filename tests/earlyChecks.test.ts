@@ -714,7 +714,12 @@ describe("unmapped pods", () => {
       writeGitSpecs(podsCache, ["AppAuth"]);
       expect(offlinePodRoute("AppAuth", [">= 1.7.6"], { lock: { lockfileVersion: 1, pods: {} }, cache: podsCache })).toBe("source");
       expect(libraryFailures(root, { table: NO_POD_TABLE, podsCache })).toEqual([
-        { id: "unmapped-pod", allowKey: "react-native-app-auth", reason: unmapped("react-native-app-auth 8.5.1", "AppAuth", "AppAuth", false) },
+        {
+          id: "unmapped-pod",
+          allowKey: "react-native-app-auth",
+          pods: ["AppAuth"],
+          reason: unmapped("react-native-app-auth 8.5.1", "AppAuth", "AppAuth", false),
+        },
       ]);
     });
 
@@ -753,6 +758,7 @@ describe("unmapped pods", () => {
       {
         id: "unmapped-pod",
         allowKey: "react-native-app-auth",
+        pods: ["AppAuth"],
         reason: unmapped("react-native-app-auth 8.5.1", "AppAuth", "AppAuth", false),
       },
     ]);
@@ -780,6 +786,7 @@ describe("unmapped pods", () => {
       {
         id: "unmapped-pod",
         allowKey: "@react-native-ml-kit/text-recognition",
+        pods: ["GoogleMLKit"],
         reason: unmapped("@react-native-ml-kit/text-recognition 2.0.0", "GoogleMLKit", "GoogleMLKit", false),
       },
     ]);
@@ -796,6 +803,7 @@ describe("unmapped pods", () => {
     expect(libraryFailures(two).map((f) => f.reason)).toEqual([
       unmapped("lib 1.0.0", "GoogleMLKit and SDWebImage", "GoogleMLKit", true),
     ]);
+    expect(libraryFailures(two)[0]!.pods).toEqual(["GoogleMLKit", "SDWebImage"]);
     const three = await project({
       lib: {
         "ios/Lib.podspec": "Pod::Spec.new do |s|\n  s.dependency 'MMKV'\n  s.ios.dependency('Lottie', '~> 4.0')\nend\n",
