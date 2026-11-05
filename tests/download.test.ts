@@ -121,6 +121,17 @@ describe("downloadFile sizes, headers and causes", () => {
     expect(networkReason((err as Error).cause)).toBe("connect ECONNREFUSED");
   });
 
+  it("logs the failed URL unless quiet", async () => {
+    server = await startPodsServer();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await downloadFile(`${server.base}/gone`, join(dir, "a")).catch(() => undefined);
+    expect(errors).toHaveBeenCalledWith(`Download failed: ${server.base}/gone`);
+    errors.mockClear();
+    await downloadFile(`${server.base}/gone`, join(dir, "a"), { quiet: true }).catch(() => undefined);
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
+  });
+
   it("keeps the HTTP status in the cause", async () => {
     server = await startPodsServer();
     const err = await downloadFile(`${server.base}/gone`, join(dir, "a")).catch((e: unknown) => e);

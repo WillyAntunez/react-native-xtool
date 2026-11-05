@@ -108,6 +108,7 @@ export async function fetchPodArchive(
         checkLength: true,
         headers: podHeaders(),
         refuseHttpRedirect: locked === undefined,
+        quiet: true,
       });
     } catch (err) {
       if (err instanceof DownloadInsecureRedirectError) throw notHttps(new URL(err.to));

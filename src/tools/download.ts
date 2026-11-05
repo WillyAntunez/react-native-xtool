@@ -83,6 +83,8 @@ export interface DownloadOptions {
   expectedBytes?: number;
   /** Without expectedBytes: compare with the response's Content-Length when it has no Content-Encoding. */
   checkLength?: boolean;
+  /** No `Download failed: <url>` line on stderr: the caller prints its own stop. */
+  quiet?: boolean;
   /** Follows redirects one by one and refuses one from https to another scheme (a DownloadInsecureRedirectError). */
   refuseHttpRedirect?: boolean;
 }
@@ -151,7 +153,7 @@ export async function downloadFile(url: string, dest: string, opts: DownloadOpti
       lastErr = err;
     }
   }
-  console.error(`Download failed: ${url}`);
+  if (!opts.quiet) console.error(`Download failed: ${url}`);
   throw new Error(`Could not download ${url}: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`, {
     cause: lastErr,
   });

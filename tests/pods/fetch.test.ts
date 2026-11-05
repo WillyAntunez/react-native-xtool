@@ -202,11 +202,14 @@ describe("fetchPodArchive", () => {
     expect(downloads()).toEqual([]);
   });
 
-  it("names the host and the reason of another failure", async () => {
+  it("names the host and the reason of another failure, in its one line", async () => {
     await serve({ [PATH]: { status: 500, body: "oops" } });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
     await expect(fetchPodArchive(plan(), cache)).rejects.toThrow(
       `Could not download MLImage 1.0.0-beta7 from ${HOST}: HTTP 500 Internal Server Error. Build again; the cache keeps what was complete.`,
     );
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
   });
 
   it("retries a partial download once, then names both sizes", async () => {
