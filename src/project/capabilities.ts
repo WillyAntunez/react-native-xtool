@@ -329,7 +329,7 @@ export async function detectCapabilities(projectRoot: string, opts: ProbeOptions
     limits: allowKnownLimits(earlyFailures(root, libraryChecks), config.knownLimits?.allow ?? []),
     podPins: podPinWarnings(root, podTable, libraryChecks),
     orphanPatches: orphanPatches(root).map(orphanPatchLine),
-    scaffoldPins: scaffoldPinWarnings(root, podTable, config.exclude),
+    scaffoldPins: scaffoldPinWarnings(root, podTable, config.exclude, kind),
   };
   if (kind !== undefined) caps.kind = kind;
   const entitlements = entitlementsCapability(root, kind);

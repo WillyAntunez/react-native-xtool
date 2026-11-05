@@ -899,6 +899,33 @@ describe("unmapped pods", () => {
     ]);
   });
 
+  it("keeps a subspec whose sibling autolinking links outside dependencies, as the scaffolder does", async () => {
+    // The scaffolder's linked set is what autolinking links: on Expo every installed package (a peer included), on bare
+    // what package.json lists in dependencies, devDependencies and peerDependencies. A subspec that declares such a
+    // sibling is kept, so its pods are refused or pinned like the library's own.
+    const camera = {
+      "package.json": JSON.stringify({ name: "react-native-vision-camera", version: "4.7.3" }),
+      "VisionCamera.podspec":
+        'Pod::Spec.new do |s|\n  s.name = "VisionCamera"\n' +
+        "  s.subspec 'FrameProcessors' do |fp|\n    fp.dependency \"react-native-worklets-core\"\n" +
+        "    fp.dependency 'MMKV', '~> 2.0'\n    fp.dependency 'AppAuth', '>= 1.7.6'\n  end\nend\n",
+    };
+    const workletsCore = {
+      "package.json": JSON.stringify({ name: "react-native-worklets-core", version: "1.6.2" }),
+      "react-native-worklets-core.podspec": "Pod::Spec.new do |s|\nend\n",
+    };
+    const peer = await project({ "react-native-vision-camera": camera });
+    await writeFiles(path.join(peer, "node_modules", "react-native-worklets-core"), workletsCore);
+    const dev = await project({ "react-native-vision-camera": camera }, { devDependencies: { "react-native-worklets-core": "*" } });
+    await writeFiles(path.join(dev, "node_modules", "react-native-worklets-core"), workletsCore);
+    for (const [root, kind] of [[peer, "expo"], [dev, "bare"]] as const) {
+      expect(libraryFailures(root, { table: mergedPodTable(), kind }).map((f) => f.reason)).toEqual([
+        expect.stringContaining("depends on the CocoaPods pod MMKV,"),
+      ]);
+      expect(scaffoldedPods(root, mergedPodTable(), { kind })).toEqual(new Map([["react-native-vision-camera", ["AppAuth"]]]));
+    }
+  });
+
   it("skips the packages the config leaves out", async () => {
     const root = await project({ "react-native-app-auth": appAuth(), "@react-native-ml-kit/text-recognition": mlKit() });
     expect(libraryFailures(root, { table: NO_POD_TABLE, exclude: ["react-native-app-auth"] }).map((f) => f.allowKey)).toEqual([

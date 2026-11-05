@@ -405,9 +405,10 @@ class Libraries {
   /**
    * Each pod dependency on the unconditional lines of the library's podspecs, as the scaffolder classifies it: the
    * pod-name index covers the podspecs of every package installed at the top of node_modules and of every direct
-   * dependency (those left out of iOS too), and the linked packages are the dependencies with a podspec or a
-   * Package.swift that the project keeps on iOS. As in the scaffolder (fix 20), a subspec that declares a missing sibling
-   * is left out with its dependencies: its pods are neither pinned nor refused.
+   * dependency (those left out of iOS too), and the linked packages are those autolinking links (`linkedPackageDirs`:
+   * on bare what package.json lists, on Expo every installed package too) with a podspec or a Package.swift that the
+   * project keeps on iOS. As in the scaffolder (fix 20), a subspec that declares a missing sibling is left out with its
+   * dependencies: its pods are neither pinned nor refused.
    */
   podDependencies(lib: Library): (DependencyClassification & { name: string; requirements: string[] })[] {
     const classifier = (this.classifier ??= podClassifier());
@@ -457,10 +458,14 @@ class Libraries {
       for (const file of podspecFiles(dir)) if (existsSync(file)) podToNpm.set(path.basename(file, ".podspec"), name);
     }
     for (const { name, dir } of this.deps) {
-      const podspecs = podspecFiles(dir).filter((file) => existsSync(file));
-      for (const file of podspecs) podToNpm.set(path.basename(file, ".podspec"), name);
-      const manifest = LIBRARY_MANIFESTS.some((rel) => existsSync(path.join(dir, rel)));
-      if ((podspecs.length > 0 || manifest) && !this.excluded(name)) linkedNpm.add(name);
+      for (const file of podspecFiles(dir)) if (existsSync(file)) podToNpm.set(path.basename(file, ".podspec"), name);
+    }
+    // The packages autolinking links, as the scaffolder's own linked set (and `excludeLines`) reads them: a sibling
+    // installed as a peer on Expo, or listed in devDependencies on bare, is linked, so a subspec declaring it is kept.
+    for (const [name, dir] of linkedPackageDirs(this.root, this.opts.kind)) {
+      const native =
+        podspecFiles(dir).some((file) => existsSync(file)) || LIBRARY_MANIFESTS.some((rel) => existsSync(path.join(dir, rel)));
+      if (native && !this.excluded(name)) linkedNpm.add(name);
     }
     const listedPodToNpm = new Map([...podToNpm].filter(([, npm]) => this.listed.has(npm)));
     return { podToNpm, linkedNpm, listedPodToNpm };

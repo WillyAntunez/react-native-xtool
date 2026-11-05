@@ -260,15 +260,15 @@ describe("build", () => {
     const applyPatches = vi.fn(async () => {});
     const t = setup({ applyPatches, project: { kind: "bare", rnScripts: "vendored" } });
     await build(t.root, {}, t.deps);
-    expect(applyPatches).toHaveBeenCalledWith(t.root, { rnScripts: "vendored", expoPlugin: "installed", podTable: mergedPodTable() });
+    expect(applyPatches).toHaveBeenCalledWith(t.root, { rnScripts: "vendored", expoPlugin: "installed", podTable: mergedPodTable(), kind: "bare" });
     const sdk57 = vi.fn(async () => {});
     const t57 = setup({ applyPatches: sdk57, project: { kind: "expo", rnScripts: "vendored", expoPlugin: "vendored", rnVersion: "0.86.3" } });
     await build(t57.root, {}, t57.deps);
-    expect(sdk57).toHaveBeenCalledWith(t57.root, { rnScripts: "vendored", expoPlugin: "vendored", podTable: mergedPodTable() });
+    expect(sdk57).toHaveBeenCalledWith(t57.root, { rnScripts: "vendored", expoPlugin: "vendored", podTable: mergedPodTable(), kind: "expo" });
     const sdk58 = vi.fn(async () => {});
     const t58 = setup({ applyPatches: sdk58, project: { kind: "expo" } });
     await build(t58.root, {}, t58.deps);
-    expect(sdk58).toHaveBeenCalledWith(t58.root, { rnScripts: "installed", expoPlugin: "installed", podTable: mergedPodTable() });
+    expect(sdk58).toHaveBeenCalledWith(t58.root, { rnScripts: "installed", expoPlugin: "installed", podTable: mergedPodTable(), kind: "expo" });
   });
 
   it("build passes the kind to runRnSpm and skips prebuild for bare", async () => {

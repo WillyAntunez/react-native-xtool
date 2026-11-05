@@ -14,6 +14,7 @@ import {
 } from "../versions.js";
 import { scaffoldedPods } from "../project/earlyChecks.js";
 import type { PodSource, PodTable } from "../project/podTable.js";
+import type { ProjectKind } from "../project/types.js";
 import { packageRoot, toolEnv } from "../tools/exec.js";
 import { outside, packagesWithManifest } from "./manifests.js";
 
@@ -408,6 +409,7 @@ function scaffoldPatchFindings(
   projectRoot: string,
   table: PodTable | undefined,
   exclude: readonly string[],
+  kind: ProjectKind | undefined,
 ): ScaffoldPatchFinding[] {
   const installed = installedVersion(projectRoot, "react-native");
   const dir = path.join(projectRoot, "patches");
@@ -454,7 +456,7 @@ function scaffoldPatchFindings(
       continue;
     }
     if (table === undefined) continue;
-    expected ??= scaffoldedPods(projectRoot, table, { exclude });
+    expected ??= scaffoldedPods(projectRoot, table, { exclude, ...(kind !== undefined ? { kind } : {}) });
     const wanted = pkg === undefined ? [] : (expected.get(pkg) ?? []);
     for (const c of pinChanges(recordedPins(PATCH_PODS_RE.exec(text)?.[1]), wanted, table)) {
       findings.push({
@@ -476,15 +478,26 @@ function scaffoldPatchFindings(
  * another React Native version than the installed one, when an older scaffolder revision wrote it, or (with `table`)
  * when its `rn-xtool-pods` line pins a pod at another version than the table, or leaves out a pod the library's
  * podspec maps. One line per patch for the slot (which wins) or the revision, else one per pod. Patches of the
- * packages the config's `exclude` lists get none: rn-xtool does not scaffold them again.
+ * packages the config's `exclude` lists get none: rn-xtool does not scaffold them again. `kind` decides which packages
+ * autolinking links, as in the early checks (`scaffoldedPods`).
  */
-export function scaffoldPatchWarnings(projectRoot: string, table?: PodTable, exclude: readonly string[] = []): string[] {
-  return scaffoldPatchFindings(projectRoot, table, exclude).map((f) => f.line);
+export function scaffoldPatchWarnings(
+  projectRoot: string,
+  table?: PodTable,
+  exclude: readonly string[] = [],
+  kind?: ProjectKind,
+): string[] {
+  return scaffoldPatchFindings(projectRoot, table, exclude, kind).map((f) => f.line);
 }
 
 /** `scaffoldPatchWarnings`' pin lines alone, for `doctor --project`. */
-export function scaffoldPinWarnings(projectRoot: string, table: PodTable, exclude: readonly string[] = []): string[] {
-  return scaffoldPatchFindings(projectRoot, table, exclude)
+export function scaffoldPinWarnings(
+  projectRoot: string,
+  table: PodTable,
+  exclude: readonly string[] = [],
+  kind?: ProjectKind,
+): string[] {
+  return scaffoldPatchFindings(projectRoot, table, exclude, kind)
     .filter((f) => f.kind === "pins")
     .map((f) => f.line);
 }
@@ -552,6 +565,7 @@ export async function refreshStaleScaffolds(
   log: (line: string) => void,
   table?: PodTable,
   exclude: readonly string[] = [],
+  kind?: ProjectKind,
 ): Promise<string[]> {
   const installedRn = installedVersion(projectRoot, "react-native");
   const patchesDir = path.join(projectRoot, "patches");
@@ -598,7 +612,7 @@ export async function refreshStaleScaffolds(
       } else if (revision < SCAFFOLD_REVISION) {
         why = `was scaffolded by an older rn-xtool scaffolder (revision ${revision}, now ${SCAFFOLD_REVISION})`;
       } else if (table !== undefined) {
-        expected ??= scaffoldedPods(projectRoot, table, { exclude });
+        expected ??= scaffoldedPods(projectRoot, table, { exclude, ...(kind !== undefined ? { kind } : {}) });
         const [c] = pinChanges(recordedPins(MANIFEST_PODS_RE.exec(manifest)?.[1]), expected.get(pkg) ?? [], table);
         if (c !== undefined) why = c.pinned !== undefined ? `pins ${c.pod} ${c.pinned}, not ${c.now}` : `does not pin ${c.pod}, ${says(c)}`;
       }
@@ -673,6 +687,8 @@ export async function applyPatches(
     podTable?: PodTable;
     /** The config's exclude: their scaffolds are neither regenerated nor warned about. */
     exclude?: readonly string[];
+    /** The project kind: which packages autolinking links when the expected pod pins are read. */
+    kind?: ProjectKind;
     log?: (line: string) => void;
   } = {
     rnScripts: "installed",
@@ -707,11 +723,11 @@ export async function applyPatches(
     }
   }
   const log = opts.log ?? ((line: string) => console.log(line));
-  const replaced = await refreshStaleScaffolds(projectRoot, log, opts.podTable, opts.exclude);
+  const replaced = await refreshStaleScaffolds(projectRoot, log, opts.podTable, opts.exclude, opts.kind);
   if (!hasProjectPatches(projectRoot)) return;
   const orphans = orphanPatches(projectRoot);
   for (const orphan of orphans) log(orphanPatchLine(orphan));
-  for (const warning of scaffoldPatchWarnings(projectRoot, opts.podTable, opts.exclude)) log(warning);
+  for (const warning of scaffoldPatchWarnings(projectRoot, opts.podTable, opts.exclude, opts.kind)) log(warning);
   let [pcmd, pargs] = projectPatchesArgv();
   const staging = projectPaths(projectRoot).projectPatchesDir;
   await rm(staging, { recursive: true, force: true });

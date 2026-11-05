@@ -1275,6 +1275,28 @@ describe("pod pins in scaffolds", () => {
     expect(scaffoldPinWarnings(stale, mergedPodTable())).toEqual([]);
   });
 
+  it("expects the pods of a subspec whose sibling Expo's autolinking links as a peer", async () => {
+    // On Expo every installed package is linked, so a subspec declaring a peer sibling is kept and its pods are pinned.
+    const root = await app(
+      "s.subspec 'Auth' do |a|\n    a.dependency 'RNPeer'\n    a.dependency 'AppAuth', '>= 1.7.6'\n  end",
+    );
+    await mkdir(path.join(root, "node_modules", "peer"), { recursive: true });
+    await writeFile(path.join(root, "node_modules", "peer", "package.json"), JSON.stringify({ name: "peer", version: "1.0.0" }));
+    await writeFile(path.join(root, "node_modules", "peer", "RNPeer.podspec"), "Pod::Spec.new do |s|\nend\n");
+    await persist(root, patch(null));
+    const line =
+      `⚠ patches/${PATCH} does not pin AppAuth, rn-xtool's table says 3.0.0: it was scaffolded without rn-xtool's pod ` +
+      `table (not through rn-xtool build); delete it so rn-xtool regenerates it ${TAIL}`;
+    expect(scaffoldPatchWarnings(root, mergedPodTable(), [], "expo")).toEqual([line]);
+    expect(scaffoldPinWarnings(root, mergedPodTable(), [], "expo")).toEqual([line]);
+    const lines: string[] = [];
+    const opts = { rnScripts: "vendored" as const, podTable: mergedPodTable(), kind: "expo" as const, log: (l: string) => lines.push(l) };
+    await applyPatches(root, async () => ({ exitCode: 0 }), opts);
+    expect(lines).toEqual([line]);
+    // Without the kind only what package.json lists is linked: the subspec is left out, so nothing is expected.
+    expect(scaffoldPatchWarnings(root, mergedPodTable())).toEqual([]);
+  });
+
   it("leaves the scaffolds of excluded packages alone", async () => {
     // rn-xtool never scaffolds an excluded package again, so "delete it so rn-xtool regenerates it" would be wrong.
     const persisted = await app();

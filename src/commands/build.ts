@@ -139,7 +139,7 @@ export interface BuildDeps {
   /** `podTable`: the merged pod table, for the stale-pin checks of scaffolds. */
   applyPatches: (
     root: string,
-    sources: { rnScripts: RnScripts; expoPlugin: ExpoPlugin; podTable?: PodTable; exclude?: readonly string[] },
+    sources: { rnScripts: RnScripts; expoPlugin: ExpoPlugin; podTable?: PodTable; exclude?: readonly string[]; kind?: ProjectKind },
   ) => Promise<void>;
   /** After patch-package, before rn-spm: rewrites known non-portable snippets in the libraries' own manifests. */
   fixLibraryManifests: (root: string, log: (s: string) => void) => Promise<void>;
@@ -336,6 +336,7 @@ export async function build(
       expoPlugin: project.expoPlugin,
       podTable: mergedPodTable(config.pods),
       ...(config.exclude !== undefined ? { exclude: config.exclude } : {}),
+      kind: project.kind,
     });
     await d.fixLibraryManifests(paths.root, d.log);
   });
