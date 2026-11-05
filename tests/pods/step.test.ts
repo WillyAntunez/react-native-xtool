@@ -239,6 +239,27 @@ describe("runPodsStep", () => {
     expect(readFileSync(path.join(root, PODS_LOCK), "utf8")).toBe(lockBytes);
   });
 
+  it("announces and checks the disk for a cached file that fails its re-hash before downloading it again", async () => {
+    await runPodsStep(root, ROOTS, table(), deps());
+    const damaged = path.join(cache, "downloads", `${sha(TARBALLS.MLImage!)}.tar.gz`);
+    writeFileSync(damaged, "lost bytes");
+    server.requests.length = 0;
+    logs = [];
+    seenAt = [];
+    await expect(runPodsStep(root, ROOTS, table(), deps({ filesystemOf: async () => ({ dev: 1, freeBytes: 1 }) }))).rejects.toThrow(
+      "Not enough free disk space for the CocoaPods binaries",
+    );
+    expect(downloads()).toEqual([]);
+    await runPodsStep(root, ROOTS, table(), deps());
+    const at = logs.findIndex((l) => l.includes("needs 1 CocoaPods binary that is not in rn-xtool's cache"));
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(logs[at]).toContain(`MLImage 1.0.0-beta7 (${formatSize(TARBALLS.MLImage!.length)})`);
+    const get = server.requests.indexOf(`GET ${dlPath("MLImage")}`);
+    expect(seenAt[at]).toBeLessThanOrEqual(get);
+    expect(downloads()).toEqual([`GET ${dlPath("MLImage")}`]);
+    expect(readFileSync(damaged)).toEqual(TARBALLS.MLImage!);
+  });
+
   it("leaves the project and the lock as they were on a mismatch", async () => {
     await runPodsStep(root, ROOTS, table(), deps());
     const lockBytes = readFileSync(path.join(root, PODS_LOCK), "utf8");

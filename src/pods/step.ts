@@ -15,7 +15,7 @@ import { packageRoot } from "../tools/exec.js";
 import { makeArRunner, type ArRunner } from "./ar.js";
 import { extractPod } from "./archive.js";
 import { PodsNetworkError, offlineText, type CdnOptions } from "./cdn.js";
-import { cachedArchive, fetchPodArchive, headSize, type DownloadPlan } from "./fetch.js";
+import { fetchPodArchive, headSize, verifiedCachedArchive, type DownloadPlan } from "./fetch.js";
 import { PODS_LINK, PodsError, formatSize } from "./format.js";
 import {
   PODS_LOCK,
@@ -123,8 +123,8 @@ function checkSdk(binary: readonly ResolvedBinaryPod[], sdk: string): void {
 interface Download {
   b: ResolvedBinaryPod;
   plan: DownloadPlan;
-  /** Whether the cache holds the locked file at the locked URL: no request. */
-  cached: boolean;
+  /** The locked file at the locked URL, in the cache and re-hashed (row 76): no request. */
+  cached?: { file: string; sha256: string; size: number; moved: false };
 }
 
 /** Goal 5.3: what is downloaded, how much, from where and whose. */
@@ -206,7 +206,7 @@ export async function runPodsStep(root: string, roots: readonly PodRoot[], table
   }
   checkSdk(resolution.binary, d.sdkDir ?? defaultSdkDir());
 
-  const all: Download[] = resolution.binary.map((b) => {
+  const all: Download[] = await Promise.all(resolution.binary.map(async (b) => {
     const locked: LockEntry | undefined = lock.pods[b.pod];
     const ext = archiveExt(b);
     const url = b.spec.source.http!;
@@ -220,10 +220,11 @@ export async function runPodsStep(root: string, roots: readonly PodRoot[], table
       ...(b.spec.source.sha256 !== undefined ? { specSha256: b.spec.source.sha256 } : {}),
       ...(b.spec.source.sha1 !== undefined ? { specSha1: b.spec.source.sha1 } : {}),
     };
-    const cached = locked?.version === b.version && locked.url === url && cachedArchive(cache, locked.sha256, ext) !== undefined;
-    return { b, plan, cached };
-  });
-  const todo = all.filter((t) => !t.cached);
+    // Hashed now, so a damaged file is announced and counted by the disk check like a missing one (review M2).
+    const cached = locked?.version === b.version && locked.url === url ? await verifiedCachedArchive(cache, locked, ext) : undefined;
+    return { b, plan, ...(cached !== undefined ? { cached } : {}) };
+  }));
+  const todo = all.filter((t) => t.cached === undefined);
   if (todo.length > 0) {
     await Promise.all(
       todo.map(async (t) => {
@@ -246,17 +247,15 @@ export async function runPodsStep(root: string, roots: readonly PodRoot[], table
   }
 
   // The downloads first, largest first as announced, so an unreachable host names what is still missing.
-  const order = [
-    ...[...todo].sort((a, b) => (b.plan.expectedBytes ?? -1) - (a.plan.expectedBytes ?? -1) || byText(a.b.pod, b.b.pod)),
-    ...all.filter((t) => t.cached),
-  ];
+  const order = [...todo].sort((a, b) => (b.plan.expectedBytes ?? -1) - (a.plan.expectedBytes ?? -1) || byText(a.b.pod, b.b.pod));
   const fetched = new Map<string, { file: string; sha256: string; size: number; moved: boolean }>();
+  for (const t of all) if (t.cached !== undefined) fetched.set(t.b.pod, t.cached);
   for (const [i, t] of order.entries()) {
     try {
       fetched.set(t.b.pod, await fetchPodArchive(t.plan, cache));
     } catch (err) {
       if (!(err instanceof PodsNetworkError)) throw err;
-      const more = order.slice(i + 1).filter((o) => !o.cached).length;
+      const more = order.length - i - 1;
       const what = more > 0 ? `${err.what} (and ${more} more)` : err.what;
       throw stopOf(new PodsNetworkError(err.host, err.reason, what, more > 0 || err.plural, err.verb), cache);
     }

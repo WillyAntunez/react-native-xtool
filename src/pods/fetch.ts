@@ -66,6 +66,20 @@ async function hashFile(file: string, algo: "sha256" | "sha1"): Promise<string> 
   return hash.digest("hex");
 }
 
+/**
+ * The locked file in the cache when its bytes still hash to the lock's sha256 (row 76); undefined when it is missing
+ * or damaged, so the caller announces and downloads it again.
+ */
+export async function verifiedCachedArchive(
+  cache: string,
+  locked: LockEntry,
+  ext: string,
+): Promise<{ file: string; sha256: string; size: number; moved: false } | undefined> {
+  const file = cachedArchive(cache, locked.sha256, ext);
+  if (file === undefined || (await hashFile(file, "sha256")) !== locked.sha256) return undefined;
+  return { file, sha256: locked.sha256, size: (await stat(file)).size, moved: false };
+}
+
 /** A request failed before any answer: fetch's `TypeError("fetch failed")`. */
 const unreachable = (err: unknown): boolean => err instanceof TypeError && err.message === "fetch failed";
 
@@ -86,11 +100,9 @@ export async function fetchPodArchive(
   // Spec goal 1.7: a spec URL other than the lock's is downloaded and checked against the locked sha256, even when the
   // cache holds the file, so the lock records the new URL (review M-5).
   if (locked !== undefined && plan.url === locked.url) {
-    const file = cachedArchive(cache, locked.sha256, plan.ext);
     // Re-hashed before reuse (row 76): a file whose bytes were lost after a crash is downloaded again.
-    if (file !== undefined && (await hashFile(file, "sha256")) === locked.sha256) {
-      return { file, sha256: locked.sha256, size: (await stat(file)).size, moved: false };
-    }
+    const cached = await verifiedCachedArchive(cache, locked, plan.ext);
+    if (cached !== undefined) return cached;
   }
   const host = new URL(plan.url).host;
   /** P16's stop for a URL whose scheme is not https (compared as the URL parser reads it, so `HTTP:` too). */
