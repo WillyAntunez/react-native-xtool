@@ -366,8 +366,8 @@ function podspecsCheck(podspecs: Capabilities["podspecs"]): CheckResult {
 }
 
 const NO_KNOWN_LIMITS =
-  "none of the setups rn-xtool refuses early (CocoaPods-only libraries with prebuilt binaries or vendored C sources, " +
-  "pnpm, Yarn PnP, hoisted packages)";
+  "none of the setups rn-xtool refuses early (CocoaPods-only libraries with prebuilt binaries, vendored C sources " +
+  "or CocoaPods pods without a SwiftPM package, pnpm, Yarn PnP, hoisted packages)";
 
 /**
  * One ok line without known limits, else one line per limit: a warning when the config allows it, else a failure whose

@@ -5,6 +5,7 @@ import path from "node:path";
 import Module, { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  allowedLimitText,
   allowKnownLimits,
   earlyFailures,
   installFailures,
@@ -12,6 +13,8 @@ import {
   libraryFailures,
   UnsupportedSetupError,
 } from "../src/project/earlyChecks.js";
+import { mergedPodTable, type PodTable } from "../src/project/podTable.js";
+import { podDependencies } from "../src/project/podspecs.js";
 
 const tempDirs: string[] = [];
 
@@ -600,5 +603,224 @@ describe("knownLimits.allow", () => {
         '- installed with pnpm.\n  To build anyway, add "pnpm" to knownLimits.allow in rn-xtool.config.json.\n' +
         `- ${ASYNC_STORAGE_REASON}\n  ${hint}`,
     );
+  });
+});
+
+describe("unmapped pods", () => {
+  const NO_POD_TABLE: PodTable = { pods: {}, source: {} };
+  const UNMAPPED_DOCS = `${DOCS}#libraries-that-depend-on-cocoapods-pods`;
+  const unmapped = (lib: string, pods: string, first: string, several: boolean) =>
+    `${lib}: its podspec depends on the CocoaPods ${several ? "pods" : "pod"} ${pods}, which ${several ? "have" : "has"} no ` +
+    `SwiftPM package rn-xtool knows. Add ${several ? "them" : "one"} under "pods" in rn-xtool.config.json: ` +
+    `{ "pods": { "${first}": { "url": "<git URL>", "exact": "<version>", "products": ["<product>"] } } }, or leave the ` +
+    `library out with "exclude". See ${UNMAPPED_DOCS}`;
+
+  /** react-native-app-auth 8.5.1's shape: the pod name comes from package.json, AppAuth is a CocoaPods pod. */
+  const appAuth = (): Record<string, string> => ({
+    "package.json": JSON.stringify({ name: "react-native-app-auth", version: "8.5.1" }),
+    "react-native-app-auth.podspec":
+      "require 'json'\npackage = JSON.parse(File.read(File.join(__dir__, 'package.json')))\n\n" +
+      "Pod::Spec.new do |s|\n  s.name         = package['name']\n  s.source_files  = 'ios/**/*.{h,m}'\n" +
+      "  s.dependency 'React-Core'\n  s.dependency 'AppAuth', '>= 1.7.6'\nend\n",
+  });
+
+  /** @react-native-ml-kit/text-recognition 2.0.0's shape: five subspecs of the one pod GoogleMLKit. */
+  const mlKit = (): Record<string, string> => ({
+    "package.json": JSON.stringify({ name: "@react-native-ml-kit/text-recognition", version: "2.0.0" }),
+    "RNMLKitTextRecognition.podspec":
+      'Pod::Spec.new do |s|\n  s.name         = "RNMLKitTextRecognition"\n  s.dependency "React"\n' +
+      "  # To recognize Latin script\n  s.dependency 'GoogleMLKit/TextRecognition', '8.0.0'\n" +
+      ["Chinese", "Devanagari", "Japanese", "Korean"].map((l) => `  s.dependency 'GoogleMLKit/TextRecognition${l}', '8.0.0'\n`).join("") +
+      "end\n",
+  });
+
+  it("refuses AppAuth's shape without a table entry", async () => {
+    const root = await project({ "react-native-app-auth": appAuth() });
+    expect(libraryFailures(root, { table: NO_POD_TABLE })).toEqual([
+      {
+        id: "unmapped-pod",
+        allowKey: "react-native-app-auth",
+        reason: unmapped("react-native-app-auth 8.5.1", "AppAuth", "AppAuth", false),
+      },
+    ]);
+  });
+
+  it("lets AppAuth through with rn-xtool's table", async () => {
+    const root = await project({ "react-native-app-auth": appAuth() });
+    expect(libraryFailures(root)).toEqual([]);
+    expect(libraryFailures(root, { table: mergedPodTable() })).toEqual([]);
+  });
+
+  it("maps a pod the config's pods name", async () => {
+    const root = await project({ "react-native-app-auth": appAuth() });
+    const pods = { MMKV: { url: "https://github.com/Tencent/MMKV", exact: "2.2.4", products: ["MMKV"] } };
+    await writeFiles(path.join(root, "node_modules", "react-native-app-auth"), {
+      "react-native-app-auth.podspec": "Pod::Spec.new do |s|\n  s.dependency 'MMKV', '~> 2.0'\nend\n",
+    });
+    expect(libraryFailures(root).map((f) => f.id)).toEqual(["unmapped-pod"]);
+    expect(libraryFailures(root, { pods })).toEqual([]);
+  });
+
+  it("refuses ML Kit's shape, naming GoogleMLKit once", async () => {
+    const root = await project({ "@react-native-ml-kit/text-recognition": mlKit() });
+    expect(libraryFailures(root)).toEqual([
+      {
+        id: "unmapped-pod",
+        allowKey: "@react-native-ml-kit/text-recognition",
+        reason: unmapped("@react-native-ml-kit/text-recognition 2.0.0", "GoogleMLKit", "GoogleMLKit", false),
+      },
+    ]);
+  });
+
+  it("names several unmapped pods", async () => {
+    const two = await project({
+      lib: {
+        "Lib.podspec":
+          "Pod::Spec.new do |s|\n  s.dependency 'GoogleMLKit/TextRecognition', '8.0.0'\n" +
+          '  s.dependency "GoogleToolboxForMac/Logger", "~> 4.2"\n  s.dependency \'GoogleMLKit/Vision\'\nend\n',
+      },
+    });
+    expect(libraryFailures(two).map((f) => f.reason)).toEqual([
+      unmapped("lib 1.0.0", "GoogleMLKit and GoogleToolboxForMac", "GoogleMLKit", true),
+    ]);
+    const three = await project({
+      lib: {
+        "ios/Lib.podspec": "Pod::Spec.new do |s|\n  s.dependency 'MMKV'\n  s.ios.dependency('Lottie', '~> 4.0')\nend\n",
+        "Other.podspec": "Pod::Spec.new do |s|\n  s.dependency 'Firebase/Core'\n  s.dependency 'MMKV'\nend\n",
+      },
+    });
+    expect(libraryFailures(three).map((f) => f.reason)).toEqual([
+      unmapped("lib 1.0.0", "Firebase, MMKV and Lottie", "Firebase", true),
+    ]);
+  });
+
+  it("ignores pods under a Ruby condition (react-native-video's shape)", async () => {
+    const root = await project({
+      "react-native-video": {
+        "package.json": JSON.stringify({ name: "react-native-video", version: "6.19.3" }),
+        "react-native-video.podspec":
+          "fabric_enabled = ENV['RCT_NEW_ARCH_ENABLED'] == '1'\n\nPod::Spec.new do |s|\n  s.name           = 'react-native-video'\n" +
+          '  s.subspec "Video" do |ss|\n    ss.source_files = "ios/Video/**/*.{h,m,swift,mm}"\n' +
+          '    if fabric_enabled\n      ss.dependency "react-native-video/Fabric"\n    end\n' +
+          '    if defined?($RNVideoUseGoogleIMA)\n      Pod::UI.puts "RNVideo: enable IMA SDK"\n\n' +
+          "      ss.ios.dependency 'GoogleAds-IMA-iOS-SDK', '~> 3.22.1'\n      ss.tvos.dependency 'GoogleAds-IMA-tvOS-SDK', '~> 4.2'\n" +
+          "    end\n    if defined?($RNVideoUseVideoCaching)\n" +
+          '      ss.dependency "SPTPersistentCache", "~> 1.1.0"\n      ss.dependency "DVAssetLoaderDelegate", "~> 0.3.1"\n' +
+          "    end\n  end\n\n  if respond_to?(:install_modules_dependencies, true)\n    install_modules_dependencies(s)\n" +
+          '  else\n    s.dependency "React-Core"\n    s.dependency "Folly" if fabric_enabled\n  end\n' +
+          "  s.tvos.dependency 'TVOnlyPod'\n  s.default_subspec = \"Video\"\nend\n",
+      },
+    });
+    expect(libraryFailures(root, { table: NO_POD_TABLE })).toEqual([]);
+  });
+
+  it("does not refuse siblings, core, Expo or subspec dependencies", async () => {
+    const root = await project({
+      lib: {
+        "Self.podspec":
+          "Pod::Spec.new do |s|\n  s.name = 'Self'\n  s.dependency 'react-native-missing'\n  s.dependency 'RNWorklets'\n" +
+          "  s.dependency 'React-Core'\n  s.dependency 'ExpoModulesCore'\n  s.dependency 'Self/Sub'\n" +
+          "  s.dependency 'RNSibling', '>= 1.0'\nend\n",
+      },
+      "react-native-worklets": { "RNWorklets.podspec": "Pod::Spec.new do |s|\n  s.name = 'RNWorklets'\nend\n" },
+      sibling: { "RNSibling.podspec": "Pod::Spec.new do |s|\nend\n" },
+    });
+    await writeFiles(root, {
+      "react-native.config.js": "module.exports = { dependencies: { 'react-native-worklets': { platforms: { ios: null } } } };\n",
+    });
+    expect(libraryFailures(root, { table: NO_POD_TABLE })).toEqual([]);
+  });
+
+  it("knownLimits.allow turns it into a warning", async () => {
+    const root = await project({ "@react-native-ml-kit/text-recognition": mlKit() });
+    const [failure] = allowKnownLimits(libraryFailures(root), ["@react-native-ml-kit/text-recognition"]);
+    expect(failure).toMatchObject({ id: "unmapped-pod", allowed: true });
+    expect(allowedLimitText(failure!)).toBe(
+      `${unmapped("@react-native-ml-kit/text-recognition 2.0.0", "GoogleMLKit", "GoogleMLKit", false)} ` +
+        "(allowed by rn-xtool.config.json knownLimits.allow; the build may fail later)",
+    );
+  });
+
+  it("skips libraries with their own Package.swift or swiftpmConfig.scaffold false", async () => {
+    const cases = [
+      await project({ "react-native-app-auth": { ...appAuth(), "Package.swift": "// swift-tools-version: 6.0\n" } }),
+      await project({ "react-native-app-auth": { ...appAuth(), "ios/Package.swift": "// swift-tools-version: 6.0\n" } }),
+      await project({
+        "react-native-app-auth": {
+          ...appAuth(),
+          "package.json": JSON.stringify({ name: "react-native-app-auth", version: "8.5.1", swiftpmConfig: { scaffold: false } }),
+        },
+      }),
+      await project({
+        "expo-thing": {
+          "expo-module.config.json": JSON.stringify({ platforms: ["apple"] }),
+          "ios/ExpoThing.podspec": "Pod::Spec.new do |s|\n  s.dependency 'AppAuth'\nend\n",
+        },
+      }),
+    ];
+    for (const root of cases) expect(libraryFailures(root, { table: NO_POD_TABLE })).toEqual([]);
+    const scaffolded = await project({
+      "react-native-app-auth": { ...appAuth(), "Package.swift": `${SCAFFOLD_MARKER}\n// swift-tools-version: 6.0\n` },
+    });
+    expect(libraryFailures(scaffolded, { table: NO_POD_TABLE }).map((f) => f.id)).toEqual(["unmapped-pod"]);
+  });
+
+  it("skips the packages the config leaves out", async () => {
+    const root = await project({ "react-native-app-auth": appAuth(), "@react-native-ml-kit/text-recognition": mlKit() });
+    expect(libraryFailures(root, { table: NO_POD_TABLE, exclude: ["react-native-app-auth"] }).map((f) => f.allowKey)).toEqual([
+      "@react-native-ml-kit/text-recognition",
+    ]);
+  });
+
+  it("names the binaries and the unmapped pods of one library", async () => {
+    const root = await project({
+      [ASYNC_STORAGE]: asyncStorage({
+        "Extra.podspec": "Pod::Spec.new do |s|\n  s.dependency 'MMKV'\nend\n",
+      }),
+    });
+    expect(libraryFailures(root, { table: NO_POD_TABLE }).map((f) => f.id)).toEqual(["vendored-binaries", "unmapped-pod"]);
+  });
+
+  it("loads only rn-xtool's vendored scaffolder", async () => {
+    const root = await project({ "react-native-app-auth": appAuth() });
+    await writeFiles(root, { "node_modules/react-native/scripts/spm/scaffold-package-swift.js": "throw new Error('project code');\n" });
+    const req = createRequire(import.meta.url);
+    for (const key of Object.keys(req.cache)) if (key.includes(`${path.sep}vendor${path.sep}`)) delete req.cache[key];
+    const loader = Module as unknown as { _load(request: string, parent: { filename?: string } | undefined, isMain: boolean): unknown };
+    const seen: string[] = [];
+    const real = loader._load;
+    const spy = vi.spyOn(loader, "_load").mockImplementation(function (this: unknown, request, parent, isMain) {
+      seen.push(request, parent?.filename ?? "");
+      return real.call(this, request, parent, isMain);
+    });
+    try {
+      expect(libraryFailures(root, { table: NO_POD_TABLE }).map((f) => f.id)).toEqual(["unmapped-pod"]);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(seen.some((s) => s.endsWith(path.join("vendor", "rn-spm", "spm", "scaffold-package-swift.js")))).toBe(true);
+    expect(seen.filter((s) => s.startsWith(root))).toEqual([]);
+  });
+
+  it("reads each dependency's name and requirements from the given lines", () => {
+    expect(
+      podDependencies([
+        "  s.dependency 'AppAuth', '>= 1.7.6'",
+        '  ss.ios.dependency "GoogleMLKit/TextRecognition", " ~> 8.0", "< 9 " # note',
+        "  s.dependency('Lottie', ['>= 4.0', '  < 5.0'])",
+        "  s.dependency 'React-Core'",
+        "  s.tvos.dependency 'TVOnly'",
+        "  # s.dependency 'Commented'",
+        "  s.dependency \"#{prefix}Pod\"",
+        "  s.dependency 'Folly', folly_version",
+        "  dependency_list = 'not one'",
+      ]),
+    ).toEqual([
+      { name: "AppAuth", requirements: [">= 1.7.6"] },
+      { name: "GoogleMLKit/TextRecognition", requirements: ["~> 8.0", "< 9"] },
+      { name: "Lottie", requirements: [">= 4.0", "< 5.0"] },
+      { name: "React-Core", requirements: [] },
+      { name: "Folly", requirements: [] },
+    ]);
   });
 });

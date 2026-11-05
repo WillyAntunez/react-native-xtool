@@ -488,8 +488,10 @@ outside every target (AppAuth-iOS 3.0.0's `Sources/AppAuth.h`: `@import AppAuth;
 be a relative path ending in `.h` without `.` or `..` segments, and each module a module name; otherwise that library
 gets the error `react-native spm scaffold: pods.<pod>.forwardHeaders.<header> must be a list of module names, under a
 relative path ending in .h`. A scaffold without forwarders removes a `rn-spm-pod-headers/` whose files all carry the
-banner. An unmapped pod gets one warning per pod (subspecs collapse to the root pod): `Dependency "<pod>" is a CocoaPods pod with no known SwiftPM equivalent; the scaffolded package
-may fail to build — add it to the pod→SwiftPM map in scaffold-package-swift.js`. Expo-named pods
+banner. An unmapped pod gets one warning per pod (subspecs collapse to the root pod): `Dependency "<pod>" is a
+CocoaPods pod with no known SwiftPM equivalent; the scaffolded package may fail to build — add it under "pods" in
+rn-xtool.config.json: { "pods": { "<pod>": { "url": "<git URL>", "exact": "<version>", "products": ["<product>"] } }
+}`. Expo-named pods
 (`expo-*`, `Expo*`, `EX*`) keep the old "Unknown dependency" warning. A remote package makes the first build
 of a clean `.build` need network (SwiftPM clones it). Verified on react-native-pager-view 9.0.7: re-scaffolded
 from scratch, it builds with no hand edit.

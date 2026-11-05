@@ -129,3 +129,39 @@ export function unconditionalLineIndexes(text: string): number[] {
   }
   return kept;
 }
+
+/** `<spec>.dependency` or `<spec>.ios.dependency` at the start of a line, with an optional `(`. */
+const DEPENDENCY = /^\s*[A-Za-z_]\w*\.(?:ios\.)?dependency\b\s*\(?\s*/;
+const STRING = /^(["'])((?:(?!\1)[^\\]|\\.)*)\1/;
+
+/**
+ * The pod dependencies on `lines` (podspec lines as written, such as `unconditionalLines(text, "source")`):
+ * `<spec>.dependency 'Name'` or `<spec>.ios.dependency 'Name'`, with the requirement strings that follow, one by one or
+ * in one `[…]` list, each trimmed. Another platform's dependency, a name built with `#{…}`, and a line that does not
+ * start with the call are left out; the requirements stop at the first value that is not a string.
+ */
+export function podDependencies(lines: readonly string[]): { name: string; requirements: string[] }[] {
+  return lines.flatMap((line) => {
+    const head = DEPENDENCY.exec(line);
+    if (head === null) return [];
+    let rest = line.slice(head[0].length);
+    const take = (re: RegExp): RegExpExecArray | null => {
+      const m = re.exec(rest);
+      if (m !== null) rest = rest.slice(m[0].length);
+      return m;
+    };
+    const name = take(STRING)?.[2];
+    if (name === undefined || name === "" || name.includes("#{")) return [];
+    const requirements: string[] = [];
+    items: while (take(/^\s*,\s*/) !== null) {
+      const list = take(/^\[\s*/) !== null;
+      do {
+        const item = take(STRING);
+        if (item === null) break items;
+        requirements.push(item[2]!.trim());
+      } while (list && take(/^\s*,\s*/) !== null);
+      if (list && take(/^\s*\]/) === null) break;
+    }
+    return [{ name, requirements }];
+  });
+}

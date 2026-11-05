@@ -22,6 +22,7 @@ import {
   libraryFailures,
   UnsupportedSetupError,
   type EarlyFailure,
+  type LibraryCheckOptions,
 } from "../project/earlyChecks.js";
 import { readProject, RN_CLI_MISSING, type ProjectInfo, type ProjectKind, type ReadProjectOptions } from "../project/index.js";
 import { appIconRecord } from "../generate/appIcon.js";
@@ -112,8 +113,11 @@ export interface BuildDeps {
   loadConfig: (root: string) => Promise<ExpoXtoolConfig>;
   /** The install layouts rn-xtool refuses before reading the project (pnpm, Yarn PnP, hoisted packages). */
   installFailures: (root: string) => EarlyFailure[];
-  /** The libraries rn-xtool refuses (a Package.swift the project's patches/ create counts), checked with the installs. */
-  libraryFailures: (root: string) => EarlyFailure[];
+  /**
+   * The libraries rn-xtool refuses (a Package.swift the project's patches/ create counts, the config's pods map pods),
+   * checked with the installs.
+   */
+  libraryFailures: (root: string, opts: LibraryCheckOptions) => EarlyFailure[];
   readProject: (root: string, opts?: ReadProjectOptions) => Promise<ProjectInfo>;
   exists: (path: string) => boolean;
   /** Deletes a directory tree (no error when it is missing). */
@@ -152,7 +156,7 @@ export interface BuildDeps {
 const realDeps: BuildDeps = {
   loadConfig,
   installFailures: (root) => installFailures(root),
-  libraryFailures,
+  libraryFailures: (root, opts) => libraryFailures(root, opts),
   readProject,
   exists: existsSync,
   remove: (path) => rm(path, { recursive: true, force: true }),
@@ -207,7 +211,8 @@ export async function build(
   };
   // Before reading the project or writing anything (prebuild, --clean, patches): these setups would otherwise fail
   // minutes into rn-spm or SwiftPM. A Package.swift the project's patches/ create counts already, as in doctor.
-  stopOnKnownLimits([...d.installFailures(root), ...d.libraryFailures(root)]);
+  const libraryChecks: LibraryCheckOptions = config.pods !== undefined ? { pods: config.pods } : {};
+  stopOnKnownLimits([...d.installFailures(root), ...d.libraryFailures(root, libraryChecks)]);
   const project = await d.readProject(root, { log: d.log });
   // Bare rn-spm runs RN's default autolinking config command, `npx --no-install @react-native-community/cli config`.
   if (project.kind === "bare" && project.hasRnCli === false) throw new Error(RN_CLI_MISSING);

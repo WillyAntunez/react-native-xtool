@@ -304,7 +304,10 @@ export async function detectCapabilities(projectRoot: string, opts: ProbeOptions
   const expoVersion = installedExpoVersion(root);
   const caps: Capabilities = {
     podspecs: podspecFeatures(root),
-    limits: allowKnownLimits(earlyFailures(root), config.knownLimits?.allow ?? []),
+    limits: allowKnownLimits(
+      earlyFailures(root, config.pods !== undefined ? { pods: config.pods } : {}),
+      config.knownLimits?.allow ?? [],
+    ),
     orphanPatches: orphanPatches(root).map(orphanPatchLine),
   };
   if (kind !== undefined) caps.kind = kind;

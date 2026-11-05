@@ -998,10 +998,12 @@ function translatePodspecToSpmTarget(
         }
       }
     } else if (!unmappedPods.includes(pod)) {
-      // Any other CocoaPods pod ("MMKV"): say loudly that the build may fail.
+      // Any other CocoaPods pod ("MMKV"): say loudly that the build may fail,
+      // and where its SwiftPM package goes (RN_SPM_POD_TABLE's source).
       unmappedPods.push(pod);
       warnings.push(
-        `Dependency "${pod}" is a CocoaPods pod with no known SwiftPM equivalent; the scaffolded package may fail to build — add it to the pod→SwiftPM map in scaffold-package-swift.js`,
+        `Dependency "${pod}" is a CocoaPods pod with no known SwiftPM equivalent; the scaffolded package may fail to build — ` +
+          `add it under "pods" in rn-xtool.config.json: { "pods": { "${pod}": { "url": "<git URL>", "exact": "<version>", "products": ["<product>"] } } }`,
       );
     }
   }

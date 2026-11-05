@@ -443,7 +443,7 @@ describe("build", () => {
       expect((error as UnsupportedSetupError).failures).toEqual(failures);
       expect(roots).toEqual([t.root]);
       expect(readProject).not.toHaveBeenCalled();
-      expect(libraryFailures).toHaveBeenCalledWith(t.root);
+      expect(libraryFailures).toHaveBeenCalledWith(t.root, {});
       expect(t.calls).toEqual([]);
       expect(t.logs.filter((l) => l.startsWith("▸"))).toEqual([]);
     }
@@ -521,6 +521,35 @@ describe("build", () => {
     });
     await build(persisted.root, {}, persisted.deps);
     expect(persisted.calls).toEqual(buildSteps({ ...expoFlags, hasIos: true, clean: false }));
+  });
+  it("stops on an unmapped pod before anything changes", async () => {
+    const name = "@react-native-ml-kit/text-recognition";
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ name: "app", dependencies: { [name]: "2.0.0" } }),
+      [`node_modules/${name}/package.json`]: JSON.stringify({ name, version: "2.0.0" }),
+      [`node_modules/${name}/RNMLKitTextRecognition.podspec`]:
+        "Pod::Spec.new do |s|\n  s.dependency 'React'\n  s.dependency 'GoogleMLKit/TextRecognition', '8.0.0'\nend\n",
+    };
+    const t0 = setup({ hasIos: true, libraryFailures: realLibraryFailures });
+    for (const [rel, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(t0.root, rel)), { recursive: true });
+      writeFileSync(join(t0.root, rel), text);
+    }
+    const error = await build(t0.root, {}, t0.deps).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(UnsupportedSetupError);
+    expect((error as UnsupportedSetupError).failures.map((f) => [f.id, f.allowKey])).toEqual([["unmapped-pod", name]]);
+    expect((error as Error).message).toMatch(/^@react-native-ml-kit\/text-recognition 2\.0\.0: its podspec depends on the CocoaPods pod GoogleMLKit,/);
+    expect(t0.calls).toEqual([]);
+
+    // The config's pods map it: the build goes on.
+    const pods = { GoogleMLKit: { url: "https://github.com/example/mlkit", exact: "8.0.0", products: ["MLKitTextRecognition"] } };
+    const mapped = setup({ hasIos: true, cfg: { pods }, libraryFailures: realLibraryFailures });
+    for (const [rel, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(mapped.root, rel)), { recursive: true });
+      writeFileSync(join(mapped.root, rel), text);
+    }
+    await build(mapped.root, {}, mapped.deps);
+    expect(mapped.calls).toEqual(buildSteps({ ...expoFlags, hasIos: true, clean: false }));
   });
   it("warns and builds on when rn-xtool.config.json allows every refusal", async () => {
     const pnpm: EarlyFailure = { id: "pnpm", allowKey: "pnpm", reason: "This project was installed with pnpm." };

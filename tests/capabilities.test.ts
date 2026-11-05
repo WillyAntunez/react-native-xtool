@@ -527,6 +527,20 @@ describe("detectCapabilities", () => {
     expect(limits?.[0]?.reason).toMatch(/^@react-native-async-storage\/async-storage 3\.1\.1: its podspec \(AsyncStorage\.podspec\)/);
   });
 
+  it("checks the pods with the config's table", async () => {
+    const dir = await expo58();
+    const pkg = JSON.parse(await readFile(path.join(dir, "package.json"), "utf8"));
+    pkg.dependencies["react-native-mmkv-lib"] = "1.0.0";
+    await writeFile(path.join(dir, "package.json"), JSON.stringify(pkg));
+    await writePackage(path.join(dir, "node_modules", "react-native-mmkv-lib"), { name: "react-native-mmkv-lib", version: "1.0.0" }, {
+      "MmkvLib.podspec": "Pod::Spec.new do |s|\n  s.dependency 'React-Core'\n  s.dependency 'MMKV', '~> 2.0'\nend\n",
+    });
+    expect((await detect(dir)).limits?.map((l) => [l.id, l.allowKey])).toEqual([["unmapped-pod", "react-native-mmkv-lib"]]);
+    const pods = { MMKV: { url: "https://github.com/Tencent/MMKV", exact: "2.2.4", products: ["MMKV"] } };
+    await writeFile(path.join(dir, "rn-xtool.config.json"), JSON.stringify({ pods }));
+    expect((await detect(dir)).limits).toEqual([]);
+  });
+
   it("leaves the React Native fields out without react-native", async () => {
     const c = await detect(await bare(null), noNetwork);
     expect(c.rnVersion).toBeUndefined();

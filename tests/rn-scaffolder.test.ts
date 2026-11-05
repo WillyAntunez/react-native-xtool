@@ -123,6 +123,7 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
     });
     it("scaffold-package-swift.js has the pod→SwiftPM map hunk", () => {
       expect(src("scaffold-package-swift.js")).toContain("const KNOWN_POD_SPM_PACKAGES");
+      expect(src("scaffold-package-swift.js")).toContain('add it under "pods" in rn-xtool.config.json: ');
     });
     it("the scaffolder has the fixes 14–19 hunks", () => {
       expect(src("read-podspec.js")).toContain("function resolvePackageVersion");
@@ -1014,7 +1015,8 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
         { name: "foo", root, swiftName: "Foo", platforms: { ios: {} } },
       );
     const UNMAPPED = (pod: string) =>
-      `Dependency "${pod}" is a CocoaPods pod with no known SwiftPM equivalent; the scaffolded package may fail to build — add it to the pod→SwiftPM map in scaffold-package-swift.js`;
+      `Dependency "${pod}" is a CocoaPods pod with no known SwiftPM equivalent; the scaffolded package may fail to build — ` +
+      `add it under "pods" in rn-xtool.config.json: { "pods": { "${pod}": { "url": "<git URL>", "exact": "<version>", "products": ["<product>"] } } }`;
 
     it("maps SwiftUIIntrospect (react-native-pager-view's `~> 1.0`) to its SwiftPM package", () => {
       const spec = translate(lib(`  s.dependency "SwiftUIIntrospect", '~> 1.0'`));

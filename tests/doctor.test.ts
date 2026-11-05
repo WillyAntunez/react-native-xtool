@@ -559,8 +559,8 @@ describe("doctor --project", () => {
       name: "known-limits",
       status: "ok",
       detail:
-        "none of the setups rn-xtool refuses early (CocoaPods-only libraries with prebuilt binaries or vendored C sources, " +
-        "pnpm, Yarn PnP, hoisted packages)",
+        "none of the setups rn-xtool refuses early (CocoaPods-only libraries with prebuilt binaries, vendored C sources " +
+        "or CocoaPods pods without a SwiftPM package, pnpm, Yarn PnP, hoisted packages)",
     });
     expect(none.checks.filter((c) => c.name === "known-limits")).toHaveLength(1);
     expect(none.ok).toBe(true);

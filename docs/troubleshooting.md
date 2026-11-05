@@ -226,6 +226,15 @@ the library, or take it out of iOS autolinking (`expo.autolinking.exclude`) if t
 `expo-sqlite/kv-store` comes from the same package, so it is not a way around it. An Expo module that ships a
 precompiled copy, or has a `Package.swift` of its own or from your project's `patches/`, passes.
 
+### Libraries that depend on CocoaPods pods
+
+`<package> <version>: its podspec depends on the CocoaPods pod <pod>, which has no SwiftPM package rn-xtool knows. Add
+one under "pods" in rn-xtool.config.json: { "pods": { "<pod>": { "url": "<git URL>", "exact": "<version>", "products":
+["<product>"] } } }, or leave the library out with "exclude".`
+
+The library's podspec depends on a CocoaPods pod, and neither rn-xtool's pod table nor the `pods` of your
+`rn-xtool.config.json` names a SwiftPM package for it. Pods under a Ruby condition (`if`, `unless`) do not count.
+
 ### pnpm and Yarn PnP
 
 `This project was installed with pnpm (pnpm-lock.yaml and a node_modules/.pnpm store); rn-xtool needs the flat
@@ -703,8 +712,8 @@ checks, so it also runs on a machine without Swift or xtool. Run it from the pro
   without its `⚠`: `patches/<file> is for <package>, which is not installed; skipped. Delete it if you removed the
   library.` ([details](#build-and-patches)).
 - **known-limits**: the setups rn-xtool refuses before a build ([Unsupported setups](#unsupported-setups)). With none,
-  it reads `none of the setups rn-xtool refuses early (CocoaPods-only libraries with prebuilt binaries or vendored C
-  sources, pnpm, Yarn PnP, hoisted packages)`. Otherwise there is one ✖ line per refusal, with its reason and a link
+  it reads `none of the setups rn-xtool refuses early (CocoaPods-only libraries with prebuilt binaries, vendored C
+  sources or CocoaPods pods without a SwiftPM package, pnpm, Yarn PnP, hoisted packages)`. Otherwise there is one ✖ line per refusal, with its reason and a link
   to its section, followed by `To build anyway, add "<name>" to knownLimits.allow in rn-xtool.config.json.` on the
   next line, and `doctor --project` exits non-zero. A refusal that `knownLimits.allow` lets through is a ⚠ warning
   instead, ending with `(allowed by rn-xtool.config.json knownLimits.allow; the build may fail later)`.
