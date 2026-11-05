@@ -1,17 +1,23 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { troubleshootingUrl } from "../../src/docs.js";
 import {
+  EXTRACTED_STAMP,
+  EXTRACTOR_VERSION,
+  defaultListRunner,
+  extractPod,
   listArchive,
   parseTarListing,
   parseZipListing,
   safeEntries,
   unsafeEntry,
   type ArchiveEntry,
+  type ExtractRequest,
   type ListRunner,
 } from "../../src/pods/archive.js";
+import { swapIn } from "../../src/pipeline/rnArtifacts.js";
 import { tarGz, zip, type ArchiveSpec } from "../support/archives.js";
 
 const LINK = troubleshootingUrl("cocoapods-binaries");
@@ -178,5 +184,200 @@ describe("safeEntries", () => {
     await expect(safeEntries(file, "tar.gz", { pod: "MLKitFoo", version: "1.0.0" })).rejects.toThrow(
       /rn-xtool cannot list broken\.tar\.gz \(MLKitFoo 1\.0\.0\): /,
     );
+  });
+});
+
+const FOO: ArchiveSpec[] = [
+  { type: "dir", path: "Frameworks/" },
+  { type: "dir", path: "Frameworks/MLKitFoo.framework/" },
+  { type: "file", path: "Frameworks/MLKitFoo.framework/MLKitFoo", body: "!<arch>\n" },
+  { type: "file", path: "Frameworks/MLKitFoo.framework/Headers/MLKitFoo.h", body: "// h" },
+  { type: "file", path: "Frameworks/MLKitFoo.framework/Modules/module.modulemap", body: "framework module MLKitFoo {}" },
+  { type: "file", path: "Resources/FooResources/model.tflite", body: "model" },
+  { type: "file", path: "Resources/FooResources/sub/labels.txt", body: "labels" },
+  { type: "file", path: "Other/big.bin", body: "big" },
+  { type: "file", path: "NOTICES", body: "notices" },
+  { type: "file", path: "README.md", body: "readme" },
+];
+const KEPT = [
+  "Frameworks/MLKitFoo.framework/Headers/MLKitFoo.h",
+  "Frameworks/MLKitFoo.framework/MLKitFoo",
+  "Frameworks/MLKitFoo.framework/Modules/module.modulemap",
+  "NOTICES",
+  "Resources/FooResources/model.tflite",
+  "Resources/FooResources/sub/labels.txt",
+];
+const SHA_FOO = "f".repeat(64);
+const under = (prefix: string, entries: ArchiveSpec[]): ArchiveSpec[] => [
+  { type: "dir", path: `${prefix}/` },
+  ...entries.map((e) => ({ ...e, path: `${prefix}/${e.path}` }) as ArchiveSpec),
+];
+
+/** Every file and link below `root`, relative, sorted; the stamp left out. */
+function treeFiles(root: string): string[] {
+  const out: string[] = [];
+  const walk = (rel: string): void => {
+    for (const d of readdirSync(path.join(root, rel), { withFileTypes: true })) {
+      const p = rel === "" ? d.name : `${rel}/${d.name}`;
+      if (d.isDirectory()) walk(p);
+      else if (p !== EXTRACTED_STAMP) out.push(p);
+    }
+  };
+  walk("");
+  return out.sort();
+}
+
+describe("extractPod", () => {
+  let cache: string;
+  beforeEach(() => {
+    cache = path.join(dir, "cache");
+  });
+  const request = (archive: string, ext: "tar.gz" | "zip", extra: Partial<ExtractRequest> = {}): ExtractRequest => ({
+    archive,
+    ext,
+    sha256: SHA_FOO,
+    pod: "MLKitFoo",
+    version: "1.0.0",
+    flatten: false,
+    keep: ["Frameworks/MLKitFoo.framework", "Resources/FooResources/**", "NOTICES"],
+    required: ["Frameworks/MLKitFoo.framework"],
+    ...extra,
+  });
+  const extracted = (): string[] => (existsSync(path.join(cache, "extracted")) ? readdirSync(path.join(cache, "extracted")) : []);
+
+  it.each(["tar.gz", "zip"] as const)("extracts only the paths the spec needs (%s)", async (ext) => {
+    const dest = await extractPod(request(write(ext, FOO), ext), cache);
+    expect(dest).toBe(path.join(cache, "extracted", SHA_FOO));
+    expect(treeFiles(dest)).toEqual(KEPT);
+    expect(readFileSync(path.join(dest, "Resources/FooResources/sub/labels.txt"), "utf8")).toBe("labels");
+    expect(JSON.parse(readFileSync(path.join(dest, EXTRACTED_STAMP), "utf8"))).toEqual({
+      extractorVersion: EXTRACTOR_VERSION,
+      sha256: SHA_FOO,
+      keep: ["Frameworks/MLKitFoo.framework", "NOTICES", "Resources/FooResources/**"],
+      flatten: false,
+    });
+    expect(extracted()).toEqual([SHA_FOO]);
+  });
+
+  it.each(["tar.gz", "zip"] as const)("strips the top-level folder of a flatten archive (%s)", async (ext) => {
+    const dest = await extractPod(request(write(ext, under("MLKitFoo-1.0.0", FOO)), ext, { flatten: true }), cache);
+    expect(treeFiles(dest)).toEqual(KEPT);
+  });
+
+  it("keeps the layout of a flatten archive with several top-level entries", async () => {
+    const dest = await extractPod(request(write("tar.gz", FOO), "tar.gz", { flatten: true }), cache);
+    expect(treeFiles(dest)).toEqual(KEPT);
+  });
+
+  it("brings the target of a kept link along", async () => {
+    const entries: ArchiveSpec[] = [
+      ...FOO,
+      { type: "file", path: "Shared/libFoo.a", body: "!<arch>\n" },
+      { type: "symlink", path: "Frameworks/MLKitFoo.framework/libFoo.a", target: "../../Shared/libFoo.a" },
+    ];
+    const dest = await extractPod(request(write("tar.gz", entries), "tar.gz"), cache);
+    expect(treeFiles(dest)).toContain("Shared/libFoo.a");
+    expect(readFileSync(path.join(dest, "Frameworks/MLKitFoo.framework/libFoo.a"), "utf8")).toBe("!<arch>\n");
+    expect(treeFiles(dest)).not.toContain("Other/big.bin");
+  });
+
+  it.each(["tar.gz", "zip"] as const)(
+    "names the expected path and the archive's top-level entries when a vendored path is missing (%s)",
+    async (ext) => {
+      const file = write(ext, [...under("MLKitFoo-1.0.0", FOO), { type: "file", path: "LICENSE", body: "l" }]);
+      await expect(extractPod(request(file, ext), cache)).rejects.toThrow(
+        `MLKitFoo 1.0.0: its spec names Frameworks/MLKitFoo.framework, which the download does not hold. Its top-level entries: LICENSE, MLKitFoo-1.0.0/. See ${LINK}`,
+      );
+      expect(extracted()).toEqual([]);
+    },
+  );
+
+  it("refuses an unsafe archive and extracts nothing", async () => {
+    const file = write("tar.gz", [...FOO, { type: "symlink", path: "Frameworks/MLKitFoo.framework/x", target: "/etc" }]);
+    await expect(extractPod(request(file, "tar.gz"), cache)).rejects.toThrow(/rn-xtool refuses to extract MLKitFoo-1\.0\.0\.tar\.gz/);
+    expect(extracted()).toEqual([]);
+  });
+
+  it("reuses a stamped tree", async () => {
+    const file = write("tar.gz", FOO);
+    const dest = await extractPod(request(file, "tar.gz"), cache);
+    writeFileSync(path.join(dest, "marker"), "kept");
+    rmSync(file);
+    expect(await extractPod(request(file, "tar.gz"), cache)).toBe(dest);
+    expect(readFileSync(path.join(dest, "marker"), "utf8")).toBe("kept");
+  });
+
+  it("rebuilds a tree without its stamp", async () => {
+    const file = write("tar.gz", FOO);
+    const dest = await extractPod(request(file, "tar.gz"), cache);
+    rmSync(path.join(dest, EXTRACTED_STAMP));
+    writeFileSync(path.join(dest, "marker"), "stale");
+    await extractPod(request(file, "tar.gz"), cache);
+    expect(treeFiles(dest)).toEqual(KEPT);
+    expect(existsSync(path.join(dest, EXTRACTED_STAMP))).toBe(true);
+    expect(extracted()).toEqual([SHA_FOO]);
+  });
+
+  it("rebuilds a tree stamped for other paths", async () => {
+    const file = write("tar.gz", FOO);
+    const dest = await extractPod(request(file, "tar.gz", { keep: ["NOTICES"], required: [] }), cache);
+    expect(treeFiles(dest)).toEqual(["NOTICES"]);
+    await extractPod(request(file, "tar.gz"), cache);
+    expect(treeFiles(dest)).toEqual(KEPT);
+  });
+
+  it.each(["tar.gz", "zip"] as const)("writes the stamp last (%s)", async (ext) => {
+    const file = write(ext, FOO);
+    const failing: ListRunner = async (cmd, args) => {
+      const out = await defaultListRunner(cmd, args);
+      if (args.includes("-x") || args.includes("-xzf") || args.includes("-d")) throw new Error("disk full");
+      return out;
+    };
+    await expect(extractPod(request(file, ext), cache, failing)).rejects.toThrow("disk full");
+    expect(extracted()).toEqual([]);
+    const dest = await extractPod(request(file, ext), cache);
+    await expect(extractPod(request(file, ext, { keep: ["NOTICES"], required: [] }), cache, failing)).rejects.toThrow("disk full");
+    expect(treeFiles(dest)).toEqual(KEPT);
+    expect(existsSync(path.join(dest, EXTRACTED_STAMP))).toBe(true);
+    expect(extracted()).toEqual([SHA_FOO]);
+  });
+
+  it("writes the stamp into the tree before it swaps the tree in", async () => {
+    const file = write("tar.gz", FOO);
+    const stamped: boolean[] = [];
+    const swap: typeof swapIn = async (tmp, dest, old) => {
+      stamped.push(existsSync(path.join(tmp, EXTRACTED_STAMP)));
+      await swapIn(tmp, dest, old);
+    };
+    const dest = await extractPod(request(file, "tar.gz"), cache, defaultListRunner, swap);
+    expect(stamped).toEqual([true]);
+    expect(existsSync(path.join(dest, EXTRACTED_STAMP))).toBe(true);
+  });
+
+  it("lets a tree another build stamped during the swap win", async () => {
+    const file = write("tar.gz", FOO);
+    // The other build swaps its own finished tree in first, so this build's rename fails.
+    const swap: typeof swapIn = async (tmp, dest) => {
+      cpSync(tmp, dest, { recursive: true });
+      throw Object.assign(new Error(`ENOTEMPTY: directory not empty, rename '${tmp}' -> '${dest}'`), { code: "ENOTEMPTY" });
+    };
+    const dest = await extractPod(request(file, "tar.gz"), cache, defaultListRunner, swap);
+    expect(treeFiles(dest)).toEqual(KEPT);
+    expect(extracted()).toEqual([path.basename(dest)]);
+    const failing: typeof swapIn = async () => {
+      throw new Error("rename failed");
+    };
+    await expect(extractPod(request(file, "tar.gz", { keep: ["NOTICES"], required: [] }), cache, defaultListRunner, failing)).rejects.toThrow(
+      "rename failed",
+    );
+  });
+
+  it("two extractions of one archive both succeed", async () => {
+    const file = write("tar.gz", FOO);
+    const [a, b] = await Promise.all([extractPod(request(file, "tar.gz"), cache), extractPod(request(file, "tar.gz"), cache)]);
+    expect(a).toBe(b);
+    expect(treeFiles(a)).toEqual(KEPT);
+    expect(existsSync(path.join(a, EXTRACTED_STAMP))).toBe(true);
+    expect(extracted()).toEqual([SHA_FOO]);
   });
 });
