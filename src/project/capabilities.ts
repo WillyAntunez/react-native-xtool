@@ -15,6 +15,7 @@ import { cachedArchive, headSize } from "../pods/fetch.js";
 import { formatSize } from "../pods/format.js";
 import { PODS_LOCK, lockedVersions, readPodsLock, unusedLockEntries, type PodsLock } from "../pods/lock.js";
 import { SourcePodError, resolveBinaryPods } from "../pods/resolve.js";
+import { parseRequirements, satisfiesAll } from "../pods/versions.js";
 import { rawSlotComplete, rnArtifactsCacheRoot, type Flavor } from "../pipeline/rnArtifactsStep.js";
 import { orphanPatchLine, orphanPatches, scaffoldPinWarnings } from "../pipeline/patches.js";
 import { resolveRnDir, vendoredScriptsRoot } from "../pipeline/rnSpm.js";
@@ -473,7 +474,24 @@ async function binaryPodsLines(
   let needed: NeededPod[] = [];
   if (roots.length > 0) {
     const podOf = (dependency: string): string => dependency.split("/")[0]!;
-    if (roots.every((r) => lock.pods[podOf(r.dependency)] !== undefined)) {
+    // Row 11: a locked version a library's requirement no longer meets is resolved again by the build.
+    const moving = roots.filter((r) => {
+      const locked = lock.pods[podOf(r.dependency)];
+      if (locked === undefined) return false;
+      try {
+        return !satisfiesAll(locked.version, parseRequirements(r.requirements));
+      } catch {
+        return true;
+      }
+    });
+    for (const r of moving) {
+      const pod = podOf(r.dependency);
+      const line =
+        `⚠ pods — ${pod}: ${PODS_LOCK} records ${lock.pods[pod]!.version}, which no longer meets "${r.requirements.join(", ")}" ` +
+        `(${r.library} ${r.libraryVersion}); rn-xtool build resolves it again and records the new version`;
+      if (!lines.includes(line)) lines.push(line);
+    }
+    if (moving.length === 0 && roots.every((r) => lock.pods[podOf(r.dependency)] !== undefined)) {
       needed = fromLock();
       lines.push(neededLine(needed, libs));
     } else if (opts.offline) {

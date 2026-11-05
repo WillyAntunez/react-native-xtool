@@ -730,6 +730,22 @@ describe("binary pods", () => {
     expect(caps.binaryPods).toEqual([`✔ pods — 2 CocoaPods binaries for ${LIB}, in rn-xtool's cache and in ${NAME}`]);
   });
 
+  it("does not report a locked version the library no longer accepts as ready", async () => {
+    const { dir, podsCache } = await mlKitProject({ GoogleMLKit: entry("GoogleMLKit", "a"), MLKitCommon: entry("MLKitCommon", "b") });
+    await cacheFile(podsCache, "a");
+    await cacheFile(podsCache, "b");
+    // The library moved to GoogleMLKit 9.0.0.
+    await writeFile(
+      path.join(dir, "node_modules", LIB, "RNMLKitTextRecognition.podspec"),
+      "Pod::Spec.new do |s|\n  s.dependency 'GoogleMLKit/TextRecognition', '9.0.0'\nend\n",
+    );
+    const caps = await detectCapabilities(dir, { podsCache, podsFetch: noFetch, offline: true });
+    expect(caps.binaryPods).toEqual([
+      `⚠ pods — GoogleMLKit: ${NAME} records 8.0.0, which no longer meets "9.0.0" (${LIB} 2.0.0); rn-xtool build resolves it again and records the new version`,
+      "ℹ pods — not checked (offline)",
+    ]);
+  });
+
   it("reports what is left to download, with its size", async () => {
     const { dir, podsCache } = await mlKitProject({ GoogleMLKit: entry("GoogleMLKit", "a"), MLKitCommon: entry("MLKitCommon", "b", { size: 2_500_000 }) });
     await cacheFile(podsCache, "a");
