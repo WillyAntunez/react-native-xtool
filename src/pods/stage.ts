@@ -73,6 +73,14 @@ function sourceProducts(entry: PodEntry, subspecs: readonly string[]): string[] 
  */
 export function podBinariesInput(result: PodsResult, iosMin: string): PodBinariesInput {
   const { resolution, wrapped } = result;
+  // Archives come from the wrapped pods and link flags from the resolution: the two must name the same pods (review M5).
+  const resolved = new Set(resolution.binary.map((b) => `${b.pod} ${b.version}`));
+  const made = new Set(wrapped.map((w) => `${w.pod} ${w.version}`));
+  const odd = [
+    ...[...made].filter((p) => !resolved.has(p)).map((p) => `${p} too`),
+    ...[...resolved].filter((p) => !made.has(p)).map((p) => `${p} missing`),
+  ];
+  if (odd.length > 0) throw new Error(`internal error: the wrapped CocoaPods binaries (${odd.join(", ")}) are not the resolved ones`);
   const owner = new Map<string, WrappedPod>();
   for (const w of [...wrapped].sort((a, b) => byText(a.pod, b.pod))) {
     for (const f of w.frameworks) {

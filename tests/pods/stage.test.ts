@@ -249,6 +249,23 @@ describe("renderPodBinariesPackage", () => {
     );
   });
 
+  it("stops when the wrapped pods are not the resolved binary pods", () => {
+    // A wrapped pod outside the resolution would be force-loaded without its frameworks and libraries.
+    const extra = mlKit();
+    extra.wrapped.push(wrapped("MLKitFoo", "1.0.0", ["MLKitFoo"]));
+    expect(() => podBinariesInput(extra, "15.1")).toThrow(
+      "internal error: the wrapped CocoaPods binaries (MLKitFoo 1.0.0 too) are not the resolved ones",
+    );
+    const missing = mlKit();
+    missing.wrapped = missing.wrapped.filter((w) => w.pod !== "MLImage");
+    expect(() => podBinariesInput(missing, "15.1")).toThrow("internal error: the wrapped CocoaPods binaries (MLImage 1.0.0-beta7 missing) are not the resolved ones");
+    const other = mlKit();
+    other.wrapped = other.wrapped.map((w) => (w.pod === "MLImage" ? { ...w, version: "0.9.0" } : w));
+    expect(() => podBinariesInput(other, "15.1")).toThrow(
+      "internal error: the wrapped CocoaPods binaries (MLImage 0.9.0 too, MLImage 1.0.0-beta7 missing) are not the resolved ones",
+    );
+  });
+
   it("stops when the wrapper's name is a binary target's", () => {
     const r = mlKit();
     r.wrapped.push(wrapped("MLKitExtra", "1.0.0", ["GoogleMLKitWrapper"]));
