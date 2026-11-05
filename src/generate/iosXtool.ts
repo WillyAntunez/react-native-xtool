@@ -16,6 +16,8 @@ import { expoClangImporterInputs } from "./expoImporter.js";
 import { DEV_SUPPORT_TARGET, renderPackageSwift, type AppTargetInputs } from "./packageSwift.js";
 import { writeEmptyTargetObjects } from "../pods/emptyTargets.js";
 import type { PodsLinks } from "../pods/stage.js";
+import { PODS_LINK, PodsError } from "../pods/format.js";
+import { writeResourceBundle, type BundleSource } from "../pipeline/resourceBundles.js";
 import { scaffoldedImporterPaths } from "./scaffoldImporter.js";
 import { BASE_RESOURCES, DEFAULT_RESOURCES, renderXtoolYml } from "./xtoolYml.js";
 
@@ -32,6 +34,8 @@ export interface GenerateContext {
   pods?: PodsLinks;
   /** Targets of the linked table pods without sources: an empty object is written in place of each (row 81). */
   emptyTargets?: string[];
+  /** Podspec `resource_bundles` (binary pods' and scaffolded libraries'): each becomes `Resources/<key>.bundle`. */
+  resourceBundles?: BundleSource[];
 }
 
 const MANIFEST_6_5 = "Package@swift-6.5.swift";
@@ -192,6 +196,38 @@ async function expoBridgingHeader(iosDir: string, sourcesDir: string, log: (s: s
   return copy;
 }
 
+/**
+ * Row 38: one bundle per name, and none over an app resource (xtool copies each to the app root under its name, and
+ * fails on an existing one).
+ */
+function checkBundleNames(bundles: readonly BundleSource[], appResources: readonly string[]): void {
+  const owners = new Map<string, string>();
+  for (const b of bundles) {
+    const name = `${b.key}.bundle`;
+    const first = owners.get(name);
+    if (first !== undefined) {
+      throw new PodsError(`Two resource bundles would be copied to App.app/${name}: ${first} and ${b.owner}. See ${PODS_LINK}`);
+    }
+    owners.set(name, b.owner);
+    const clash = appResources.find((r) => basename(r) === name);
+    if (clash !== undefined) {
+      throw new PodsError(
+        `The resource bundle ${name} (${b.owner}) would be copied over the app resource ${basename(clash)} in App.app. See ${PODS_LINK}`,
+      );
+    }
+  }
+}
+
+/** Writes the bundles into `resourcesDir` and returns their names, sorted (those that match no file left out). */
+async function writeBundles(bundles: readonly BundleSource[], resourcesDir: string, log: (s: string) => void): Promise<string[]> {
+  const names: string[] = [];
+  for (const b of bundles) {
+    const built = await writeResourceBundle(b, resourcesDir, log);
+    if (built !== undefined) names.push(built.name);
+  }
+  return names.sort();
+}
+
 export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
   const { project, paths } = ctx;
   const headersDir = swiftHeadersDir(paths.iosXtool);
@@ -201,6 +237,10 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
   await rm(resourcesDir, { recursive: true, force: true });
   await mkdir(paths.sources, { recursive: true });
   const { app, resources } = await writeAppSources(ctx, headersDir, resourcesDir);
+  const appResources = [...(project.hasExpoConstants ? DEFAULT_RESOURCES : BASE_RESOURCES), ...resources.map((r) => `Resources/${r}`)];
+  const bundleSources = ctx.resourceBundles ?? [];
+  checkBundleNames(bundleSources, appResources);
+  const bundles = await writeBundles(bundleSources, resourcesDir, ctx.log ?? console.log);
   // The icon from the app's AppIcon.appiconset; a missing or unusable one is reported and the build goes on.
   const icon = await findAppIcon(project, { bundleRootNames: resources, prebuildIcon: ctx.prebuildIcon });
   for (const line of icon.lines) (ctx.log ?? console.log)(line);
@@ -251,10 +291,7 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
     join(paths.iosXtool, "xtool.yml"),
     renderXtoolYml({
       bundleIdentifier: project.bundleIdentifier,
-      resources: [
-        ...(project.hasExpoConstants ? DEFAULT_RESOURCES : BASE_RESOURCES),
-        ...resources.map((r) => `Resources/${r}`),
-      ],
+      resources: [...appResources, ...bundles.map((b) => `Resources/${b}`)],
       iconPath: icon.source !== undefined ? APP_ICON_FILE : undefined,
       entitlementsPath: entitlements !== undefined ? ENTITLEMENTS_FILE : undefined,
     }),

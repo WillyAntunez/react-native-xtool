@@ -137,6 +137,7 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
     readState,
     depsFingerprint: async () => "fp-test",
     unbundledResources: () => [],
+    resourceBundles: () => [],
     emptyTargets: over.emptyTargets ?? (() => []),
     log: (s) => logs.push(s),
   };
@@ -163,6 +164,21 @@ describe("build", () => {
     const quiet = setup();
     await build(quiet.root, {}, quiet.deps);
     expect(quiet.logs.some((l) => l.startsWith("ℹ Not copied into the app"))).toBe(false);
+  });
+
+  it("hands the scaffolded libraries' resource bundles to generate, read after rn-spm", async () => {
+    const t = setup();
+    const bundle = { key: "RNSVGFilters", baseDir: "/p/svg", globs: ["apple/**/*.iphoneos.metallib"], owner: "react-native-svg" };
+    const resourceBundles = (root: string) => {
+      t.calls.push(`bundles ${root === t.root}`);
+      return [bundle];
+    };
+    await build(t.root, {}, { ...t.deps, resourceBundles });
+    expect(t.calls.indexOf("bundles true")).toBeGreaterThan(t.calls.indexOf("rn-spm"));
+    expect((t.writeIosXtool.mock.calls[0] as unknown[])[0]).toMatchObject({ resourceBundles: [bundle] });
+    const plain = setup();
+    await build(plain.root, {}, plain.deps);
+    expect((plain.writeIosXtool.mock.calls[0] as unknown[])[0]).not.toHaveProperty("resourceBundles");
   });
 
   it("leaves no fingerprint in the state when xtool-build fails", async () => {

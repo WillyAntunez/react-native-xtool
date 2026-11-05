@@ -13,7 +13,8 @@ import { applyPatches } from "../pipeline/patches.js";
 import { prepareRnArtifacts } from "../pipeline/rnArtifactsStep.js";
 import type { ExpoPlugin, RnScripts } from "../versions.js";
 import { runRnSpm } from "../pipeline/rnSpm.js";
-import { unbundledResources, unbundledResourcesLine } from "../pipeline/scaffoldResources.js";
+import type { BundleSource } from "../pipeline/resourceBundles.js";
+import { scaffoldedResourceBundles, unbundledResources, unbundledResourcesLine } from "../pipeline/scaffoldResources.js";
 import { checkFrameworkSymbols } from "../pipeline/symbols.js";
 import {
   allowedLimitText,
@@ -178,6 +179,8 @@ export interface BuildDeps {
   emptyTargets: (root: string, opts: LibraryCheckOptions) => string[];
   /** After rn-spm: the resources scaffolded libraries declare that do not reach the app. */
   unbundledResources: (root: string) => { pkg: string; items: string[] }[];
+  /** After rn-spm: the scaffolded libraries' `resource_bundles` generate builds into the app. */
+  resourceBundles: (root: string) => BundleSource[];
   /** The app's CODE_SIGN_ENTITLEMENTS file (Debug); throws an EntitlementsError when xtool could not sign with it. */
   readEntitlements: (project: ProjectInfo, iosDir: string) => AppEntitlements | undefined;
   log: (s: string) => void;
@@ -215,6 +218,7 @@ const realDeps: BuildDeps = {
   readState,
   depsFingerprint: depsFingerprint,
   unbundledResources,
+  resourceBundles: scaffoldedResourceBundles,
   emptyTargets: (root, opts) => {
     const table = mergedPodTable(opts.pods);
     return emptyTargetsOf(table, [...scaffoldedPods(root, table, opts).values()].flat());
@@ -372,6 +376,7 @@ export async function build(
   );
   const resources = unbundledResourcesLine(d.unbundledResources(paths.root));
   if (resources !== undefined) d.log(resources);
+  const resourceBundles = d.resourceBundles(paths.root);
   // Expo 58 and bare: jsi after rn-spm, as before.
   if (!vendoredExpo && planned("jsi")) jsi = await step("jsi", buildJsi);
   if (planned("app-config")) await step("app-config", () => d.generateAppConfig(paths));
@@ -436,6 +441,7 @@ export async function build(
       log: d.log,
       prebuildIcon,
       ...(emptyTargets.length > 0 ? { emptyTargets } : {}),
+      ...(resourceBundles.length > 0 ? { resourceBundles } : {}),
     });
     await writeState(paths.iosXtool, state);
   });

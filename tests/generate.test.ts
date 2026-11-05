@@ -2,6 +2,7 @@ import { mkdtemp, rm, mkdir, cp, readFile, readdir, lstat, readlink, realpath, s
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { troubleshootingUrl } from "../src/docs.js";
 import { renderPackageSwift } from "../src/generate/packageSwift.js";
 import { renderXtoolYml } from "../src/generate/xtoolYml.js";
 import { devSupportTemplatesDir, sceneDelegateClassNames, writeIosXtool } from "../src/generate/iosXtool.js";
@@ -959,6 +960,89 @@ describe("writeIosXtool", () => {
     const yml = await readFile(join(paths.iosXtool, "xtool.yml"), "utf8");
     expect(yml).toContain("  - Resources/Maps.bundle\n");
     expect(yml).toContain("  - Resources/Vendor.bundle\n");
+  });
+
+  describe("resource bundles", () => {
+    const LINK = troubleshootingUrl("cocoapods-binaries");
+    /** A pod folder holding `<dir>/<file>` for each entry. */
+    async function podDir(files: Record<string, string>): Promise<string> {
+      const dir = await mkdtemp(join(tmpdir(), "xt7-pod-"));
+      tmps.push(dir);
+      for (const [rel, text] of Object.entries(files)) {
+        await mkdir(join(dir, rel, ".."), { recursive: true });
+        await writeFile(join(dir, rel), text);
+      }
+      return dir;
+    }
+
+    it("lists the bundles in xtool.yml as Resources/<key>.bundle", async () => {
+      const { paths, ctx } = await bareProject();
+      const pod = await podDir({ "Resources/LatinOCRResources/model.tflite": "m", "apple/a.iphoneos.metallib": "k" });
+      await writeIosXtool({
+        ...ctx,
+        resourceBundles: [
+          { key: "RNSVGFilters", baseDir: pod, globs: ["apple/**/*.iphoneos.metallib"], owner: "react-native-svg" },
+          { key: "LatinOCRResources", baseDir: pod, globs: ["Resources/LatinOCRResources/**"], owner: "MLKitTextRecognition 6.0.0" },
+        ],
+      });
+      const staged = join(paths.iosXtool, "Resources");
+      expect(await readFile(join(staged, "LatinOCRResources.bundle", "model.tflite"), "utf8")).toBe("m");
+      expect(await readFile(join(staged, "RNSVGFilters.bundle", "a.iphoneos.metallib"), "utf8")).toBe("k");
+      expect(await readFile(join(staged, "RNSVGFilters.bundle", "Info.plist"), "utf8")).toContain("org.cocoapods.RNSVGFilters");
+      expect(await readFile(join(paths.iosXtool, "xtool.yml"), "utf8")).toContain(
+        "resources:\n  - Frameworks\n  - ip.txt\n  - Resources/Base.lproj\n  - Resources/Inter.ttf\n" +
+          "  - Resources/PrivacyInfo.xcprivacy\n  - Resources/es.lproj\n" +
+          "  - Resources/LatinOCRResources.bundle\n  - Resources/RNSVGFilters.bundle\n",
+      );
+    });
+
+    it("stops on two bundles with one name", async () => {
+      const { ctx } = await bareProject();
+      const pod = await podDir({ "a/x.png": "x" });
+      const err = await writeIosXtool({
+        ...ctx,
+        resourceBundles: [
+          { key: "Assets", baseDir: pod, globs: ["a/*.png"], owner: "lib-a" },
+          { key: "Assets", baseDir: pod, globs: ["a/*.png"], owner: "MLKitFoo 1.0.0" },
+        ],
+      }).catch((e: unknown) => e);
+      expect((err as Error).message).toBe(`Two resource bundles would be copied to App.app/Assets.bundle: lib-a and MLKitFoo 1.0.0. See ${LINK}`);
+    });
+
+    it("stops on a bundle named like an app resource", async () => {
+      const { app, ctx } = await bareProject();
+      await mkdir(join(app, "Maps.bundle"), { recursive: true });
+      await writeFile(join(app, "Maps.bundle", "a.png"), "png");
+      ctx.project.bare!.resources.push({ absPath: join(app, "Maps.bundle"), relPath: "HelloWorld/Maps.bundle" });
+      const pod = await podDir({ "a/x.png": "x" });
+      const err = await writeIosXtool({
+        ...ctx,
+        resourceBundles: [{ key: "Maps", baseDir: pod, globs: ["a/*.png"], owner: "some-lib" }],
+      }).catch((e: unknown) => e);
+      expect((err as Error).message).toBe(
+        `The resource bundle Maps.bundle (some-lib) would be copied over the app resource Maps.bundle in App.app. See ${LINK}`,
+      );
+      ctx.project.hasExpoConstants = true;
+      const expo = await writeIosXtool({
+        ...ctx,
+        resourceBundles: [{ key: "EXConstants", baseDir: pod, globs: ["a/*.png"], owner: "other-lib" }],
+      }).catch((e: unknown) => e);
+      expect((expo as Error).message).toBe(
+        `The resource bundle EXConstants.bundle (other-lib) would be copied over the app resource EXConstants.bundle in App.app. See ${LINK}`,
+      );
+    });
+
+    it("xtool.yml is byte-identical without bundles", async () => {
+      const { paths, ctx, logs } = await bareProject();
+      await writeIosXtool(ctx);
+      const before = await readFile(join(paths.iosXtool, "xtool.yml"), "utf8");
+      await writeIosXtool({ ...ctx, resourceBundles: [] });
+      expect(await readFile(join(paths.iosXtool, "xtool.yml"), "utf8")).toBe(before);
+      const pod = await podDir({ "a/x.txt": "x" });
+      await writeIosXtool({ ...ctx, resourceBundles: [{ key: "Empty", baseDir: pod, globs: ["a/*.png"], owner: "some-lib" }] });
+      expect(await readFile(join(paths.iosXtool, "xtool.yml"), "utf8")).toBe(before);
+      expect(logs).toContain("⚠ Empty.bundle (some-lib) matches no file (a/*.png); it is not built");
+    });
   });
 
   it("refuses two resources that flatten to one name, naming both", async () => {
