@@ -80,7 +80,9 @@ export function checkPodEntries(file: string, pods: unknown): void {
   };
   if (!isRecord(pods)) fail("pods", "an object of CocoaPods pod names");
   for (const [pod, entry] of Object.entries(pods as Record<string, unknown>)) {
-    if (!PLAIN.test(pod) || pod.includes("/")) fail("pods", "an object of CocoaPods pod names");
+    if (!PLAIN.test(pod) || pod.includes("/")) {
+      fail(`pods.${pod === "" ? '""' : pod}`, 'a CocoaPods pod name (no "/", spaces or quotes)');
+    }
     const e = isRecord(entry) ? entry : {};
     if (typeof e.url !== "string" || !GIT_URL.test(e.url)) fail(`pods.${pod}.url`, "a git URL (https://…)");
     if (typeof e.exact !== "string" || !VERSION.test(e.exact)) fail(`pods.${pod}.exact`, "a version such as 3.0.0");
