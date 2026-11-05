@@ -64,7 +64,7 @@ describe("postPackChecks", () => {
   it("removes the packed app and its .ipa when a check fails", async () => {
     writeFileSync(path.join(dir, "App.ipa"), "ipa");
     rmSync(path.join(app, "KoreanOCRResources.bundle"), { recursive: true });
-    await expect(postPackChecks(app, pods(), fakeNm(ALL))).rejects.toThrow("so rn-xtool removed it:");
+    await expect(postPackChecks(app, pods(), fakeNm(ALL))).rejects.toThrow("so rn-xtool removed it and does not install it:");
     expect(existsSync(app)).toBe(false);
     expect(existsSync(path.join(dir, "App.ipa"))).toBe(false);
   });
@@ -73,7 +73,7 @@ describe("postPackChecks", () => {
     rmSync(path.join(app, "KoreanOCRResources.bundle"), { recursive: true });
     rmSync(path.join(app, "LatinOCRResources.bundle", "Info.plist"));
     await expect(postPackChecks(app, pods(), fakeNm(ALL))).rejects.toThrow(
-      "The packed app is not what the CocoaPods binaries need, so rn-xtool removed it:\n" +
+      "The packed app is not what the CocoaPods binaries need, so rn-xtool removed it and does not install it:\n" +
         "  - App.app/LatinOCRResources.bundle has no Info.plist (MLKitTextRecognition 6.0.0)\n" +
         "  - App.app/KoreanOCRResources.bundle is missing (MLKitTextRecognitionKorean 5.0.0)\n" +
         `See ${LINK}`,
@@ -92,7 +92,7 @@ describe("postPackChecks", () => {
     const extra = ["A", "B", "C", "D", "E", "F"].map((c) => `_OBJC_CLASS_$_MLK${c}`);
     const err = await postPackChecks(app, pods(), fakeNm(["_OBJC_CLASS_$_MLKTextRecognizer"], extra)).catch((e: unknown) => e);
     expect((err as Error).message).toBe(
-      "The packed app is not what the CocoaPods binaries need, so rn-xtool removed it:\n" +
+      "The packed app is not what the CocoaPods binaries need, so rn-xtool removed it and does not install it:\n" +
         "  - the App binary does not define _OBJC_CLASS_$_MLKITx_SRLRegistry (MLKitCommon 13.0.0, force-loaded)\n" +
         "  - the App binary does not define _OBJC_CLASS_$_MLKA (MLKitTextRecognition 6.0.0, force-loaded)\n" +
         "  - the App binary does not define _OBJC_CLASS_$_MLKB (MLKitTextRecognition 6.0.0, force-loaded)\n" +

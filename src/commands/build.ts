@@ -476,6 +476,7 @@ export async function build(
 
   const depsFingerprint = await d.depsFingerprint(paths.root);
   const emptyTargets = [...new Set([...d.emptyTargets(root, libraryChecks), ...(staged?.links.emptyTargets ?? [])])].sort();
+  const postPack = pods !== undefined && staged !== undefined ? postPackPods(staged, pods) : undefined;
   // Written without the fingerprint first: a failed xtool-build must not look up to date.
   const state: BuildState = {
     version: 1,
@@ -498,6 +499,7 @@ export async function build(
         installedBundleId: previousState.installedBundleId,
       }),
     ...(emptyTargets.length > 0 && { emptyTargets }),
+    ...(postPack !== undefined && { postPack }),
   };
   await step("generate", async () => {
     await d.writeIosXtool({
@@ -516,6 +518,6 @@ export async function build(
   });
   await step("xtool-build", () => d.devBuild(d.xtoolBin(config), paths.iosXtool));
   // A failure leaves the state without the fingerprint, so the next run builds again.
-  if (pods !== undefined && staged !== undefined) await d.postPack(paths.appBundle, postPackPods(staged, pods));
+  if (postPack !== undefined) await d.postPack(paths.appBundle, postPack);
   await writeState(paths.iosXtool, { ...state, depsFingerprint });
 }

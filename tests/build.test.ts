@@ -384,6 +384,8 @@ describe("build", () => {
         ],
       ]);
       expect((await readState(join(t.root, "ios-xtool")))?.depsFingerprint).toBe("fp-test");
+      // install runs the same checks on the app xtool builds before it installs (row 88).
+      expect((await readState(join(t.root, "ios-xtool")))?.postPack).toEqual((seen[0] as unknown[])[1]);
 
       const failing = withPods();
       const postPack = async () => {
@@ -395,6 +397,7 @@ describe("build", () => {
       const plain = setup();
       await build(plain.root, {}, plain.deps);
       expect(plain.calls).not.toContain("post-pack");
+      expect((await readState(join(plain.root, "ios-xtool")))?.postPack).toBeUndefined();
     });
 
     it("passes the links and the bundles to generate", async () => {

@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { PostPackPods } from "./pods/postPack.js";
 import type { ProjectKind } from "./project/index.js";
 
 export interface BuildState {
@@ -36,6 +37,8 @@ export interface BuildState {
   prebuildIcon?: { path?: string; sha256?: string };
   /** The SwiftPM targets without sources whose empty objects generate wrote; `install` writes them again (row 90). */
   emptyTargets?: string[];
+  /** With binary pods: what the post-pack checks read; `install` runs them on the app xtool builds (row 88). */
+  postPack?: PostPackPods;
 }
 
 const STATE_FILE = ".rn-xtool-state.json";

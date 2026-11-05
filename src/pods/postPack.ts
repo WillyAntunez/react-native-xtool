@@ -3,7 +3,8 @@
  * Every `resource_bundles` key of a staged pod is `App.app/<key>.bundle` with its Info.plist (rows 51, 54), no binary
  * target is embedded under `Frameworks/` (row 50), and every Objective-C class a force-loaded archive defines is in the
  * App binary (row 55: a dropped `+load` class). Nothing is repaired: a failure removes the packed app and its .ipa
- * (row 88) and stops with the list.
+ * (row 88) and stops with the list. `build` runs them after xtool-build; `install` runs them again on the app xtool
+ * builds from `.build`, before it installs.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
@@ -83,6 +84,6 @@ export async function postPackChecks(appBundle: string, pods: PostPackPods, nm: 
     // Row 88: a refused app is not left where `run` would take it as built, nor its .ipa beside it.
     await rm(appBundle, { recursive: true, force: true });
     await rm(path.join(path.dirname(appBundle), `${path.basename(appBundle, ".app")}.ipa`), { force: true });
-    throw new PodsError(`The packed app is not what the CocoaPods binaries need, so rn-xtool removed it:\n${items.join("\n")}\nSee ${PODS_LINK}`);
+    throw new PodsError(`The packed app is not what the CocoaPods binaries need, so rn-xtool removed it and does not install it:\n${items.join("\n")}\nSee ${PODS_LINK}`);
   }
 }
