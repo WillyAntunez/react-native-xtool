@@ -251,6 +251,25 @@ describe("wrapPod", () => {
     expect((await wrap("MLKitFoo", ["Frameworks/MLKitFoo.framework"])).warnings).toEqual([]);
   });
 
+  it("stops on two vendored frameworks with one name, naming both", async () => {
+    framework("Frameworks/MLKitFoo.framework", lib());
+    write(
+      "Other/MLKitFoo.xcframework/Info.plist",
+      plist.build({
+        AvailableLibraries: [{ LibraryIdentifier: "ios-arm64", LibraryPath: "MLKitFoo.framework", SupportedArchitectures: ["arm64"], SupportedPlatform: "ios" }],
+        CFBundlePackageType: "XFWK",
+        XCFrameworkFormatVersion: "1.0",
+      }),
+    );
+    framework("Other/MLKitFoo.xcframework/ios-arm64/MLKitFoo.framework", lib());
+    await expect(wrap("MLKitFoo", ["Frameworks/MLKitFoo.framework", "Other/MLKitFoo.xcframework"])).rejects.toThrow(
+      new PodsError(
+        `MLKitFoo 1.0.0 (needed by ${LIB}) ships two frameworks named MLKitFoo: Frameworks/MLKitFoo.framework and Other/MLKitFoo.xcframework/ios-arm64/MLKitFoo.framework. rn-xtool makes one module of each name. Leave the library out with "exclude" in rn-xtool.config.json. See ${LINK}`,
+      ),
+    );
+    expect(trees()).toEqual([]);
+  });
+
   it("expands globs in vendored_frameworks", async () => {
     framework("Frameworks/A.framework", lib());
     framework("Frameworks/B.framework", lib());

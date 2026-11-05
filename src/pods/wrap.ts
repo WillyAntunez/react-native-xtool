@@ -130,6 +130,14 @@ function expand(patterns: readonly string[], tree: () => { rel: string; isDir: b
 
 let sequence = 0;
 
+/** One wrapped framework: its module name, the path it came from, its privacy manifests and minos. */
+interface Made {
+  name: string;
+  rel: string;
+  privacy: string[];
+  minos?: string;
+}
+
 class Wrapper {
   readonly label: string;
   private treeCache?: { rel: string; isDir: boolean }[];
@@ -204,7 +212,7 @@ class Wrapper {
       .map((e) => `${rel}/${e.rel}`);
   }
 
-  async framework(dir: string, rel: string): Promise<{ name: string; privacy: string[]; minos?: string }> {
+  async framework(dir: string, rel: string): Promise<Made> {
     const name = path.basename(rel, ".framework");
     const modules = path.join(dir, "Modules");
     if (listTree(modules).some((e) => e.rel.endsWith(".swiftmodule"))) throw this.otherShape("Swift framework", rel);
@@ -215,10 +223,10 @@ class Wrapper {
     await this.archive(name, s, `${rel}/${name}`);
     const headers = path.join(dir, "Headers");
     await writeHeadersXcframework(path.join(this.tmp, "xcframeworks"), name, { from: headers, files: filesBelow(headers) }, map);
-    return { name, privacy: this.privacy(dir, rel), ...(s.minos !== undefined ? { minos: s.minos } : {}) };
+    return { name, rel, privacy: this.privacy(dir, rel), ...(s.minos !== undefined ? { minos: s.minos } : {}) };
   }
 
-  async xcframework(dir: string, rel: string): Promise<{ name: string; privacy: string[]; minos?: string }> {
+  async xcframework(dir: string, rel: string): Promise<Made> {
     let slices;
     try {
       slices = readXcframeworkSlices(dir);
@@ -260,11 +268,11 @@ class Wrapper {
     await this.archive(name, s, `${sliceRel}/${lp}`);
     const files = filesBelow(headers).filter((f) => f !== "module.modulemap");
     await writeHeadersXcframework(path.join(this.tmp, "xcframeworks"), name, { from: headers, files }, map);
-    return { name, privacy: this.privacy(sliceDir, sliceRel), ...(s.minos !== undefined ? { minos: s.minos } : {}) };
+    return { name, rel: `${sliceRel}/${lp}`, privacy: this.privacy(sliceDir, sliceRel), ...(s.minos !== undefined ? { minos: s.minos } : {}) };
   }
 
   /** A headers-only pod: one xcframework named by its module, with its header source_files flat. */
-  async headersOnly(): Promise<{ name: string; privacy: string[] }> {
+  async headersOnly(): Promise<Made> {
     const { spec, layers, extracted } = this.i;
     const name = spec.moduleName ?? this.i.pod;
     const headers = expand(layers.flatMap((l) => l.sourceFiles), this.tree).filter((h) => isFile(path.join(extracted, h)));
@@ -286,7 +294,7 @@ class Wrapper {
     await writeHeadersXcframework(xcframeworks, name, { from: extracted, files: [] }, map);
     const into = path.join(xcf, "ios-arm64", "Headers", name);
     for (const h of headers) await writeFile(path.join(into, path.posix.basename(h)), await readFile(path.join(extracted, h)));
-    return { name, privacy: [] };
+    return { name, rel: name, privacy: [] };
   }
 }
 
@@ -357,15 +365,24 @@ export async function wrapPod(i: WrapInput, cache: string, ar: ArRunner, swap: t
     await rm(tmp, { recursive: true, force: true });
     await mkdir(tmp, { recursive: true });
     const w = new Wrapper(i, tmp, ar);
-    const made: { name: string; privacy: string[]; minos?: string }[] = [];
+    const made: Made[] = [];
     if (i.headersOnly) {
       made.push(await w.headersOnly());
     } else {
       for (const rel of expand(i.layers.flatMap((l) => l.vendoredFrameworks), w.tree)) {
         const dir = path.join(i.extracted, rel);
-        if (rel.endsWith(".xcframework")) made.push(await w.xcframework(dir, rel));
-        else if (rel.endsWith(".framework")) made.push(await w.framework(dir, rel));
+        let one: Made;
+        if (rel.endsWith(".xcframework")) one = await w.xcframework(dir, rel);
+        else if (rel.endsWith(".framework")) one = await w.framework(dir, rel);
         else throw new PodsError(`${w.label} vendors ${rel}, which is neither a .framework nor an .xcframework. See ${PODS_LINK}`);
+        // Row 78: one module per name, so a second framework of that name would replace the first.
+        const twin = made.find((m) => m.name === one.name);
+        if (twin !== undefined) {
+          throw new PodsError(
+            `${w.label} ships two frameworks named ${one.name}: ${twin.rel} and ${one.rel}. rn-xtool makes one module of each name. ${EXCLUDE}`,
+          );
+        }
+        made.push(one);
       }
     }
     made.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
