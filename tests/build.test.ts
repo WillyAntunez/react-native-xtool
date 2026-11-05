@@ -218,6 +218,19 @@ describe("build", () => {
     expect((plain.writeIosXtool.mock.calls[0] as unknown[])[0]).not.toHaveProperty("resourceBundles");
   });
 
+  it("names a scaffolded bundle that would hold one file name twice in the ℹ line, and builds on without it", async () => {
+    const t = setup();
+    const dir = mkdtempSync(join(tmpdir(), "build-dup-bundle-"));
+    for (const f of ["a/x.metallib", "b/x.metallib"]) {
+      mkdirSync(join(dir, f, ".."), { recursive: true });
+      writeFileSync(join(dir, f), f);
+    }
+    const bundle = { key: "Twice", baseDir: dir, globs: ["**/*.metallib"], owner: "react-native-foo" };
+    await build(t.root, {}, { ...t.deps, resourceBundles: () => [bundle] });
+    expect(t.logs).toContain("ℹ Not copied into the app: react-native-foo (Twice.bundle). Code that loads them at run time does not find them.");
+    expect((t.writeIosXtool.mock.calls[0] as unknown[])[0]).not.toHaveProperty("resourceBundles");
+  });
+
   describe("binary pods", () => {
     const LIB = "@react-native-ml-kit/text-recognition";
     const ROOT = { library: LIB, libraryVersion: "2.0.0", dependency: "GoogleMLKit/TextRecognition", requirements: ["8.0.0"] };

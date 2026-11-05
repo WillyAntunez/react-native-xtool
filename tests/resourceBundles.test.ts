@@ -61,6 +61,34 @@ describe("bundleFiles", () => {
     );
   });
 
+  it("keeps .lproj folders when a glob flattens", () => {
+    write("Res/en.lproj/Localizable.strings");
+    write("Res/fr.lproj/Localizable.strings");
+    write("Res/img.png");
+    for (const globs of [["Res/**/*.strings", "Res/*.png"], ["Res/**/*"]]) {
+      expect(bundleFiles(source("K", globs, "lib")).map((f) => f.dest)).toEqual([
+        path.join("en.lproj", "Localizable.strings"),
+        path.join("fr.lproj", "Localizable.strings"),
+        "img.png",
+      ]);
+    }
+  });
+
+  it("copies a folder a glob matches whole, under its name", () => {
+    write("Res/en.lproj/Localizable.strings");
+    write("Res/fr.lproj/Localizable.strings");
+    write("Res/img.png");
+    write("Res/Sounds/a.caf");
+    const expected = [
+      path.join("Sounds", "a.caf"),
+      path.join("en.lproj", "Localizable.strings"),
+      path.join("fr.lproj", "Localizable.strings"),
+      "img.png",
+    ];
+    expect(bundleFiles(source("K", ["Res/*"], "lib")).map((f) => f.dest)).toEqual(expected);
+    expect(bundleFiles(source("K", ["Res/*.lproj", "Res/*.png", "Res/Sound?"], "lib")).map((f) => f.dest)).toEqual(expected);
+  });
+
   it("takes a file two globs match once", () => {
     write("ios/PrivacyInfo.xcprivacy");
     const got = bundleFiles(source("P", ["ios/PrivacyInfo.xcprivacy", "ios/*.xcprivacy"], "react-native-device-info"));

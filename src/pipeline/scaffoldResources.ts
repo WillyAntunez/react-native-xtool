@@ -15,7 +15,7 @@ import {
   rubyCode,
   unconditionalLineIndexes,
 } from "../project/podspecs.js";
-import type { BundleSource } from "./resourceBundles.js";
+import { DuplicateBundleFileError, bundleFiles, type BundleSource } from "./resourceBundles.js";
 
 /** Every file the scaffolder generates carries this (SCAFFOLDER_MARKER in vendor/rn-spm/spm/scaffold-package-swift.js). */
 const SCAFFOLDER_BANNER = "AUTO-SCAFFOLDED by react-native spm scaffold";
@@ -168,6 +168,41 @@ export function scaffoldedResourceBundles(projectRoot: string): BundleSource[] {
     }
   }
   return sources;
+}
+
+/**
+ * The scaffolded libraries' bundles rn-xtool can build, and those that would hold two files under one name, as
+ * `<key>.bundle` per library for the ℹ line (row 86: block 2 left such a bundle out and built on). A binary pod's
+ * bundle keeps the stop.
+ */
+export function placeableBundles(sources: readonly BundleSource[]): { bundles: BundleSource[]; left: { pkg: string; items: string[] }[] } {
+  const bundles: BundleSource[] = [];
+  const left: { pkg: string; items: string[] }[] = [];
+  for (const s of sources) {
+    try {
+      bundleFiles(s);
+      bundles.push(s);
+    } catch (err) {
+      if (!(err instanceof DuplicateBundleFileError)) throw err;
+      left.push({ pkg: s.owner, items: [`${s.key}.bundle`] });
+    }
+  }
+  return { bundles, left: withUnbundled([], left) };
+}
+
+/** `list` with `more`'s items added to their library's (sorted by name), each item once. */
+export function withUnbundled(
+  list: readonly { pkg: string; items: string[] }[],
+  more: readonly { pkg: string; items: string[] }[],
+): { pkg: string; items: string[] }[] {
+  const byPkg = new Map<string, string[]>(list.map((l) => [l.pkg, [...l.items]]));
+  for (const m of more) {
+    const items = byPkg.get(m.pkg) ?? [];
+    byPkg.set(m.pkg, [...items, ...m.items.filter((i) => !items.includes(i))]);
+  }
+  return [...byPkg]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([pkg, items]) => ({ pkg, items }));
 }
 
 /**

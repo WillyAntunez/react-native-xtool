@@ -14,7 +14,13 @@ import { prepareRnArtifacts } from "../pipeline/rnArtifactsStep.js";
 import type { ExpoPlugin, RnScripts } from "../versions.js";
 import { runRnSpm } from "../pipeline/rnSpm.js";
 import type { BundleSource } from "../pipeline/resourceBundles.js";
-import { scaffoldedResourceBundles, unbundledResources, unbundledResourcesLine } from "../pipeline/scaffoldResources.js";
+import {
+  placeableBundles,
+  scaffoldedResourceBundles,
+  unbundledResources,
+  unbundledResourcesLine,
+  withUnbundled,
+} from "../pipeline/scaffoldResources.js";
 import { checkFrameworkSymbols, makeNmRunner } from "../pipeline/symbols.js";
 import {
   allowedLimitText,
@@ -433,9 +439,11 @@ export async function build(
       ...(binary !== undefined ? { binary } : {}),
     }),
   );
-  const resources = unbundledResourcesLine(d.unbundledResources(paths.root));
+  // A scaffolded bundle that would hold one file name twice is left out and named, as block 2 did (row 86).
+  const scaffolded = placeableBundles(d.resourceBundles(paths.root));
+  const resources = unbundledResourcesLine(withUnbundled(d.unbundledResources(paths.root), scaffolded.left));
   if (resources !== undefined) d.log(resources);
-  const resourceBundles = [...(pods?.bundles ?? []), ...d.resourceBundles(paths.root)];
+  const resourceBundles = [...(pods?.bundles ?? []), ...scaffolded.bundles];
   // Expo 58 and bare: jsi after rn-spm, as before.
   if (!vendoredExpo && planned("jsi")) jsi = await step("jsi", buildJsi);
   if (planned("app-config")) await step("app-config", () => d.generateAppConfig(paths));

@@ -2,7 +2,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { scaffoldedResourceBundles, unbundledResources, unbundledResourcesLine } from "../src/pipeline/scaffoldResources.js";
+import {
+  placeableBundles,
+  scaffoldedResourceBundles,
+  unbundledResources,
+  unbundledResourcesLine,
+  withUnbundled,
+} from "../src/pipeline/scaffoldResources.js";
 
 const tmp: string[] = [];
 afterAll(() => {
@@ -234,5 +240,41 @@ describe("scaffolded libraries' resource bundles", () => {
     });
     expect(scaffoldedResourceBundles(root)).toEqual([]);
     expect(unbundledResources(root)).toEqual([{ pkg: "lib", items: ["Assets.bundle", "#{name}_extra.bundle", "Vars.bundle"] }]);
+  });
+});
+
+describe("placeableBundles", () => {
+  function lib(files: string[]): string {
+    const dir = mkdtempSync(path.join(tmpdir(), "rn-xtool-placeable-"));
+    tmp.push(dir);
+    for (const f of files) {
+      mkdirSync(path.dirname(path.join(dir, f)), { recursive: true });
+      writeFileSync(path.join(dir, f), f);
+    }
+    return dir;
+  }
+
+  it("leaves a scaffolded bundle that would hold one name twice to the ℹ line, with the library's other items", () => {
+    const dup = lib(["a/x.metallib", "b/x.metallib"]);
+    const ok = lib(["Res/y.png"]);
+    const sources = [
+      { key: "Twice", baseDir: dup, globs: ["**/*.metallib"], owner: "react-native-foo" },
+      { key: "Fine", baseDir: ok, globs: ["Res/*.png"], owner: "react-native-foo" },
+    ];
+    const placeable = placeableBundles(sources);
+    expect(placeable.bundles).toEqual([sources[1]]);
+    expect(placeable.left).toEqual([{ pkg: "react-native-foo", items: ["Twice.bundle"] }]);
+    const merged = withUnbundled(
+      [
+        { pkg: "react-native-zed", items: ["z.png"] },
+        { pkg: "react-native-foo", items: ["PrivacyInfo.xcprivacy"] },
+      ],
+      placeable.left,
+    );
+    expect(unbundledResourcesLine(merged)).toBe(
+      "ℹ Not copied into the app: react-native-foo (PrivacyInfo.xcprivacy, Twice.bundle), react-native-zed (z.png). " +
+        "Code that loads them at run time does not find them.",
+    );
+    expect(withUnbundled([], [{ pkg: "a", items: ["A.bundle"] }])).toEqual([{ pkg: "a", items: ["A.bundle"] }]);
   });
 });

@@ -1,12 +1,14 @@
 /**
  * Podspec `resource_bundles` as `.bundle` folders at the app root (spec goal 4): each key `K` becomes `K.bundle`, holding
  * the files its globs match and the `Info.plist` CocoaPods writes for a resource bundle. A glob ending in `/**` keeps
- * the layout below its literal folder; any other match goes to the bundle root under its basename, as CocoaPods copies
- * matched files flat (NSBundle's `URLForResource:withExtension:` looks at the root: react-native-svg's filters). Files
+ * the layout below its literal folder; a folder any other glob matches is copied whole under its name, and a file it
+ * matches goes to the bundle root under its basename, inside its nearest `.lproj` folder when it has one, as CocoaPods
+ * copies matched files flat and keeps localizations (NSBundle's `URLForResource:withExtension:` looks at the root:
+ * react-native-svg's filters; row 86). Files
  * are copied, never symlinked (xtool copies a symlink as a symlink) nor hard-linked (row 85: an edit in the app's copy
  * never reaches the cache or the package).
  */
-import { lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { readdirSync, realpathSync, statSync } from "node:fs";
 import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -56,7 +58,33 @@ function walk(dir: string, rel = ""): string[] {
   return out.sort();
 }
 
+/** Every folder below `dir` (not through symlinks), relative with `/`, sorted. */
+function walkDirs(dir: string, rel = ""): string[] {
+  let entries;
+  try {
+    entries = readdirSync(path.join(dir, rel), { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const out: string[] = [];
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const r = rel === "" ? e.name : `${rel}/${e.name}`;
+    out.push(r, ...walkDirs(dir, r));
+  }
+  return out.sort();
+}
+
 const clean = (glob: string): string => glob.replace(/^(\.\/)+/, "");
+
+/** A flattened file's place: its basename, inside its nearest `.lproj` folder when it has one (row 86). */
+function flatDest(rel: string): string {
+  const parts = rel.split("/");
+  for (let i = parts.length - 2; i >= 0; i--) {
+    if (parts[i]!.endsWith(".lproj")) return `${parts[i]}/${parts.at(-1)}`;
+  }
+  return parts.at(-1)!;
+}
 
 /** The compiled resource a file belongs to (its asset catalog, or itself), or undefined. */
 function compiledOf(rel: string): string | undefined {
@@ -69,36 +97,45 @@ function compiledOf(rel: string): string | undefined {
 /** The matches of every glob, with their place in the bundle, and the compiled resources left out. */
 function matches(s: BundleSource): { files: { dest: string; src: string; rel: string }[]; compiled: string[] } {
   const all = walk(s.baseDir);
+  const dirs = walkDirs(s.baseDir);
   const files: { dest: string; src: string; rel: string }[] = [];
   const compiled = new Set<string>();
   for (const raw of s.globs) {
     const glob = clean(raw);
-    const literal = !micromatch.scan(glob).isGlob;
-    const isDir = literal && lstatSync(path.join(s.baseDir, glob), { throwIfNoEntry: false })?.isDirectory() === true;
+    const keepsLayout = glob.endsWith("/**");
+    // A folder the glob matches is copied whole, under its name, as CocoaPods adds it; one inside another matched
+    // folder is in that copy already. A `/**` glob keeps the layout below its folder instead.
+    const matched = keepsLayout ? [] : dirs.filter((d) => micromatch.isMatch(d, glob));
+    const folders = matched.filter((d) => !matched.some((o) => d.startsWith(`${o}/`)));
     for (const rel of all) {
-      let dest: string;
-      if (isDir) {
-        // A folder named literally is copied whole, under its name.
-        if (!rel.startsWith(`${glob}/`)) continue;
-        dest = `${path.posix.basename(glob)}/${rel.slice(glob.length + 1)}`;
-      } else {
-        if (!micromatch.isMatch(rel, glob)) continue;
-        if (glob.endsWith("/**")) {
+      const dests: string[] = [];
+      for (const f of folders) if (rel.startsWith(`${f}/`)) dests.push(`${path.posix.basename(f)}/${rel.slice(f.length + 1)}`);
+      if (micromatch.isMatch(rel, glob)) {
+        if (keepsLayout) {
           const folder = micromatch.scan(glob.slice(0, -3)).base;
-          dest = folder === "" ? rel : rel.slice(folder.length + 1);
+          dests.push(folder === "" ? rel : rel.slice(folder.length + 1));
         } else {
-          dest = path.posix.basename(rel);
+          dests.push(flatDest(rel));
         }
       }
+      if (dests.length === 0) continue;
       const c = compiledOf(rel);
       if (c !== undefined) {
         compiled.add(c);
         continue;
       }
-      files.push({ dest, src: path.join(s.baseDir, rel), rel });
+      for (const dest of dests) files.push({ dest, src: path.join(s.baseDir, rel), rel });
     }
   }
   return { files, compiled: [...compiled].sort() };
+}
+
+/** Two files for one place in a bundle. */
+export class DuplicateBundleFileError extends PodsError {
+  constructor(message: string) {
+    super(message);
+    this.name = "DuplicateBundleFileError";
+  }
 }
 
 /** One destination per file: the same file matched twice is taken once, two files for one destination stop. */
@@ -108,7 +145,7 @@ function placed(s: BundleSource, found: { dest: string; src: string; rel: string
     const first = byDest.get(f.dest);
     if (first === undefined) byDest.set(f.dest, f);
     else if (first.src !== f.src) {
-      throw new PodsError(`${s.key}.bundle (${s.owner}) would hold ${f.dest} twice: ${first.rel} and ${f.rel}. See ${PODS_LINK}`);
+      throw new DuplicateBundleFileError(`${s.key}.bundle (${s.owner}) would hold ${f.dest} twice: ${first.rel} and ${f.rel}. See ${PODS_LINK}`);
     }
   }
   return [...byDest]
