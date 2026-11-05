@@ -13,6 +13,11 @@ export interface Route {
   redirect?: string;
   /** 403 when the request's User-Agent does not start with it. */
   needsUserAgent?: string;
+  /**
+   * Sends the full Content-Length but only the first `at` bytes of the body, then closes the connection: for the first
+   * `times` requests (every request without it).
+   */
+  truncate?: { at: number; times?: number };
   /** Never answers (the connection stays open until the server closes). */
   hang?: boolean;
 }
@@ -57,6 +62,12 @@ export async function startPodsServer(routes: Record<string, Route> = {}): Promi
     }
     const body = route.body ?? "";
     res.writeHead(route.status ?? 200, { "content-length": String(Buffer.byteLength(body)), ...route.headers });
+    const truncate = route.truncate;
+    if (req.method !== "HEAD" && truncate !== undefined && (truncate.times === undefined || truncate.times > 0)) {
+      if (truncate.times !== undefined) truncate.times--;
+      res.write(Buffer.from(body).subarray(0, truncate.at), () => res.socket?.destroy());
+      return;
+    }
     res.end(req.method === "HEAD" ? undefined : body);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

@@ -16,27 +16,94 @@ export async function sha256File(file: string): Promise<string> {
   return hash.digest("hex");
 }
 
-/** Streams `url` to `dest` via a temp file; verifies size and retries once. */
-export async function downloadFile(
-  url: string,
-  dest: string,
-  opts: { minBytes?: number; mode?: number; sha256?: string } = {},
-): Promise<void> {
-  const minBytes = opts.minBytes ?? 1024 * 1024;
+/** A download the server answered with another status than 2xx; `url` is the URL that answered (after redirects). */
+export class DownloadHttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly url: string,
+    statusText: string,
+  ) {
+    super(`HTTP ${status} ${statusText}`.trimEnd());
+    this.name = "DownloadHttpError";
+  }
+}
+
+/** A body of another size than expected; `cause` is the stream's error when the transfer broke off. */
+export class DownloadSizeError extends Error {
+  constructor(
+    readonly size: number,
+    readonly expected: number,
+    options?: ErrorOptions,
+  ) {
+    super(`downloaded ${size} bytes, expected ${expected}`, options);
+    this.name = "DownloadSizeError";
+  }
+}
+
+export interface DownloadOptions {
+  /** Rejects a body of this many bytes or fewer; 1 MiB by default, none when `expectedBytes` is given. */
+  minBytes?: number;
+  mode?: number;
+  sha256?: string;
+  headers?: Record<string, string>;
+  /** A body of another size is retried once, then rejected: `downloaded ${size} bytes, expected ${n}`. */
+  expectedBytes?: number;
+  /** Without expectedBytes: compare with the response's Content-Length when it has no Content-Encoding. */
+  checkLength?: boolean;
+}
+
+/** The size the body must have: `expectedBytes`, else (with `checkLength`) a plain Content-Length. */
+function expectedSize(res: Response, opts: DownloadOptions): number | undefined {
+  if (opts.expectedBytes !== undefined) return opts.expectedBytes;
+  if (!opts.checkLength || res.headers.has("content-encoding")) return undefined;
+  const length = res.headers.get("content-length");
+  return length !== null && /^\d+$/.test(length) ? Number(length) : undefined;
+}
+
+async function sizeOf(file: string): Promise<number> {
+  try {
+    return (await stat(file)).size;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Streams `url` to `dest` via `<dest>.<pid>.part`; checks the size and retries once. The final error keeps the last
+ * failure as its `cause` (a DownloadHttpError, a DownloadSizeError, or fetch's own error with the network reason).
+ */
+export async function downloadFile(url: string, dest: string, opts: DownloadOptions = {}): Promise<void> {
+  const minBytes = opts.minBytes ?? (opts.expectedBytes !== undefined ? 0 : 1024 * 1024);
   await mkdir(path.dirname(dest), { recursive: true });
   const tmp = `${dest}.${process.pid}.part`;
   let lastErr: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
-      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status} ${res.statusText}`);
-      await pipeline(Readable.fromWeb(res.body as never), createWriteStream(tmp));
-      const { size } = await stat(tmp);
+      const res = await fetch(url, {
+        redirect: "follow",
+        headers: opts.headers,
+        signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+      });
+      if (!res.ok || !res.body) throw new DownloadHttpError(res.status, res.url || url, res.statusText);
+      const expected = expectedSize(res, opts);
+      let streamErr: unknown;
+      try {
+        await pipeline(Readable.fromWeb(res.body as never), createWriteStream(tmp));
+      } catch (err) {
+        streamErr = err;
+      }
+      const size = await sizeOf(tmp);
+      if (expected !== undefined && size !== expected) {
+        throw new DownloadSizeError(size, expected, streamErr === undefined ? undefined : { cause: streamErr });
+      }
+      if (streamErr !== undefined) throw streamErr;
       if (size <= minBytes) throw new Error(`downloaded file too small (${size} bytes)`);
       if (opts.sha256) {
         const actual = await sha256File(tmp);
         if (actual !== opts.sha256.toLowerCase()) {
-          throw new ChecksumError(`checksum mismatch for ${url}: expected sha256 ${opts.sha256}, got ${actual}. If the upstream asset changed, report it at https://github.com/WillyAntunez/react-native-xtool/issues; the pin lives in src/versions.ts.`);
+          throw new ChecksumError(
+            `checksum mismatch for ${url}: expected sha256 ${opts.sha256}, got ${actual}. If the upstream asset changed, report it at https://github.com/WillyAntunez/react-native-xtool/issues.`,
+          );
         }
       }
       if (opts.mode !== undefined) await chmod(tmp, opts.mode);
@@ -49,5 +116,7 @@ export async function downloadFile(
     }
   }
   console.error(`Download failed: ${url}`);
-  throw new Error(`Could not download ${url}: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`);
+  throw new Error(`Could not download ${url}: ${lastErr instanceof Error ? lastErr.message : String(lastErr)}`, {
+    cause: lastErr,
+  });
 }
