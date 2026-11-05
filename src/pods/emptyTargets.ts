@@ -4,8 +4,8 @@
  * link (`Build input file cannot be found`). The table entry names such targets (`emptyTargets`), and rn-xtool writes
  * an empty arm64 object in their place before xtool-build, the one clang writes for an empty C file.
  */
-import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { PodTable } from "../project/podTable.js";
 
@@ -53,19 +53,26 @@ export function emptyArm64Object(minIos: string): Buffer {
 }
 
 /**
- * Writes `<Target>.o` for each target under `ios-xtool/.build/out/Products/Debug-iphoneos`, unless a file is there
- * (Swift Build's own object, should a later version of the package give the target sources). Returns the targets it
- * wrote.
+ * Writes `<Target>.o` for each target under `ios-xtool/.build/out/Products/Debug-iphoneos`, through a temporary file
+ * and a rename. A file there is kept only when it is byte for byte the object this writes (row 84): a write cut short,
+ * a full disk or a foreign file is never trusted. Returns the targets it wrote.
  */
 export async function writeEmptyTargetObjects(iosXtool: string, targets: readonly string[], minIos: string): Promise<string[]> {
   const written: string[] = [];
   const dir = path.join(iosXtool, ...EMPTY_TARGETS_DIR);
+  const object = emptyArm64Object(minIos);
   for (const target of [...new Set(targets)]) {
     if (!TARGET_NAME.test(target)) throw new Error(`internal error: ${target} is not a target name`);
     const file = path.join(dir, `${target}.o`);
-    if (existsSync(file)) continue;
+    if (existsSync(file) && readFileSync(file).equals(object)) continue;
     await mkdir(dir, { recursive: true });
-    await writeFile(file, emptyArm64Object(minIos));
+    const tmp = `${file}.tmp-${process.pid}`;
+    try {
+      await writeFile(tmp, object);
+      await rename(tmp, file);
+    } finally {
+      await rm(tmp, { force: true });
+    }
     written.push(target);
   }
   return written;

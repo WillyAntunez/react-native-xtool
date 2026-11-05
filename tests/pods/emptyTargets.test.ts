@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -50,15 +50,26 @@ describe("writeEmptyTargetObjects", () => {
     const dir = path.join(iosXtool, ...EMPTY_TARGETS_DIR);
     expect(dir).toBe(path.join(iosXtool, ".build", "out", "Products", "Debug-iphoneos"));
     expect(readFileSync(path.join(dir, "GTMDefines.o")).equals(emptyArm64Object("16.4"))).toBe(true);
-    // Swift Build's own object (a later version with sources) is never replaced.
-    writeFileSync(path.join(dir, "Other.o"), "built");
-    expect(await writeEmptyTargetObjects(iosXtool, ["Other"], "16.4")).toEqual([]);
-    expect(readFileSync(path.join(dir, "Other.o"), "utf8")).toBe("built");
+    // The object the builder writes is kept as it is.
+    expect(await writeEmptyTargetObjects(iosXtool, ["GTMDefines", "Other"], "16.4")).toEqual([]);
     // Nothing to write, nothing made.
     const none = path.join(root, "none");
     mkdirSync(none);
     expect(await writeEmptyTargetObjects(none, [], "16.4")).toEqual([]);
     expect(existsSync(path.join(none, ".build"))).toBe(false);
+  });
+
+  it("rewrites an object that is not the builder's (row 84)", async () => {
+    const iosXtool = path.join(root, "ios-xtool");
+    const dir = path.join(iosXtool, ...EMPTY_TARGETS_DIR);
+    mkdirSync(dir, { recursive: true });
+    // A write cut short, a foreign file, and one written for another minimum.
+    writeFileSync(path.join(dir, "Short.o"), "");
+    writeFileSync(path.join(dir, "Foreign.o"), "built");
+    writeFileSync(path.join(dir, "Older.o"), emptyArm64Object("15.1"));
+    expect(await writeEmptyTargetObjects(iosXtool, ["Short", "Foreign", "Older"], "16.4")).toEqual(["Short", "Foreign", "Older"]);
+    for (const t of ["Short", "Foreign", "Older"]) expect(readFileSync(path.join(dir, `${t}.o`)).equals(emptyArm64Object("16.4"))).toBe(true);
+    expect(readdirSync(dir).sort()).toEqual(["Foreign.o", "Older.o", "Short.o"]);
   });
 
   it("refuses a target name that is a path", async () => {
