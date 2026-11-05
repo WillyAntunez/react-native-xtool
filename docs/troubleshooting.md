@@ -232,14 +232,20 @@ precompiled copy, or has a `Package.swift` of its own or from your project's `pa
 one under "pods" in rn-xtool.config.json: { "pods": { "<pod>": { "url": "<git URL>", "exact": "<version>", "products":
 ["<product>"] } } }, or leave the library out with "exclude". See <this section>`
 
-The library's podspec depends on a CocoaPods pod, and neither rn-xtool's pod table nor the `pods` of your
-`rn-xtool.config.json` names a SwiftPM package for it. With several such pods the text names them all (`the CocoaPods
-pods GoogleMLKit and GoogleToolboxForMac, which have no SwiftPM package rn-xtool knows. Add them …`), and the snippet
-names the first. Pods under a Ruby condition (`if`, `unless`) do not count, nor do those of a subspec the
-scaffolder leaves out for a missing dependency
-([Scaffolded libraries](#scaffolded-libraries)). @react-native-ml-kit/text-recognition 2.0.0 is refused this way, for
-GoogleMLKit: ML Kit ships as prebuilt binaries with no SwiftPM package, which needs a later rn-xtool. Until then,
-`exclude` builds the app without it ([Leaving a module out](#leaving-a-module-out)).
+The library's podspec depends on a CocoaPods pod whose spec is a git source, and neither rn-xtool's pod table nor the
+`pods` of your `rn-xtool.config.json` names a SwiftPM package for it. With several such pods the text names them all
+(`the CocoaPods pods <pod> and <pod>, which have no SwiftPM package rn-xtool knows. Add them …`), and the snippet
+names the first. Pods under a Ruby condition (`if`, `unless`) do not count, nor do those of a subspec the scaffolder
+leaves out for a missing dependency ([Scaffolded libraries](#scaffolded-libraries)). A pod that ships prebuilt static
+binaries, such as GoogleMLKit (@react-native-ml-kit/text-recognition 2.0.0), is not refused: rn-xtool downloads and
+links it ([CocoaPods binaries](#cocoapods-binaries)).
+
+The early checks read a pod's route offline, from `rn-xtool-pods.lock.json` or a spec in rn-xtool's cache. A pod
+neither names is not refused there: `ℹ pods — GoogleMLKit (from @react-native-ml-kit/text-recognition) is not
+resolved yet; rn-xtool build reads its spec from the CocoaPods CDN.` The `pods` step then reads it, still before
+anything changes in the project, and gives the refusal above for a git-source pod, also for one a binary pod depends
+on, with the chain that reaches it. `knownLimits.allow` and these pods:
+[CocoaPods binaries](#knownlimitsallow-and-binary-pods).
 
 rn-xtool's pod table maps AppAuth (react-native-app-auth) to AppAuth-iOS 3.0.0 and SwiftUIIntrospect
 (react-native-pager-view) to swiftui-introspect 1.5.0. A mapped pod becomes a `.package(url:exact:)` dependency of the
@@ -272,14 +278,25 @@ SwiftPM's resolve error naming the URL.
   of its SwiftPM targets. The scaffolder writes `rn-spm-pod-headers/<Dir/Header.h>` into the library, holding one
   `@import <module>;` per module, and adds `rn-spm-pod-headers` to the library's header search paths, so
   `#import <AppAuth/AppAuth.h>` resolves as it does under CocoaPods.
+- `outsideRequirement` (optional): a sentence saying why `exact` is outside a requirement on purpose, checked by you.
+  The pin check then prints one `ℹ` line with it instead of the `⚠` (rn-xtool's GoogleToolboxForMac entry,
+  [CocoaPods binaries](#warnings-and-information-lines)). It holds for the entry's own `url` and `exact`: a config
+  entry that pins another one drops it.
+- `emptyTargets` (optional): `["<target>", …]`, the package's targets without sources (GoogleToolboxForMac's
+  `GTMDefines`). Swift Build writes no object for them but lists one at link, so rn-xtool writes an empty one in its
+  place before `xtool-build` ([How the binaries are linked](#how-the-binaries-are-linked)). Like
+  `outsideRequirement`, it holds for the entry's own `url` and `exact`: a config entry that pins another one drops it.
+  `"emptyTargets": []` clears it for the same pin.
 
 Every command checks the shape, offline, and names the key: `rn-xtool.config.json: pods.AppAuth.products must be a
 list of product names`. The other texts end in `pods must be an object of CocoaPods pod names`, `pods.<pod> must be a
 CocoaPods pod name (no "/", spaces or quotes)`, `pods.<pod>.url must be a git URL (https://…)`, `pods.<pod>.exact must
 be a version such as 3.0.0`, `pods.<pod>.subspecs must be an object of subspec names`,
-`pods.<pod>.subspecs.<name> must be a list of product names`, `pods.<pod>.forwardHeaders must be an object of header
-paths` and `pods.<pod>.forwardHeaders.<header> must be a list of module names, under a relative path ending in .h`. A
-URL or product that is well formed but wrong is named by SwiftPM at `xtool-build`, in its resolve error.
+`pods.<pod>.subspecs.<name> must be a list of product names`, `pods.<pod>.outsideRequirement must be a sentence saying
+why the pin is outside the requirement`, `pods.<pod>.emptyTargets must be a list of target names`,
+`pods.<pod>.forwardHeaders must be an object of header paths` and `pods.<pod>.forwardHeaders.<header> must be a list
+of module names, under a relative path ending in .h`. A URL or product that is well formed but wrong is named by
+SwiftPM at `xtool-build`, in its resolve error.
 
 **Changing a shipped pod.** An entry for a pod rn-xtool's table maps overrides only the fields it names, and the
 others stay. It still needs `url`, `exact` and `products`. To pin AppAuth 2.1.0:
@@ -429,17 +446,347 @@ the app's. rn-xtool patches and builds the copy in the app's own `node_modules`,
 the app outside the workspace, or keep react-native and expo in the app's `node_modules` (for example with Yarn
 classic's `nohoist`). Only parent folders' `node_modules` are checked, not Node's global folders.
 
+## CocoaPods binaries
+
+Some libraries depend on CocoaPods pods that ship prebuilt static binaries instead of sources: Google's ML Kit, behind
+@react-native-ml-kit/text-recognition, is ten such pods. rn-xtool links them without CocoaPods or Ruby. It reads their
+specs from the CocoaPods CDN, downloads the files the specs name, checks each one against `rn-xtool-pods.lock.json` at
+the project root, and keeps them in its own cache, `~/.cache/rn-xtool/pods` (`$XDG_CACHE_HOME/rn-xtool/pods` when
+`XDG_CACHE_HOME` is set). The copies a build puts in the project are git-ignored. ML Kit text recognition 2.0.0 is
+the verified case, checked by building only: it has not run on a device yet ([libraries.md](libraries.md)). The steps
+are in [how-it-works.md](how-it-works.md#cocoapods-binaries).
+
+A pod takes this route when no pod table entry maps it and its spec downloads an archive (`.tar.gz`, `.tgz` or `.zip`)
+that holds static `vendored_frameworks` (`.framework` or `.xcframework`), or only headers (GoogleMLKit's `MLKitCore`).
+The git-source pods it depends on go through the pod table, as a library's do
+([above](#libraries-that-depend-on-cocoapods-pods)). rn-xtool's table maps ML Kit's four: GTMSessionFetcher 3.5.0,
+GoogleUtilities 8.1.5, GoogleDataTransport 10.1.1 and GoogleToolboxForMac 6.0.1. When another package needs one of
+them at another exact version (a Firebase package, GoogleSignIn), `xtool-build` stops with SwiftPM's version conflict
+naming both; the pod table (`pods` in `rn-xtool.config.json`) is the one place to align them.
+
+The work happens in the `pods` step, the first step of `build` (and of `run` when it builds), before anything changes
+in the project: no `expo prebuild`, no patches. A stop there leaves the project as it was. The `pod-binaries` step,
+right before `rn-spm`, then writes the package the scaffolds link, `ios/build/pod-binaries`, from the cache, on every
+build, so `expo prebuild --clean` wiping `ios/` costs nothing. When `ios/build/pod-binaries` or a pod's bundle in
+`ios-xtool/Resources` is gone after the build (a hand-run `npx expo prebuild --clean`, `rm -rf ios/build`), `install`
+(and so `run`) stages it again from the lock and the cache before xtool builds: `ℹ pods — ios/build/pod-binaries is
+missing since the last build; rn-xtool stages it again from rn-xtool-pods.lock.json and its cache.` When the binary
+pods changed since then, it stops: ``The CocoaPods binaries the project needs changed since the last build. Run
+`rn-xtool build`, then install again.`` Build through rn-xtool: SwiftPM run by hand on a scaffold that links binary
+pods stops with SwiftPM's "package manifest cannot be accessed" when `ios/build/pod-binaries` is missing.
+
+### The first download
+
+Before it downloads anything, the `pods` step says what, how much, from where and whose. For ML Kit:
+
+`ℹ pods — @react-native-ml-kit/text-recognition needs 10 CocoaPods binaries that are not in rn-xtool's cache, 40.3 MB
+from dl.google.com: MLKitTextRecognitionCommon 5.0.0 (30.3 MB), MLKitCommon 13.0.0 (2.5 MB), …, MLImage 1.0.0-beta7
+(7 KB). From Google, Inc. ("Copyright 2024 Google LLC", "Copyright 2025 Google LLC";
+https://developers.google.com/ml-kit/guides; terms: https://developers.google.com/ml-kit/terms). rn-xtool keeps them in
+~/.cache/rn-xtool/pods and does not copy them into the project.`
+
+- The vendor is each spec's `authors` (`From an unnamed vendor` when a spec names none), followed by the license texts
+  of that vendor's pods and the spec's homepage. `terms:` comes from rn-xtool's `data/pod-terms.json`, which maps a
+  homepage to the vendor's terms page; a homepage it does not list gets no `terms:`.
+- Sizes come from each host's `Content-Length`: the total reads `at least <size>` when some files have none, and
+  `size unknown` when none do.
+- The files are the vendor's, under the vendor's terms: for ML Kit, the ML Kit Terms
+  (https://developers.google.com/ml-kit/terms). rn-xtool downloads them on your machine, from the URL in each spec,
+  for your own build, as CocoaPods does. It does not accept the terms on your behalf, and its npm package holds none of
+  these files.
+- Nothing of them is committed: the cache is outside the project, `ios/build/pod-binaries` has its own `.gitignore`
+  (`*`), and the bundles and `.build` sit under `ios-xtool/`, which is ignored too. The lock holds versions, URLs,
+  sizes and hashes, none of the files' content. Do not publish the cache either (a CI cache, a shared drive): it holds the vendor's files.
+- The line comes back only for files missing from the cache (after it was deleted, or a new pod), and for a cached
+  file that no longer has its recorded sha256, which is downloaded again.
+- After the downloads: `ℹ pods — recorded the sha256 of 10 downloads in rn-xtool-pods.lock.json; commit it, so other
+  machines check that they get the same files.`
+
+**Disk.** Before the first download, the step checks that the cache's filesystem has about 8 times the download size
+free: the downloads, their unpacked and wrapped copies in the cache, and the copies each app holds. Otherwise it stops
+with `Not enough free disk space for the CocoaPods binaries: the filesystem of ~/.cache/rn-xtool/pods has <free> free,
+and rn-xtool needs about <need> there (<n> downloads <size>, unpacked, wrapped and per-app copies <rest>). Free some
+space, then build again.` When the project is on another filesystem than the cache, the cache's needs about 6 times
+the download size (`unpacked and wrapped copies <rest>`) and the project's 2 times, for the per-app copies; the stop
+then names each filesystem that is short, the project's as `the filesystem of <project> has <free> free, and rn-xtool
+needs about <need> there (the per-app copies in ios/build/pod-binaries and ios-xtool/Resources)`. For ML Kit's
+40.3 MB, the cache takes about 237 MB, and each app about 66 MB more (`ios/build/pod-binaries` and the model bundles
+in `ios-xtool/Resources`). `App.app` grows by about 53 MB, and the
+proof app's `ios-xtool/.build` took about 0.84 GB.
+
+### The lock file
+
+`rn-xtool-pods.lock.json` sits next to `rn-xtool.config.json`; commit it. For each binary pod it records the version,
+the subspecs used, the download's URL, size and sha256, and the libraries that need it. The first build records,
+later builds check: a file missing from the cache is downloaded again and must have the recorded sha256, and a cached
+file is hashed again before it is used.
+
+- **Versions stay.** The locked version is kept while it meets every requirement, so `~> 13.0.0` does not move to a
+  newer MLKitCommon by itself. After a library upgrade whose requirement it no longer meets, `doctor --project` warns
+  `⚠ pods — <pod>: rn-xtool-pods.lock.json records <old>, which no longer meets "<requirement>" (<library>
+  <version>); rn-xtool build resolves it again and records the new version`, and `build` does so: `ℹ pods — <pod>:
+  rn-xtool-pods.lock.json records <old>, which no longer meets "<requirement>" (<who>); now <new>, recorded in
+  rn-xtool-pods.lock.json`.
+- **A changed file:** `The file dl.google.com serves for MLImage 1.0.0-beta7 is not the one rn-xtool-pods.lock.json
+  records (sha256 <new> instead of <recorded>). rn-xtool does not use it. If you trust the new file, delete the
+  "MLImage" entry from rn-xtool-pods.lock.json and build again.` The vendor re-uploaded the same version, or the file
+  was changed on its way. rn-xtool deletes the download and does not retry; the project and the lock stay as they
+  were. Without the entry, the next build announces, downloads and records the file again.
+- **The same file at a new URL:** `ℹ pods — <pod> <version> moved to <url>; same file (its sha256 matches
+  rn-xtool-pods.lock.json), so the lock's URL is updated`. Another file there is a changed file, above.
+- **The first download is trusted on first use**, over HTTPS: ML Kit's specs carry no checksum, so nothing checks the
+  file before the lock records it. A spec that names its own `sha256` or `sha1` is checked too: `The file <host> serves
+  for <pod> <version> does not match the <sha256|sha1> its spec names (<got> instead of <want>). rn-xtool does not use
+  it.`
+- **Plain http:** `<pod> <version> downloads over plain http from <host>; rn-xtool downloads it only when
+  rn-xtool-pods.lock.json already records its sha256.` A spec URL that is not https, or an https URL that redirects to
+  plain http, is refused, because nothing would protect or pin the file. When the lock records the file, it is
+  downloaded and checked against that sha256.
+- **Merge conflicts:** `rn-xtool-pods.lock.json has merge conflict markers; keep either side and build again: rn-xtool
+  checks every file against the hashes it keeps.` Keep either side: the next build checks every file against the
+  entries that remain, and records what is missing.
+- **A lock rn-xtool cannot read:** `rn-xtool-pods.lock.json is not a lock rn-xtool can read (<reason>); fix it, or
+  delete it to record the files again.`, where the reason is the JSON error or the key with a wrong value
+  (`pods.MLImage.sha256 must be a sha256 in hex`). `doctor --project` shows it as `⚠ pods — not checked: <that text>`.
+- **Entries no library needs** (a library removed, or left out with `exclude`) stay, so toggling `exclude` keeps the
+  recorded hashes; rn-xtool never removes them. `doctor --project` lists them: `ℹ pods — rn-xtool-pods.lock.json also
+  records <pods>, which no library needs now; rn-xtool keeps these entries`. Delete them by hand once the library is
+  gone for good.
+
+### Offline and behind a proxy
+
+- With the lock and every file it records in the cache, the `pods` step makes no request, so a build works without
+  internet (`.build` kept; see the last bullet). With no network at all, set `lanIp` in `rn-xtool.config.json`:
+  `build` otherwise reads this computer's LAN address from its default route, and stops with `Could not detect LAN IP;
+  set lanIp in rn-xtool.config.json`.
+- A machine without the cache needs the network once: the CocoaPods CDN (`cdn.cocoapods.org`, which redirects to
+  jsDelivr) for the specs, and the vendor's host for the files. Offline, the step stops before anything changes:
+  `Cannot reach dl.google.com (getaddrinfo ENOTFOUND) to download MLKitCommon 13.0.0 (2.5 MB), which is not in
+  rn-xtool's cache (~/.cache/rn-xtool/pods). Connect to the network and build again; once downloaded, builds use the
+  cache.` The same text names `cdn.cocoapods.org` for a spec (`to read the spec of GoogleMLKit 8.0.0, which is not …`)
+  or a version list (`to read the versions of GoogleMLKit, which are not …`), and adds `(and <n> more)` when other
+  files are missing too.
+- Specs are cached per version and never read again: CocoaPods trunk is read-only from 2026-12-02, so a version's spec
+  no longer changes. A pod's version list is read again on its first resolution and when its locked version no longer
+  meets a requirement, so a machine with an older cache resolves the versions a fresh machine does.
+- If the CDN or jsDelivr goes away, machines with the cache and the lock keep building; a machine without them stops
+  with the text above. rn-xtool mirrors nothing.
+- **A file the vendor removed:** `<host> answered 404 for <pod> <version> (needed by <library>): <url>. The vendor no
+  longer serves this file; a machine whose rn-xtool cache holds it keeps building.` (or 410).
+- **A pod that is not on trunk** (a private spec repo, a deleted version): `<pod> <version> (needed by <library>) is
+  not on the CocoaPods trunk: <url> answered 404. rn-xtool reads pods from trunk only; map the pod to a SwiftPM package
+  under "pods" in rn-xtool.config.json, or leave the library out with "exclude".` (`its version list <url> does not
+  name it` for a pod trunk does not know).
+- **Other answers.** A reset connection or a 5xx answer is read once more (a download is retried once after any
+  failure); a second failure stops with the texts here.
+  `<host> answered HTTP <status> for <url> (<what>). Build again later; if it keeps failing, see <this section>`;
+  `<host> answered <url> (<what>) with something other than <a CocoaPods version list|a CocoaPods spec> ("<the start of
+  the answer>"). …` when a proxy's or captive portal's page comes back; `Could not download <pod> <version> from
+  <host>: <reason>. Build again; the cache keeps what was complete.` A download stops after 15 minutes.
+- **"Cannot reach cdn.cocoapods.org (…)" on a network that needs a proxy, while `curl` and `git` work.** rn-xtool
+  downloads with Node's built-in `fetch`, which ignores `HTTPS_PROXY` and `HTTP_PROXY`, as rn-xtool's other downloads
+  do. On Node 24, run the build with `NODE_USE_ENV_PROXY=1` (for example `NODE_USE_ENV_PROXY=1 rn-xtool build`) so
+  `fetch` uses those variables. A machine whose cache holds every file `rn-xtool-pods.lock.json` records builds without
+  any request.
+- **"Cannot reach cdn.cocoapods.org (UNABLE_TO_GET_ISSUER_CERT_LOCALLY)" (or `SELF_SIGNED_CERT_IN_CHAIN`, or the same
+  for `dl.google.com`) on a network that inspects TLS with its own root certificate, while `curl` and `git` work.**
+  Node's `fetch` trusts its own list of certificate authorities, not the system's. Give it the network's root
+  certificate with `NODE_EXTRA_CA_CERTS=<file.pem>` (for example `NODE_EXTRA_CA_CERTS=~/company-root.pem rn-xtool
+  build`). As behind a proxy, a machine whose cache holds every file the lock records builds without any request.
+- The source pods' SwiftPM packages come from GitHub at `xtool-build`, as for any mapped pod: the first build, and any
+  build after `ios-xtool/.build` is deleted, need the network for them, and an offline fetch fails with SwiftPM's
+  resolve error naming the URL.
+
+### Stops
+
+Most stops name the pod, its version and the library that needs it, and end with a link to this section. Most of the
+shapes below end `Leave the library out with "exclude" in rn-xtool.config.json.`:
+[Leaving a module out](#leaving-a-module-out) builds the app without it.
+
+- **A git-source pod with no SwiftPM package.** The `pods` step gives the refusal of
+  [Libraries that depend on CocoaPods pods](#libraries-that-depend-on-cocoapods-pods), with the chain when a binary pod
+  depends on it: `<library> <version>: its podspec depends on the CocoaPods pod <root>, and through it (<root>
+  <version> → <pod> <version>) on the CocoaPods pod <pod>, which has no SwiftPM package rn-xtool knows. Add one under
+  "pods" in rn-xtool.config.json: …, or leave the library out with "exclude".` Add the pod under `pods`, as that
+  section shows.
+- **No version fits:** `No version of <pod> satisfies every requirement: "<requirement>" (<who>), "<requirement>"
+  (<who>). rn-xtool resolves CocoaPods versions without backtracking; leave one of the libraries out with "exclude" in
+  rn-xtool.config.json.` Each pod gets the newest version that meets every requirement, and a prerelease
+  (`1.0.0-beta7`) only when a requirement names one. There is no backtracking, so a combination CocoaPods would find by
+  trying older versions stops here too.
+- **A changed file, plain http:** see [The lock file](#the-lock-file).
+- **No arm64 device slice:** `<pod> <version> (needed by <library>) ships no arm64 device slice (it has x86_64):
+  <file>. rn-xtool builds for iPhones only. …`, and for a simulator build: `… ships an arm64 slice built for the iOS
+  simulator, not for iPhones (<file>). …`.
+- **Other binary shapes:** `<pod> <version> (needed by <library>) ships a dynamic framework (<path>); rn-xtool links
+  static CocoaPods binaries only. …` (or `a Swift framework`). The spec's own shape is named the same way: `…
+  ships vendored libraries (<path>); rn-xtool links static CocoaPods binaries only. …`, `… compiles sources
+  (<path>); …`, `… is a <kind> download (<url>); …` and `… comes from a <kind> source, which rn-xtool cannot
+  download; …`. rn-xtool links static frameworks and headers-only pods; dynamic frameworks, Swift binaries,
+  `vendored_libraries`, compiled sources in a downloaded pod and other sources are not supported.
+- **No iOS:** `<pod> <version> (needed by <library>) does not support iOS (its platforms: <platforms>), so an iPhone
+  app cannot use it. …`.
+- **Two of one name:** `<pod> <version> (needed by <library>) ships two frameworks named <Name>: <path> and <path>.
+  rn-xtool makes one module of each name. …`; `Two CocoaPods binaries make the module <Name>: <pod> <version> and
+  <pod> <version>. rn-xtool cannot link both.`; `… its source_files hold two headers named <file> (<path> and <path>),
+  which rn-xtool puts in one folder.`; and, for the bundles, `Two resource bundles would be copied to
+  App.app/<Key>.bundle: <owner> and <owner>.`, `The resource bundle <Key>.bundle (<owner>) would be copied over the
+  app resource <file> in App.app.` and `<Key>.bundle (<owner>) would hold <file> twice: <path> and <path>.` (a
+  scaffolded library's bundle that would hold one name twice is left out instead, and named in the `ℹ Not copied into
+  the app` line).
+- **Module maps rn-xtool cannot rewrite:** `<pod> <version> (needed by <library>): <path>/Modules/module.modulemap names
+  the framework bundle (an umbrella directory ("Headers")), which rn-xtool cannot rewrite for SwiftPM.` The parenthesis
+  can also read `a path relative to the framework ("…")`, `a framework submodule`, `another framework module` or `a
+  module.private.modulemap`. rn-xtool moves a framework's headers to `Headers/<Name>/` and drops the `framework`
+  keyword of its module map, and these maps would then name other files. Leave the library out. A framework with no
+  module map and no umbrella header stops with `…: <path> has no Modules/module.modulemap and no Headers/<Name>.h, so
+  rn-xtool cannot make a module for it.`
+- **A spec path outside the pod:** `The spec of <pod> <version> has a "<key>" path that leaves the pod's folder
+  (<path>).` (an absolute path, or one that goes up with `..`), and for an `.xcframework` slice `… ships <path>, whose
+  <slice> slice names a <key> that leaves it (<value>).`
+- **A file the spec names and the download lacks** (a vendored framework, a header, a module map): `<pod> <version>
+  (needed by <library>): its spec names <path>, which the download does not hold. Its top-level entries: <entries>.`
+- **Extraction.** rn-xtool lists every archive before it unpacks it, and refuses one with an unsafe entry: `rn-xtool
+  refuses to extract <file> (<pod> <version>): its entry "<entry>" has an absolute path. Nothing was extracted.` (or
+  `goes up with ..`, `is a device or special file`, `is a link that points outside the archive`). A damaged archive
+  stops with `rn-xtool cannot list <file> (<pod> <version>): <reason>.` or `rn-xtool could not extract <file> (<pod>
+  <version>): <reason>.`, and a `.zip` without `unzip` on the host with `<pod> <version> is a .zip download, and unzip
+  is not installed. Install it (sudo apt install unzip) and build again.`
+- **llvm-ar:** ``llvm-ar was not found on the Swift toolchain's PATH; rn-xtool wraps CocoaPods binaries with it. Run
+  `rn-xtool setup` to install Swift 6.4 through swiftly.``, or `llvm-ar could not wrap <pod> <version>'s object
+  (<path>): <error>`. The Swift toolchain `setup` installs ships it. `doctor` prints `✔ llvm-ar — LLVM <version>`, or
+  the missing text as ✖ when the project's lock records binary pods (⚠ otherwise).
+- **The iOS SDK:** `<pod> <version> (needed by <library>) links the framework <Name>, which the iOS SDK rn-xtool builds
+  with (<SDK>) does not have.` (or `the library <name>`), before any download.
+- **A file that is no Mach-O binary rn-xtool knows:** `… ships a binary rn-xtool does not recognise (<path>, which
+  starts with <bytes>).`
+
+### Warnings and information lines
+
+- **Privacy manifests**, on every build: `ℹ pods — not copied into the app: the PrivacyInfo.xcprivacy inside
+  MLKitCommon.framework and MLKitTextRecognitionCommon.framework. Development builds run without them; privacy
+  manifests are read only at App Store submission.` Nothing to do for a development build.
+- **A pin outside a binary pod's requirement**, on every build: `ℹ GoogleToolboxForMac 6.0.1 (rn-xtool table) is
+  outside MLKitCommon's and MLKitVision's requirement ">= 4.2.1, < 5.0": 4.x ships no Package.swift; 6.0.1 keeps the
+  GTMLogger API ML Kit links against`. A table entry's `outsideRequirement` marks such a pin as checked, which makes
+  the ⚠ of [A pin outside the podspec's requirement](#libraries-that-depend-on-cocoapods-pods) this ℹ. An entry in
+  your config that pins another `url` or `exact` drops it, so the ⚠ comes back: `⚠ GoogleToolboxForMac <version>
+  (rn-xtool.config.json) is outside MLKitCommon's and MLKitVision's requirement ">= 4.2.1, < 5.0"`.
+- **A newer iOS minimum:** `⚠ <pod> needs iOS <version>; the app's minimum is 16.4; it fails to load on older
+  iPhones`, from the spec's platform or the binary's own minimum. rn-xtool builds every app for iOS 16.4; ML Kit needs
+  15.5.
+- **A scaffold persisted before rn-xtool linked the binary pods** (a library built under `knownLimits.allow` before):
+  `⚠ patches/<file> does not link GoogleMLKit's CocoaPods binaries: it was scaffolded before rn-xtool resolved them;
+  delete it so rn-xtool regenerates it (also remove node_modules/<package> and reinstall: that copy still has the old
+  Package.swift)`. Do what it says, as for the other stale scaffolds
+  ([Build and patches](#build-and-patches)). Without a persisted patch, `build` removes the old manifest itself: `ℹ
+  node_modules/<package>/Package.swift does not link GoogleMLKit's CocoaPods binaries: rn-xtool removed it so the
+  rn-spm step scaffolds it again`.
+- **A pod that moved to a SwiftPM package:** after you map a binary pod under `pods`, `⚠ patches/<file> links <pod>'s
+  CocoaPods binaries, but the config maps <pod> to a SwiftPM package now; delete it so rn-xtool regenerates it (also
+  remove …)` (`rn-xtool's table` when the table maps it).
+- **The persist guard.** The `pods` and `pod-binaries` steps write nothing under `node_modules`, so a persisted scaffold never holds the
+  vendor's files. As a guard, rn-xtool does not persist a scaffold patch that would hold a binary file:
+  `⚠ Did not persist <library>'s scaffold: the patch would contain a binary file (<path>)`, or `⚠ Did not persist
+  <library>'s scaffold: rn-xtool could not read <patch> to check it for binary files`. The build goes on.
+
+### knownLimits.allow and binary pods
+
+A library in `knownLimits.allow` builds anyway when one of its pods is a git-source pod with no SwiftPM package (the
+first stop above). The `pods` step leaves that pod out with `⚠ known-limits — <the refusal> (allowed by
+rn-xtool.config.json knownLimits.allow; the build may fail later)`, once (not again when the early checks printed it),
+and the build goes on; it may fail later, where the pod is needed. Its other pods are resolved and linked as usual.
+`doctor --project` shows the same line as `⚠ pods — …`, and a refusal for a library the list does not name as
+`✖ pods — <the refusal>` (unless its `known-limits` line names it already).
+
+Once a build has read that pod's spec, it is in rn-xtool's cache: the early checks find it there and print the line,
+and the `pods` step leaves the pod out before any CDN read. With the lock and a full cache, such a library then builds
+offline too. A machine that never read the spec needs the CDN once; offline, the step stops with `Cannot reach
+cdn.cocoapods.org (<reason>) to read the versions of <pod>, which are not in rn-xtool's cache
+(~/.cache/rn-xtool/pods). …`.
+
+### How the binaries are linked
+
+- Each static framework becomes a headers-only `.xcframework` for compiling and a thin arm64 archive, linked once with
+  `-Xlinker -force_load` on the App target (ML Kit: nine archives). Nothing links them a second time, and there is no
+  `-all_load`.
+- With binary pods, and only then, the App target also gets `-Xlinker -no_objc_relative_method_lists`: without it,
+  xtool's `ld64.lld` crashes while it builds Objective-C method lists from MLKitTextRecognitionCommon's object.
+  Builds without binary pods are unchanged.
+- GoogleToolboxForMac 6.0.1's `GTMDefines` target has no sources, so Swift Build writes no object for it but lists
+  one at link (`Build input file cannot be found: '…/Products/Debug-iphoneos/GTMDefines.o'`). Its table entry lists
+  it in `emptyTargets`, and rn-xtool writes the object clang makes for an empty C file at
+  `ios-xtool/.build/out/Products/Debug-iphoneos/GTMDefines.o` before `xtool-build`; `install` writes it again before
+  xtool builds, so deleting `ios-xtool/.build` costs nothing. A file there that is not byte for byte that object is
+  rewritten.
+- The source pods' privacy manifests reach the app as their SwiftPM bundles (`GoogleUtilities_Logger.bundle`, …).
+
+### Resource bundles
+
+- **Binary pods.** Each `resource_bundles` key `<Key>` of a pod becomes `ios-xtool/Resources/<Key>.bundle`, with an
+  `Info.plist` holding CocoaPods' keys (`CFBundleIdentifier` `org.cocoapods.<Key>`), and xtool copies it to
+  `App.app/<Key>.bundle`, where the code looks for it. ML Kit's models are five: `LatinOCRResources`,
+  `ChineseOCRResources`, `DevanagariOCRResources`, `JapaneseOCRResources` and `KoreanOCRResources`.
+- **Scaffolded libraries.** The unconditional `resource_bundles` (and `ios.resource_bundles`) of each library rn-xtool
+  scaffolds are built the same way, when their names and globs are plain strings: react-native-svg's
+  `RNSVGFilters.bundle` (its prebuilt `*.iphoneos.metallib` filters) and react-native-device-info's
+  `RNDeviceInfoPrivacyInfo.bundle`. What still does not arrive is named in the `ℹ Not copied into the app` line
+  ([Scaffolded libraries](#scaffolded-libraries)).
+- **Layout.** A glob ending in `/**` keeps the layout below its folder. A folder any other glob matches is copied whole
+  under its name, and a matched file goes to the bundle's root under its name, inside its nearest `.lproj` folder when
+  it has one (`fr.lproj/Localizable.strings`).
+- Files that need Xcode's tools are left out with `ℹ Left out of <Key>.bundle (<owner>), as they need Xcode's tools
+  (asset catalogs, storyboards, xibs): <files>`, and a bundle whose globs match nothing is not built: `⚠ <Key>.bundle
+  (<owner>) matches no file (<globs>); it is not built`.
+
+### Checks on the packed app
+
+After `xtool-build`, with binary pods, rn-xtool reads the packed `App.app`: each pod's bundle is there with its
+`Info.plist`, no binary target was embedded under `Frameworks/` as a dynamic framework, and every Objective-C class a
+force-loaded archive defines is in the App binary. When one fails, it stops:
+
+```text
+✖ The packed app is not what the CocoaPods binaries need, so rn-xtool removed it and does not install it:
+  - App.app/<Key>.bundle is missing (<pod> <version>)
+  - App.app/Frameworks/<Name>.framework is there: xtool embedded a static binary as a dynamic framework
+  - the App binary does not define _OBJC_CLASS_$_<Class> (<pod> <version>, force-loaded)
+See <this section>
+```
+
+At most five missing classes are listed, then `- and <n> more`. rn-xtool removes `App.app` and the `.ipa` beside it,
+and the build is not recorded as up to date, so `run` builds again. `install` (over USB and with `--network`, so `run`
+too) has xtool build the app from `ios-xtool/.build` first and runs the same checks on it before it installs anything:
+a refused app is removed and not installed.
+
+### The cache
+
+- `~/.cache/rn-xtool/pods` holds the specs (`specs/`), the downloads named by their sha256 (`downloads/`), and the
+  trees rn-xtool unpacked (`extracted/`) and wrapped (`wrapped/`) from them. Two projects share one copy of a file.
+- **It grows.** It keeps every version a build downloaded, and its trees; a tree made by an older rn-xtool (an older
+  extractor or wrapper) stays there too. Deleting the folder is safe: the next build downloads what the project needs
+  again and checks each file against `rn-xtool-pods.lock.json`.
+- Temporary files and trees a stopped build left are removed when a later `pods` step starts, once they are 24 hours
+  old. Files are synced to disk before they count as cached, and a tree whose files changed is built again.
+- Two builds can share the cache. Rarely, a build that reads a tree while another build puts the same tree in place
+  stops with a missing-file error; building again passes.
+
+### Leaving it out
+
+`"exclude": ["@react-native-ml-kit/text-recognition"]` still builds the app without the library: its pods are not
+resolved, downloaded or staged, its lock entries stay (listed by `doctor --project` as entries no library needs), and
+an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leaving a module out](#leaving-a-module-out)).
+
 ## Build and patches
 
 - **Metal shaders are skipped on Linux:** a library that ships `.metal` files (react-native-svg's `MetalCI` filters)
   would fail the build with `unable to spawn process 'metal'`, because the Metal compiler only exists on macOS. The
   scaffolder excludes them and prints `Skipped N Metal shader(s)`; the library works, but features that rely on those
-  shaders are unavailable in the build.
-- **svg Metal filters stay unavailable under SwiftPM:** react-native-svg loads its prebuilt `*.metallib` files from
-  `RNSVGFilters.bundle`, declared in the podspec through `s.ios.resource_bundles`. A scaffolded library's resources are
-  not copied into the app (on any host, macOS included), so the bundle is never built, and `build` names it in its
-  `ℹ Not copied into the app` line ([below](#scaffolded-libraries)). Skipping `.metal` compilation is the only
-  Linux-specific part. Rendering that does not use those filters is unaffected.
+  shaders are unavailable in the build, unless the library ships them prebuilt, as react-native-svg does.
+- **react-native-svg's Metal filters:** react-native-svg loads its prebuilt `*.metallib` files from
+  `RNSVGFilters.bundle`, declared in the podspec through `s.ios.resource_bundles`. rn-xtool builds that bundle from the
+  two `*.iphoneos.metallib` files the package ships and copies it to `App.app`
+  ([resource bundles](#resource-bundles)), so skipping the `.metal` sources costs nothing there. This is checked by
+  building (2026-11-05); a filter rendering on a device is not checked yet.
 - **An Expo config plugin change is missing from the app** (for example expo-image-picker's photo library text in
   Info.plist): `build` runs `expo prebuild` only when `ios/` is missing. After adding or changing a config plugin in
   `app.json`, run `rn-xtool build --clean` (or `run --clean`), which re-runs `expo prebuild --clean`.
@@ -592,16 +939,18 @@ the `Package.swift` of every other library, persisted in `patches/` or edited by
   CocoaPods. In a library that declares no Swift 6, strict-concurrency errors such as `static property 'shared' is not
   concurrency-safe because non-'Sendable' type 'AudioSessionManager' may have shared mutable state` (react-native-video
   6.19.3) come from a scaffold of revision 3 or older: see the revision warning above.
+- **Resource bundles.** rn-xtool builds each unconditional `resource_bundles` (and `ios.resource_bundles`) entry of a
+  scaffolded library whose name and globs are plain strings, as `<name>.bundle` at the root of `App.app`, where the
+  code looks for it: react-native-svg's `RNSVGFilters.bundle` and react-native-device-info's
+  `RNDeviceInfoPrivacyInfo.bundle`, for example ([details](#resource-bundles)). The scaffolded `Package.swift` itself
+  holds no resources.
 - **"ℹ Not copied into the app: <library> (<resources>), …. Code that loads them at run time does not find them.":**
-  `build` prints it once, right after `rn-spm`, for the scaffolded libraries whose podspec declares resources
-  (`resource_bundles`, `resources`): the scaffolded `Package.swift` holds no resources, and rn-xtool copies no bundle
-  into `App.app`. A bundle made only of privacy manifests is named by its files, any other bundle as `<name>.bundle`
-  (react-native-svg's `RNSVGFilters.bundle`), and a plain resource by its file name. Values under a Ruby condition,
-  and those for other platforms than iOS, are not read. A feature that loads one of these resources at run time is
-  unavailable, such as svg's Metal filters. When every resource named is a privacy manifest, the line ends
-  "Development builds run without them; privacy manifests are read only at App Store submission." instead, for
-  example `ℹ Not copied into the app: react-native-device-info (PrivacyInfo.xcprivacy). Development builds run without
-  them; privacy manifests are read only at App Store submission.`; there is nothing to do for a development build.
+  `build` prints it once, right after `rn-spm`, for what of the scaffolded libraries' resources still does not reach
+  the app: a plain resource (`resources`), named by its file name, and a bundle (`<name>.bundle`) whose name or files
+  are Ruby code rather than plain strings, or that would hold one file name twice. Values under a Ruby condition, and
+  those for other platforms than iOS, are not read. A feature that loads one of these resources at run time is
+  unavailable. When every resource named is a privacy manifest, the line ends "Development builds run without them;
+  privacy manifests are read only at App Store submission." instead; there is nothing to do for a development build.
 
 ## Newer than the verified versions
 
@@ -880,12 +1229,31 @@ checks, so it also runs on a machine without Swift or xtool. Run it from the pro
   `built from source (expo-modules-core <version> ships no prebuilds)`.
 - **podspecs** (information only): the podspec features the dependencies use that rn-xtool tracks (`subspecs`,
   `compiler_flags`, `header_dir`, `header_mappings_dir`, `vendored_frameworks`, `resource_bundles`), each with the
-  packages that use it, or `no tracked podspec features in the dependencies`.
+  packages that use it, or `no tracked podspec features in the dependencies`. `resource_bundles` names only the
+  packages with a bundle rn-xtool does not build: one under a Ruby condition, or whose name or files are Ruby code
+  rather than plain strings.
 - **exclude** (only with `exclude` in `rn-xtool.config.json`): an ℹ line naming the modules left out of the build, and
   a ⚠ line for each name it ignores ([Leaving a module out](#leaving-a-module-out)).
-- **pods** (only when a pin misses a requirement): one ⚠ line per pod whose version in the pod table is outside the
-  requirement of a library's podspec, the `build` line without its `⚠`: `AppAuth 3.0.0 (rn-xtool table) is outside
-  react-native-app-auth's requirement ">= 4.0"`. The build goes on with the pinned version.
+- **pods** (only when a library depends on CocoaPods binaries, the lock records some, or a pin misses a requirement):
+  - `✔ pods — 10 CocoaPods binaries for @react-native-ml-kit/text-recognition, in rn-xtool's cache and in
+    rn-xtool-pods.lock.json`: the build needs no download.
+  - `ℹ pods — 10 CocoaPods binaries for @react-native-ml-kit/text-recognition, 10 to download from dl.google.com
+    (40.3 MB)`: what the first build downloads ([CocoaPods binaries](#cocoapods-binaries)). Pods the lock does not
+    record are probed online (the CDN's specs, HEAD requests for the sizes, nothing downloaded) within the same 10 s
+    budget as `rn-artifacts`; `size unknown` when a host sends no size.
+  - `ℹ pods — not checked (offline)` under `--report`, which makes no request, and `⚠ pods — not checked: <reason>`
+    when the CDN cannot be reached (`Cannot reach cdn.cocoapods.org (…) to read the versions of GoogleMLKit`), the lock
+    cannot be read, or the probe takes more than 10 s (`timed out after 10 s`).
+  - `⚠ pods — <pod>: rn-xtool-pods.lock.json records <old>, which no longer meets "<requirement>" (<library>
+    <version>); rn-xtool build resolves it again and records the new version`.
+  - `✖ pods — <the stop>`: what would stop the `pods` step, such as a git-source pod with no SwiftPM package, or a
+    version conflict; `⚠ pods — <the refusal> (allowed by rn-xtool.config.json knownLimits.allow; the build may fail
+    later)` for a library `knownLimits.allow` names.
+  - `ℹ pods — rn-xtool-pods.lock.json also records <pods>, which no library needs now; rn-xtool keeps these entries`,
+    and `✖ pods — <pod> <version> is a .zip download, and unzip is not installed. …`.
+  - One ⚠ line per pod whose version in the pod table is outside the requirement of a library's podspec, the `build`
+    line without its `⚠`: `AppAuth 3.0.0 (rn-xtool table) is outside react-native-app-auth's requirement ">= 4.0"`.
+    The build goes on with the pinned version.
 - **patches** (only when a patch's package is not installed, or a scaffold patch's pod pins are stale): one ⚠ line per
   such patch in `patches/`, the `build` line without its `⚠`: `patches/<file> is for <package>, which is not
   installed; skipped. Delete it if you removed the library.` ([details](#build-and-patches)), and one per pod a

@@ -11,6 +11,7 @@ import {
   type PairCandidate,
 } from "../device/discover.js";
 import { message } from "../device/errors.js";
+import { restagePods } from "./build.js";
 import { loadPairRecord, pairedUdids, type LoadedPairRecord, type PairRecordSources } from "../device/pairRecord.js";
 import { readPairRecordFromUsbmux } from "../device/usbmux.js";
 import {
@@ -21,9 +22,14 @@ import {
 } from "../device/wifiInstall.js";
 import { detectLanRoute, isPrivateIpv4, looksLikeTunnel, type LanRoute } from "../net.js";
 import { projectPaths } from "../paths.js";
+import { writeEmptyTargetObjects } from "../pods/emptyTargets.js";
+import { postPackChecks, type PostPackPods } from "../pods/postPack.js";
+import { makeNmRunner } from "../pipeline/symbols.js";
+import { IOS_MIN } from "../versions.js";
 import { readState, rememberDevice, writeState, type BuildState } from "../state.js";
 import {
   authStatus,
+  devBuild,
   devBuildIpa,
   devRun,
   installedBundleId,
@@ -46,6 +52,13 @@ export interface InstallDeps {
     writeState?: (iosXtoolDir: string, state: BuildState) => Promise<void>;
     devRun?: (bin: string, iosXtoolDir: string) => Promise<void>;
     devBuildIpa?: (bin: string, iosXtoolDir: string) => Promise<string>;
+    /** With binary pods, before xtool builds: pod-binaries and the pods' bundles staged again when gone (row 37). */
+    restagePods?: (root: string, state: InstallState) => Promise<void>;
+    /** Before xtool builds: the empty objects of the targets the state records (row 90). */
+    writeEmptyTargets?: (iosXtoolDir: string, targets: readonly string[]) => Promise<unknown>;
+    /** With binary pods: xtool builds the app first, so the post-pack checks read it before anything installs. */
+    devBuild?: (bin: string, iosXtoolDir: string) => Promise<void>;
+    postPack?: (appBundle: string, pods: PostPackPods) => Promise<void>;
   };
   wifi?: {
     /** This computer's default route (address + interface), unless `lanIp` is configured. */
@@ -170,6 +183,37 @@ async function authenticated(
   return { config, bin, auth: auth as AuthStatus & { teamId: string } };
 }
 
+/**
+ * Row 37: with binary pods, what xtool builds from (ios/build/pod-binaries, the pods' bundles in ios-xtool/Resources)
+ * may be gone since the build, after a hand-run `expo prebuild --clean` or `rm -rf ios/build`: staged again first.
+ */
+async function restaged(x: NonNullable<InstallDeps["xtool"]>, root: string, state: InstallState, log: (s: string) => void): Promise<void> {
+  if (state.postPack === undefined) return;
+  await (x.restagePods ?? ((r, s) => restagePods(r, s, { log })))(root, state);
+}
+
+/**
+ * Row 90: xtool links the empty objects of the targets without sources from `.build`, which may be gone since the
+ * build (deleted by hand, or a clean): `install` writes them again before xtool builds, as generate does.
+ */
+async function emptyObjects(x: NonNullable<InstallDeps["xtool"]>, iosXtool: string, state: InstallState): Promise<void> {
+  const targets = state.emptyTargets ?? [];
+  if (targets.length === 0) return;
+  await (x.writeEmptyTargets ?? ((dir, t) => writeEmptyTargetObjects(dir, t, IOS_MIN)))(iosXtool, targets);
+}
+
+/**
+ * Row 88: with binary pods, the app xtool installs comes from `.build`, not from the App.app build checked. xtool
+ * builds and packs it first (`xtool dev run` and `xtool dev build --ipa` then find nothing to rebuild), and the
+ * post-pack checks read it: a refused app is removed and never installed.
+ */
+async function checkedApp(x: NonNullable<InstallDeps["xtool"]>, bin: string, root: string, state: InstallState): Promise<void> {
+  if (state.postPack === undefined) return;
+  const paths = projectPaths(root);
+  await explainingXtool(() => (x.devBuild ?? devBuild)(bin, paths.iosXtool));
+  await (x.postPack ?? ((app, pods) => postPackChecks(app, pods, makeNmRunner())))(paths.appBundle, state.postPack);
+}
+
 export async function install(root: string, deps: InstallDeps = {}, opts: InstallOptions = {}): Promise<void> {
   if (opts.network !== undefined && opts.network !== false) return installNetwork(root, deps, opts);
   const x = deps.xtool ?? {};
@@ -186,6 +230,9 @@ export async function install(root: string, deps: InstallDeps = {}, opts: Instal
   const iosXtool = projectPaths(root).iosXtool;
   const state = await (x.readState ?? readState)(iosXtool).catch(() => undefined);
   if (!state) throw new Error("No build found. Run `rn-xtool build` first.");
+  await restaged(x, root, state, log);
+  await emptyObjects(x, iosXtool, state);
+  await checkedApp(x, bin, root, state);
   await explainingXtool(() => (x.devRun ?? devRun)(bin, iosXtool));
   const id = installedBundleId(auth.teamId, state.bundleIdentifier);
   // Which iPhone got this build: `run` must not skip the install for a different one. The id is the one xtool signs
@@ -208,6 +255,9 @@ async function installNetwork(root: string, deps: InstallDeps, opts: InstallOpti
   const state = await (x.readState ?? readState)(iosXtool).catch(() => undefined);
   if (!state) throw new Error("No build found. Run `rn-xtool build` first.");
 
+  await restaged(x, root, state, log);
+  await emptyObjects(x, iosXtool, state);
+  await checkedApp(x, bin, root, state);
   const ipa = await explainingXtool(() => (x.devBuildIpa ?? devBuildIpa)(bin, iosXtool));
   const bundleId = installedBundleId(auth.teamId, state.bundleIdentifier);
   const route: LanRoute = config.lanIp

@@ -75,14 +75,14 @@ function nearestExisting(dir: string): string {
   return at;
 }
 
-async function filesystemOf(dir: string): Promise<{ dev: number; freeBytes: number }> {
+export async function filesystemOf(dir: string): Promise<{ dev: number; freeBytes: number }> {
   const at = nearestExisting(dir);
   const [{ dev }, fs] = await Promise.all([stat(at), statfs(at)]);
   return { dev, freeBytes: fs.bavail * fs.bsize };
 }
 
 /** `p` with the home folder shown as `~`. */
-function tilde(p: string): string {
+export function tilde(p: string): string {
   const home = homedir();
   if (p === home) return "~";
   return p.startsWith(home + path.sep) ? `~${p.slice(home.length)}` : p;

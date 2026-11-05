@@ -159,6 +159,9 @@ type PodTableEntry = {
   subspecs?: {[name: string]: Array<string>},
   forwardHeaders?: {[header: string]: Array<string>},
 };
+// A pod the caller builds from prebuilt binaries into the app's local
+// `build/pod-binaries` package (fix 27), as the product named here.
+type PodBinaryEntry = {binary: {product: string}};
 */
 const KNOWN_POD_SPM_PACKAGES /*: {[pod: string]: PodTableEntry} */ = {
   SwiftUIIntrospect: {
@@ -173,8 +176,12 @@ const POD_TABLE_ENV = 'RN_SPM_POD_TABLE';
 const POD_PINS_MARKER = '// rn-xtool-pods: ';
 
 // One pod table entry in its full shape; `product: string` is read as
-// `products: [product]`. Throws with the key that has the wrong shape.
-function podTableEntry(pod /*: string */, raw /*: mixed */) /*: PodTableEntry */ {
+// `products: [product]`. An entry with `binary` is a binary pod (fix 27) and
+// its other keys are ignored. Throws with the key that has the wrong shape.
+function podTableEntry(
+  pod /*: string */,
+  raw /*: mixed */,
+) /*: PodTableEntry | PodBinaryEntry */ {
   const isNames = (v /*: mixed */) =>
     Array.isArray(v) &&
     v.length > 0 &&
@@ -186,6 +193,16 @@ function podTableEntry(pod /*: string */, raw /*: mixed */) /*: PodTableEntry */
     Object.values(v).every(isNames);
   if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error(`pods.${pod} is not an object`);
+  }
+  if (raw.binary !== undefined) {
+    const binaryProduct =
+      raw.binary != null && typeof raw.binary === 'object'
+        ? raw.binary.product
+        : undefined;
+    if (typeof binaryProduct !== 'string' || binaryProduct === '') {
+      throw new Error(`pods.${pod}.binary.product is not a product name`);
+    }
+    return {binary: {product: binaryProduct}};
   }
   const {url, exact, products, product, subspecs, forwardHeaders} = raw;
   if (typeof url !== 'string' || url === '') {
@@ -223,7 +240,7 @@ function podTableEntry(pod /*: string */, raw /*: mixed */) /*: PodTableEntry */
  * wins). Without the variable, the baseline. Throws when the file cannot be
  * read or has the wrong shape.
  */
-function loadPodTable() /*: {[pod: string]: PodTableEntry} */ {
+function loadPodTable() /*: {[pod: string]: PodTableEntry | PodBinaryEntry} */ {
   const file = process.env[POD_TABLE_ENV];
   if (file == null || file === '') {
     return {...KNOWN_POD_SPM_PACKAGES};
@@ -259,6 +276,7 @@ type PodDependencyKind =
   | 'sibling'
   | 'missing-sibling'
   | 'mapped'
+  | 'binary'
   | 'unmapped';
 */
 
@@ -273,6 +291,8 @@ type PodDependencyKind =
  *   - 'expo': an Expo module's pod;
  *   - 'mapped': a CocoaPods pod with a SwiftPM package in `table`, with the
  *     `products` its subspec names (`subspecs`), else the entry's;
+ *   - 'binary': a pod whose `table` entry is `{binary: {product}}`, built from
+ *     prebuilt binaries into the app's `build/pod-binaries` package (fix 27);
  *   - 'unmapped': any other CocoaPods pod.
  * `pod` is the name before any `/<subspec>`.
  */
@@ -324,6 +344,9 @@ function classifyPodDependency(
   }
   if (Object.hasOwn(ctx.table, pod)) {
     const entry = ctx.table[pod];
+    if (entry.binary != null && typeof entry.binary.product === 'string') {
+      return {kind: 'binary', pod, entry, products: [entry.binary.product]};
+    }
     const sub = depName.includes('/') ? depName.slice(pod.length + 1) : null;
     const products =
       (sub != null ? entry.subspecs?.[sub] : null) ??
@@ -950,6 +973,8 @@ function translatePodspecToSpmTarget(
   const siblingNames /*: Array<string> */ = [];
   const externalPackages /*: Array<{pod: string, url: string, exact: string, products: Array<string>, package: string}> */ = [];
   const podForwarders /*: Array<{pod: string, header: string, modules: Array<string>}> */ = [];
+  // Pods built from prebuilt binaries (fix 27), each once, in podspec order.
+  const binaryPods /*: Array<{pod: string, product: string}> */ = [];
   const unmappedPods /*: Array<string> */ = [];
   const leftOut /*: Array<string> */ = [];
   // Every iOS-autolinked dep has a resolved Swift name.
@@ -1006,6 +1031,13 @@ function translatePodspecToSpmTarget(
         if (!ext.products.includes(product)) {
           ext.products.push(product);
         }
+      }
+    } else if (kind === 'binary') {
+      // One product of the app's pod-binaries package covers every subspec
+      // line of the pod (fix 27).
+      const product = (products ?? [])[0];
+      if (product != null && !binaryPods.some(b => b.pod === pod)) {
+        binaryPods.push({pod, product});
       }
     } else if (!unmappedPods.includes(pod)) {
       // Any other CocoaPods pod ("MMKV"): say loudly that the build may fail,
@@ -1543,6 +1575,7 @@ function translatePodspecToSpmTarget(
     siblingNames,
     siblingSwiftNames,
     externalPackages,
+    binaryPods,
     extraFrameworks: model.frameworks,
     weakFrameworks: model.weakFrameworks,
     compilerFlags: model.compilerFlags,
@@ -1577,6 +1610,9 @@ type EmitContext = {
   // Relative path to the app's local xcframeworks package
   // (<appRoot>/build/xcframeworks). Only referenced when remote == null.
   localXcfwPackageDir?: ?string,
+  // Relative path to the app's local package of prebuilt CocoaPods binaries
+  // (<appRoot>/build/pod-binaries, fix 27). Only referenced for binary pods.
+  podBinariesPackageDir?: ?string,
   iosDeploymentTarget?: ?string,
 };
 */
@@ -1757,6 +1793,25 @@ function emitScaffoldedPackageSwift(
       targetDeps.push(`.product(name: "${product}", package: "${ext.package}")`);
     }
   }
+  // CocoaPods pods built from prebuilt binaries: one local package, a product
+  // per pod (fix 27).
+  const binaryPods = spec.binaryPods ?? [];
+  if (binaryPods.length > 0) {
+    const dir = ctx.podBinariesPackageDir;
+    if (dir == null) {
+      throw new Error(
+        'emitScaffoldedPackageSwift: podBinariesPackageDir is required for a binary pod.',
+      );
+    }
+    packageDeps.push(`.package(path: "${dir}")`);
+    const binaryProducts /*: Array<string> */ = [];
+    for (const {product} of binaryPods) {
+      if (!binaryProducts.includes(product)) {
+        binaryProducts.push(product);
+        targetDeps.push(`.product(name: "${product}", package: "pod-binaries")`);
+      }
+    }
+  }
 
   // sources: emit only when the podspec declared them. If empty (regex-fallback
   // podspec), no `sources:`/`exclude:` is emitted and SPM auto-scans the target
@@ -1840,9 +1895,14 @@ let rnSpmBridgingHeader = Context.packageDirectory + "/${mixed.bridgingHeader}"
 
   // The pods this manifest pins, sorted by pod, so rn-xtool can tell a
   // persisted scaffold pinned by another pod table.
-  const pinned = [...(spec.externalPackages ?? [])]
+  // A binary pod is recorded as `<pod>=binary` (fix 27): its versions live in
+  // the caller's lock, so a version change does not make the manifest stale.
+  const pinned = [
+    ...(spec.externalPackages ?? []).map(e => ({pod: e.pod, pin: e.exact})),
+    ...(spec.binaryPods ?? []).map(b => ({pod: b.pod, pin: 'binary'})),
+  ]
     .sort((a, b) => (a.pod < b.pod ? -1 : a.pod > b.pod ? 1 : 0))
-    .map(e => `${e.pod}=${e.exact}`);
+    .map(e => `${e.pod}=${e.pin}`);
   const podsLine =
     pinned.length > 0 ? `\n${POD_PINS_MARKER}${pinned.join(', ')}` : '';
 
@@ -2248,6 +2308,7 @@ function scaffoldPackageSwiftForDep(
     iosDeploymentTarget: ctx.iosDeploymentTarget,
     codegenPackageDir: relFromManifest('build', 'generated', 'ios'),
     localXcfwPackageDir: relFromManifest('build', 'xcframeworks'),
+    podBinariesPackageDir: relFromManifest('build', 'pod-binaries'),
   });
 
   // Distinguish "first-time scaffold" (no file at all) from "regenerate"

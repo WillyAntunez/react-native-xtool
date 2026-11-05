@@ -2,6 +2,7 @@ import { mkdtemp, rm, mkdir, cp, readFile, readdir, lstat, readlink, realpath, s
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { troubleshootingUrl } from "../src/docs.js";
 import { renderPackageSwift } from "../src/generate/packageSwift.js";
 import { renderXtoolYml } from "../src/generate/xtoolYml.js";
 import { devSupportTemplatesDir, sceneDelegateClassNames, writeIosXtool } from "../src/generate/iosXtool.js";
@@ -95,6 +96,72 @@ describe("renderPackageSwift", () => {
     });
     expect(o.manifest).toBe(snapshot);
     expect(o.manifest65).toBeUndefined();
+  });
+
+  describe("binary pods", () => {
+    const ARCHIVES = ["/p/ios/build/pod-binaries/archives/libMLKitCommon.a", "/p/ios/build/pod-binaries/archives/libMLKitVision.a"];
+    const pods = {
+      archives: ARCHIVES,
+      frameworks: ["AVFoundation", "Foundation", "React"],
+      libraries: ["c++", "sqlite3", "z"],
+      weakFrameworks: ["CoreNFC"],
+      emptyTargets: ["GTMDefines"],
+    };
+    const base = { iosDir: "/p/ios", frameworks, iosMin: "16.4", app: noApp };
+    const linker = (manifest: string): string => /linkerSettings: \[\n([\s\S]*?)\n {12}\]/.exec(manifest)![1]!;
+
+    it("adds one -force_load per archive and the pods' frameworks and libraries", () => {
+      const out = renderPackageSwift({ ...base, pods }).manifest;
+      expect(linker(out)).toBe(
+        [
+          '                .linkedLibrary("c++"),',
+          '                .unsafeFlags(["-Xlinker", "-ObjC", "-F", "/a/b", "-F", "/c/d", ' +
+            ARCHIVES.map((a) => `"-Xlinker", "-force_load", "-Xlinker", "${a}"`).join(", ") +
+            ', "-Xlinker", "-weak_framework", "-Xlinker", "CoreNFC", "-Xlinker", "-no_objc_relative_method_lists"]),',
+          '                .linkedFramework("React"),',
+          '                .linkedFramework("hermesvm"),',
+          '                .linkedFramework("ExpoFont"),',
+          // The pods' frameworks the runtime frameworks do not link already, then their libraries but c++, sorted.
+          '                .linkedFramework("AVFoundation"),',
+          '                .linkedFramework("Foundation"),',
+          '                .linkedLibrary("sqlite3"),',
+          '                .linkedLibrary("z"),',
+        ].join("\n"),
+      );
+    });
+
+    it("links each archive once, by -force_load only, and never -all_load", () => {
+      const out = renderPackageSwift({ ...base, pods }).manifest;
+      for (const a of ARCHIVES) {
+        expect(out.split(a).length - 1, a).toBe(1);
+        expect(out).toContain(`"-force_load", "-Xlinker", "${a}"`);
+      }
+      expect(out).not.toContain("all_load");
+      expect(out).not.toMatch(/\.linkedLibrary\("(MLKit|lib)/);
+    });
+
+    it("turns off relative method lists only when binary pods are linked", () => {
+      // Row 80: xtool's ld64.lld crashes on ML Kit's text-recognition object without it (G1).
+      expect(renderPackageSwift({ ...base, pods }).manifest).toContain('"-no_objc_relative_method_lists"');
+      expect(renderPackageSwift(base).manifest).not.toContain("no_objc_relative_method_lists");
+      const headersOnly = { ...pods, archives: [] };
+      expect(renderPackageSwift({ ...base, pods: headersOnly }).manifest).not.toContain("no_objc_relative_method_lists");
+    });
+
+    it("the manifest is byte-identical without pods", async () => {
+      const snapshot = await readFile(new URL("./fixtures/expo-Package.swift", import.meta.url), "utf8");
+      const expo = {
+        iosDir: "/p/ios",
+        frameworks,
+        iosMin: "16.4",
+        expo: expoInputs({ clangImporter: { swiftHeadersDir: "/h", includeDirs: ["/e/A/pod-headers"], moduleMaps: ["/h/A.modulemap"] } }),
+        app: { ...noApp, importerPaths: [] },
+      };
+      expect(renderPackageSwift(expo).manifest).toBe(snapshot);
+      const none = { archives: [], frameworks: [], libraries: [], weakFrameworks: [], emptyTargets: [] };
+      expect(renderPackageSwift({ ...expo, pods: none }).manifest).toBe(snapshot);
+      expect(renderPackageSwift({ ...base, pods: none }).manifest).toBe(renderPackageSwift(base).manifest);
+    });
   });
 
   describe("the dev-support target", () => {
@@ -326,6 +393,39 @@ describe("writeIosXtool", () => {
     expect(pkg.match(/"-F"/g)).toHaveLength(3); // compile-interfaces + 2 unique searchPaths
     expect(pkg).toContain("ExpoModulesJSIHeaders");
     expect(await readFile(join(paths.iosXtool, "xtool.yml"), "utf8")).toContain("  - EXConstants.bundle");
+  });
+
+  it("keeps the absolute archive paths out of every persisted file", async () => {
+    const tmp = await mkdtemp(join(tmpdir(), "xt7-pods-"));
+    tmps.push(tmp);
+    const target = join(tmp, "ios", "app");
+    await mkdir(target, { recursive: true });
+    await cp(new URL("./fixtures/ios-target", import.meta.url).pathname, target, { recursive: true });
+    const paths = projectPaths(tmp);
+    const project: ProjectInfo = {
+      kind: "expo", root: tmp, name: "app", slug: "app", version: "1.0.0", buildNumber: "1",
+      bundleIdentifier: "com.example.app", moduleName: "main", sdkVersion: 58, rnVersion: "0.88.0",
+      rnScripts: "installed", expoPlugin: "installed",
+      iosTargetName: "app", iosTargetDir: target, infoPlistPath: join(target, "Info.plist"),
+      hasExpoModules: true, hasExpoConstants: true, hasDevClient: false,
+    };
+    const archive = join(paths.podBinaries, "archives", "libMLKitVision.a");
+    const pods = { archives: [archive], frameworks: [], libraries: [], weakFrameworks: [], emptyTargets: [] };
+    await writeIosXtool({ project, paths, frameworks, metroPort: 8081, lanIp: "192.168.1.5", log: () => {}, pods, emptyTargets: ["GTMDefines"] });
+    // Row 81: the source-less target's object, where Swift Build looks for it at link.
+    const placeholder = join(paths.iosXtool, ".build", "out", "Products", "Debug-iphoneos", "GTMDefines.o");
+    expect((await readFile(placeholder)).subarray(0, 4).toString("hex")).toBe("cffaedfe");
+    const holding: string[] = [];
+    const walk = async (dir: string): Promise<void> => {
+      for (const e of await readdir(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) await walk(p);
+        else if (e.isFile() && (await readFile(p, "utf8")).includes(archive)) holding.push(p);
+      }
+    };
+    await walk(tmp);
+    // Only the manifest regenerated on every build (and never persisted) holds them.
+    expect(holding).toEqual([join(paths.iosXtool, "Package.swift")]);
   });
 
   /** An Expo project whose app target is a copy of `fixture` (a directory under tests/fixtures). */
@@ -860,6 +960,99 @@ describe("writeIosXtool", () => {
     const yml = await readFile(join(paths.iosXtool, "xtool.yml"), "utf8");
     expect(yml).toContain("  - Resources/Maps.bundle\n");
     expect(yml).toContain("  - Resources/Vendor.bundle\n");
+  });
+
+  describe("resource bundles", () => {
+    const LINK = troubleshootingUrl("cocoapods-binaries");
+    const LIBS_LINK = troubleshootingUrl("scaffolded-libraries");
+    /** A pod folder holding `<dir>/<file>` for each entry. */
+    async function podDir(files: Record<string, string>): Promise<string> {
+      const dir = await mkdtemp(join(tmpdir(), "xt7-pod-"));
+      tmps.push(dir);
+      for (const [rel, text] of Object.entries(files)) {
+        await mkdir(join(dir, rel, ".."), { recursive: true });
+        await writeFile(join(dir, rel), text);
+      }
+      return dir;
+    }
+
+    it("lists the bundles in xtool.yml as Resources/<key>.bundle", async () => {
+      const { paths, ctx } = await bareProject();
+      const pod = await podDir({ "Resources/LatinOCRResources/model.tflite": "m", "apple/a.iphoneos.metallib": "k" });
+      await writeIosXtool({
+        ...ctx,
+        resourceBundles: [
+          { key: "RNSVGFilters", baseDir: pod, globs: ["apple/**/*.iphoneos.metallib"], owner: "react-native-svg" },
+          { key: "LatinOCRResources", baseDir: pod, globs: ["Resources/LatinOCRResources/**"], owner: "MLKitTextRecognition 6.0.0" },
+        ],
+      });
+      const staged = join(paths.iosXtool, "Resources");
+      expect(await readFile(join(staged, "LatinOCRResources.bundle", "model.tflite"), "utf8")).toBe("m");
+      expect(await readFile(join(staged, "RNSVGFilters.bundle", "a.iphoneos.metallib"), "utf8")).toBe("k");
+      expect(await readFile(join(staged, "RNSVGFilters.bundle", "Info.plist"), "utf8")).toContain("org.cocoapods.RNSVGFilters");
+      expect(await readFile(join(paths.iosXtool, "xtool.yml"), "utf8")).toContain(
+        "resources:\n  - Frameworks\n  - ip.txt\n  - Resources/Base.lproj\n  - Resources/Inter.ttf\n" +
+          "  - Resources/PrivacyInfo.xcprivacy\n  - Resources/es.lproj\n" +
+          "  - Resources/LatinOCRResources.bundle\n  - Resources/RNSVGFilters.bundle\n",
+      );
+    });
+
+    it("stops on two bundles with one name", async () => {
+      const { ctx } = await bareProject();
+      const pod = await podDir({ "a/x.png": "x" });
+      const err = await writeIosXtool({
+        ...ctx,
+        resourceBundles: [
+          { key: "Assets", baseDir: pod, globs: ["a/*.png"], owner: "lib-a", library: true },
+          { key: "Assets", baseDir: pod, globs: ["a/*.png"], owner: "MLKitFoo 1.0.0" },
+        ],
+      }).catch((e: unknown) => e);
+      // A scaffolded library is involved: its section, not the CocoaPods binaries'.
+      expect((err as Error).message).toBe(`Two resource bundles would be copied to App.app/Assets.bundle: lib-a and MLKitFoo 1.0.0. See ${LIBS_LINK}`);
+      const pods = await writeIosXtool({
+        ...ctx,
+        resourceBundles: [
+          { key: "Assets", baseDir: pod, globs: ["a/*.png"], owner: "MLKitBar 1.0.0" },
+          { key: "Assets", baseDir: pod, globs: ["a/*.png"], owner: "MLKitFoo 1.0.0" },
+        ],
+      }).catch((e: unknown) => e);
+      expect((pods as Error).message).toBe(`Two resource bundles would be copied to App.app/Assets.bundle: MLKitBar 1.0.0 and MLKitFoo 1.0.0. See ${LINK}`);
+    });
+
+    it("stops on a bundle named like an app resource", async () => {
+      const { app, ctx } = await bareProject();
+      await mkdir(join(app, "Maps.bundle"), { recursive: true });
+      await writeFile(join(app, "Maps.bundle", "a.png"), "png");
+      ctx.project.bare!.resources.push({ absPath: join(app, "Maps.bundle"), relPath: "HelloWorld/Maps.bundle" });
+      const pod = await podDir({ "a/x.png": "x" });
+      const err = await writeIosXtool({
+        ...ctx,
+        resourceBundles: [{ key: "Maps", baseDir: pod, globs: ["a/*.png"], owner: "some-lib", library: true }],
+      }).catch((e: unknown) => e);
+      expect((err as Error).message).toBe(
+        `The resource bundle Maps.bundle (some-lib) would be copied over the app resource Maps.bundle in App.app. See ${LIBS_LINK}`,
+      );
+      ctx.project.hasExpoConstants = true;
+      const expo = await writeIosXtool({
+        ...ctx,
+        resourceBundles: [{ key: "EXConstants", baseDir: pod, globs: ["a/*.png"], owner: "other-lib" }],
+      }).catch((e: unknown) => e);
+      expect((expo as Error).message).toBe(
+        `The resource bundle EXConstants.bundle (other-lib) would be copied over the app resource EXConstants.bundle in App.app. See ${LINK}`,
+      );
+    });
+
+    it("xtool.yml is byte-identical without bundles", async () => {
+      const { paths, ctx, logs } = await bareProject();
+      await writeIosXtool(ctx);
+      const before = await readFile(join(paths.iosXtool, "xtool.yml"), "utf8");
+      await writeIosXtool({ ...ctx, resourceBundles: [] });
+      expect(await readFile(join(paths.iosXtool, "xtool.yml"), "utf8")).toBe(before);
+      const pod = await podDir({ "a/x.txt": "x" });
+      await writeIosXtool({ ...ctx, resourceBundles: [{ key: "Empty", baseDir: pod, globs: ["a/*.png"], owner: "some-lib" }] });
+      expect(await readFile(join(paths.iosXtool, "xtool.yml"), "utf8")).toBe(before);
+      expect(logs).toContain("⚠ Empty.bundle (some-lib) matches no file (a/*.png); it is not built");
+    });
   });
 
   it("refuses two resources that flatten to one name, naming both", async () => {

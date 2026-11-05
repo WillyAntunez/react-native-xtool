@@ -1,0 +1,12 @@
+{
+  "name": "MLKitFoo",
+  "version": "1.0.0",
+  "summary": "A test-only pod whose requirement on MLKitCommon conflicts with GoogleMLKit's",
+  "homepage": "https://example.invalid/mlkit-foo",
+  "license": { "type": "Copyright", "text": "Copyright 2026 Example" },
+  "authors": ["Example One", "Example Two"],
+  "source": { "http": "https://example.invalid/dl/MLKitFoo-1.0.0.zip" },
+  "platforms": { "ios": "15.5" },
+  "dependencies": { "MLKitCommon": "~> 14.0" },
+  "vendored_frameworks": "Frameworks/MLKitFoo.framework"
+}

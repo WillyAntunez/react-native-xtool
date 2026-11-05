@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
+import { join, relative } from "node:path";
 import { depsFingerprint } from "../deps.js";
 import { configFileOf, loadConfig, type ExpoXtoolConfig, type PodEntry } from "../config.js";
 import { readFlavoredFrameworks, stageFrameworks, type RuntimeFramework } from "../frameworks.js";
@@ -13,21 +14,31 @@ import { applyPatches } from "../pipeline/patches.js";
 import { prepareRnArtifacts } from "../pipeline/rnArtifactsStep.js";
 import type { ExpoPlugin, RnScripts } from "../versions.js";
 import { runRnSpm } from "../pipeline/rnSpm.js";
-import { unbundledResources, unbundledResourcesLine } from "../pipeline/scaffoldResources.js";
-import { checkFrameworkSymbols } from "../pipeline/symbols.js";
+import { writeResourceBundle, type BundleSource } from "../pipeline/resourceBundles.js";
+import {
+  placeableBundles,
+  scaffoldedResourceBundles,
+  unbundledResources,
+  unbundledResourcesLine,
+  withUnbundled,
+} from "../pipeline/scaffoldResources.js";
+import { checkFrameworkSymbols, makeNmRunner } from "../pipeline/symbols.js";
 import {
   allowedLimitText,
   allowKnownLimits,
+  binaryPodCandidates,
   excludeLines,
   installFailures,
   libraryFailures,
   podPinWarnings,
+  scaffoldedPods,
+  unresolvedPodLines,
   UnsupportedSetupError,
   type EarlyFailure,
   type LibraryCheckOptions,
 } from "../project/earlyChecks.js";
 import { entitlementLines, readEntitlements, type AppEntitlements } from "../project/entitlements.js";
-import { mergedPodTable, type PodTable } from "../project/podTable.js";
+import { mergedPodTable, type PodBinary, type PodTable } from "../project/podTable.js";
 import {
   detectProjectKind,
   readProject,
@@ -40,6 +51,12 @@ import { appIconRecord } from "../generate/appIcon.js";
 import { readState, writeState, type BuildState } from "../state.js";
 import { run } from "../tools/exec.js";
 import { devBuild, xtoolBin } from "../tools/xtool.js";
+import { emptyTargetsOf } from "../pods/emptyTargets.js";
+import { PODS_LOCK } from "../pods/lock.js";
+import type { PodRoot } from "../pods/resolve.js";
+import { postPackChecks, postPackPods, type PostPackPods } from "../pods/postPack.js";
+import { stagePodBinaries, type StagedPods } from "../pods/stage.js";
+import { runPodsStep, type PodsStepDeps, type PodsStepResult } from "../pods/step.js";
 
 export const BUILD_STEP_NAMES = [
   "patches",
@@ -64,6 +81,8 @@ export interface BuildPlanInput {
    */
   rnArtifacts: boolean;
   expoPlugin: ExpoPlugin;
+  /** Binary CocoaPods pods to resolve: `pods` first, `pod-binaries` right before rn-spm. */
+  pods?: boolean;
 }
 
 /** Whether `installed` is xtool's signed form of `bundleIdentifier`: XTL-<one segment>.<bundleIdentifier>, exactly. */
@@ -78,8 +97,15 @@ function signedIdOf(installed: string, bundleIdentifier: string): boolean {
  * because the plugin needs the JSI headers.
  * Bare: never prebuild (`--clean` removes the build outputs instead), rn-artifacts only for the
  * vendored scripts, ExpoModulesJSI only with Expo modules set up, app-config only with expo-constants.
+ * With binary pods, `pods` comes first (before anything changes in the project) and `pod-binaries` right before rn-spm.
  */
 export function buildSteps(state: BuildPlanInput): string[] {
+  const steps = plainSteps(state);
+  if (!state.pods) return steps;
+  return ["pods", ...steps.flatMap((s) => (s === "rn-spm" ? ["pod-binaries", s] : [s]))];
+}
+
+function plainSteps(state: BuildPlanInput): string[] {
   if (state.kind === "expo") {
     const vendored = state.expoPlugin === "vendored";
     const steps: string[] = BUILD_STEP_NAMES.filter(
@@ -154,6 +180,7 @@ export interface BuildDeps {
       expoPlugin: ExpoPlugin;
       pods?: Record<string, PodEntry>;
       exclude?: readonly string[];
+      binary?: Record<string, PodBinary>;
     },
   ) => Promise<void>;
   buildJsi: (paths: ProjectPaths, opts?: { rnHeaders?: JsiRnHeaders; headersXcframework?: boolean }) => Promise<RuntimeFramework>;
@@ -172,8 +199,27 @@ export interface BuildDeps {
   xtoolBin: (config: ExpoXtoolConfig) => string;
   readState: (iosXtoolDir: string) => Promise<BuildState | undefined>;
   depsFingerprint: (root: string) => Promise<string>;
+  /** The targets without sources of the table pods the scaffolded libraries link (written as empty objects, row 81). */
+  emptyTargets: (root: string, opts: LibraryCheckOptions) => string[];
   /** After rn-spm: the resources scaffolded libraries declare that do not reach the app. */
   unbundledResources: (root: string) => { pkg: string; items: string[] }[];
+  /** After rn-spm: the scaffolded libraries' `resource_bundles` generate builds into the app. */
+  resourceBundles: (root: string) => BundleSource[];
+  /** After the early checks: the `ℹ` line per unmapped pod the early checks cannot route offline. */
+  unresolvedPodLines: (root: string, opts: LibraryCheckOptions) => string[];
+  /** The binary CocoaPods pods the scaffolded libraries depend on (`unmapped` dependencies; excluded libraries skipped). */
+  binaryPodCandidates: (root: string, opts: LibraryCheckOptions) => PodRoot[];
+  /** The `pods` step: resolve, announce, download, verify, wrap, record the lock. */
+  pods: (
+    root: string,
+    roots: PodRoot[],
+    table: PodTable,
+    opts: Pick<PodsStepDeps, "podsFile" | "allowed" | "warned" | "log">,
+  ) => Promise<PodsStepResult>;
+  /** The `pod-binaries` step: ios/build/pod-binaries, rebuilt on every build. */
+  stagePods: (paths: ProjectPaths, result: PodsStepResult) => Promise<StagedPods>;
+  /** After xtool-build, with binary pods: the packed app's bundles, frameworks and force-loaded classes (spec goal 7). */
+  postPack: (appBundle: string, pods: PostPackPods) => Promise<void>;
   /** The app's CODE_SIGN_ENTITLEMENTS file (Debug); throws an EntitlementsError when xtool could not sign with it. */
   readEntitlements: (project: ProjectInfo, iosDir: string) => AppEntitlements | undefined;
   log: (s: string) => void;
@@ -211,6 +257,16 @@ const realDeps: BuildDeps = {
   readState,
   depsFingerprint: depsFingerprint,
   unbundledResources,
+  resourceBundles: scaffoldedResourceBundles,
+  binaryPodCandidates: (root, opts) => binaryPodCandidates(root, opts),
+  unresolvedPodLines: (root, opts) => unresolvedPodLines(root, opts),
+  pods: (root, roots, table, opts) => runPodsStep(root, roots, table, opts),
+  stagePods: (paths, result) => stagePodBinaries(paths, result),
+  postPack: (appBundle, pods) => postPackChecks(appBundle, pods, makeNmRunner()),
+  emptyTargets: (root, opts) => {
+    const table = mergedPodTable(opts.pods);
+    return emptyTargetsOf(table, [...scaffoldedPods(root, table, opts).values()].flat());
+  },
   readEntitlements,
   log: (s) => console.log(s),
 };
@@ -230,6 +286,76 @@ async function prebuildFailure(e: unknown, removeIos: () => Promise<void>): Prom
   return new Error(`${reason}\n${tail}`, { cause: e });
 }
 
+/** "a", "a and b", "a, b and c" */
+const andList = (items: readonly string[]): string =>
+  items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+
+/** What the library checks read from the config, for a project of `kind`. */
+function libraryChecksOf(config: ExpoXtoolConfig, kind: ProjectKind | undefined): LibraryCheckOptions {
+  const podsFile = configFileOf(config, "pods");
+  return {
+    ...(config.pods !== undefined ? { pods: config.pods } : {}),
+    ...(podsFile !== undefined ? { podsFile } : {}),
+    ...(config.exclude !== undefined ? { exclude: config.exclude } : {}),
+    ...(kind !== undefined ? { kind } : {}),
+  };
+}
+
+/**
+ * Row 37: `install` (and so `run`) builds with xtool from ios/build/pod-binaries and the pods' bundles in
+ * ios-xtool/Resources, which a hand-run `expo prebuild --clean` or `rm -rf ios/build` removes after the build. With
+ * binary pods in the build state and one of them missing, the `pods` step runs again (with the lock and a full cache,
+ * no request) and they are staged again from rn-xtool's cache, as `build` stages them. Binary pods that changed since
+ * the build stop: the app in `.build` is not theirs.
+ */
+export async function restagePods(
+  root: string,
+  state: Pick<BuildState, "postPack" | "kind">,
+  overrides: Partial<BuildDeps> = {},
+): Promise<void> {
+  const recorded = state.postPack;
+  if (recorded === undefined) return;
+  const d: BuildDeps = { ...realDeps, ...overrides };
+  const paths = projectPaths(root);
+  const resources = join(paths.iosXtool, "Resources");
+  const packageGone = !d.exists(join(paths.podBinaries, "Package.swift")) || recorded.archives.some((a) => !d.exists(a.path));
+  const bundlesGone = recorded.bundles.filter((b) => !d.exists(join(resources, `${b.key}.bundle`, "Info.plist"))).map((b) => b.key);
+  if (!packageGone && bundlesGone.length === 0) return;
+  const gone = [
+    ...(packageGone ? [relative(root, paths.podBinaries)] : []),
+    ...bundlesGone.map((key) => relative(root, join(resources, `${key}.bundle`))),
+  ];
+  d.log(
+    `ℹ pods — ${andList(gone)} ${gone.length === 1 ? "is" : "are"} missing since the last build; rn-xtool stages ` +
+      `${gone.length === 1 ? "it" : "them"} again from ${PODS_LOCK} and its cache.`,
+  );
+  const config = await d.loadConfig(root);
+  const checks = libraryChecksOf(config, state.kind);
+  const allowed = config.knownLimits?.allow ?? [];
+  const early = new Set(
+    allowKnownLimits(d.libraryFailures(root, checks), allowed)
+      .filter((f) => f.allowed)
+      .flatMap((f) => (f.pods ?? []).map((pod) => `${f.allowKey}\0${pod}`)),
+  );
+  const podsFile = configFileOf(config, "pods");
+  const pods = await d.pods(root, d.binaryPodCandidates(root, checks), mergedPodTable(config.pods), {
+    ...(podsFile !== undefined ? { podsFile } : {}),
+    allowed,
+    warned: (library, pod) => early.has(`${library}\0${pod}`),
+    log: d.log,
+  });
+  const changed = new Error("The CocoaPods binaries the project needs changed since the last build. Run `rn-xtool build`, then install again.");
+  const sameBundles = (bundles: readonly { key: string; owner: string }[]): boolean =>
+    JSON.stringify(bundles) === JSON.stringify(recorded.bundles);
+  if (packageGone) {
+    const staged = await d.stagePods(paths, pods);
+    if (JSON.stringify(postPackPods(staged, pods)) !== JSON.stringify(recorded)) throw changed;
+  } else if (!sameBundles(pods.bundles.map((b) => ({ key: b.key, owner: b.owner })))) {
+    throw changed;
+  }
+  for (const b of pods.bundles) if (bundlesGone.includes(b.key)) await writeResourceBundle(b, resources, d.log);
+}
+
 export async function build(
   root: string,
   opts: { clean?: boolean },
@@ -246,9 +372,12 @@ export async function build(
   }
   const config = await d.loadConfig(root);
   // Known limits the config allows are warnings; the others stop the build.
+  const allowedPods = new Set<string>();
   const stopOnKnownLimits = (failures: EarlyFailure[]): void => {
     const marked = allowKnownLimits(failures, config.knownLimits?.allow ?? []);
     for (const f of marked) if (f.allowed) d.log(`⚠ known-limits — ${allowedLimitText(f)}`);
+    // The pods step leaves these out before any CDN read and does not warn again (rows 12 and 91).
+    for (const f of marked) if (f.allowed) for (const pod of f.pods ?? []) allowedPods.add(`${f.allowKey}\0${pod}`);
     const refused = marked.filter((f) => !f.allowed);
     if (refused.length > 0) throw new UnsupportedSetupError(refused);
   };
@@ -262,16 +391,12 @@ export async function build(
     kind = undefined;
   }
   const podsFile = configFileOf(config, "pods");
-  const libraryChecks: LibraryCheckOptions = {
-    ...(config.pods !== undefined ? { pods: config.pods } : {}),
-    ...(podsFile !== undefined ? { podsFile } : {}),
-    ...(config.exclude !== undefined ? { exclude: config.exclude } : {}),
-    ...(kind !== undefined ? { kind } : {}),
-  };
+  const libraryChecks = libraryChecksOf(config, kind);
   // What the config leaves out comes first: a refusal below may point at "exclude".
   for (const line of excludeLines(root, config.exclude ?? [], { kind, file: configFileOf(config, "exclude") })) d.log(line);
   stopOnKnownLimits([...d.installFailures(root), ...d.libraryFailures(root, libraryChecks)]);
   for (const line of d.podPinWarnings(root, libraryChecks)) d.log(line);
+  for (const line of d.unresolvedPodLines(root, libraryChecks)) d.log(line);
   const project = await d.readProject(root, { log: d.log });
   // Bare rn-spm runs RN's default autolinking config command, `npx --no-install @react-native-community/cli config`.
   if (project.kind === "bare" && project.hasRnCli === false) throw new Error(RN_CLI_MISSING);
@@ -286,6 +411,7 @@ export async function build(
 
   // SDK 57: the vendored Expo plugin builds against RN's prebuilt artifacts and needs the JSI headers first.
   const vendoredExpo = project.kind === "expo" && project.expoPlugin === "vendored";
+  const podRoots = d.binaryPodCandidates(root, libraryChecks);
   const steps = buildSteps({
     kind: project.kind,
     hasIos: d.exists(paths.ios),
@@ -294,8 +420,23 @@ export async function build(
     hasExpoConstants: project.hasExpoConstants,
     rnArtifacts: (project.rnScripts === "vendored" || vendoredExpo) && !config.rnArtifactsDir,
     expoPlugin: project.expoPlugin,
+    pods: podRoots.length > 0,
   });
   const planned = (name: string): boolean => steps.includes(name);
+
+  // Before anything changes in the project: an unreachable host, a changed file or a short disk stops here.
+  const table = mergedPodTable(config.pods);
+  const pods = planned("pods")
+    ? await step("pods", () =>
+        d.pods(paths.root, podRoots, table, {
+          ...(podsFile !== undefined ? { podsFile } : {}),
+          allowed: config.knownLimits?.allow ?? [],
+          warned: (library, pod) => allowedPods.has(`${library}\0${pod}`),
+          log: d.log,
+        }),
+      )
+    : undefined;
+  const binary = pods !== undefined && Object.keys(pods.binary).length > 0 ? pods.binary : undefined;
 
   const prebuilds = planned("prebuild") || planned("prebuild --clean");
   if (prebuilds) {
@@ -334,7 +475,7 @@ export async function build(
     await d.applyPatches(paths.root, {
       rnScripts: project.rnScripts,
       expoPlugin: project.expoPlugin,
-      podTable: mergedPodTable(config.pods),
+      podTable: mergedPodTable(config.pods, binary),
       ...(config.exclude !== undefined ? { exclude: config.exclude } : {}),
       kind: project.kind,
     });
@@ -352,6 +493,8 @@ export async function build(
     return d.buildJsi(paths, { rnHeaders: jsiRnHeaderDirs(artifactsRoot), headersXcframework: true });
   };
   let jsi = vendoredExpo && planned("jsi") ? await step("jsi", buildJsi) : undefined;
+  // On every build: the scaffolds link ../pod-binaries, and generate force-loads its archives.
+  const staged = pods !== undefined && planned("pod-binaries") ? await step("pod-binaries", () => d.stagePods(paths, pods)) : undefined;
   await step("rn-spm", () =>
     d.runRnSpm(paths, {
       rnArtifactsDir: artifactsRoot,
@@ -360,10 +503,14 @@ export async function build(
       expoPlugin: project.expoPlugin,
       ...(config.pods !== undefined ? { pods: config.pods } : {}),
       ...(config.exclude !== undefined ? { exclude: config.exclude } : {}),
+      ...(binary !== undefined ? { binary } : {}),
     }),
   );
-  const resources = unbundledResourcesLine(d.unbundledResources(paths.root));
+  // A scaffolded bundle that would hold one file name twice is left out and named, as block 2 did (row 86).
+  const scaffolded = placeableBundles(d.resourceBundles(paths.root));
+  const resources = unbundledResourcesLine(withUnbundled(d.unbundledResources(paths.root), scaffolded.left));
   if (resources !== undefined) d.log(resources);
+  const resourceBundles = [...(pods?.bundles ?? []), ...scaffolded.bundles];
   // Expo 58 and bare: jsi after rn-spm, as before.
   if (!vendoredExpo && planned("jsi")) jsi = await step("jsi", buildJsi);
   if (planned("app-config")) await step("app-config", () => d.generateAppConfig(paths));
@@ -395,6 +542,8 @@ export async function build(
   }
 
   const depsFingerprint = await d.depsFingerprint(paths.root);
+  const emptyTargets = [...new Set([...d.emptyTargets(root, libraryChecks), ...(staged?.links.emptyTargets ?? [])])].sort();
+  const postPack = pods !== undefined && staged !== undefined ? postPackPods(staged, pods) : undefined;
   // Written without the fingerprint first: a failed xtool-build must not look up to date.
   const state: BuildState = {
     version: 1,
@@ -416,11 +565,26 @@ export async function build(
       signedIdOf(previousState.installedBundleId, project.bundleIdentifier) && {
         installedBundleId: previousState.installedBundleId,
       }),
+    ...(emptyTargets.length > 0 && { emptyTargets }),
+    ...(postPack !== undefined && { postPack }),
   };
   await step("generate", async () => {
-    await d.writeIosXtool({ project, paths, frameworks, metroPort, lanIp, log: d.log, prebuildIcon });
+    await d.writeIosXtool({
+      project,
+      paths,
+      frameworks,
+      metroPort,
+      lanIp,
+      log: d.log,
+      prebuildIcon,
+      ...(staged !== undefined ? { pods: staged.links } : {}),
+      ...(emptyTargets.length > 0 ? { emptyTargets } : {}),
+      ...(resourceBundles.length > 0 ? { resourceBundles } : {}),
+    });
     await writeState(paths.iosXtool, state);
   });
   await step("xtool-build", () => d.devBuild(d.xtoolBin(config), paths.iosXtool));
+  // A failure leaves the state without the fingerprint, so the next run builds again.
+  if (postPack !== undefined) await d.postPack(paths.appBundle, postPack);
   await writeState(paths.iosXtool, { ...state, depsFingerprint });
 }

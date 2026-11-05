@@ -1,0 +1,24 @@
+{
+  "name": "MLKitCommon",
+  "version": "13.0.0",
+  "summary": "Placeholder summary",
+  "homepage": "https://example.invalid/ml-kit/guides",
+  "license": { "type": "Copyright", "text": "Copyright 2024 Google LLC" },
+  "authors": "Google, Inc.",
+  "source": { "http": "https://example.invalid/dl/MLKitCommon-13.0.0.tar.gz" },
+  "platforms": { "ios": "15.5" },
+  "module_name": "MLKitCommon",
+  "dependencies": {
+    "GTMSessionFetcher/Core": [">= 3.3.2", " < 4.0"],
+    "GoogleDataTransport": ["~> 10.0"],
+    "GoogleToolboxForMac/Logger": [">= 4.2.1", " < 5.0"],
+    "GoogleToolboxForMac/NSData+zlib": [">= 4.2.1", " < 5.0"],
+    "GoogleUtilities/Logger": ["~> 8.0"],
+    "GoogleUtilities/UserDefaults": ["~> 8.0"]
+  },
+  "frameworks": ["Foundation", "LocalAuthentication"],
+  "libraries": ["c++", "sqlite3", "z"],
+  "pod_target_xcconfig": { "EXCLUDED_ARCHS[sdk=iphonesimulator*]": "arm64" },
+  "preserve_paths": ["CHANGELOG.md", "README.md", "NOTICES"],
+  "vendored_frameworks": ["Frameworks/MLKitCommon.framework"]
+}

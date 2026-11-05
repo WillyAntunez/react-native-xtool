@@ -1,0 +1,22 @@
+{
+  "name": "MLKitVision",
+  "version": "9.0.0",
+  "summary": "Placeholder summary",
+  "homepage": "https://example.invalid/ml-kit/guides",
+  "license": { "type": "Copyright", "text": "Copyright 2024 Google LLC" },
+  "authors": "Google, Inc.",
+  "source": { "http": "https://example.invalid/dl/MLKitVision-9.0.0.tar.gz" },
+  "platforms": { "ios": "15.5" },
+  "module_name": "MLKitVision",
+  "dependencies": {
+    "GTMSessionFetcher/Core": [">= 3.3.2", " < 4.0"],
+    "GoogleToolboxForMac/Logger": [">= 4.2.1", " < 5.0"],
+    "GoogleToolboxForMac/NSData+zlib": [">= 4.2.1", " < 5.0"],
+    "MLImage": [" 1.0.0-beta7"],
+    "MLKitCommon": "~> 13.0"
+  },
+  "frameworks": ["Accelerate", "AVFoundation", "CoreGraphics", "CoreMedia", "CoreVideo", "Foundation", "UIKit"],
+  "pod_target_xcconfig": { "EXCLUDED_ARCHS[sdk=iphonesimulator*]": "arm64" },
+  "preserve_paths": ["CHANGELOG.md", "README.md", "NOTICES"],
+  "vendored_frameworks": ["Frameworks/MLKitVision.framework"]
+}

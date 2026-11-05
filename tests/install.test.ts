@@ -1,8 +1,12 @@
-import { readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { firstRunChecklist, install } from "../src/commands/install.js";
+import { projectPaths } from "../src/paths.js";
+import { EMPTY_TARGETS_DIR, emptyArm64Object } from "../src/pods/emptyTargets.js";
+import { IOS_MIN } from "../src/versions.js";
 
 const APP_ID_LIMIT = readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "xtool-errors", "app-id-limit.txt"),
@@ -369,6 +373,130 @@ describe("install", () => {
   });
 });
 
+describe("install over USB with empty targets", () => {
+  it("writes the empty target objects the build recorded before xtool dev run (row 90)", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "install-empty-usb-"));
+    const object = path.join(projectPaths(root).iosXtool, ...EMPTY_TARGETS_DIR, "GTMDefines.o");
+    const seen: boolean[] = [];
+    await install(root, {
+      xtool: {
+        loadConfig: async () => ({}),
+        bin: () => "/bin/xtool",
+        authStatus: async () => ({ loggedIn: true, teamId: "TEAM", appleId: "a@b.c" }),
+        listDevices: async () => [{ name: "Phone", udid: "u", transport: "usb" }],
+        readState: async () => ({ bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20", emptyTargets: ["GTMDefines"] }),
+        devRun: async () => void seen.push(existsSync(object)),
+        writeState: async () => {},
+      },
+      log: () => {},
+    });
+    expect(seen).toEqual([true]);
+    rmSync(root, { recursive: true, force: true });
+  });
+});
+
+describe("install with binary pods (row 88)", () => {
+  const POST_PACK = {
+    binaryTargets: ["MLKitCommon"],
+    archives: [{ path: "/p/ios/build/pod-binaries/archives/libMLKitCommon.a", owner: "MLKitCommon 13.0.0" }],
+    bundles: [{ key: "LatinOCRResources", owner: "MLKitTextRecognition 6.0.0" }],
+  };
+  const REFUSED = "The packed app is not what the CocoaPods binaries need, so rn-xtool removed it and does not install it:";
+  const usb = (over: { state?: object; postPack?: () => Promise<void> } = {}) => {
+    const calls: string[] = [];
+    const writeState = vi.fn(async () => {});
+    const deps = {
+      xtool: {
+        loadConfig: async () => ({}),
+        bin: () => "/bin/xtool",
+        authStatus: async () => ({ loggedIn: true, teamId: "TEAM", appleId: "a@b.c" }),
+        listDevices: async () => [{ name: "Phone", udid: "u", transport: "usb" as const }],
+        readState: async () => ({ bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20", postPack: POST_PACK, ...over.state }),
+        restagePods: async (root: string, state: { postPack?: unknown }) => void calls.push(`restage ${root} ${state.postPack === POST_PACK}`),
+        writeEmptyTargets: async () => void calls.push("empty-objects"),
+        devBuild: async (_bin: string, dir: string) => void calls.push(`dev build ${dir}`),
+        postPack: async (app: string, pods: unknown) => {
+          calls.push(`post-pack ${app} ${JSON.stringify(pods)}`);
+          await over.postPack?.();
+        },
+        devRun: async () => void calls.push("dev run"),
+        writeState,
+      },
+      log: () => {},
+    };
+    return { deps, calls, writeState };
+  };
+
+  it("stages the pod binaries again if needed, then checks the app xtool builds before xtool dev run installs it", async () => {
+    const { deps, calls } = usb({ state: { emptyTargets: ["GTMDefines"] } });
+    await install("/p", deps);
+    expect(calls).toEqual([
+      "restage /p true",
+      "empty-objects",
+      "dev build /p/ios-xtool",
+      `post-pack /p/ios-xtool/xtool/App.app ${JSON.stringify(POST_PACK)}`,
+      "dev run",
+    ]);
+  });
+
+  it("does not install over USB when the checks refuse the app", async () => {
+    const { deps, calls, writeState } = usb({
+      postPack: async () => {
+        throw new Error(REFUSED);
+      },
+    });
+    await expect(install("/p", deps)).rejects.toThrow(REFUSED);
+    expect(calls).not.toContain("dev run");
+    expect(writeState).not.toHaveBeenCalled();
+  });
+
+  it("builds once, with xtool dev run alone, without binary pods", async () => {
+    const { deps, calls } = usb({ state: { postPack: undefined } });
+    await install("/p", deps);
+    expect(calls).toEqual(["dev run"]);
+  });
+
+  it("checks the app before xtool builds the ipa, and does not install a refused one over Wi-Fi", async () => {
+    const calls: string[] = [];
+    const installOverWifi = vi.fn();
+    const network = (postPack: () => Promise<void>) =>
+      install(
+        "/p",
+        {
+          xtool: {
+            loadConfig: async () => ({}),
+            bin: () => "/bin/xtool",
+            authStatus: async () => ({ loggedIn: true, teamId: "TEAM", appleId: "a@b.c" }),
+            readState: async () => ({ bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20", postPack: POST_PACK }),
+            restagePods: async () => void calls.push("restage"),
+            devBuild: async () => void calls.push("dev build"),
+            postPack: async () => {
+              calls.push("post-pack");
+              await postPack();
+            },
+            devBuildIpa: async () => {
+              calls.push("dev build --ipa");
+              throw new Error("stop here");
+            },
+          },
+          wifi: { installOverWifi },
+          log: () => {},
+        },
+        { network: true },
+      );
+    await expect(network(async () => {})).rejects.toThrow("stop here");
+    expect(calls).toEqual(["restage", "dev build", "post-pack", "dev build --ipa"]);
+    calls.length = 0;
+    await expect(
+      network(async () => {
+        throw new Error(REFUSED);
+      }),
+    ).rejects.toThrow(REFUSED);
+    expect(calls).toEqual(["restage", "dev build", "post-pack"]);
+    expect(installOverWifi).not.toHaveBeenCalled();
+  });
+});
+
 describe("install --network", () => {
   const UD = "00008030-0000000012345678";
   const record = { HostID: "H", SystemBUID: "B", HostCertificate: Buffer.from("c"), HostPrivateKey: Buffer.from("k") };
@@ -408,6 +536,19 @@ describe("install --network", () => {
     };
     return { d, logs, calls };
   };
+
+  it("writes the empty target objects the build recorded before xtool builds the ipa (row 90)", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "install-empty-net-"));
+    const object = path.join(projectPaths(root).iosXtool, ...EMPTY_TARGETS_DIR, "GTMDefines.o");
+    const { d, calls } = deps({ state: { emptyTargets: ["GTMDefines"] } });
+    calls.devBuildIpa.mockImplementation(async () => {
+      expect(readFileSync(object)).toEqual(emptyArm64Object(IOS_MIN));
+      return "/p/ios-xtool/xtool/App.ipa";
+    });
+    await install(root, d, { network: true });
+    expect(calls.devBuildIpa).toHaveBeenCalledTimes(1);
+    rmSync(root, { recursive: true, force: true });
+  });
 
   it("builds a signed ipa, installs it over Wi‑Fi without USB and remembers the iPhone", async () => {
     const { d, logs, calls } = deps({ state: { deviceIp: "192.168.1.9", deviceUdid: UD, hasDevClient: true } });

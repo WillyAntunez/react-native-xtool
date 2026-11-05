@@ -9,10 +9,12 @@ work as Linux but is untested so far. arm64 Linux is untested (the xtool checksu
    run. CI does not compile for iOS or touch a device, so the clean-machine check below still applies.
 2. `npm ci && npm test && npm run lint` are green locally too (with `node scripts/fetch-test-tarballs.mjs` run first).
 3. `CHANGELOG.md` has the release under a new version heading (move the `Unreleased` entries there, with the date).
-4. `npm pack --dry-run` lists only `bin/`, `data/` (the shipped pod table, `data/pods.json`, read at runtime),
+4. `npm pack --dry-run` lists only `bin/`, `data/` (the shipped pod table, `data/pods.json`, and the vendors' terms
+   URLs, `data/pod-terms.json`, both read at runtime),
    `dist/`, `patches/`, `scripts/`, `shims/`, `templates/` (the first-launch helper's sources, copied into the app),
    `vendor/` (the vendored SwiftPM scripts and Expo plugin, needed at runtime), `README.md`, `CHANGELOG.md`, `LICENSE`
-   and `package.json`. No `tests/`, `docs/`, `src/` or `.superpowers/`.
+   and `package.json`. No `tests/`, `docs/`, `src/` or `.superpowers/`. No Mach-O or `ar` file either: a vendor's
+   binary is never shipped, and `tests/packageFiles.test.ts` (part of `npm test`) fails when the package would hold one.
 5. On a clean machine (or a fresh WSL2 distro) install the packed tarball and run `rn-xtool doctor`:
    `npm pack && npm i -g ./react-native-xtool-<version>.tgz && rn-xtool doctor`.
 6. On a device, a fresh install of a reference app without the dev client shows its icon on the home screen and
@@ -92,6 +94,34 @@ one baseline entry, so the 0.88 patches and the scaffold revision stay as they a
 library's podspec requirement accepts that builds, and check that the tag ships a `Package.swift`. Changing a shipped
 pin makes every persisted scaffold of that library stale: users get the `⚠ patches/<file> pins <pod> <old>,
 rn-xtool's table says <new>` line until they regenerate it, so name the change in the CHANGELOG.
+
+## Binary pods
+
+**The cache's versions.** The pods cache keeps extracted and wrapped trees across releases, named by their archive and
+their stamp. When a change alters what `extractPod` (`src/pods/archive.ts`) or `wrapPod` (`src/pods/wrap.ts`) writes
+into a tree, bump `EXTRACTOR_VERSION` (for `extractPod`) or `WRAPPER_VERSION` (for `wrapPod`) in the same commit.
+Users' trees made by the old code are then rebuilt instead of reused; a wrapped tree's key holds `EXTRACTOR_VERSION`
+too, so an extractor bump rebuilds both. A change that alters no tree content keeps the version. The old trees stay in
+users' caches until they delete `~/.cache/rn-xtool/pods`, which the troubleshooting page says is safe.
+
+**The source pods in `data/pods.json`.** A binary pod's git-source dependencies (ML Kit's GTMSessionFetcher,
+GoogleUtilities, GoogleDataTransport and GoogleToolboxForMac) are pod table entries like any other, pinned to the
+newest tag the binary pods' requirements accept that ships a `Package.swift`. When no such tag exists
+(GoogleToolboxForMac 4.x has none), pin the nearest one that does only after a build proves the binaries link against
+it (the post-pack checks pass and the symbols the binaries need are in the App binary), and give the entry an
+`outsideRequirement` sentence saying why: the pin check then prints that one `ℹ` line instead of the `⚠`. A target
+the package declares without sources, which Swift Build lists at link anyway (`GTMDefines`), goes in the entry's
+`emptyTargets`. A changed pin is a changed table entry, so the scaffolder section's CHANGELOG note applies.
+
+**`data/pod-terms.json`** maps a spec's `homepage` to the vendor's terms page, which the line before the first
+download names (`terms: …`). Both are https URLs (the `podTerms` test in `tests/pods/step.test.ts` checks the
+shape). When rn-xtool links binary pods of a new vendor, check the terms page and add its entry; a homepage the file
+does not list gets no `terms:` part, and the line still names the vendor, the licenses and the homepage from the
+spec.
+
+**CocoaPods trunk is read-only from 2026-12-02.** No version is added or changed after that date, so the specs
+rn-xtool caches per version stay valid, and a pin or a fixture taken from the CDN does not move. The CDN stays up as
+long as GitHub and jsDelivr do; a machine with the cache and the lock keeps building if it goes away.
 
 ## Drift watch
 

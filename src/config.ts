@@ -38,6 +38,17 @@ export interface PodEntry {
   subspecs?: Record<string, string[]>;
   /** A header the package leaves outside its targets (`AppAuth/AppAuth.h`) → the modules a forwarder `@import`s. */
   forwardHeaders?: Record<string, string[]>;
+  /**
+   * Why a pin outside a podspec's requirement was checked and is meant: the pin check prints an ℹ line with it instead
+   * of the ⚠. It holds for the entry's own url and exact only (a config pin of another version drops it).
+   */
+  outsideRequirement?: string;
+  /**
+   * The package's targets without sources (GoogleToolboxForMac's `GTMDefines`): Swift Build never writes their object
+   * but lists it at link, so rn-xtool writes an empty one in their place before xtool-build. An empty list clears a
+   * shipped entry's; a pin to another `exact` or `url` drops it.
+   */
+  emptyTargets?: string[];
 }
 
 /** A config file whose content has the wrong shape; the message names the file and the key. */
@@ -70,13 +81,15 @@ const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 const MODULE_NAME = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*$/;
 const isNames = (v: unknown, name: RegExp = PLAIN): v is string[] =>
   Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === "string" && name.test(x));
+/** A SwiftPM target name that is safe as a file name. */
+const TARGET_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** A relative path ending in .h, without empty, `.` or `..` segments. */
 const isHeaderKey = (h: string): boolean =>
   h.endsWith(".h") && !h.includes("\\") && h.split("/").every((seg) => seg !== "" && seg !== "." && seg !== "..");
 
 /**
  * Throws a ConfigError naming `file` and the key when `pods` is not an object of pod names, each mapped to
- * `{ url, exact, products | product, subspecs?, forwardHeaders? }`. Used on the configs and on rn-xtool's own table.
+ * `{ url, exact, products | product, subspecs?, forwardHeaders?, outsideRequirement?, emptyTargets? }`. Used on the configs and on rn-xtool's own table.
  * Only the shape is checked, offline: a well-formed URL or product that does not exist is SwiftPM's to name at the
  * xtool-build step.
  */
@@ -99,6 +112,13 @@ export function checkPodEntries(file: string, pods: unknown): void {
       for (const [name, list] of Object.entries(e.subspecs as Record<string, unknown>)) {
         if (!isNames(list)) fail(`pods.${pod}.subspecs.${name}`, "a list of product names");
       }
+    }
+    if (e.outsideRequirement !== undefined && (typeof e.outsideRequirement !== "string" || e.outsideRequirement.trim() === "")) {
+      fail(`pods.${pod}.outsideRequirement`, "a sentence saying why the pin is outside the requirement");
+    }
+    // An empty list: none (it clears a shipped entry's).
+    if (e.emptyTargets !== undefined && !(Array.isArray(e.emptyTargets) && e.emptyTargets.length === 0) && !isNames(e.emptyTargets, TARGET_NAME)) {
+      fail(`pods.${pod}.emptyTargets`, "a list of target names");
     }
     if (e.forwardHeaders !== undefined) {
       if (!isRecord(e.forwardHeaders)) fail(`pods.${pod}.forwardHeaders`, "an object of header paths");

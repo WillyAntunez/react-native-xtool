@@ -14,6 +14,10 @@ import { APP_ICON_FILE, findAppIcon, type IconRecord } from "./appIcon.js";
 import { copyBareTarget } from "./bareSources.js";
 import { expoClangImporterInputs } from "./expoImporter.js";
 import { DEV_SUPPORT_TARGET, renderPackageSwift, type AppTargetInputs } from "./packageSwift.js";
+import { writeEmptyTargetObjects } from "../pods/emptyTargets.js";
+import type { PodsLinks } from "../pods/stage.js";
+import { PodsError } from "../pods/format.js";
+import { bundleLink, writeResourceBundle, type BundleSource } from "../pipeline/resourceBundles.js";
 import { scaffoldedImporterPaths } from "./scaffoldImporter.js";
 import { BASE_RESOURCES, DEFAULT_RESOURCES, renderXtoolYml } from "./xtoolYml.js";
 
@@ -26,6 +30,12 @@ export interface GenerateContext {
   log?: (s: string) => void;
   /** The app config icon `build` recorded when it last ran expo prebuild (findAppIcon's stale-icon check). */
   prebuildIcon?: IconRecord;
+  /** The binary pods' link inputs, for the App target (`stagePodBinaries`). */
+  pods?: PodsLinks;
+  /** Targets of the linked table pods without sources: an empty object is written in place of each (row 81). */
+  emptyTargets?: string[];
+  /** Podspec `resource_bundles` (binary pods' and scaffolded libraries'): each becomes `Resources/<key>.bundle`. */
+  resourceBundles?: BundleSource[];
 }
 
 const MANIFEST_6_5 = "Package@swift-6.5.swift";
@@ -186,6 +196,38 @@ async function expoBridgingHeader(iosDir: string, sourcesDir: string, log: (s: s
   return copy;
 }
 
+/**
+ * Row 38: one bundle per name, and none over an app resource (xtool copies each to the app root under its name, and
+ * fails on an existing one).
+ */
+function checkBundleNames(bundles: readonly BundleSource[], appResources: readonly string[]): void {
+  const owners = new Map<string, BundleSource>();
+  for (const b of bundles) {
+    const name = `${b.key}.bundle`;
+    const first = owners.get(name);
+    if (first !== undefined) {
+      throw new PodsError(`Two resource bundles would be copied to App.app/${name}: ${first.owner} and ${b.owner}. See ${bundleLink(first, b)}`);
+    }
+    owners.set(name, b);
+    const clash = appResources.find((r) => basename(r) === name);
+    if (clash !== undefined) {
+      throw new PodsError(
+        `The resource bundle ${name} (${b.owner}) would be copied over the app resource ${basename(clash)} in App.app. See ${bundleLink(b)}`,
+      );
+    }
+  }
+}
+
+/** Writes the bundles into `resourcesDir` and returns their names, sorted (those that match no file left out). */
+async function writeBundles(bundles: readonly BundleSource[], resourcesDir: string, log: (s: string) => void): Promise<string[]> {
+  const names: string[] = [];
+  for (const b of bundles) {
+    const built = await writeResourceBundle(b, resourcesDir, log);
+    if (built !== undefined) names.push(built.name);
+  }
+  return names.sort();
+}
+
 export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
   const { project, paths } = ctx;
   const headersDir = swiftHeadersDir(paths.iosXtool);
@@ -195,6 +237,10 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
   await rm(resourcesDir, { recursive: true, force: true });
   await mkdir(paths.sources, { recursive: true });
   const { app, resources } = await writeAppSources(ctx, headersDir, resourcesDir);
+  const appResources = [...(project.hasExpoConstants ? DEFAULT_RESOURCES : BASE_RESOURCES), ...resources.map((r) => `Resources/${r}`)];
+  const bundleSources = ctx.resourceBundles ?? [];
+  checkBundleNames(bundleSources, appResources);
+  const bundles = await writeBundles(bundleSources, resourcesDir, ctx.log ?? console.log);
   // The icon from the app's AppIcon.appiconset; a missing or unusable one is reported and the build goes on.
   const icon = await findAppIcon(project, { bundleRootNames: resources, prebuildIcon: ctx.prebuildIcon });
   for (const line of icon.lines) (ctx.log ?? console.log)(line);
@@ -245,10 +291,7 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
     join(paths.iosXtool, "xtool.yml"),
     renderXtoolYml({
       bundleIdentifier: project.bundleIdentifier,
-      resources: [
-        ...(project.hasExpoConstants ? DEFAULT_RESOURCES : BASE_RESOURCES),
-        ...resources.map((r) => `Resources/${r}`),
-      ],
+      resources: [...appResources, ...bundles.map((b) => `Resources/${b}`)],
       iconPath: icon.source !== undefined ? APP_ICON_FILE : undefined,
       entitlementsPath: entitlements !== undefined ? ENTITLEMENTS_FILE : undefined,
     }),
@@ -266,9 +309,12 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
       : undefined,
     app: { ...app, importerPaths: await scaffoldedImporterPaths(paths.autolinking) },
     devSupport,
+    ...(ctx.pods !== undefined ? { pods: ctx.pods } : {}),
   });
   await writeFile(join(paths.iosXtool, "Package.swift"), manifest);
   if (manifest65 !== undefined) await writeFile(join(paths.iosXtool, MANIFEST_6_5), manifest65);
   else await rm(join(paths.iosXtool, MANIFEST_6_5), { force: true });
   await writeFile(join(paths.iosXtool, ".gitignore"), "*\n");
+  // Before xtool-build: Swift Build links an object it never writes for a target without sources.
+  if (ctx.emptyTargets !== undefined && ctx.emptyTargets.length > 0) await writeEmptyTargetObjects(paths.iosXtool, ctx.emptyTargets, IOS_MIN);
 }

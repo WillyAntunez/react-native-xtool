@@ -3,6 +3,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join, relative, resolve } from "node:path";
 import { loadConfig } from "./config.js";
+import { PODS_LOCK } from "./pods/lock.js";
 import { detectProjectKind } from "./project/detect.js";
 import { openPbxproj, readTargetContent, resolveSetting } from "./project/pbxproj.js";
 
@@ -75,6 +76,7 @@ async function bareNativeEntries(root: string): Promise<string[]> {
  * Fingerprint of everything that can make the installed app or the Metro cache stale:
  * every dependency/devDependency at its INSTALLED version, plus the patches/*.patch names,
  * plus, for a bare project, the content of its native app target (see `bareNativeEntries`),
+ * plus the sha256 of rn-xtool-pods.lock.json when there is one,
  * plus rn-xtool's own version (`toolVersion` in tests): what it generates into the app changes between releases.
  *
  * Deliberately no native/JS distinction: JS-only changes also need a Metro cache reset,
@@ -100,5 +102,8 @@ export async function depsFingerprint(root: string, opts: { toolVersion?: string
     // no patches directory
   }
   const tool = `rn-xtool@${opts.toolVersion ?? RN_XTOOL_VERSION}`;
-  return fingerprintOf([...entries, ...patches, ...(await bareNativeEntries(root)), tool]);
+  // A pulled change to the binary pods' lock changes what the pods step links (preflight P14).
+  const lockHash = await contentHash(join(root, PODS_LOCK));
+  const lock = lockHash === "missing" ? [] : [`pods-lock@${lockHash}`];
+  return fingerprintOf([...entries, ...patches, ...(await bareNativeEntries(root)), ...lock, tool]);
 }

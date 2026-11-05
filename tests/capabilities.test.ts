@@ -15,6 +15,17 @@ import { fakeExpo58Modules } from "./support/expo58.js";
 import { makeFakeSlot088 } from "./support/fakeSlots.js";
 import { fakeRnScripts } from "./support/rnScripts.js";
 import { plistOf, withEntitlements } from "./support/entitlements.js";
+import { useGitSpecCache } from "./support/podsCache.js";
+import { troubleshootingUrl } from "../src/docs.js";
+import { podShard } from "../src/pods/cdn.js";
+import { allowedLimitText } from "../src/project/earlyChecks.js";
+import { formatSize } from "../src/pods/format.js";
+import { PODS_LOCK } from "../src/pods/lock.js";
+import { podsCdnRoutes } from "./support/podFixtures.js";
+import { closedPortBase, startPodsServer, type PodsServer } from "./support/podsServer.js";
+
+// Unmapped pods read as git sources from a cache of their own, never the machine's.
+useGitSpecCache();
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
 const tempDirs: string[] = [];
@@ -353,6 +364,25 @@ describe("podspecFeatures", () => {
     });
   });
 
+  it("leaves out the resource bundles rn-xtool builds, and keeps those it cannot read", async () => {
+    const root = await tempDir("rn-xtool-caps-podspecs-");
+    await writePackage(root, { name: "app", dependencies: { built: "1.0.0", interpolated: "1.0.0", conditional: "1.0.0", mixed: "1.0.0" } });
+    const nm = path.join(root, "node_modules");
+    await writePackage(path.join(nm, "built"), { name: "built", version: "1.0.0" }, {
+      "Built.podspec": "Pod::Spec.new do |s|\n  s.resource_bundles = { 'Built' => ['Res/*.png'] }\nend\n",
+    });
+    await writePackage(path.join(nm, "interpolated"), { name: "interpolated", version: "1.0.0" }, {
+      "Interpolated.podspec": 'Pod::Spec.new do |s|\n  s.resource_bundles = { "I" => ["#{dir}/*.png"] }\nend\n',
+    });
+    await writePackage(path.join(nm, "conditional"), { name: "conditional", version: "1.0.0" }, {
+      "Conditional.podspec": "Pod::Spec.new do |s|\n  if ENV['X']\n    s.resource_bundles = { 'C' => ['Res/*.png'] }\n  end\nend\n",
+    });
+    await writePackage(path.join(nm, "mixed"), { name: "mixed", version: "1.0.0" }, {
+      "Mixed.podspec": "Pod::Spec.new do |s|\n  s.resource_bundles = { 'M' => ['Res/*.png'] }\n  s.resource_bundles = { 'N' => files }\nend\n",
+    });
+    expect(podspecFeatures(root).resource_bundles).toEqual(["conditional", "interpolated", "mixed"]);
+  });
+
   it("skips dependencies that are not installed and reads a scoped package", async () => {
     const root = await tempDir("rn-xtool-caps-podspecs-");
     await writePackage(root, { name: "app", dependencies: { "@scope/lib": "1.0.0", gone: "1.0.0" } });
@@ -659,6 +689,213 @@ describe("detectCapabilities", () => {
       vendored_frameworks: [],
       resource_bundles: [],
     });
+  });
+});
+
+describe("binary pods", () => {
+  const LIB = "@react-native-ml-kit/text-recognition";
+  const NAME = "rn-xtool-pods.lock.json";
+  const VERSIONS: Record<string, string> = {
+    GoogleMLKit: "8.0.0",
+    MLImage: "1.0.0-beta7",
+    MLKitCommon: "13.0.0",
+    MLKitTextRecognition: "6.0.0",
+    MLKitTextRecognitionChinese: "5.0.0",
+    MLKitTextRecognitionDevanagari: "5.0.0",
+    MLKitTextRecognitionJapanese: "5.0.0",
+    MLKitTextRecognitionKorean: "5.0.0",
+    MLKitTextRecognitionCommon: "5.0.0",
+    MLKitVision: "9.0.0",
+  };
+  const entry = (pod: string, sha: string, o: { size?: number; ext?: string; neededBy?: string[] } = {}) => ({
+    version: VERSIONS[pod] ?? "1.0.0",
+    subspecs: [],
+    url: `https://example.invalid/dl/${pod}.${o.ext ?? "tar.gz"}`,
+    size: o.size ?? 7000,
+    sha256: sha.repeat(64),
+    neededBy: o.neededBy ?? [LIB],
+  });
+  let server: PodsServer | undefined;
+  afterEach(async () => {
+    await server?.close();
+    server = undefined;
+  });
+
+  /** A project with the ML Kit library, `lock` as its lock, and an empty pods cache. */
+  async function mlKitProject(lock?: Record<string, unknown>, o: { exclude?: string[] } = {}) {
+    const dir = await tempDir("rn-xtool-caps-pods-");
+    await writePackage(dir, { name: "app", dependencies: { [LIB]: "2.0.0" } });
+    await writePackage(path.join(dir, "node_modules", LIB), { name: LIB, version: "2.0.0" }, {
+      "RNMLKitTextRecognition.podspec": "Pod::Spec.new do |s|\n  s.dependency 'React'\n  s.dependency 'GoogleMLKit/TextRecognition', '8.0.0'\nend\n",
+    });
+    if (lock !== undefined) await writeFile(path.join(dir, PODS_LOCK), JSON.stringify({ lockfileVersion: 1, pods: lock }));
+    if (o.exclude !== undefined) await writeFile(path.join(dir, "rn-xtool.config.json"), JSON.stringify({ exclude: o.exclude }));
+    const podsCache = await tempDir("rn-xtool-caps-podcache-");
+    return { dir, podsCache };
+  }
+  const cacheFile = async (podsCache: string, sha: string, ext = "tar.gz") => {
+    await mkdir(path.join(podsCache, "downloads"), { recursive: true });
+    await writeFile(path.join(podsCache, "downloads", `${sha.repeat(64)}.${ext}`), "x");
+  };
+  const noFetch = (() => {
+    throw new Error("no network in this test");
+  }) as unknown as typeof fetch;
+
+  it("reports cached binaries", async () => {
+    const { dir, podsCache } = await mlKitProject({ GoogleMLKit: entry("GoogleMLKit", "a"), MLKitCommon: entry("MLKitCommon", "b") });
+    await cacheFile(podsCache, "a");
+    await cacheFile(podsCache, "b");
+    const caps = await detectCapabilities(dir, { podsCache, podsFetch: noFetch });
+    expect(caps.binaryPods).toEqual([`✔ pods — 2 CocoaPods binaries for ${LIB}, in rn-xtool's cache and in ${NAME}`]);
+  });
+
+  it("does not report a locked version the library no longer accepts as ready", async () => {
+    const { dir, podsCache } = await mlKitProject({ GoogleMLKit: entry("GoogleMLKit", "a"), MLKitCommon: entry("MLKitCommon", "b") });
+    await cacheFile(podsCache, "a");
+    await cacheFile(podsCache, "b");
+    // The library moved to GoogleMLKit 9.0.0.
+    await writeFile(
+      path.join(dir, "node_modules", LIB, "RNMLKitTextRecognition.podspec"),
+      "Pod::Spec.new do |s|\n  s.dependency 'GoogleMLKit/TextRecognition', '9.0.0'\nend\n",
+    );
+    const caps = await detectCapabilities(dir, { podsCache, podsFetch: noFetch, offline: true });
+    expect(caps.binaryPods).toEqual([
+      `⚠ pods — GoogleMLKit: ${NAME} records 8.0.0, which no longer meets "9.0.0" (${LIB} 2.0.0); rn-xtool build resolves it again and records the new version`,
+      "ℹ pods — not checked (offline)",
+    ]);
+  });
+
+  it("reports what is left to download, with its size", async () => {
+    const { dir, podsCache } = await mlKitProject({ GoogleMLKit: entry("GoogleMLKit", "a"), MLKitCommon: entry("MLKitCommon", "b", { size: 2_500_000 }) });
+    await cacheFile(podsCache, "a");
+    const caps = await detectCapabilities(dir, { podsCache, podsFetch: noFetch });
+    expect(caps.binaryPods).toEqual([`ℹ pods — 2 CocoaPods binaries for ${LIB}, 1 to download from example.invalid (2.5 MB)`]);
+  });
+
+  it("probes unresolved pods within the budget", async () => {
+    const { dir, podsCache } = await mlKitProject();
+    server = await startPodsServer(podsCdnRoutes(Object.fromEntries(Object.entries(VERSIONS).map(([p, v]) => [p, [v]])), podShard));
+    for (const pod of Object.keys(VERSIONS)) server.routes[`/dl/${pod}-${VERSIONS[pod]}.tar.gz`] = { body: Buffer.alloc(1000) };
+    const base = server.base;
+    const podsFetch = ((input: string | URL | Request, init?: RequestInit) => {
+      const u = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+      return fetch(u.hostname === "example.invalid" ? `${base}${u.pathname}` : input, init);
+    }) as typeof fetch;
+    const caps = await detectCapabilities(dir, { podsCache, podsCdnBase: base, podsFetch });
+    // TextRecognition (Latin) alone: GoogleMLKit, MLImage, MLKitCommon, MLKitTextRecognition(Common) and MLKitVision.
+    expect(caps.binaryPods).toEqual([`ℹ pods — 6 CocoaPods binaries for ${LIB}, 6 to download from example.invalid (${formatSize(6000)})`]);
+    expect(server.requests.filter((r) => r.startsWith("GET /dl/"))).toEqual([]);
+    expect(server.requests.filter((r) => r.startsWith("HEAD /dl/"))).toHaveLength(6);
+  });
+
+  it("warns not checked when the probe fails", async () => {
+    const { dir, podsCache } = await mlKitProject();
+    const closed = await closedPortBase();
+    const caps = await detectCapabilities(dir, { podsCache, podsCdnBase: closed });
+    expect(caps.binaryPods).toEqual([
+      `⚠ pods — not checked: Cannot reach ${new URL(closed).host} (connect ECONNREFUSED) to read the versions of GoogleMLKit`,
+    ]);
+    server = await startPodsServer({});
+    server.routes[`/all_pods_versions_${podShard("GoogleMLKit").join("_")}.txt`] = { hang: true };
+    const slow = await detectCapabilities(dir, { podsCache, podsCdnBase: server.base, timeoutMs: 300 });
+    expect(slow.binaryPods).toEqual(["⚠ pods — not checked: timed out after 0.3 s"]);
+  });
+
+  describe("a git-source pod without a table entry", () => {
+    const GIT_LIB = "react-native-git";
+    const refusal =
+      `${GIT_LIB} 1.0.0: its podspec depends on the CocoaPods pod GitPod, which has no SwiftPM package rn-xtool knows. ` +
+      `Add one under "pods" in rn-xtool.config.json: { "pods": { "GitPod": { "url": "<git URL>", "exact": "<version>", "products": ["<product>"] } } }, ` +
+      `or leave the library out with "exclude". See ${troubleshootingUrl("libraries-that-depend-on-cocoapods-pods")}`;
+    async function gitProject(allow?: string[]) {
+      const dir = await tempDir("rn-xtool-caps-gitpod-");
+      await writePackage(dir, { name: "app", dependencies: { [GIT_LIB]: "1.0.0" } });
+      await writePackage(path.join(dir, "node_modules", GIT_LIB), { name: GIT_LIB, version: "1.0.0" }, {
+        "RNGit.podspec": "Pod::Spec.new do |s|\n  s.dependency 'GitPod'\nend\n",
+      });
+      if (allow !== undefined) await writeFile(path.join(dir, "rn-xtool.config.json"), JSON.stringify({ knownLimits: { allow } }));
+      server = await startPodsServer({
+        [`/all_pods_versions_${podShard("GitPod").join("_")}.txt`]: { body: "GitPod/1.0.0\n" },
+        [`/Specs/${podShard("GitPod").join("/")}/GitPod/1.0.0/GitPod.podspec.json`]: {
+          body: JSON.stringify({
+            name: "GitPod",
+            version: "1.0.0",
+            homepage: "https://example.invalid/pod",
+            license: "MIT",
+            authors: "Example",
+            source: { git: "https://example.invalid/git/pod.git", tag: "1.0.0" },
+            platforms: { ios: "15.5" },
+            source_files: "Sources/**/*.m",
+          }),
+        },
+      });
+      return { dir, podsCache: await tempDir("rn-xtool-caps-podcache-") };
+    }
+
+    it("fails with the resolver's refusal, not a not-checked warning", async () => {
+      const { dir, podsCache } = await gitProject();
+      const caps = await detectCapabilities(dir, { podsCache, podsCdnBase: server!.base });
+      expect(caps.binaryPods).toEqual([`✖ pods — ${refusal}`]);
+      // The spec is cached now: the early checks refuse it, and the pods line does not repeat it.
+      const again = await detectCapabilities(dir, { podsCache, podsCdnBase: server!.base });
+      expect(again.limits?.map((f) => [f.allowed, f.reason])).toEqual([[undefined, refusal]]);
+      expect(again.binaryPods).toEqual([]);
+    });
+
+    it("warns once for a library knownLimits.allow names", async () => {
+      const { dir, podsCache } = await gitProject([GIT_LIB]);
+      const allowed = `${refusal} (allowed by rn-xtool.config.json knownLimits.allow; the build may fail later)`;
+      const first = await detectCapabilities(dir, { podsCache, podsCdnBase: server!.base });
+      expect(first.binaryPods).toEqual([`⚠ pods — ${allowed}`]);
+      // The spec is cached now: the early checks' allowed line says it, and the pods line does not repeat it.
+      const again = await detectCapabilities(dir, { podsCache, podsCdnBase: server!.base });
+      expect(again.limits?.map((f) => (f.allowed ? allowedLimitText(f) : f.reason))).toEqual([allowed]);
+      expect(again.binaryPods).toEqual([]);
+    });
+  });
+
+  it("does not probe with --offline", async () => {
+    const { dir, podsCache } = await mlKitProject();
+    const caps = await detectCapabilities(dir, { podsCache, podsFetch: noFetch, offline: true });
+    expect(caps.binaryPods).toEqual(["ℹ pods — not checked (offline)"]);
+  });
+
+  it("lists the lock entries no library needs", async () => {
+    const lock = {
+      GoogleMLKit: entry("GoogleMLKit", "a"),
+      MLKitFoo: entry("MLKitFoo", "c", { neededBy: ["other-lib"] }),
+      MLKitBar: entry("MLKitBar", "d", { neededBy: ["other-lib"] }),
+    };
+    const { dir, podsCache } = await mlKitProject(lock);
+    await cacheFile(podsCache, "a");
+    const caps = await detectCapabilities(dir, { podsCache, podsFetch: noFetch });
+    expect(caps.binaryPods).toEqual([
+      `✔ pods — 1 CocoaPods binary for ${LIB}, in rn-xtool's cache and in ${NAME}`,
+      `ℹ pods — ${NAME} also records MLKitBar 1.0.0 and MLKitFoo 1.0.0, which no library needs now; rn-xtool keeps these entries`,
+    ]);
+    const excluded = await mlKitProject(lock, { exclude: [LIB] });
+    expect((await detectCapabilities(excluded.dir, { podsCache: excluded.podsCache, podsFetch: noFetch })).binaryPods).toEqual([
+      `ℹ pods — ${NAME} also records GoogleMLKit 8.0.0, MLKitBar 1.0.0 and MLKitFoo 1.0.0, which no library needs now; rn-xtool keeps these entries`,
+    ]);
+  });
+
+  it("adds the unzip line only when a lock entry is a zip", async () => {
+    const lock = { GoogleMLKit: entry("GoogleMLKit", "a"), MLKitFoo: entry("MLKitFoo", "c", { ext: "zip" }) };
+    const { dir, podsCache } = await mlKitProject(lock);
+    await cacheFile(podsCache, "a");
+    await cacheFile(podsCache, "c", "zip");
+    const unzip = "✖ pods — MLKitFoo 1.0.0 is a .zip download, and unzip is not installed. Install it (sudo apt install unzip) and build again.";
+    expect((await detectCapabilities(dir, { podsCache, podsFetch: noFetch, hasUnzip: () => false })).binaryPods).toContain(unzip);
+    expect((await detectCapabilities(dir, { podsCache, podsFetch: noFetch, hasUnzip: () => true })).binaryPods).not.toContain(unzip);
+    const tars = await mlKitProject({ GoogleMLKit: entry("GoogleMLKit", "a") });
+    const lines = (await detectCapabilities(tars.dir, { podsCache: tars.podsCache, podsFetch: noFetch, hasUnzip: () => false })).binaryPods;
+    expect(lines?.some((l) => l.includes("unzip"))).toBe(false);
+  });
+
+  it("prints no pods line for a project without binary pods", async () => {
+    const dir = await tempDir("rn-xtool-caps-nopods-");
+    await writePackage(dir, { name: "app", dependencies: {} });
+    expect((await detectCapabilities(dir, { podsFetch: noFetch })).binaryPods).toEqual([]);
   });
 });
 

@@ -1,0 +1,14 @@
+{
+  "name": "MLImage",
+  "version": "1.0.0-beta7",
+  "summary": "Placeholder summary",
+  "homepage": "https://example.invalid/ml-kit/guides",
+  "license": { "type": "Copyright", "text": "Copyright 2025 Google LLC" },
+  "authors": "Google, Inc.",
+  "source": { "http": "https://example.invalid/dl/MLImage-1.0.0-beta7.tar.gz" },
+  "platforms": { "ios": "15.5" },
+  "module_name": "MLImage",
+  "frameworks": ["CoreGraphics", "CoreMedia", "CoreVideo", "Foundation", "UIKit"],
+  "pod_target_xcconfig": { "EXCLUDED_ARCHS[sdk=iphonesimulator*]": "arm64" },
+  "vendored_frameworks": ["Frameworks/MLImage.framework"]
+}

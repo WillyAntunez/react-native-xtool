@@ -1318,6 +1318,92 @@ describe("pod pins in scaffolds", () => {
     expect(lines).toEqual([]);
   });
 
+  describe("binary pods", () => {
+    const ML = "@react-native-ml-kit/text-recognition";
+    const ML_PATCH = "@react-native-ml-kit+text-recognition+2.0.0.patch";
+    const ML_TAIL = `(also remove node_modules/${ML} and reinstall: that copy still has the old Package.swift)`;
+    const binary = { GoogleMLKit: { product: "GoogleMLKit" } };
+    const mlPatch = (pins: string | null) =>
+      patch(pins).replaceAll(`node_modules/${LIB}/`, `node_modules/${ML}/`);
+    async function mlApp(): Promise<string> {
+      const { root } = await tempProject();
+      const files: Record<string, string> = {
+        "package.json": JSON.stringify({ name: "app", dependencies: { [ML]: "2.0.0", "react-native": "0.88.1" } }),
+        "node_modules/react-native/package.json": JSON.stringify({ name: "react-native", version: "0.88.1" }),
+        [`node_modules/${ML}/package.json`]: JSON.stringify({ name: ML, version: "2.0.0" }),
+        [`node_modules/${ML}/RNMLKitTextRecognition.podspec`]:
+          "Pod::Spec.new do |s|\n  s.dependency 'React-Core'\n  s.dependency 'GoogleMLKit/TextRecognition', '8.0.0'\n" +
+          "  s.dependency 'GoogleMLKit/TextRecognitionChinese', '8.0.0'\nend\n",
+      };
+      for (const [rel, text] of Object.entries(files)) {
+        await mkdir(path.dirname(path.join(root, rel)), { recursive: true });
+        await writeFile(path.join(root, rel), text);
+      }
+      return root;
+    }
+    const persistMl = async (root: string, text: string) => {
+      await mkdir(path.join(root, "patches"), { recursive: true });
+      await writeFile(path.join(root, "patches", ML_PATCH), text);
+    };
+
+    it("warns about a persisted scaffold that does not link a binary pod", async () => {
+      const root = await mlApp();
+      await persistMl(root, mlPatch(null));
+      const line =
+        `⚠ patches/${ML_PATCH} does not link GoogleMLKit's CocoaPods binaries: it was scaffolded before rn-xtool resolved ` +
+        `them; delete it so rn-xtool regenerates it ${ML_TAIL}`;
+      expect(scaffoldPatchWarnings(root, mergedPodTable(undefined, binary))).toEqual([line]);
+      expect(scaffoldPinWarnings(root, mergedPodTable(undefined, binary))).toEqual([line]);
+      // Before rn-xtool resolves binary pods (no map), nothing is compared.
+      expect(scaffoldPatchWarnings(root, mergedPodTable())).toEqual([]);
+    });
+
+    it("reads GoogleMLKit=binary as linked, not as a version", async () => {
+      const root = await mlApp();
+      await persistMl(root, mlPatch("GoogleMLKit=binary"));
+      expect(scaffoldPatchWarnings(root, mergedPodTable(undefined, binary))).toEqual([]);
+      // A table that maps the pod meanwhile does not read "binary" as a version either.
+      const mapped = mergedPodTable({ GoogleMLKit: { url: "https://github.com/example/mlkit", exact: "1.0.0", products: ["MLKit"] } });
+      expect(scaffoldPatchWarnings(root, mapped).some((l) => l.includes("pins GoogleMLKit binary"))).toBe(false);
+    });
+
+    it("warns about a persisted binary-route scaffold whose pod the table maps now", async () => {
+      const root = await mlApp();
+      await persistMl(root, mlPatch("GoogleMLKit=binary"));
+      const mapped = mergedPodTable({ GoogleMLKit: { url: "https://github.com/example/mlkit", exact: "1.0.0", products: ["MLKit"] } });
+      const line =
+        `⚠ patches/${ML_PATCH} links GoogleMLKit's CocoaPods binaries, but the config maps GoogleMLKit to a SwiftPM package now; ` +
+        `delete it so rn-xtool regenerates it ${ML_TAIL}`;
+      expect(scaffoldPatchWarnings(root, mapped)).toEqual([line]);
+      // An unpersisted copy is scaffolded again.
+      const copy = path.join("node_modules", ML, "Package.swift");
+      const fresh = await mlApp();
+      await writeFile(path.join(fresh, copy), `${manifest("GoogleMLKit=binary").join("\n")}\n`);
+      const lines: string[] = [];
+      await applyPatches(fresh, async () => ({ exitCode: 0 }), { rnScripts: "vendored", podTable: mapped, log: (l) => lines.push(l) });
+      expect(existsSync(path.join(fresh, copy))).toBe(false);
+      expect(lines).toEqual([
+        `ℹ node_modules/${ML}/Package.swift links GoogleMLKit's CocoaPods binaries, but the config maps GoogleMLKit to a SwiftPM package now: rn-xtool removed it so the rn-spm step scaffolds it again`,
+      ]);
+    });
+
+    it("regenerates an unpersisted copy that does not link a binary pod", async () => {
+      const root = await mlApp();
+      const copy = path.join("node_modules", ML, "Package.swift");
+      await writeFile(path.join(root, copy), `${manifest(null).join("\n")}\n`);
+      const lines: string[] = [];
+      await applyPatches(root, async () => ({ exitCode: 0 }), {
+        rnScripts: "vendored",
+        podTable: mergedPodTable(undefined, binary),
+        log: (l) => lines.push(l),
+      });
+      expect(existsSync(path.join(root, copy))).toBe(false);
+      expect(lines).toEqual([
+        `ℹ node_modules/${ML}/Package.swift does not link GoogleMLKit's CocoaPods binaries: rn-xtool removed it so the rn-spm step scaffolds it again`,
+      ]);
+    });
+  });
+
   it("regenerates an unpersisted copy whose pins differ", async () => {
     const copy = path.join("node_modules", LIB, "Package.swift");
     const cases: [string | null, Record<string, unknown> | undefined, string][] = [

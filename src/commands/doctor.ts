@@ -16,6 +16,8 @@ import { VersionGateError } from "../project/detect.js";
 import { MissingBundleIdentifierError, readProject, RN_CLI_MISSING, type ProjectKind } from "../project/index.js";
 import { openPbxproj } from "../project/pbxproj.js";
 import { makeNmRunner } from "../pipeline/symbols.js";
+import { makeArRunner } from "../pods/ar.js";
+import { readPodsLock } from "../pods/lock.js";
 import { readState } from "../state.js";
 import { NO_FINGERPRINT_WARNING } from "./start.js";
 import { sha256File } from "../tools/download.js";
@@ -60,6 +62,10 @@ export interface DoctorProbes {
   swiftVersion: () => Promise<string | undefined>;
   /** The LLVM version of the Swift toolchain's llvm-nm (G4 needs it); rejects with LLVM_NM_MISSING when it is missing. */
   llvmNmVersion: () => Promise<string>;
+  /** The LLVM version of the Swift toolchain's llvm-ar (binary pods need it); rejects with LLVM_AR_MISSING when missing. */
+  llvmArVersion: () => Promise<string>;
+  /** Whether the project at `root` has binary pods: entries in rn-xtool-pods.lock.json. */
+  hasBinaryPods: (root: string) => boolean;
   /** Full path of the xtool binary, used in hints. */
   xtoolPath: () => string;
   xtoolInstalled: () => boolean;
@@ -169,6 +175,16 @@ export function realProbes(config: ExpoXtoolConfig, opts: { offline?: boolean } 
     swiftVersion: () => swiftVersionText(PROBE_TIMEOUT_MS),
     llvmNmVersion: async () =>
       /LLVM version (\S+)/.exec(await makeNmRunner("llvm-nm", PROBE_TIMEOUT_MS)(["--version"]))?.[1] ?? "unknown",
+    llvmArVersion: async () =>
+      /LLVM version (\S+)/.exec(await makeArRunner("llvm-ar", PROBE_TIMEOUT_MS)(["--version"]))?.[1] ?? "unknown",
+    hasBinaryPods: (root) => {
+      try {
+        return Object.keys(readPodsLock(root).pods).length > 0;
+      } catch {
+        // A lock rn-xtool cannot read still says the project uses binary pods.
+        return true;
+      }
+    },
     xtoolPath: () => config.xtoolPath ?? defaultXtoolPath(),
     xtoolInstalled: () => isExecutable(config.xtoolPath ?? defaultXtoolPath()),
     xtoolSha256: async () => {
@@ -384,13 +400,16 @@ function knownLimitsChecks(limits: NonNullable<Capabilities["limits"]>): DoctorC
 
 /**
  * `doctor --project`'s capability lines, in order: versions, rn-scripts, rn-artifacts, expo-plugin, expo-modules,
- * podspecs, exclude, pods, patches, known-limits and entitlements. The four in between are left out when the project has no such field
+ * podspecs, exclude, pods (the binary pods' lines, then the pin lines), patches, known-limits and entitlements. The four in between are left out when the project has no such field
  * (no react-native, no expo), exclude without the config's `exclude` (one line per entry: info for the modules left
  * out, warn for a name it ignores), pods unless a pod pin misses a podspec's requirement, patches unless a patch's package is not
  * installed or a scaffold patch's pod pins are stale (one warning each, the build's line without its `⚠ `), and
  * known-limits when `limits` is undefined. `projectError` is why the project could not be read; a
  * `VersionGateError` fails the versions line.
  */
+/** The status a binary-pod line's mark stands for. */
+const POD_LINE_STATUS: Record<string, CheckResult["status"]> = { "✔": "ok", ℹ: "info", "⚠": "warn", "✖": "fail" };
+
 export function capabilityChecks(c: Capabilities, projectError?: unknown): DoctorCheck[] {
   const supported = unsupportedReason(c) === undefined;
   const lines: [string, CheckResult | undefined][] = [
@@ -409,7 +428,17 @@ export function capabilityChecks(c: Capabilities, projectError?: unknown): Docto
       // The ℹ line starts with the check's own name, which the report prints already.
       detail: line.replace(/^[ℹ⚠] /, "").replace(/^exclude — /, ""),
     })),
-    ...(c.podPins ?? []).map((line) => ({ name: "pods", status: "warn" as const, detail: line.replace(/^⚠ /, "") })),
+    ...(c.binaryPods ?? []).map((line) => ({
+      name: "pods",
+      status: POD_LINE_STATUS[line[0]!] ?? ("info" as const),
+      // The line starts with the check's own name, which the report prints already.
+      detail: line.replace(/^[✔ℹ⚠✖] pods — /, ""),
+    })),
+    ...(c.podPins ?? []).map((line) => ({
+      name: "pods",
+      status: line.startsWith("ℹ ") ? ("info" as const) : ("warn" as const),
+      detail: line.replace(/^[⚠ℹ] /, ""),
+    })),
     ...[...(c.orphanPatches ?? []), ...(c.scaffoldPins ?? [])].map((line) => ({
       name: "patches",
       status: "warn" as const,
@@ -538,6 +567,14 @@ export async function doctorWithProbes(
   }
   // Every build's frameworks step (G4) runs it, with no bypass: a missing one fails here instead of minutes into a build.
   await add("llvm-nm", async () => ({ status: "ok", detail: `LLVM ${await p.llvmNmVersion()}` }));
+  // The pods step wraps binary pods' objects with it: missing, it fails a project with binary pods and warns otherwise.
+  await add("llvm-ar", async () => {
+    try {
+      return { status: "ok", detail: `LLVM ${await p.llvmArVersion()}` };
+    } catch (e) {
+      return { status: root !== undefined && p.hasBinaryPods(root) ? "fail" : "warn", detail: message(e) };
+    }
+  });
   await add("xtool", async () => {
     if (!p.xtoolInstalled()) return { status: "fail", detail: "not found — run rn-xtool setup" };
     const v = await p.xtoolVersion();

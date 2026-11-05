@@ -1,0 +1,36 @@
+{
+  "name": "GoogleUtilities",
+  "version": "8.1.5",
+  "summary": "Placeholder summary",
+  "homepage": "https://example.invalid/GoogleUtilities",
+  "license": { "type": "Apache-2.0", "file": "LICENSE" },
+  "authors": "Google, Inc.",
+  "source": { "git": "https://example.invalid/git/GoogleUtilities.git", "tag": "CocoaPods-8.1.5" },
+  "platforms": { "ios": "12.0", "osx": "10.15", "tvos": "13.0", "watchos": "7.0" },
+  "subspecs": [
+    { "name": "Privacy", "resource_bundles": { "GoogleUtilities_Privacy": "GoogleUtilities/Privacy/Resources/PrivacyInfo.xcprivacy" } },
+    {
+      "name": "Environment",
+      "source_files": ["GoogleUtilities/Environment/**/*.[mh]"],
+      "dependencies": { "GoogleUtilities/Privacy": [] },
+      "frameworks": ["Security"]
+    },
+    {
+      "name": "Logger",
+      "source_files": ["GoogleUtilities/Logger/**/*.[mh]"],
+      "dependencies": { "GoogleUtilities/Environment": [], "GoogleUtilities/Privacy": [] }
+    },
+    {
+      "name": "Reachability",
+      "source_files": ["GoogleUtilities/Reachability/**/*.[mh]"],
+      "dependencies": { "GoogleUtilities/Privacy": [], "GoogleUtilities/Logger": [] },
+      "ios": { "frameworks": ["SystemConfiguration"] },
+      "osx": { "frameworks": ["SystemConfiguration"] }
+    },
+    {
+      "name": "UserDefaults",
+      "source_files": ["GoogleUtilities/UserDefaults/**/*.[mh]"],
+      "dependencies": { "GoogleUtilities/Logger": [], "GoogleUtilities/Privacy": [] }
+    }
+  ]
+}

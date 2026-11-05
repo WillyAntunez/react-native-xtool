@@ -1,0 +1,16 @@
+{
+  "name": "MLKitTextRecognitionChinese",
+  "version": "5.0.0",
+  "summary": "Placeholder summary",
+  "homepage": "https://example.invalid/ml-kit/guides",
+  "license": { "type": "Copyright", "text": "Copyright 2024 Google LLC" },
+  "authors": "Google, Inc.",
+  "source": { "http": "https://example.invalid/dl/MLKitTextRecognitionChinese-5.0.0.tar.gz" },
+  "platforms": { "ios": "15.5" },
+  "dependencies": { "MLKitCommon": "~> 13.0", "MLKitTextRecognitionCommon": ["5.0.0"], "MLKitVision": "~> 9.0" },
+  "frameworks": ["Accelerate", "AVFoundation", "CoreGraphics", "CoreImage", "CoreMedia", "CoreVideo", "Foundation", "UIKit"],
+  "libraries": ["c++"],
+  "preserve_paths": ["CHANGELOG.md", "README.md", "NOTICES"],
+  "resource_bundles": { "ChineseOCRResources": ["Resources/ChineseOCRResources/**"] },
+  "vendored_frameworks": ["Frameworks/MLKitTextRecognitionChinese.framework"]
+}

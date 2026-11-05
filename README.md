@@ -41,8 +41,9 @@ and prebuilt artifacts it would use, Expo's plugin and modules, podspec features
 device checks ([details](docs/troubleshooting.md#doctor---project)).
 
 CocoaPods is not needed: the `Podfile` is ignored. Any library with a podspec is tried automatically (CocoaPods-only
-ones get a generated `Package.swift`); [docs/libraries.md](docs/libraries.md) lists the ones verified on a device and
-what does not work yet (library resource bundles, vendored binaries, Xcode-only tools).
+ones get a generated `Package.swift`, and the pods they depend on come from SwiftPM packages or, for pods of prebuilt
+binaries, from the CocoaPods CDN); [docs/libraries.md](docs/libraries.md) lists the ones verified on a device and what
+does not work yet (a library's own vendored binaries, Xcode-only tools).
 
 ## Before you start
 
@@ -113,6 +114,28 @@ rn-xtool's own version) and compares them with the last successful build and ins
 - `run --network` installs over Wi‑Fi, no cable, after a one-time USB pairing
   ([docs/wifi-install.md](docs/wifi-install.md)).
 
+## CocoaPods binaries
+
+Some libraries depend on CocoaPods pods that ship prebuilt static binaries instead of sources, such as Google's ML Kit
+behind @react-native-ml-kit/text-recognition. rn-xtool reads their specs from the CocoaPods CDN, downloads the files on
+your machine, wraps them for SwiftPM and links them, with no CocoaPods or Ruby. ML Kit text recognition 2.0.0 builds
+this way on bare React Native 0.88.1 (checked by building on 2026-11-05; not run on a device yet).
+
+- Before the first download, `build` names the files, their sizes, the host and the vendor, with the vendor's terms:
+  `ℹ pods — @react-native-ml-kit/text-recognition needs 10 CocoaPods binaries that are not in rn-xtool's cache, 40.3 MB
+  from dl.google.com: … From Google, Inc. (…; terms: https://developers.google.com/ml-kit/terms). …`. The files are
+  Google's, under the ML Kit Terms; rn-xtool downloads them for your own build and does not accept the terms for you.
+- It records each file's sha256 in `rn-xtool-pods.lock.json` at the project root: commit it, so other machines check
+  that they get the same files. The files are kept in `~/.cache/rn-xtool/pods`; the copies a build puts in the app's
+  folders are git-ignored, and none reaches `patches/`.
+- Disk: before the first download, `build` checks for about 8 times the download size. For ML Kit's 40.3 MB, the
+  cache then holds about 237 MB and each app about 66 MB of copies; the app grows by about 53 MB.
+- With the lock and a full cache, the `pods` step makes no request, so a rebuild works without internet (with
+  `ios-xtool/.build` kept; with no network at all, set `lanIp` in `rn-xtool.config.json`). `"exclude"` in
+  `rn-xtool.config.json` still builds the app without the library.
+
+Details, every message and what to do: [docs/troubleshooting.md](docs/troubleshooting.md#cocoapods-binaries).
+
 ## Commands
 
 | Command | What it does |
@@ -144,7 +167,7 @@ CommonJS (`module.exports = {...}`) unless your project is ESM. Both are merged,
 | `xtoolPath` | managed copy | Use a specific xtool binary in `setup`, `doctor` and `install` (`setup` skips the download; it must exist and be executable). |
 | `projectKind` | auto-detected | `"expo"` or `"bare"`, to skip [project detection](docs/bare-react-native.md#detection). |
 | `knownLimits` | none | `{ "allow": [...] }`: build anyway a setup rn-xtool refuses early. List a package name, or `"pnpm"`, `"pnp"` or `"hoisted"`; the refusal becomes a warning, and the build may fail later ([details](docs/troubleshooting.md#unsupported-setups)). |
-| `pods` | rn-xtool's table | `{ "<pod>": { "url", "exact", "products" } }`: the SwiftPM package for a CocoaPods pod a library depends on, merged over rn-xtool's own entries (AppAuth, SwiftUIIntrospect) field by field ([details](docs/troubleshooting.md#libraries-that-depend-on-cocoapods-pods)). |
+| `pods` | rn-xtool's table | `{ "<pod>": { "url", "exact", "products" } }`: the SwiftPM package for a CocoaPods pod a library depends on, merged over rn-xtool's own entries (AppAuth, SwiftUIIntrospect, the source pods ML Kit needs) field by field ([details](docs/troubleshooting.md#libraries-that-depend-on-cocoapods-pods)). |
 | `exclude` | none | `["<package>"]`: native modules left out of rn-xtool's iOS builds, without touching `react-native.config.js` ([details](docs/troubleshooting.md#leaving-a-module-out)). |
 
 **Entitlements.** `build` reads the file `CODE_SIGN_ENTITLEMENTS` names in the app target's Debug configuration (on
@@ -165,12 +188,13 @@ prints a `⚠` line for each key a free team does not get, such as push notifica
 - Bare projects: one app target and one `.xcodeproj`, always built for iOS 16.4; `.xcconfig` files, capabilities,
   script phases, storyboards, asset catalogs (except the app icon) and `.xib` files are not used; entitlements come
   from the Debug `CODE_SIGN_ENTITLEMENTS` file ([details](docs/bare-react-native.md#limits)).
-- Metal shaders are not compiled on Linux: react-native-svg's Metal filters are unavailable.
+- Metal shaders are not compiled on Linux. react-native-svg's filters use the prebuilt `*.metallib` files it ships,
+  which reach the app in `RNSVGFilters.bundle` (checked by building; not yet on a device).
 - `doctor --project` and `build` refuse early, with the reason and a link, the setups rn-xtool knows it cannot build
-  yet: CocoaPods-only libraries with prebuilt binaries (async-storage 3.x) or that depend on a CocoaPods pod without a
-  known SwiftPM package (ML Kit), Expo modules that build vendored C sources (expo-sqlite), pnpm and Yarn PnP installs,
-  and react-native or expo hoisted to a parent folder. `knownLimits.allow`
-  in `rn-xtool.config.json` builds them anyway. Other unsupported setups still fail during the build
+  yet: CocoaPods-only libraries with prebuilt binaries of their own (async-storage 3.x) or that depend on a CocoaPods
+  pod from a git source without a known SwiftPM package, Expo modules that build vendored C sources (expo-sqlite),
+  pnpm and Yarn PnP installs, and react-native or expo hoisted to a parent folder. `knownLimits.allow` in
+  `rn-xtool.config.json` builds them anyway. Other unsupported setups still fail during the build
   ([details](docs/troubleshooting.md#unsupported-setups)).
 - A daily drift watch checks the newest patch of each supported line (version gates, bundled patches, portable library
   manifests) and opens an issue in this repo when one breaks. It does not compile or run the app, so a patch release it

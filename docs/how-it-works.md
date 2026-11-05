@@ -5,7 +5,7 @@ runs on Linux (React Native 0.85, 0.86 and 0.87 and Expo SDK 57, which ship none
 a SwiftPM package for your app in `ios-xtool/`, and hands it to [xtool](https://github.com/xtool-org/xtool), which
 builds, signs and installs it with the Darwin SDK extracted from your own `Xcode.xip`. This page is the overview
 (toolchain, patches, build steps, Expo SDK 58 and 57, rebuild detection, the first launch, dev-client discovery,
-scaffolded libraries); [recipe.md](recipe.md) has every step with file locations.
+scaffolded libraries, CocoaPods binaries); [recipe.md](recipe.md) has every step with file locations.
 
 [Back to README](../README.md)
 
@@ -32,7 +32,12 @@ scaffolded libraries); [recipe.md](recipe.md) has every step with file locations
 
 ## The build, step by step
 
-1. Applies the bundled patches to `node_modules` with patch-package, on Expo projects and bare React Native 0.88.x
+1. When a library depends on CocoaPods pods that ship prebuilt binaries (Google's ML Kit), the `pods` step comes
+   first, before `expo prebuild` and anything else that changes the project: it reads the pods' specs from the
+   CocoaPods CDN, downloads the files and checks them against `rn-xtool-pods.lock.json`, and wraps them for SwiftPM
+   in rn-xtool's cache ([CocoaPods binaries](#cocoapods-binaries)). Then, on Expo, `expo prebuild` when `ios/` is
+   missing.
+2. Applies the bundled patches to `node_modules` with patch-package, on Expo projects and bare React Native 0.88.x
    projects (each patch only when its package is installed, so a bare project without Expo modules gets only the
    React Native one). Bare 0.85, 0.86 and 0.87 projects get none: the fixes live in the vendored scripts. An Expo SDK 57
    project gets only the patches of its installed versions' release lines, which is `expo-modules-jsi+57.1.3.patch`
@@ -51,9 +56,10 @@ scaffolded libraries); [recipe.md](recipe.md) has every step with file locations
      such as expo-sqlite ([upstream/expo-spm-plugin-mixed-modules.md](upstream/expo-spm-plugin-mixed-modules.md)).
    - **React Native** (`patches/react-native+0.88.1.patch`, and its identical copy `react-native+0.88.0.patch` for bare
      0.88.0; about 3.0k lines across 3 files under
-     `react-native/scripts/spm/`: `read-podspec.js`, `scaffold-package-swift.js`, `spm-utils.js`): 24 generic fixes to
+     `react-native/scripts/spm/`: `read-podspec.js`, `scaffold-package-swift.js`, `spm-utils.js`): 25 generic fixes to
      the `spm scaffold` podspec reader and `Package.swift` generator, including mixed Swift + Objective-C/C++ targets,
-     CocoaPods dependencies mapped to SwiftPM packages through a pod table file, the Swift importer paths of mixed
+     CocoaPods dependencies mapped to SwiftPM packages through a pod table file (or to the local package of CocoaPods
+     binaries), the Swift importer paths of mixed
      targets, dependencies on
      packages that are not installed left out, the Swift 5 language mode and Swift compilation conditions, plus two to
      the per-app header farm ([upstream/react-native-scaffolder.md](upstream/react-native-scaffolder.md)).
@@ -64,17 +70,18 @@ scaffolded libraries); [recipe.md](recipe.md) has every step with file locations
    Packages linked from outside the project are skipped, with a line saying so. Today the snippet is `CFGetTypeID`,
    checked in react-native-reanimated 4.7.1 and react-native-worklets 0.13.0 and 0.13.1
    ([upstream/reanimated-worklets-manifest.md](upstream/reanimated-worklets-manifest.md)).
-2. Bare projects on the vendored SwiftPM scripts (React Native 0.85, 0.86 or 0.87), and Expo SDK 57 projects, first run
+3. Bare projects on the vendored SwiftPM scripts (React Native 0.85, 0.86 or 0.87), and Expo SDK 57 projects, first run
    the `rn-artifacts` step (downloads
    and, for 0.85 and 0.86, adapts the prebuilt artifacts, see
    [bare-react-native.md](bare-react-native.md#older-artifacts-085-086)).
    Then runs React Native 0.88's SwiftPM pipeline (the vendored copy for 0.85, 0.86 and 0.87, see
    [below](#vendored-swiftpm-scripts)) and Expo's SPM plugin (the vendored copy for SDK 57, see
-   [Expo SDK 57](#expo-sdk-57)), with Linux shims for `plutil` and `otool`.
-3. Builds ExpoModulesJSI with the Darwin SDK and stages the runtime frameworks. On Expo SDK 57 the JSI build runs before
-   step 2, because the vendored plugin needs its headers. Before staging, the `frameworks` step checks that the
+   [Expo SDK 57](#expo-sdk-57)), with Linux shims for `plutil` and `otool`. With CocoaPods binaries, the
+   `pod-binaries` step writes the local package the scaffolds link, `ios/build/pod-binaries`, right before.
+4. Builds ExpoModulesJSI with the Darwin SDK and stages the runtime frameworks. On Expo SDK 57 the JSI build runs before
+   step 3, because the vendored plugin needs its headers. Before staging, the `frameworks` step checks that the
    frameworks fit together ([G4](#precompiled-frameworks-g4)).
-4. Generates `ios-xtool/` (Package.swift, xtool.yml, Info.plist, ip.txt, app config). It is a regenerable artifact; do
+5. Generates `ios-xtool/` (Package.swift, xtool.yml, Info.plist, ip.txt, app config). It is a regenerable artifact; do
    not edit it by hand. It also gets:
    - the app's entitlements, as `App.entitlements`, when the file `CODE_SIGN_ENTITLEMENTS` names has keys
      ([Entitlements](#entitlements));
@@ -86,9 +93,12 @@ scaffolded libraries); [recipe.md](recipe.md) has every step with file locations
    - `AppIcon.png`, the app icon taken from `Images.xcassets/AppIcon.appiconset`, named by `iconPath` in `xtool.yml`
      ([details](troubleshooting.md#app-icon-and-launch-screen));
    - for apps with `expo-dev-client`, `DEV_CLIENT_DEFAULT_LAUNCHER_URL = http://<lanIp>:<metroPort>` and `_expo._tcp`
-     in `NSBonjourServices` in Info.plist ([Dev-client discovery](#dev-client-discovery)).
-5. Gives CocoaPods-only libraries a `Package.swift` (see [below](#cocoapods-only-libraries)).
-6. `xtool` builds, signs and installs the app; Metro serves JS to the phone over Wi‑Fi.
+     in `NSBonjourServices` in Info.plist ([Dev-client discovery](#dev-client-discovery));
+   - the resource bundles of the CocoaPods binaries and of scaffolded libraries, under `Resources/`, and, with
+     CocoaPods binaries, their link flags on the App target ([CocoaPods binaries](#cocoapods-binaries)).
+6. Gives CocoaPods-only libraries a `Package.swift` (see [below](#cocoapods-only-libraries)).
+7. `xtool` builds, signs and installs the app; Metro serves JS to the phone over Wi‑Fi. With CocoaPods binaries,
+   rn-xtool checks the packed `App.app` before anything installs it.
 
 Bare React Native projects follow the same steps with a few differences (no `expo prebuild`, no injection into your
 Xcode project, ExpoModulesJSI only with Expo modules): see [bare-react-native.md](bare-react-native.md).
@@ -342,9 +352,11 @@ patch above is what makes that scaffolder work for real-world podspecs.
   `Scaffolding <library> failed: <reason>`, followed by that library's own warnings, one block per failed library.
   Nothing is persisted for a failed library, and React Native does not run a second time
   ([troubleshooting.md](troubleshooting.md#scaffolded-libraries)).
-- After `rn-spm`, `build` prints one `ℹ Not copied into the app: …` line naming the scaffolded libraries whose podspec
-  declares resources (`resource_bundles`, `resources`): the scaffolded `Package.swift` holds no resources, and
-  rn-xtool copies no bundle into `App.app`.
+- The scaffolded `Package.swift` holds no resources. rn-xtool builds the library's unconditional `resource_bundles`
+  whose names and globs are plain strings as `<name>.bundle` at the root of `App.app` (react-native-svg's
+  `RNSVGFilters.bundle`, react-native-device-info's privacy bundle; [CocoaPods binaries](#cocoapods-binaries)). After
+  `rn-spm`, `build` prints one `ℹ Not copied into the app: …` line naming what still does not arrive: plain
+  `resources`, and bundles whose name or files are Ruby code.
 
 - rn-xtool persists the generated file in your project's `patches/` with patch-package: commit those files.
 - On every build the `patches` step applies rn-xtool's own patches and then your project's `patches/` (when present),
@@ -364,8 +376,9 @@ patch above is what makes that scaffolder work for real-world podspecs.
   `patches` step naming the file to delete and the library to reinstall; rn-xtool then regenerates it.
 - Before anything is scaffolded, `doctor --project` and `build` check every dependency's podspec. A CocoaPods-only
   library whose podspec declares prebuilt binaries (`vendored_frameworks`, `vendored_libraries`) cannot be scaffolded
-  yet: the generated `Package.swift` cannot link them. Neither can one that depends on a pod the pod table does not
-  map ([Third-party pods](#third-party-pods)). `build` stops on it before it changes anything, with the reason
+  yet: the generated `Package.swift` cannot link them. Neither can one that depends on a git-source pod the pod table
+  does not map ([Third-party pods](#third-party-pods)); a pod of prebuilt binaries is downloaded and linked instead
+  ([CocoaPods binaries](#cocoapods-binaries)). `build` stops on it before it changes anything, with the reason
   and a link, instead of failing minutes later in the build. Expo modules are left to Expo's plugin, which
   links their binaries; an Expo module that builds C sources from its `vendor/` folder (expo-sqlite) is refused the
   same way. A `Package.swift` the library ships or your `patches/` create counts, and `knownLimits.allow` in
@@ -387,12 +400,15 @@ The scaffolder classifies each `s.dependency` on an unconditional line of a pods
   `RNWorklets`): wired to that package;
 - a sibling autolinking does not link: left out, with the subspec that declares it;
 - a pod in the pod table: a `.package(url:exact:)` dependency plus its products;
+- a pod of prebuilt binaries the `pods` step resolved: `.package(path:)` to `build/pod-binaries` plus its product
+  ([CocoaPods binaries](#cocoapods-binaries));
 - anything else: unmapped, with a warning.
 
 **The pod table** is merged per pod, field by field, in this order, the later winning: the scaffolder's own baseline
-(SwiftUIIntrospect), rn-xtool's `data/pods.json` (AppAuth), then the `pods` of `rn-xtool.config.json`. rn-xtool
-writes the merged table to `ios/build/rn-xtool-pods.json` and names it in `RN_SPM_POD_TABLE` for every React Native
-run of the `rn-spm` step; without it the scaffolder falls back to its baseline. A mapped pod's `forwardHeaders` become
+(SwiftUIIntrospect), rn-xtool's `data/pods.json` (AppAuth, and the source pods ML Kit reaches), then the `pods` of
+`rn-xtool.config.json`. rn-xtool writes the merged table to `ios/build/rn-xtool-pods.json`, with the binary pods the
+`pods` step resolved, and names it in `RN_SPM_POD_TABLE` for every React Native run of the `rn-spm` step; without it
+the scaffolder falls back to its baseline. A mapped pod's `forwardHeaders` become
 `rn-spm-pod-headers/<Dir/Header.h>` files in the library, each holding `@import <module>;` lines, on the library's
 header search path: AppAuth's umbrella header is outside its SwiftPM targets, and react-native-app-auth imports it as
 `<AppAuth/AppAuth.h>`. Each manifest records the pods it pins on a marker line, `// rn-xtool-pods: AppAuth=3.0.0`.
@@ -401,7 +417,8 @@ header search path: AppAuth's umbrella header is outside its SwiftPM targets, an
 the scaffolder, never the project's. They read podspecs as text, with no `pod ipc` and no network. The linked
 packages are those autolinking links: on bare, what package.json lists in `dependencies`, `devDependencies` and
 `peerDependencies`; on Expo, every installed package too. A library rn-xtool would scaffold is refused when it
-depends on an unmapped pod, and on bare when it depends by pod name on a package that is installed but not listed in
+depends on an unmapped pod whose spec in rn-xtool's cache is a git source (the `pods` step decides for one it has
+not read yet), and on bare when it depends by pod name on a package that is installed but not listed in
 package.json ([troubleshooting.md](troubleshooting.md#libraries-that-depend-on-cocoapods-pods)). A pin whose version
 misses the podspec's requirement (`=`, `>`, `>=`, `<`, `<=`, `~>`, several of them) gets a `⚠` line, not a refusal.
 
@@ -411,6 +428,107 @@ persisted patch is removed so the `rn-spm` step scaffolds it again.
 
 SwiftPM fetches a mapped pod's package from GitHub during `xtool dev build`, as for any package dependency: the first
 clean build needs the network, and offline builds with `rnArtifactsDir` need it already in `ios-xtool/.build`.
+
+## CocoaPods binaries
+
+A pod that ships prebuilt static binaries, such as Google's ML Kit, has no SwiftPM package for the pod table to map.
+rn-xtool builds one from the vendor's files, in two steps of `build`. The messages, and what to do about each, are in
+[troubleshooting.md](troubleshooting.md#cocoapods-binaries).
+
+**`pods`** runs first, before `expo prebuild` and the patches, so a stop leaves the project as it was:
+
+1. **Roots.** Each unconditional `s.dependency` of a library rn-xtool would scaffold that the classifier finds unmapped
+   (a table entry always wins), unless the library is left out (`exclude`, `platforms.ios: null`,
+   `expo.autolinking.exclude`).
+2. **Specs, without Ruby.** The CocoaPods CDN serves every trunk spec as JSON
+   (`https://cdn.cocoapods.org/Specs/<a>/<b>/<c>/<Pod>/<version>/<Pod>.podspec.json`, where `<a>`, `<b>` and `<c>`
+   are the first three hex digits of the pod name's md5; it redirects to jsDelivr), and one version list per shard
+   (`all_pods_versions_<a>_<b>_<c>.txt`). rn-xtool reads them with Node's `fetch` and its own `User-Agent`. A spec is
+   cached per version under `~/.cache/rn-xtool/pods/specs` and never read again: CocoaPods trunk is read-only from
+   2026-12-02. A reset connection or a 5xx answer is read once more.
+3. **The resolver.** Requirements come from the libraries and from the binary pods themselves (a string or a list;
+   `=`, `>`, `>=`, `<`, `<=`, `~>`). Each pod gets the newest listed version that meets all of them, greedily, without
+   backtracking, and a prerelease only when a requirement names one; the version `rn-xtool-pods.lock.json` records is
+   kept while it meets them. Dependencies are walked through binary pods only: a pod the table maps brings its own
+   through its `Package.swift`. Each pod's route comes from its spec: an http archive with static
+   `vendored_frameworks` is binary, one whose selected subspecs hold only headers is binary and headers-only, a git
+   source goes to the table (or is refused), and any other shape stops.
+4. **Download and verify.** Before the first download, one `ℹ` line names the libraries, the files and their sizes
+   (HEAD requests), the hosts, and each vendor's authors, license texts, homepage and terms page (from
+   `data/pod-terms.json`), and the free space is checked: 8 times the downloads on the cache's filesystem, or, when
+   the project is on another one, 6 times there and 2 times (the per-app copies) on the project's. Each file
+   goes to `downloads/<sha256>.<ext>` through a temporary file per process, with its size checked against
+   `Content-Length`, one retry, then its sha256 against the lock (and the spec's own `sha256` or `sha1`, when it names
+   one). A cached file is hashed again before reuse. A URL that is not https, or a redirect to plain http, is refused
+   unless the lock records the file.
+5. **Extract.** The archive is listed first (`tar -tzvf`, or `unzip -Z` for a `.zip`), and an absolute path, a `..`
+   segment, a device file or a link out of the tree refuses it. Only what the spec needs is unpacked (the vendored
+   frameworks, the resource-bundle globs, header `source_files`, `preserve_paths`, the module map), with the source's
+   `flatten` honoured, into `extracted/<sha256>-<stamp hash>`. The tree is assembled beside it, swapped in whole, and
+   stamped last.
+6. **Wrap.** A small Mach-O reader stands in for `llvm-lipo`, which the toolchain does not ship. It cuts the arm64
+   slice out of a fat binary; a simulator slice, a missing arm64 slice, a dynamic framework or a Swift framework stops.
+   An `ar` slice is kept as it is, and an `MH_OBJECT` slice (MLKitTextRecognitionCommon's) is wrapped into an archive
+   with `llvm-ar rcs --format=darwin`. Each framework becomes a **headers-only xcframework**: one `ios-arm64` library
+   slice with an empty placeholder archive and `Headers/<Name>/`, holding the framework's headers and its module map.
+   The map is rewritten by content (the leading `framework` keyword goes, the `link` lines stay, so autolinking still
+   works), or generated from `Headers/<Name>.h`. The real thin archive sits beside it, as `archives/lib<Name>.a`, in
+   `wrapped/<sha256>-<stamp hash>`. The privacy manifests inside the frameworks are named in one `ℹ` line.
+7. **The lock** is written when the step succeeds and its content changed, through a temporary file and a rename.
+
+A cache tree's stamp records the `EXTRACTOR_VERSION` (extraction) or `WRAPPER_VERSION` (wrapping) that made it, and
+its file count and size; a tree another version made, or whose files changed, is built again. With the lock and every
+file in the cache, the step makes no request. Temporary files older than 24 hours are removed when it starts.
+
+**`pod-binaries`** runs right before `rn-spm`, on every build:
+
+- `ios/build/pod-binaries` is the local package `pod-binaries`: a `Package.swift` (tools 6.0, the app's deployment
+  target, as the scaffolds read it) with one `.binaryTarget(name:path:)` per xcframework, and one product per root
+  pod (`GoogleMLKit`). The product lists its binary targets, which puts their headers on the library directly, and a
+  small wrapper C target (`wrapper.c` and `include/<Wrapper>.h`) that depends on the source pods' products, declared
+  as `.package(url:exact:)` from the pod table. When two libraries name subspecs of one pod, the product covers them
+  all, as CocoaPods installs one pod with every subspec requested.
+- `xcframeworks/` and `archives/` are copies of the cache, never links, so an edit there never reaches the cache. They
+  keep the cache's modification times, and the generated files are rewritten only when their content changes, so a
+  build with nothing changed processes nothing again. `.gitignore` holds `*`. Nothing is written under
+  `node_modules`, so `patches/` never holds the vendor's files.
+- The scaffolder (fix 27 in [upstream/react-native-scaffolder.md](upstream/react-native-scaffolder.md)) emits
+  `.package(path:)` to `build/pod-binaries`, relative to the `libs/<SwiftName>` symlink, and `.product(name:
+  "GoogleMLKit", package: "pod-binaries")`. The marker records `GoogleMLKit=binary` without a version (the lock holds
+  the versions), so a persisted scaffold stays portable and a version change does not make it stale.
+
+**`generate`** links the archives on the App target in `ios-xtool/Package.swift`, regenerated on every build and never
+persisted: one `-Xlinker -force_load -Xlinker <archive>` per archive (no `-all_load`, which would also pull in every
+member of React Native's archives), the specs' `frameworks`, `libraries` and `weak_frameworks`, and, with binary pods
+only, `-Xlinker -no_objc_relative_method_lists`, without which xtool's `ld64.lld` crashes on
+MLKitTextRecognitionCommon's object. SwiftPM never sees the real archive, so nothing links it twice, and `-force_load`
+keeps the archives' `+load` classes, which register ML Kit's components. For a table entry's `emptyTargets`
+(GoogleToolboxForMac's `GTMDefines`, a target without sources that Swift Build lists at link anyway), rn-xtool writes
+the empty arm64 object clang writes for an empty C file at `ios-xtool/.build/out/Products/Debug-iphoneos/<Target>.o`
+before `xtool-build`, and `install` writes it again before xtool builds.
+
+**Resource bundles.** The pods' `resource_bundles`, and the unconditional ones of scaffolded libraries whose names and
+globs are plain strings, become `ios-xtool/Resources/<Key>.bundle`, each with an `Info.plist` holding CocoaPods' keys,
+listed under `resources:` in `xtool.yml`. xtool copies each to `App.app/<Key>.bundle`, where the code finds it by name
+in the main bundle (ML Kit's five OCR models, react-native-svg's filters). The files are copies with their
+modification times. Two bundles of one name, or one named like an app resource, stop `generate`.
+
+**After `xtool-build`**, the post-pack checks read `App.app` with `llvm-nm` and file reads: every pod's bundle with its
+`Info.plist`; no binary target embedded under `Frameworks/` (xtool embeds a framework binary that is not an `ar`
+archive as a dynamic one, xtool issue #130); and every `_OBJC_CLASS_$_` a force-loaded archive defines is in the App
+binary, which is how a dropped `+load` class shows. A failure removes `App.app` and stops. `build` records what the
+checks read, with the empty targets, in the build state, and `install` (so `run` too) has xtool build the app, runs the
+same checks on it, and installs only an app that passes. Before that, `install` stages `ios/build/pod-binaries` and
+the pods' bundles again from the lock and the cache when they are gone since the build.
+
+**Data.** `data/pods.json` maps the source pods ML Kit reaches (GTMSessionFetcher, GoogleUtilities, GoogleDataTransport,
+GoogleToolboxForMac), with GoogleToolboxForMac's checked `outsideRequirement` and its `emptyTargets`.
+`data/pod-terms.json` maps a spec homepage to its vendor's terms page, for the line before the first download.
+
+**ML Kit text recognition**, in the build-only proof on bare React Native 0.88.1 (2026-11-05; not run on a device yet):
+ten binary pods and four source pods; 40.3 MB downloaded from dl.google.com; the `pods` step took 7.5 s on the first
+build and 0.1 s offline later; nine `-force_load`s; the cache took 237 MB and the app's copies 66 MB; `App.app` grew by
+53 MB (the App binary by 40.3 MB); `ios-xtool/.build` took about 0.84 GB.
 
 ## Leaving a module out
 

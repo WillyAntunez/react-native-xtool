@@ -17,6 +17,7 @@ import type { Capabilities, PodspecFeature } from "../src/project/capabilities.j
 import { DetectError, VersionGateError } from "../src/project/detect.js";
 import { MissingBundleIdentifierError } from "../src/project/index.js";
 import { LLVM_NM_MISSING } from "../src/pipeline/symbols.js";
+import { LLVM_AR_MISSING } from "../src/pods/ar.js";
 import { NODE_MIN, XTOOL_SHA256, XTOOL_VERSION } from "../src/versions.js";
 import { fakeExpo57Modules } from "./support/expo57.js";
 import { fakeExpo58Modules } from "./support/expo58.js";
@@ -69,6 +70,8 @@ const good: DoctorProbes = {
   nodeVersion: () => "24.15.0",
   swiftVersion: async () => "6.4",
   llvmNmVersion: async () => "21.0.0",
+  llvmArVersion: async () => "21.0.0",
+  hasBinaryPods: () => false,
   xtoolPath: () => "/cache/xtool.AppImage",
   xtoolInstalled: () => true,
   xtoolVersion: async () => `xtool ${XTOOL_VERSION}`,
@@ -121,7 +124,7 @@ describe("doctorWithProbes", () => {
     const r = await doctorWithProbes(good);
     expect(r.ok).toBe(true);
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "swift", "llvm-nm", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
+      "node", "swift", "llvm-nm", "llvm-ar", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
     ]);
     expect(r.checks.every((c) => c.status === "ok")).toBe(true);
   });
@@ -182,6 +185,28 @@ describe("doctorWithProbes", () => {
     });
     expect(r.ok).toBe(false);
     expect(r.checks.find((c) => c.name === "llvm-nm")).toEqual({ name: "llvm-nm", status: "fail", detail: LLVM_NM_MISSING });
+  });
+
+  it("prints the llvm-ar line after llvm-nm", async () => {
+    const r = await doctorWithProbes(good);
+    expect(r.checks.find((c) => c.name === "llvm-ar")).toEqual({ name: "llvm-ar", status: "ok", detail: "LLVM 21.0.0" });
+  });
+
+  it("fails on a missing llvm-ar only when the project has binary pods, and warns otherwise", async () => {
+    const noAr = {
+      ...good,
+      llvmArVersion: async () => {
+        throw new Error(LLVM_AR_MISSING);
+      },
+    };
+    const roots: string[] = [];
+    const locked = await doctorWithProbes({ ...noAr, hasBinaryPods: (root) => (roots.push(root), true) }, "/proj");
+    expect(roots).toEqual(["/proj"]);
+    expect(locked.ok).toBe(false);
+    expect(locked.checks.find((c) => c.name === "llvm-ar")).toEqual({ name: "llvm-ar", status: "fail", detail: LLVM_AR_MISSING });
+    const none = await doctorWithProbes(noAr, "/proj");
+    expect(none.checks.find((c) => c.name === "llvm-ar")).toEqual({ name: "llvm-ar", status: "warn", detail: LLVM_AR_MISSING });
+    expect((await doctorWithProbes(noAr)).checks.find((c) => c.name === "llvm-ar")?.status).toBe("warn");
   });
 
   it("fails on swift older than required", async () => {
@@ -346,7 +371,7 @@ describe("doctorWithProbes", () => {
     const r = await doctorWithProbes({ ...good, ufwActive: async () => true, buildState: async () => ({ metroPort: 8099, lanIp: "1.2.3.4" }) }, "/p");
     expect(r.checks.find((c) => c.name === "firewall")?.detail).toContain("ufw allow 8099/tcp");
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "swift", "llvm-nm", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip", "project", "project-config", "build-state", "deps", "metro-port",
+      "node", "swift", "llvm-nm", "llvm-ar", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip", "project", "project-config", "build-state", "deps", "metro-port",
     ]);
   });
 
@@ -517,7 +542,7 @@ describe("doctor --project", () => {
 
   it("makes every probe but node, project and capabilities throw", () => {
     expect(Object.keys(forbidden([])).sort()).toEqual([
-      "authStatus", "buildState", "configLanIp", "depsFingerprint", "devices", "llvmNmVersion", "lanRoute", "portFree",
+      "authStatus", "buildState", "configLanIp", "depsFingerprint", "devices", "hasBinaryPods", "llvmArVersion", "llvmNmVersion", "lanRoute", "portFree",
       "sdkInstalled", "swiftVersion", "ufwActive", "wifi", "xtoolInstalled", "xtoolPath", "xtoolSha256", "xtoolVersion",
     ].sort());
   });
@@ -628,6 +653,38 @@ describe("doctor --project", () => {
     expect(none.checks.some((c) => c.name === "pods")).toBe(false);
   });
 
+  it("--project prints the binary pods' lines before the pin lines", async () => {
+    const lib = "@react-native-ml-kit/text-recognition";
+    const binaryPods = [
+      `✔ pods — 10 CocoaPods binaries for ${lib}, in rn-xtool's cache and in rn-xtool-pods.lock.json`,
+      "ℹ pods — rn-xtool-pods.lock.json also records MLKitFoo 1.0.0, which no library needs now; rn-xtool keeps these entries",
+      "⚠ pods — not checked: timed out after 10 s",
+      "✖ pods — MLKitFoo 1.0.0 is a .zip download, and unzip is not installed. Install it (sudo apt install unzip) and build again.",
+    ];
+    const pin = 'AppAuth 3.0.0 (rn-xtool table) is outside react-native-app-auth\'s requirement ">= 4.0"';
+    const r = await doctorWithProbes({ ...good, capabilities: async () => ({ ...expo58Caps, binaryPods, podPins: [`⚠ ${pin}`] }) }, "/proj", {
+      projectOnly: true,
+    });
+    expect(r.checks.filter((c) => c.name === "pods")).toEqual([
+      { name: "pods", status: "ok", detail: binaryPods[0]!.slice("✔ pods — ".length) },
+      { name: "pods", status: "info", detail: binaryPods[1]!.slice("ℹ pods — ".length) },
+      { name: "pods", status: "warn", detail: "not checked: timed out after 10 s" },
+      { name: "pods", status: "fail", detail: binaryPods[3]!.slice("✖ pods — ".length) },
+      { name: "pods", status: "warn", detail: pin },
+    ]);
+    expect(r.ok).toBe(false);
+    const none = await doctorWithProbes({ ...good, capabilities: async () => ({ ...expo58Caps, binaryPods: [] }) }, "/proj", { projectOnly: true });
+    expect(none.checks.some((c) => c.name === "pods")).toBe(false);
+  });
+
+  it("--project shows a checked pod pin as info", async () => {
+    const line = 'GoogleToolboxForMac 6.0.1 (rn-xtool table) is outside lib\'s requirement "~> 4.2": checked';
+    const r = await doctorWithProbes({ ...good, capabilities: async () => ({ ...expo58Caps, podPins: [`ℹ ${line}`] }) }, "/proj", {
+      projectOnly: true,
+    });
+    expect(r.checks.filter((c) => c.name === "pods")).toEqual([{ name: "pods", status: "info", detail: line }]);
+  });
+
   it("--project names scaffold patches with stale pod pins", async () => {
     const line = "patches/react-native-app-auth+8.5.1.patch pins AppAuth 3.0.0, the config says 3.1.0; delete it so rn-xtool regenerates it";
     const orphan = "patches/x+1.0.0.patch is for x, which is not installed; skipped. Delete it if you removed the library.";
@@ -695,7 +752,7 @@ describe("doctor --project", () => {
     );
     expect(called).toEqual([]);
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "swift", "llvm-nm", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
+      "node", "swift", "llvm-nm", "llvm-ar", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
       "project", "project-config", "build-state", "deps", "metro-port",
     ]);
     expect(r.capabilities).toBeUndefined();
@@ -704,7 +761,7 @@ describe("doctor --project", () => {
   it("withCapabilities appends the capability lines", async () => {
     const r = await doctorWithProbes(good, "/proj", { withCapabilities: true });
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "swift", "llvm-nm", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
+      "node", "swift", "llvm-nm", "llvm-ar", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
       "project", "project-config", "build-state", "deps", "metro-port",
       "versions", "rn-scripts", "rn-artifacts", "expo-plugin", "expo-modules", "podspecs",
     ]);

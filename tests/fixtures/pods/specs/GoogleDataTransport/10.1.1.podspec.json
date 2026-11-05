@@ -1,0 +1,17 @@
+{
+  "name": "GoogleDataTransport",
+  "version": "10.1.1",
+  "summary": "Placeholder summary",
+  "homepage": "https://example.invalid/GoogleDataTransport",
+  "license": { "type": "Apache-2.0", "file": "LICENSE" },
+  "authors": "Google, Inc.",
+  "source": { "git": "https://example.invalid/git/GoogleDataTransport.git", "tag": "CocoaPods-10.1.1" },
+  "platforms": { "ios": "12.0", "osx": "10.15", "tvos": "13.0", "watchos": "7.0" },
+  "source_files": ["GoogleDataTransport/GDTCORLibrary/**/*"],
+  "ios": { "frameworks": ["SystemConfiguration", "CoreTelephony"] },
+  "osx": { "frameworks": ["SystemConfiguration", "CoreTelephony"] },
+  "tvos": { "frameworks": "SystemConfiguration" },
+  "libraries": ["z"],
+  "dependencies": { "nanopb": ["~> 3.30910.0"], "PromisesObjC": ["~> 2.4"] },
+  "resource_bundles": { "GoogleDataTransport_Privacy": "GoogleDataTransport/Resources/PrivacyInfo.xcprivacy" }
+}

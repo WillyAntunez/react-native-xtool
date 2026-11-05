@@ -1,0 +1,27 @@
+{
+  "name": "GTMSessionFetcher",
+  "version": "3.5.0",
+  "authors": "Google Inc.",
+  "license": { "type": "Apache", "file": "LICENSE" },
+  "homepage": "https://example.invalid/gtm-session-fetcher",
+  "source": { "git": "https://example.invalid/git/gtm-session-fetcher.git", "tag": "v3.5.0" },
+  "summary": "Placeholder summary",
+  "cocoapods_version": ">= 1.12.0",
+  "platforms": { "ios": "10.0", "osx": "10.12", "tvos": "10.0", "visionos": "1.0", "watchos": "6.0" },
+  "prefix_header_file": false,
+  "default_subspecs": "Full",
+  "subspecs": [
+    {
+      "name": "Core",
+      "source_files": ["Sources/Core/**/*.{h,m}"],
+      "public_header_files": "Sources/Core/Public/GTMSessionFetcher/*.h",
+      "frameworks": "Security",
+      "resource_bundles": { "GTMSessionFetcher_Core_Privacy": ["Sources/Core/Resources/PrivacyInfo.xcprivacy"] }
+    },
+    {
+      "name": "Full",
+      "source_files": ["Sources/Full/**/*.{h,m}"],
+      "dependencies": { "GTMSessionFetcher/Core": [] }
+    }
+  ]
+}

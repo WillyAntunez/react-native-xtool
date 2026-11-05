@@ -1,0 +1,33 @@
+{
+  "name": "GoogleMLKit",
+  "version": "8.0.0",
+  "summary": "Placeholder summary",
+  "homepage": "https://example.invalid/ml-kit/guides",
+  "license": { "type": "Copyright", "text": "Copyright 2024 Google LLC" },
+  "authors": "Google, Inc.",
+  "source": { "http": "https://example.invalid/dl/GoogleMLKit-8.0.0.tar.gz" },
+  "platforms": { "ios": "15.5" },
+  "module_name": "MLKit",
+  "preserve_paths": ["NOTICES"],
+  "pod_target_xcconfig": { "EXCLUDED_ARCHS[sdk=iphonesimulator*]": "arm64" },
+  "user_target_xcconfig": { "EXCLUDED_ARCHS[sdk=iphonesimulator*]": "arm64" },
+  "default_subspecs": ["Common"],
+  "subspecs": [
+    {
+      "name": "MLKitCore",
+      "dependencies": { "MLKitCommon": ["~> 13.0.0"] },
+      "preserve_paths": ["MLKitCore/Sources/module.modulemap", "MLKitCore/NOTICES"],
+      "source_files": ["MLKitCore/Sources/MLKit.h"],
+      "user_target_xcconfig": { "HEADER_SEARCH_PATHS": "$(inherited) ${PODS_ROOT}/GoogleMLKit/MLKitCore/Sources" }
+    },
+    { "name": "BarcodeScanning", "dependencies": { "GoogleMLKit/MLKitCore": [], "MLKitBarcodeScanning": "~> 7.0.0" } },
+    { "name": "Common", "dependencies": { "GoogleMLKit/MLKitCore": [], "MLKitCommon": "~> 13.0.0" } },
+    { "name": "PoseDetection", "dependencies": { "GoogleMLKit/MLKitCore": [], "MLKitPoseDetection": "~> 1.0.0-beta15" } },
+    { "name": "TextRecognition", "dependencies": { "GoogleMLKit/MLKitCore": [], "MLKitTextRecognition": "~> 6.0.0" } },
+    { "name": "TextRecognitionChinese", "dependencies": { "GoogleMLKit/MLKitCore": [], "MLKitTextRecognitionChinese": "~> 5.0.0" } },
+    { "name": "TextRecognitionDevanagari", "dependencies": { "GoogleMLKit/MLKitCore": [], "MLKitTextRecognitionDevanagari": "~> 5.0.0" } },
+    { "name": "TextRecognitionJapanese", "dependencies": { "GoogleMLKit/MLKitCore": [], "MLKitTextRecognitionJapanese": "~> 5.0.0" } },
+    { "name": "TextRecognitionKorean", "dependencies": { "GoogleMLKit/MLKitCore": [], "MLKitTextRecognitionKorean": "~> 5.0.0" } },
+    { "name": "Vision", "dependencies": { "GoogleMLKit/MLKitCore": [], "MLKitVision": "~> 9.0.0" } }
+  ]
+}

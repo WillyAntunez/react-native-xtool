@@ -16,9 +16,15 @@ export const POD_TABLE_ENV = "RN_SPM_POD_TABLE";
 
 /** Where an entry of the merged table comes from. */
 export type PodSource = "scaffolder" | "rn-xtool" | "config";
+/** A binary pod the `pods` step resolved: the product of `ios/build/pod-binaries` that links it. */
+export interface PodBinary {
+  product: string;
+}
 export interface PodTable {
   pods: Record<string, PodEntry>;
   source: Record<string, PodSource>;
+  /** The binary pods, none of which `pods` maps; absent without any. */
+  binary?: Record<string, PodBinary>;
 }
 
 function scaffolderBaseline(): Record<string, PodEntry> {
@@ -35,20 +41,29 @@ function shippedPods(): Record<string, PodEntry> {
 
 /**
  * `over` on top of `base`, field by field: the fields `over` names replace those of `base`, and the others stay (an
- * empty `forwardHeaders` or `subspecs` removes them). `product` is read as `products: [product]`.
+ * empty `forwardHeaders` or `subspecs` removes them, an empty `emptyTargets` clears them). `product` is read as
+ * `products: [product]`. A base `outsideRequirement` and `emptyTargets` go when `over` pins another `exact` or `url`
+ * without its own: both were checked for one version (final review M3).
  */
 function mergePodEntry(base: PodEntry | undefined, over: PodEntry): PodEntry {
   const { product, ...rest } = over;
   const named: PodEntry = rest.products === undefined && product !== undefined ? { ...rest, products: [product] } : rest;
   const { product: _replaced, ...kept } = base ?? ({} as Partial<PodEntry>);
+  // A checked override and a target without sources hold for the version and repository they were checked with only.
+  const moved = base !== undefined && ((over.exact !== undefined && over.exact !== base.exact) || (over.url !== undefined && over.url !== base.url));
+  if (moved) {
+    delete kept.outsideRequirement;
+    delete kept.emptyTargets;
+  }
   return { ...kept, ...named } as PodEntry;
 }
 
 /**
  * The scaffolder's baseline, then data/pods.json, then the config's pods. Per pod, a later entry overrides the fields it
- * names and keeps the others: pinning AppAuth to another version keeps its forwardHeaders.
+ * names and keeps the others: pinning AppAuth to another version keeps its forwardHeaders. `binary`: the binary pods
+ * the `pods` step resolved; a pod the table maps is never binary (the table wins, spec goal 1.2).
  */
-export function mergedPodTable(configPods?: Record<string, PodEntry>): PodTable {
+export function mergedPodTable(configPods?: Record<string, PodEntry>, binary?: Record<string, PodBinary>): PodTable {
   const table: PodTable = { pods: {}, source: {} };
   const layers: [PodSource, Record<string, PodEntry>][] = [
     ["scaffolder", scaffolderBaseline()],
@@ -61,15 +76,39 @@ export function mergedPodTable(configPods?: Record<string, PodEntry>): PodTable 
       table.source[pod] = source;
     }
   }
+  const binaryPods = Object.entries(binary ?? {}).filter(([pod]) => table.pods[pod] === undefined);
+  if (binaryPods.length > 0) table.binary = Object.fromEntries(binaryPods.map(([pod, b]) => [pod, { product: b.product }]));
   return table;
 }
 
-/** Writes the table to `ios/build/rn-xtool-pods.json` and returns that path. */
+/** The table's pods as the scaffolder reads them: each entry, and `{ binary: { product } }` for each binary pod. */
+export function scaffolderPods(table: PodTable): Record<string, PodEntry | { binary: PodBinary }> {
+  return { ...table.pods, ...Object.fromEntries(Object.entries(table.binary ?? {}).map(([pod, b]) => [pod, { binary: b }])) };
+}
+
+/**
+ * Writes the table to `ios/build/rn-xtool-pods.json` and returns that path. Its `pods` holds the entries and the
+ * binary pods (`scaffolderPods`).
+ */
 export function writePodTable(paths: ProjectPaths, table: PodTable): string {
   const file = path.join(paths.iosBuild, "rn-xtool-pods.json");
   mkdirSync(paths.iosBuild, { recursive: true });
-  writeFileSync(file, `${JSON.stringify(table, null, 2)}\n`);
+  writeFileSync(file, `${JSON.stringify({ ...table, pods: scaffolderPods(table) }, null, 2)}\n`);
   return file;
+}
+
+/** Where a pod's pin comes from, for the pin lines: the config file, or rn-xtool's table. */
+export function pinSource(table: PodTable, pod: string, podsFile?: string): string {
+  return table.source[pod] === "config" ? (podsFile ?? "rn-xtool.config.json") : "rn-xtool table";
+}
+
+/**
+ * Block 2's `⚠` line for a pin outside a requirement, or, for an entry whose `outsideRequirement` says why the pin is
+ * meant, an `ℹ` line with that reason. `dependents` is "lib's" or "MLKitCommon's and MLKitVision's".
+ */
+export function pinLine(pod: string, entry: PodEntry, source: string, dependents: string, requirement: string): string {
+  const what = `${pod} ${entry.exact} (${source}) is outside ${dependents} requirement "${requirement}"`;
+  return entry.outsideRequirement !== undefined ? `ℹ ${what}: ${entry.outsideRequirement}` : `⚠ ${what}`;
 }
 
 /** A version's numeric segments (`3.0.0` → [3, 0, 0]); undefined when one is not a number (`1.0.0-beta`, `#{v}`). */
@@ -91,7 +130,8 @@ function compareSegments(a: readonly number[], b: readonly number[]): number {
  * Whether `version` meets every CocoaPods requirement in `requirements`: `= x` or a bare `x`, `!=`, `>`, `>=`, `<`, `<=`
  * and `~> a.b` (>= a.b, < a+1) or `~> a.b.c` (>= a.b.c, < a.(b+1)). Items are trimmed and may hold several requirements
  * separated by commas. Segments compare numerically. A requirement rn-xtool cannot read (an interpolation, a
- * prerelease) is taken as met: the check warns only about a mismatch it can show.
+ * prerelease) is taken as met: the check warns only about a mismatch it can show. The binary-pod resolver chooses
+ * versions with the strict matcher instead (`satisfiesAll` in src/pods/versions.ts).
  */
 export function podRequirementSatisfied(version: string, requirements: readonly string[]): boolean {
   const have = segments(version.trim());

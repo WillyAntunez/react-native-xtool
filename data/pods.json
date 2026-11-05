@@ -5,6 +5,31 @@
       "exact": "3.0.0",
       "products": ["AppAuth"],
       "forwardHeaders": { "AppAuth/AppAuth.h": ["AppAuthCore", "AppAuth"] }
+    },
+    "GTMSessionFetcher": {
+      "url": "https://github.com/google/gtm-session-fetcher",
+      "exact": "3.5.0",
+      "products": ["GTMSessionFetcherCore"],
+      "subspecs": { "Core": ["GTMSessionFetcherCore"] }
+    },
+    "GoogleUtilities": {
+      "url": "https://github.com/google/GoogleUtilities",
+      "exact": "8.1.5",
+      "products": ["GULLogger", "GULUserDefaults"],
+      "subspecs": { "Logger": ["GULLogger"], "UserDefaults": ["GULUserDefaults"] }
+    },
+    "GoogleDataTransport": {
+      "url": "https://github.com/google/GoogleDataTransport",
+      "exact": "10.1.1",
+      "products": ["GoogleDataTransport"]
+    },
+    "GoogleToolboxForMac": {
+      "url": "https://github.com/google/google-toolbox-for-mac",
+      "exact": "6.0.1",
+      "products": ["GTMLogger", "GTMNSData_zlib"],
+      "subspecs": { "Logger": ["GTMLogger"], "NSData+zlib": ["GTMNSData_zlib"] },
+      "outsideRequirement": "4.x ships no Package.swift; 6.0.1 keeps the GTMLogger API ML Kit links against",
+      "emptyTargets": ["GTMDefines"]
     }
   }
 }

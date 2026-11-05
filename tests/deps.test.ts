@@ -60,6 +60,16 @@ describe("depsFingerprint", () => {
     expect(patched).not.toBe(base);
     expect(patched).toBe(patchedOnly);
   });
+  it("the fingerprint changes with the lock", async () => {
+    const root = project(deps, { a: "1.0.0", b: "2.0.0" });
+    const none = await depsFingerprint(root);
+    writeFileSync(join(root, "rn-xtool-pods.lock.json"), '{ "lockfileVersion": 1, "pods": {} }\n');
+    const empty = await depsFingerprint(root);
+    expect(empty).not.toBe(none);
+    expect(await depsFingerprint(root)).toBe(empty);
+    writeFileSync(join(root, "rn-xtool-pods.lock.json"), '{ "lockfileVersion": 1, "pods": { "X": {} } }\n');
+    expect(await depsFingerprint(root)).not.toBe(empty);
+  });
 });
 
 describe("depsFingerprint of a bare project", () => {
