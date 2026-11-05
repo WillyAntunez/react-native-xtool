@@ -8,6 +8,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import type { PodEntry } from "../config.js";
+import type { PodRoot } from "../pods/resolve.js";
 import type { ProjectKind } from "./types.js";
 import { troubleshootingUrl } from "../docs.js";
 import { packageRoot } from "../tools/exec.js";
@@ -633,6 +634,38 @@ export function scaffoldedPods(projectRoot: string, table: PodTable, opts: Libra
     }
   }
   return pods;
+}
+
+/**
+ * The roots of the `pods` step: each unconditional `s.dependency` the classifier calls `unmapped` (or `binary`, once
+ * the lock names it), of each library rn-xtool would scaffold that the project keeps on iOS (`exclude`,
+ * `platforms.ios: null` and `expo.autolinking.exclude` leave it out, row 67). In package order, then podspec order,
+ * without duplicates. Never throws.
+ */
+export function binaryPodCandidates(projectRoot: string, opts: LibraryCheckOptions): PodRoot[] {
+  let libs: Libraries;
+  try {
+    libs = new Libraries(path.resolve(projectRoot), opts);
+  } catch {
+    return [];
+  }
+  const roots: PodRoot[] = [];
+  for (const { name, dir } of libs.deps) {
+    try {
+      const lib = libs.library(name, dir);
+      if (lib === undefined || !libs.scaffolded(lib)) continue;
+      for (const dep of libs.podDependencies(lib)) {
+        if (dep.kind !== "unmapped" && dep.kind !== "binary") continue;
+        const root = { library: name, libraryVersion: lib.version, dependency: dep.name, requirements: dep.requirements };
+        const same = (r: PodRoot): boolean =>
+          r.library === root.library && r.dependency === root.dependency && r.requirements.join("\0") === root.requirements.join("\0");
+        if (!roots.some(same)) roots.push(root);
+      }
+    } catch {
+      // One unreadable package says nothing about the others.
+    }
+  }
+  return roots;
 }
 
 /**

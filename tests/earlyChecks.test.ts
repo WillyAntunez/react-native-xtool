@@ -5,6 +5,7 @@ import path from "node:path";
 import Module, { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  binaryPodCandidates,
   allowedLimitText,
   allowKnownLimits,
   earlyFailures,
@@ -645,6 +646,30 @@ describe("unmapped pods", () => {
     expect(scaffoldedPods(root, mergedPodTable(undefined, binary))).toEqual(new Map([["@react-native-ml-kit/text-recognition", ["GoogleMLKit"]]]));
     // Without the map, the pod stays unmapped.
     expect(libraryFailures(root).map((f) => f.id)).toEqual(["unmapped-pod"]);
+  });
+
+  it("lists each unmapped pod of a scaffolded library as a binary-pod candidate", async () => {
+    const root = await project({ "@react-native-ml-kit/text-recognition": mlKit(), "react-native-app-auth": appAuth() });
+    const roots = ["", "Chinese", "Devanagari", "Japanese", "Korean"].map((l) => ({
+      library: "@react-native-ml-kit/text-recognition",
+      libraryVersion: "2.0.0",
+      dependency: `GoogleMLKit/TextRecognition${l}`,
+      requirements: ["8.0.0"],
+    }));
+    // AppAuth is mapped by rn-xtool's table: a SwiftPM package, not a candidate.
+    expect(binaryPodCandidates(root, {})).toEqual(roots);
+    // A pod the lock already names binary is still one.
+    expect(binaryPodCandidates(root, { binary: { GoogleMLKit: { product: "GoogleMLKit" } } })).toEqual(roots);
+    expect(binaryPodCandidates(root, { table: NO_POD_TABLE }).map((r) => r.dependency)).toContain("AppAuth");
+  });
+
+  it("does no pods work for a library the project leaves out of iOS (row 67)", async () => {
+    const root = await project({ "@react-native-ml-kit/text-recognition": mlKit() });
+    expect(binaryPodCandidates(root, { exclude: ["@react-native-ml-kit/text-recognition"] })).toEqual([]);
+    await writeFiles(root, {
+      "react-native.config.js": "module.exports = { dependencies: { '@react-native-ml-kit/text-recognition': { platforms: { ios: null } } } };\n",
+    });
+    expect(binaryPodCandidates(root, {})).toEqual([]);
   });
 
   it("refuses AppAuth's shape without a table entry", async () => {
