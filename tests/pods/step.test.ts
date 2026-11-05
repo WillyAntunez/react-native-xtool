@@ -319,7 +319,7 @@ describe("runPodsStep", () => {
     const run = runPodsStep(root, ROOTS, table(), deps({ filesystemOf: async () => ({ dev: 1, freeBytes: 1000 }) }));
     await expect(run).rejects.toThrow(
       `Not enough free disk space for the CocoaPods binaries: the filesystem of ${tilde(cache)} has 1 KB free, and rn-xtool needs about ` +
-        `${formatSize(total * POD_DISK_FACTOR)} there (10 downloads ${formatSize(total)}, unpacked and wrapped copies ` +
+        `${formatSize(total * POD_DISK_FACTOR)} there (10 downloads ${formatSize(total)}, unpacked, wrapped and per-app copies ` +
         `${formatSize(total * (POD_DISK_FACTOR - 1))}). Free some space, then build again.`,
     );
     expect(downloads()).toEqual([]);
@@ -334,7 +334,7 @@ describe("runPodsStep", () => {
       init?.method === "HEAD" ? Promise.resolve(new Response(null, { status: 405 })) : globalThis.fetch(input, init)) as typeof fetch;
     const run = runPodsStep(root, ROOTS, table(), deps({ fetch: silentHead, filesystemOf: async () => ({ dev: 1, freeBytes: 1000 }) }));
     await expect(run).rejects.toThrow(
-      `and rn-xtool needs about ${formatSize(total * POD_DISK_FACTOR)} there (10 downloads ${formatSize(total)}, unpacked and wrapped copies`,
+      `and rn-xtool needs about ${formatSize(total * POD_DISK_FACTOR)} there (10 downloads ${formatSize(total)}, unpacked, wrapped and per-app copies`,
     );
     expect(downloads()).toEqual([]);
   });

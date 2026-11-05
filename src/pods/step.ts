@@ -233,8 +233,8 @@ export async function runPodsStep(root: string, roots: readonly PodRoot[], table
         if (size !== undefined) t.plan.expectedBytes = size;
       }),
     );
-    // Row 59: the downloads, their extracted trees and their wrapped copies, on the cache's filesystem. A file HEAD
-    // gives no length for counts with the size the lock records for this version (review M3).
+    // Row 59: the downloads, their extracted and wrapped trees and the per-app copies (factor 8), checked on the cache's
+    // filesystem. A file HEAD gives no length for counts with the size the lock records for this version (review M3).
     const sizeOf = (t: Download): number =>
       t.plan.expectedBytes ?? (t.plan.locked?.version === t.b.version ? t.plan.locked.size : undefined) ?? 0;
     const bytes = todo.reduce((a, t) => a + sizeOf(t), 0);
@@ -244,7 +244,7 @@ export async function runPodsStep(root: string, roots: readonly PodRoot[], table
       throw new PodsError(
         `Not enough free disk space for the CocoaPods binaries: the filesystem of ${tilde(cache)} has ${diskSize(freeBytes)} free, ` +
           `and rn-xtool needs about ${diskSize(need)} there (${todo.length} download${todo.length === 1 ? "" : "s"} ${diskSize(bytes)}, ` +
-          `unpacked and wrapped copies ${diskSize(need - bytes)}). Free some space, then build again.`,
+          `unpacked, wrapped and per-app copies ${diskSize(need - bytes)}). Free some space, then build again.`,
       );
     }
     d.log(announcement(todo, cache, d.terms ?? podTerms()));
