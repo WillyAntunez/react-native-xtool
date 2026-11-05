@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { checkPodEntries } from "../src/config.js";
 import { projectPaths } from "../src/paths.js";
+import { emptyTargetsOf } from "../src/pods/emptyTargets.js";
 import { podPinWarnings } from "../src/project/earlyChecks.js";
 import { POD_TABLE_ENV, mergedPodTable, podRequirementSatisfied, writePodTable } from "../src/project/podTable.js";
 import { packageRoot } from "../src/tools/exec.js";
@@ -90,9 +91,9 @@ describe("the pod table", () => {
     expect(mergedPodTable({ AppAuth: { ...pinned, subspecs } }).pods.AppAuth).toEqual({ ...APPAUTH, exact: "3.1.0", subspecs });
   });
 
-  it("does not carry the shipped outsideRequirement over a config pin of another version", () => {
+  it("does not carry the shipped outsideRequirement and emptyTargets over a config pin of another version", () => {
     const toolbox = ML_KIT_SOURCES.GoogleToolboxForMac;
-    const { outsideRequirement: _checked, ...rest } = toolbox;
+    const { outsideRequirement: _checked, emptyTargets: _empty, ...rest } = toolbox;
     // Another version, or another URL: the shipped reason was checked for 6.0.1 of Google's repository only.
     expect(mergedPodTable({ GoogleToolboxForMac: { url: toolbox.url, exact: "7.0.0", products: ["GTMLogger"] } }).pods.GoogleToolboxForMac).toEqual({
       ...rest,
@@ -102,14 +103,26 @@ describe("the pod table", () => {
     expect(
       mergedPodTable({ GoogleToolboxForMac: { url: "https://github.com/example/gtm", exact: "6.0.1", products: ["GTMLogger"] } }).pods
         .GoogleToolboxForMac,
-    ).not.toHaveProperty("outsideRequirement");
-    // The same pin keeps it, and a config's own reason wins.
-    expect(mergedPodTable({ GoogleToolboxForMac: { url: toolbox.url, exact: "6.0.1", products: ["GTMLogger"] } }).pods.GoogleToolboxForMac)
-      .toHaveProperty("outsideRequirement", toolbox.outsideRequirement);
+    ).not.toHaveProperty("emptyTargets");
+    // The same pin keeps them, and a config's own values win.
+    const same = mergedPodTable({ GoogleToolboxForMac: { url: toolbox.url, exact: "6.0.1", products: ["GTMLogger"] } }).pods.GoogleToolboxForMac;
+    expect(same).toHaveProperty("outsideRequirement", toolbox.outsideRequirement);
+    expect(same).toHaveProperty("emptyTargets", ["GTMDefines"]);
+    expect(
+      mergedPodTable({ GoogleToolboxForMac: { url: toolbox.url, exact: "7.0.0", products: ["GTMLogger"], emptyTargets: ["GTMOther"] } }).pods
+        .GoogleToolboxForMac,
+    ).toHaveProperty("emptyTargets", ["GTMOther"]);
     expect(
       mergedPodTable({ GoogleToolboxForMac: { url: toolbox.url, exact: "7.0.0", products: ["GTMLogger"], outsideRequirement: "mine" } }).pods
         .GoogleToolboxForMac,
     ).toHaveProperty("outsideRequirement", "mine");
+  });
+
+  it("clears the shipped emptyTargets with a config's empty list", () => {
+    const toolbox = ML_KIT_SOURCES.GoogleToolboxForMac;
+    const table = mergedPodTable({ GoogleToolboxForMac: { url: toolbox.url, exact: "6.0.1", products: ["GTMLogger"], emptyTargets: [] } });
+    expect(table.pods.GoogleToolboxForMac).toHaveProperty("emptyTargets", []);
+    expect(emptyTargetsOf(table, ["GoogleToolboxForMac"])).toEqual([]);
   });
 
   it("writes the merged table under ios/build, where the scaffolder reads it", () => {

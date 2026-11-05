@@ -41,16 +41,20 @@ function shippedPods(): Record<string, PodEntry> {
 
 /**
  * `over` on top of `base`, field by field: the fields `over` names replace those of `base`, and the others stay (an
- * empty `forwardHeaders` or `subspecs` removes them). `product` is read as `products: [product]`. A base
- * `outsideRequirement` goes when `over` pins another `exact` or `url` without its own.
+ * empty `forwardHeaders` or `subspecs` removes them, an empty `emptyTargets` clears them). `product` is read as
+ * `products: [product]`. A base `outsideRequirement` and `emptyTargets` go when `over` pins another `exact` or `url`
+ * without its own: both were checked for one version (final review M3).
  */
 function mergePodEntry(base: PodEntry | undefined, over: PodEntry): PodEntry {
   const { product, ...rest } = over;
   const named: PodEntry = rest.products === undefined && product !== undefined ? { ...rest, products: [product] } : rest;
   const { product: _replaced, ...kept } = base ?? ({} as Partial<PodEntry>);
-  // A checked override holds for the version and repository it was checked with only.
+  // A checked override and a target without sources hold for the version and repository they were checked with only.
   const moved = base !== undefined && ((over.exact !== undefined && over.exact !== base.exact) || (over.url !== undefined && over.url !== base.url));
-  if (moved) delete kept.outsideRequirement;
+  if (moved) {
+    delete kept.outsideRequirement;
+    delete kept.emptyTargets;
+  }
   return { ...kept, ...named } as PodEntry;
 }
 

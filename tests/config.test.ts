@@ -79,6 +79,8 @@ describe("loadConfig", () => {
         outsideRequirement: "checked by hand",
         emptyTargets: ["GTMDefines"],
       },
+      // An empty list: none (it clears the shipped entry's).
+      GTMSessionFetcher: { url: "https://github.com/google/gtm-session-fetcher.git", exact: "3.5.0", products: ["GTMSessionFetcherCore"], emptyTargets: [] },
     };
     await writeFile(join(dir, "rn-xtool.config.json"), JSON.stringify({ pods }));
     expect(await loadConfig(dir)).toEqual({ metroPort: 8081, pods });
@@ -129,7 +131,6 @@ describe("loadConfig", () => {
     ["an outsideRequirement that is not a string", entry({ outsideRequirement: 4 }), OUTSIDE],
     ["an empty outsideRequirement", entry({ outsideRequirement: " " }), OUTSIDE],
     ["an emptyTargets string", entry({ emptyTargets: "GTMDefines" }), EMPTY_TARGETS],
-    ["an empty emptyTargets", entry({ emptyTargets: [] }), EMPTY_TARGETS],
     ["an emptyTargets entry that is a path", entry({ emptyTargets: ["../GTMDefines"] }), EMPTY_TARGETS],
   ])("names a pods entry of the wrong shape: %s", async (_name, pods, message) => {
     await writeFile(join(dir, "rn-xtool.config.json"), JSON.stringify({ pods }));

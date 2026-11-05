@@ -45,7 +45,8 @@ export interface PodEntry {
   outsideRequirement?: string;
   /**
    * The package's targets without sources (GoogleToolboxForMac's `GTMDefines`): Swift Build never writes their object
-   * but lists it at link, so rn-xtool writes an empty one in their place before xtool-build.
+   * but lists it at link, so rn-xtool writes an empty one in their place before xtool-build. An empty list clears a
+   * shipped entry's; a pin to another `exact` or `url` drops it.
    */
   emptyTargets?: string[];
 }
@@ -115,7 +116,10 @@ export function checkPodEntries(file: string, pods: unknown): void {
     if (e.outsideRequirement !== undefined && (typeof e.outsideRequirement !== "string" || e.outsideRequirement.trim() === "")) {
       fail(`pods.${pod}.outsideRequirement`, "a sentence saying why the pin is outside the requirement");
     }
-    if (e.emptyTargets !== undefined && !isNames(e.emptyTargets, TARGET_NAME)) fail(`pods.${pod}.emptyTargets`, "a list of target names");
+    // An empty list: none (it clears a shipped entry's).
+    if (e.emptyTargets !== undefined && !(Array.isArray(e.emptyTargets) && e.emptyTargets.length === 0) && !isNames(e.emptyTargets, TARGET_NAME)) {
+      fail(`pods.${pod}.emptyTargets`, "a list of target names");
+    }
     if (e.forwardHeaders !== undefined) {
       if (!isRecord(e.forwardHeaders)) fail(`pods.${pod}.forwardHeaders`, "an object of header paths");
       for (const [header, modules] of Object.entries(e.forwardHeaders as Record<string, unknown>)) {
