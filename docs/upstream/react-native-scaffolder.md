@@ -766,6 +766,22 @@ Fix: `getDependencies` also reads `dependency(` with optional spaces around the 
 each subspec. Found while checking rn-xtool's pin check against the scaffolder (the early checks read both forms).
 Libraries that use only the space form get the same manifest, so no revision bump.
 
+## 27. `scripts/spm/scaffold-package-swift.js`: a dependency on a pod of prebuilt binaries is never linked
+
+Repro: a podspec depends on a pod that ships prebuilt static `.framework`s and no sources, as
+@react-native-ml-kit/text-recognition 2.0.0 depends on `GoogleMLKit/TextRecognition` (and four language subspecs). The
+pod has no SwiftPM package, so the scaffold warns that it is unmapped and wires nothing; the library's
+`@import MLKitVision;` then fails with `module 'MLKitVision' not found`.
+
+Fix: a pod table entry may be `{ "binary": { "product": "<name>" } }`, for a pod the caller builds from its binaries
+into a local package beside `build/xcframeworks`. `classifyPodDependency` returns `binary` for it, and the scaffold
+emits `.package(path: "<relative path to build/pod-binaries>")` once and `.product(name: "<name>", package:
+"pod-binaries")` once per pod, however many subspec lines name it. The path is relative to the `libs/<SwiftName>`
+symlink, like `build/xcframeworks`. The `rn-xtool-pods` marker records `<pod>=binary` without a version (the caller's
+lock holds the versions), so a version change does not make a persisted scaffold stale. A binary entry without a
+product name is the library's error, naming the key. Only libraries that depend on such a pod get new content, and
+every earlier scaffold of them was refused, so no revision bump.
+
 ## Known limitation (deferred): pure-Swift packages importing a mixed Expo module
 
 A Swift module built with a bridging header (every mixed target) makes each Swift importer re-read that
@@ -780,7 +796,7 @@ every generated or scaffolded Swift target that depends on a mixed module the sa
 
 `tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks the
 fixes against fixtures (skipped when the reference app is not present; set `RN_XTOOL_REF_APP` to point at it). It also
-asserts that each hunk is present in the installed RN files. Fixes 14 to 25 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
+asserts that each hunk is present in the installed RN files. Fixes 14 to 27 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
 against podspec fixtures from the SDK 57 pins in `tests/fixtures/podspecs/` (worklets 0.10.1, reanimated 4.5.1,
 screens 4.26.2, gesture-handler 2.32.0), from screens 4.30.1 (the clang-only importer paths and module map) and from
 worklets 0.8.3 (the `RCT_HERMES_V1_ENABLED` ternary). A golden test re-scaffolds the reference app's libraries and compares them

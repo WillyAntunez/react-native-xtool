@@ -170,6 +170,11 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
     it("scaffold-package-swift.js has the pod header forwarder hunk", () => {
       expect(src("scaffold-package-swift.js")).toContain("const POD_HEADERS_DIR = 'rn-spm-pod-headers'");
     });
+    it("scaffold-package-swift.js has the fix 27 hunk", () => {
+      const f = src("scaffold-package-swift.js");
+      expect(f).toContain("podBinariesPackageDir");
+      expect(f).toContain("pods.${pod}.binary.product is not a product name");
+    });
     it("scaffold-package-swift.js has the pod table file hunk", () => {
       const f = src("scaffold-package-swift.js");
       expect(f).toContain("function loadPodTable");
@@ -1654,8 +1659,12 @@ describe("scaffolder fixes 20–26 (vendor/rn-spm)", () => {
       depName: string,
       ctx: { selfPodName: string; ownNpm: string; podToNpm: Map<string, string>; linkedNpm: Set<string>; table: object },
     ) => { kind: string; pod: string; npm?: string; entry?: object };
-    const table = { SwiftUIIntrospect: { url: "https://github.com/siteline/swiftui-introspect", exact: "1.5.0", product: "SwiftUIIntrospect" } };
+    const table = {
+      SwiftUIIntrospect: { url: "https://github.com/siteline/swiftui-introspect", exact: "1.5.0", product: "SwiftUIIntrospect" },
+      GoogleMLKit: { binary: { product: "GoogleMLKit" } },
+    };
     it.each([
+      ["GoogleMLKit/TextRecognition", "binary", undefined],
       ["Foo/Sub", "subspec", undefined],
       ["React-Core", "core", undefined],
       ["ExpoModulesCore", "expo", undefined],
@@ -1683,6 +1692,7 @@ describe("scaffolder fixes 20–26 (vendor/rn-spm)", () => {
       expect(got.pod).toBe(depName.split("/")[0]);
       expect(got.npm).toBe(npm);
       if (kind === "mapped") expect(got.entry).toEqual(table.SwiftUIIntrospect);
+      if (kind === "binary") expect(got).toEqual({ kind, pod: "GoogleMLKit", entry: table.GoogleMLKit, products: ["GoogleMLKit"] });
     });
   });
 
@@ -2209,6 +2219,98 @@ describe("scaffolder fix 13: the pod table (vendor/rn-spm)", () => {
       "scaffold-package-swift.js",
     );
     expect(withTable(undefined, loadPodTable)).toEqual(KNOWN_POD_SPM_PACKAGES);
+  });
+});
+
+describe("scaffolder fix 27: binary pods (vendor/rn-spm)", () => {
+  const ML_KIT = "@react-native-ml-kit/text-recognition";
+  const LANGS = ["", "Chinese", "Devanagari", "Japanese", "Korean"];
+  /** @react-native-ml-kit/text-recognition 2.0.0's shape: five GoogleMLKit subspec lines. */
+  function lib(deps = LANGS.map((l) => `  s.dependency "GoogleMLKit/TextRecognition${l}", "8.0.0"`).join("\n")): string {
+    const root = tempDir();
+    mkdirSync(path.join(root, "ios"), { recursive: true });
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: ML_KIT, version: "2.0.0" }));
+    writeFileSync(path.join(root, "ios/TextRecognition.h"), "#import <React/RCTBridgeModule.h>\n");
+    writeFileSync(path.join(root, "ios/TextRecognition.m"), '#import "TextRecognition.h"\n@import MLKitVision;\n');
+    writeFileSync(
+      path.join(root, "RNMLKitTextRecognition.podspec"),
+      `Pod::Spec.new do |s|\n  s.name = "RNMLKitTextRecognition"\n  s.source_files = "ios/**/*.{h,m}"\n  s.dependency "React-Core"\n${deps}\nend\n`,
+    );
+    return root;
+  }
+  function tableFile(pods: unknown): string {
+    const file = path.join(tempDir(), "rn-xtool-pods.json");
+    writeFileSync(file, JSON.stringify({ pods }));
+    return file;
+  }
+  function scaffold(table: unknown, deps?: string) {
+    const saved = process.env["RN_SPM_POD_TABLE"];
+    process.env["RN_SPM_POD_TABLE"] = tableFile(table);
+    try {
+      return scaffoldLibraries(VENDORED_RN_SPM, { [ML_KIT]: lib(deps) });
+    } finally {
+      if (saved === undefined) delete process.env["RN_SPM_POD_TABLE"];
+      else process.env["RN_SPM_POD_TABLE"] = saved;
+    }
+  }
+  const BINARY = { GoogleMLKit: { binary: { product: "GoogleMLKit" } } };
+  const manifestOf = (run: ReturnType<typeof scaffoldLibraries>) => {
+    expect(run.statuses[ML_KIT]).toBe("written");
+    return run.files[`${ML_KIT}/Package.swift`]!;
+  };
+
+  it("27: wires a binary pod to the pod-binaries package", () => {
+    const run = scaffold(BINARY);
+    const pkg = manifestOf(run);
+    expect(pkg.match(/\.package\(path: "[^"]*pod-binaries"\)/g)).toEqual(['.package(path: "../../../../pod-binaries")']);
+    expect(pkg.match(/\.product\(name: "GoogleMLKit", package: "pod-binaries"\)/g)).toHaveLength(1);
+    expect(pkg).not.toContain("no known SwiftPM equivalent");
+    expect(run.results[0]!.warnings.filter((w) => w.includes("GoogleMLKit"))).toEqual([]);
+  });
+
+  it("27: records GoogleMLKit=binary on the rn-xtool-pods line, without a version", () => {
+    const pkg = manifestOf(scaffold(BINARY));
+    expect(pkg).toContain("\n// rn-xtool-pods: GoogleMLKit=binary\n");
+    expect(pkg).not.toMatch(/8\.0\.0/);
+    // Sorted by pod with the pins.
+    const pinned = manifestOf(
+      scaffold(
+        { ...BINARY, AppAuth: { url: "https://github.com/openid/AppAuth-iOS", exact: "3.0.0", products: ["AppAuth"] } },
+        `  s.dependency "GoogleMLKit/TextRecognition", "8.0.0"\n  s.dependency "AppAuth", ">= 1.7.6"`,
+      ),
+    );
+    expect(pinned).toContain("\n// rn-xtool-pods: AppAuth=3.0.0, GoogleMLKit=binary\n");
+  });
+
+  it("27: the binary route holds no absolute path", () => {
+    const run = scaffold(BINARY);
+    const pkg = manifestOf(run);
+    const rel = /\.package\(path: "([^"]*pod-binaries)"\)/.exec(pkg)![1]!;
+    expect(rel.startsWith("../")).toBe(true);
+    expect(path.isAbsolute(rel)).toBe(false);
+    // Beside build/xcframeworks, relative to the same libs/<SwiftName> symlink.
+    const xcfw = /\.package\(name: "ReactNative", path: "([^"]*)"\)/.exec(pkg)![1]!;
+    expect(rel).toBe(xcfw.replace(/xcframeworks$/, "pod-binaries"));
+    expect(pkg).not.toContain(run.roots[ML_KIT]!);
+    expect(pkg).not.toContain(tmpdir());
+  });
+
+  it.each([
+    ["no product", { binary: {} }],
+    ["an empty product", { binary: { product: "" } }],
+    ["a product that is not a string", { binary: { product: ["GoogleMLKit"] } }],
+  ])("27: a binary entry needs a product name (%s)", (_name, entry) => {
+    const run = scaffold({ GoogleMLKit: entry });
+    expect(run.statuses[ML_KIT]).toBe("error");
+    expect(run.results[0]!.reason).toMatch(/cannot read the pod table .*: pods\.GoogleMLKit\.binary\.product is not a product name$/);
+  });
+
+  it("27: without the binary entry, the pod is unmapped as before", () => {
+    const run = scaffold({});
+    const pkg = manifestOf(run);
+    expect(pkg).not.toContain("pod-binaries");
+    expect(pkg).not.toContain("rn-xtool-pods");
+    expect(run.results[0]!.warnings.some((w) => w.startsWith('Dependency "GoogleMLKit" is a CocoaPods pod with no known SwiftPM equivalent'))).toBe(true);
   });
 });
 

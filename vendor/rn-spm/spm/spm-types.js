@@ -502,6 +502,9 @@ export type SpmScaffoldSpec = {
   coreReactNative: boolean,
   siblingNames: Array<string>,
   siblingSwiftNames?: {[npmName: string]: string},
+  // CocoaPods pods built from prebuilt binaries into the app's local
+  // `build/pod-binaries` package (fix 27): one product each.
+  binaryPods?: Array<{pod: string, product: string}>,
   // Extra frameworks beyond the autolinker's default UIKit/Foundation/CoreGraphics
   // set. Merged with the defaults at emit time.
   extraFrameworks: Array<string>,
