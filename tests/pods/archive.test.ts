@@ -296,6 +296,33 @@ describe("extractPod", () => {
     },
   );
 
+  it.each([
+    ["tar.gz", "Frameworks/up", "../.."],
+    ["zip", "Frameworks/up", "../.."],
+    ["tar.gz", "x", "../MLKitFoo-1.0.0/NOTICES"],
+    ["zip", "x", "../MLKitFoo-1.0.0/NOTICES"],
+  ] as const)("checks a flatten archive's links against the kept folder (%s, %s -> %s)", async (ext, link, target) => {
+    const file = write(ext, under("MLKitFoo-1.0.0", [...FOO, { type: "symlink", path: link, target }]));
+    await expect(extractPod(request(file, ext, { flatten: true }), cache)).rejects.toThrow(
+      `rn-xtool refuses to extract MLKitFoo-1.0.0.${ext} (MLKitFoo 1.0.0): its entry "MLKitFoo-1.0.0/${link}" is a link that points outside the archive. Nothing was extracted. See ${LINK}`,
+    );
+    expect(extracted()).toEqual([]);
+  });
+
+  it.each(["tar.gz", "zip"] as const)("accepts a flatten archive's link that stays in the kept folder (%s)", async (ext) => {
+    const link: ArchiveSpec = { type: "symlink", path: "Frameworks/MLKitFoo.framework/NOTICES", target: "../../NOTICES" };
+    const dest = await extractPod(request(write(ext, under("MLKitFoo-1.0.0", [...FOO, link])), ext, { flatten: true }), cache);
+    expect(readFileSync(path.join(dest, "Frameworks/MLKitFoo.framework/NOTICES"), "utf8")).toBe(readFileSync(path.join(dest, "NOTICES"), "utf8"));
+  });
+
+  it("refuses a flatten tar's hard link outside the kept folder", async () => {
+    const file = write("tar.gz", [
+      ...under("MLKitFoo-1.0.0", FOO),
+      { type: "hardlink", path: "MLKitFoo-1.0.0/h", target: "Elsewhere/NOTICES" },
+    ]);
+    await expect(extractPod(request(file, "tar.gz", { flatten: true }), cache)).rejects.toThrow(/its entry "MLKitFoo-1\.0\.0\/h"/);
+  });
+
   it("refuses an unsafe archive and extracts nothing", async () => {
     const file = write("tar.gz", [...FOO, { type: "symlink", path: "Frameworks/MLKitFoo.framework/x", target: "/etc" }]);
     await expect(extractPod(request(file, "tar.gz"), cache)).rejects.toThrow(/rn-xtool refuses to extract MLKitFoo-1\.0\.0\.tar\.gz/);

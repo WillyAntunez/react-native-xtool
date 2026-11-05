@@ -143,16 +143,16 @@ const MAX_LINK_HOPS = 40;
 
 /**
  * Where `rel` leads from the folder `start` (segments under the archive root), following the archive's own symlinks
- * on the way; undefined when it leaves the archive (or loops).
+ * on the way; undefined when it leaves the archive (or loops), or goes up above the first `floor` segments.
  */
-export function resolveInside(links: ReadonlyMap<string, string>, start: string[], rel: string): string[] | undefined {
+export function resolveInside(links: ReadonlyMap<string, string>, start: string[], rel: string, floor = 0): string[] | undefined {
   const parts = [...start];
   const queue = segments(rel);
   let hops = 0;
   while (queue.length > 0) {
     const seg = queue.shift()!;
     if (seg === "..") {
-      if (parts.length === 0) return undefined;
+      if (parts.length <= floor) return undefined;
       parts.pop();
       continue;
     }
@@ -172,8 +172,12 @@ export type UnsafeWhy =
   | "is a device or special file"
   | "is a link that points outside the archive";
 
-/** The first entry that must not be extracted, and why. */
-export function unsafeEntry(entries: readonly ArchiveEntry[]): { entry: string; why: UnsafeWhy } | undefined {
+/**
+ * The first entry that must not be extracted, and why. With `root` (the folder `flatten` strips), links are checked
+ * against that folder, which becomes the tree's root: a link may not leave it.
+ */
+export function unsafeEntry(entries: readonly ArchiveEntry[], root?: string): { entry: string; why: UnsafeWhy } | undefined {
+  const floor = root === undefined ? 0 : 1;
   const links = new Map<string, string>();
   for (const e of entries) {
     if (e.type === "symlink") links.set(segments(e.path).join("/"), e.target ?? "");
@@ -187,13 +191,19 @@ export function unsafeEntry(entries: readonly ArchiveEntry[]): { entry: string; 
     if (e.type === "symlink" || e.type === "hardlink") {
       const target = e.target ?? "";
       if (isAbsolute(target)) return found("is a link that points outside the archive");
-      const from = e.type === "symlink" ? resolveInside(links, [], parts.slice(0, -1).join("/")) : [];
-      if (from === undefined || resolveInside(links, from, target) === undefined) {
-        return found("is a link that points outside the archive");
-      }
+      const from = e.type === "symlink" ? resolveInside(links, [], parts.slice(0, -1).join("/"), floor) : [];
+      const to = from === undefined ? undefined : resolveInside(links, from, target, e.type === "symlink" ? floor : 0);
+      if (to === undefined || (root !== undefined && to[0] !== root)) return found("is a link that points outside the archive");
     }
   }
   return undefined;
+}
+
+/** Row 22's stop. */
+function refusal(name: string, who: { pod: string; version: string }, bad: { entry: string; why: UnsafeWhy }): PodsError {
+  return new PodsError(
+    `rn-xtool refuses to extract ${name} (${who.pod} ${who.version}): its entry "${bad.entry}" ${bad.why}. Nothing was extracted. See ${PODS_LINK}`,
+  );
 }
 
 /** The entries of a pod's archive, listed and checked: the stops name the archive, the pod and the entry. */
@@ -218,11 +228,7 @@ export async function safeEntries(
     throw new PodsError(`rn-xtool cannot list ${name} (${who.pod} ${who.version}): ${reason}. See ${PODS_LINK}`);
   }
   const bad = unsafeEntry(entries);
-  if (bad !== undefined) {
-    throw new PodsError(
-      `rn-xtool refuses to extract ${name} (${who.pod} ${who.version}): its entry "${bad.entry}" ${bad.why}. Nothing was extracted. See ${PODS_LINK}`,
-    );
-  }
+  if (bad !== undefined) throw refusal(name, who, bad);
   return entries;
 }
 
@@ -387,6 +393,11 @@ export async function extractPod(
   const entries = await safeEntries(req.archive, req.ext, req, run);
   const top = req.flatten ? singleTopFolder(entries) : undefined;
   const strip = top === undefined ? 0 : 1;
+  if (top !== undefined) {
+    // The stripped folder becomes the tree's root, so a link that reaches above it would leave the tree (review I-2).
+    const bad = unsafeEntry(entries, top);
+    if (bad !== undefined) throw refusal(path.basename(req.archive), req, bad);
+  }
   const selected = selectEntries(entries, stamp.keep, strip);
 
   const n = sequence++;
