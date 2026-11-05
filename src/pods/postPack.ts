@@ -2,9 +2,11 @@
  * Spec goal 7: checks on the packed `App.app` before it is installed, for the failures ML Kit shows only at run time.
  * Every `resource_bundles` key of a staged pod is `App.app/<key>.bundle` with its Info.plist (rows 51, 54), no binary
  * target is embedded under `Frameworks/` (row 50), and every Objective-C class a force-loaded archive defines is in the
- * App binary (row 55: a dropped `+load` class). Nothing is repaired: a failure stops with the list.
+ * App binary (row 55: a dropped `+load` class). Nothing is repaired: a failure removes the packed app and its .ipa
+ * (row 88) and stops with the list.
  */
 import { existsSync, readFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import * as plist from "plist";
 import type { NmRunner } from "../pipeline/symbols.js";
@@ -78,6 +80,9 @@ export async function postPackChecks(appBundle: string, pods: PostPackPods, nm: 
     items.push(...missing.slice(0, SHOWN), ...(missing.length > SHOWN ? [`  - and ${missing.length - SHOWN} more`] : []));
   }
   if (items.length > 0) {
-    throw new PodsError(`The packed app is not what the CocoaPods binaries need, so rn-xtool does not install it:\n${items.join("\n")}\nSee ${PODS_LINK}`);
+    // Row 88: a refused app is not left where `run` would take it as built, nor its .ipa beside it.
+    await rm(appBundle, { recursive: true, force: true });
+    await rm(path.join(path.dirname(appBundle), `${path.basename(appBundle, ".app")}.ipa`), { force: true });
+    throw new PodsError(`The packed app is not what the CocoaPods binaries need, so rn-xtool removed it:\n${items.join("\n")}\nSee ${PODS_LINK}`);
   }
 }
