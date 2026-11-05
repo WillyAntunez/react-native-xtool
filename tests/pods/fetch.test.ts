@@ -262,6 +262,17 @@ describe("fetchPodArchive", () => {
     );
   });
 
+  it.each([
+    [`HTTP://${HOST}${PATH}`, "plain http"],
+    [`ftp://${HOST}${PATH}`, "ftp"],
+  ])("refuses %s, which is not https, when the lock does not record it", async (url, over) => {
+    const s = await serve({ [PATH]: { body } });
+    await expect(fetchPodArchive(plan({ url }), cache)).rejects.toThrow(
+      `MLImage 1.0.0-beta7 downloads over ${over} from ${HOST}; rn-xtool downloads it only when rn-xtool-pods.lock.json already records its sha256. See ${LINK}`,
+    );
+    expect(s.requests).toEqual([]);
+  });
+
   it("downloads a plain http URL the lock records, and checks it", async () => {
     const httpUrl = `http://${HOST}${PATH}`;
     await serve({ [PATH]: { body } });

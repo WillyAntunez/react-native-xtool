@@ -67,8 +67,8 @@ let sequence = 0;
 /**
  * The pod's archive in the cache. A locked entry whose file is cached: no request. Otherwise a download into
  * `<cache>/downloads/.<pod>-<version>.<pid>-<n>.<ext>`, then the sha256 against the lock, then the spec's sha256 or
- * sha1, then a rename to `<sha256>.<ext>` (an existing one wins, and the temporary file is removed). A plain `http://`
- * URL, or a redirect from https to plain http, is downloaded only when the lock records its sha256.
+ * sha1, then a rename to `<sha256>.<ext>` (an existing one wins, and the temporary file is removed). A URL that is not
+ * https, or a redirect away from https, is downloaded only when the lock records its sha256.
  */
 export async function fetchPodArchive(
   plan: DownloadPlan,
@@ -81,11 +81,14 @@ export async function fetchPodArchive(
     if (file !== undefined) return { file, sha256: locked.sha256, size: (await stat(file)).size, moved: false };
   }
   const host = new URL(plan.url).host;
-  const plainHttp = (from: string): PodsError =>
-    new PodsError(
-      `${pod} ${version} downloads over plain http from ${from}; rn-xtool downloads it only when ${PODS_LOCK} already records its sha256. See ${PODS_LINK}`,
+  /** P16's stop for a URL whose scheme is not https (compared as the URL parser reads it, so `HTTP:` too). */
+  const notHttps = (url: URL): PodsError => {
+    const over = url.protocol === "http:" ? "plain http" : url.protocol.replace(/:$/, "");
+    return new PodsError(
+      `${pod} ${version} downloads over ${over} from ${url.host || url.href}; rn-xtool downloads it only when ${PODS_LOCK} already records its sha256. See ${PODS_LINK}`,
     );
-  if (plan.url.startsWith("http://") && locked === undefined) throw plainHttp(host);
+  };
+  if (new URL(plan.url).protocol !== "https:" && locked === undefined) throw notHttps(new URL(plan.url));
   const dir = path.join(cache, "downloads");
   await mkdir(dir, { recursive: true });
   const tmp = path.join(dir, `.${safeName(pod)}-${safeName(version)}.${process.pid}-${sequence++}.${plan.ext}`);
@@ -99,7 +102,7 @@ export async function fetchPodArchive(
         refuseHttpRedirect: locked === undefined,
       });
     } catch (err) {
-      if (err instanceof DownloadInsecureRedirectError) throw plainHttp(new URL(err.to).host);
+      if (err instanceof DownloadInsecureRedirectError) throw notHttps(new URL(err.to));
       const cause = (err as { cause?: unknown }).cause;
       if (cause instanceof DownloadHttpError && (cause.status === 404 || cause.status === 410)) {
         throw new PodsError(

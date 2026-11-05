@@ -40,13 +40,13 @@ export class DownloadSizeError extends Error {
   }
 }
 
-/** A redirect from https to plain http, refused with `refuseHttpRedirect`; never retried. */
+/** A redirect from https to another scheme (plain http), refused with `refuseHttpRedirect`; never retried. */
 export class DownloadInsecureRedirectError extends Error {
   constructor(
     readonly from: string,
     readonly to: string,
   ) {
-    super(`${from} redirects to plain http: ${to}`);
+    super(`${from} redirects away from https: ${to}`);
     this.name = "DownloadInsecureRedirectError";
   }
 }
@@ -54,11 +54,11 @@ export class DownloadInsecureRedirectError extends Error {
 const MAX_REDIRECTS = 20;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
-/** GET `url`, following redirects; with `refuseHttpRedirect`, hop by hop, refusing a step from https to http. */
+/** GET `url`, following redirects; with `refuseHttpRedirect`, hop by hop, refusing a step away from https. */
 async function get(url: string, opts: DownloadOptions): Promise<Response> {
   const signal = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
   if (!opts.refuseHttpRedirect) return fetch(url, { redirect: "follow", headers: opts.headers, signal });
-  let current = url;
+  let current = new URL(url).href;
   for (let hops = 0; ; hops++) {
     const res = await fetch(current, { redirect: "manual", headers: opts.headers, signal });
     const location = res.headers.get("location");
@@ -66,7 +66,9 @@ async function get(url: string, opts: DownloadOptions): Promise<Response> {
     await res.body?.cancel();
     if (hops === MAX_REDIRECTS) throw new Error(`too many redirects from ${url}`);
     const next = new URL(location, current).href;
-    if (current.startsWith("https:") && next.startsWith("http:")) throw new DownloadInsecureRedirectError(current, next);
+    if (new URL(current).protocol === "https:" && new URL(next).protocol !== "https:") {
+      throw new DownloadInsecureRedirectError(current, next);
+    }
     current = next;
   }
 }
@@ -81,7 +83,7 @@ export interface DownloadOptions {
   expectedBytes?: number;
   /** Without expectedBytes: compare with the response's Content-Length when it has no Content-Encoding. */
   checkLength?: boolean;
-  /** Follows redirects one by one and refuses one from https to plain http (a DownloadInsecureRedirectError). */
+  /** Follows redirects one by one and refuses one from https to another scheme (a DownloadInsecureRedirectError). */
   refuseHttpRedirect?: boolean;
 }
 

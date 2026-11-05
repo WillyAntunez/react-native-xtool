@@ -144,6 +144,13 @@ describe("downloadFile redirects", () => {
     expect(readdirSync(dir)).toEqual([]);
   });
 
+  it("reads the scheme case-insensitively, and refuses any step away from https", async () => {
+    const f = vi.fn(async (url: string) => (url === "https://a.invalid/f" ? redirect("ftp://b.invalid/g") : new Response(body)));
+    vi.stubGlobal("fetch", f);
+    const err = await downloadFile("HTTPS://a.invalid/f", join(dir, "a"), { refuseHttpRedirect: true }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ from: "https://a.invalid/f", to: "ftp://b.invalid/g" });
+  });
+
   it("follows redirects that stay on https, hop by hop, when asked", async () => {
     const f = vi.fn(async (url: string) =>
       url === "https://a.invalid/f" ? redirect("/g") : url === "https://a.invalid/g" ? redirect("https://c.invalid/h") : new Response(body),
