@@ -101,12 +101,19 @@ export function parseTarListing(text: string): ArchiveEntry[] {
 
 const ZIP_LINE = /^(\S)\S*\s+\S+\s+\S+\s+\d+\s+\S+\s+\S+\s+\d{2}-[A-Za-z]{3}-\d{2} \d{2}:\d{2} (.*)$/;
 
-/** `LC_ALL=C unzip -Z <file>`: the type from the mode column; a symlink's target is read separately. */
+/** zipinfo's header and summary lines, around the entries. */
+const ZIP_FRAME = /^(Archive: |Zip file size: |\d+ files?, \d+ bytes uncompressed|Empty zipfile\.$)/;
+
+/**
+ * `LC_ALL=C unzip -Z <file>`: the type from the mode column; a symlink's target is read separately. Any line other
+ * than an entry, the header and the summary stops the listing.
+ */
 export function parseZipListing(longText: string): ArchiveEntry[] {
   const entries: ArchiveEntry[] = [];
   for (const line of longText.split("\n")) {
+    if (line === "" || ZIP_FRAME.test(line)) continue;
     const m = ZIP_LINE.exec(line);
-    if (m === null) continue;
+    if (m === null) throw listingError(line);
     const name = m[2]!;
     const type = name.endsWith("/") ? "dir" : typeOf(m[1]!);
     entries.push({ path: name, type: type === "hardlink" ? "special" : type });
@@ -358,6 +365,18 @@ async function makeReadable(dir: string): Promise<void> {
   }
 }
 
+/**
+ * Why tar or unzip failed, for the text: the first line of its stderr, else its exit code, else the error's first
+ * line. The archive is named by its file name, and nothing in the cache by its absolute path.
+ */
+function extractReason(err: unknown, tool: string, archive: string, cache: string): string {
+  const { stderr, exitCode } = err as { stderr?: unknown; exitCode?: unknown };
+  const first = typeof stderr === "string" ? stderr.trim().split("\n")[0]! : "";
+  const raw =
+    first !== "" ? first : typeof exitCode === "number" ? `${tool} exited with code ${exitCode}` : (err instanceof Error ? err.message : String(err)).split("\n")[0]!;
+  return raw.replaceAll(archive, path.basename(archive)).replaceAll(cache, "<cache>");
+}
+
 let sequence = 0;
 
 /**
@@ -431,7 +450,9 @@ export async function extractPod(
             `${req.pod} ${req.version} is a .zip download, and unzip is not installed. Install it (sudo apt install unzip) and build again.`,
           );
         }
-        throw err;
+        throw new PodsError(
+          `rn-xtool could not extract ${path.basename(req.archive)} (${req.pod} ${req.version}): ${extractReason(err, tool, req.archive, cache)}. See ${PODS_LINK}`,
+        );
       }
     }
     const root = top === undefined ? work : path.join(work, top);

@@ -18,6 +18,7 @@ import {
   type ListRunner,
 } from "../../src/pods/archive.js";
 import { swapIn } from "../../src/pipeline/rnArtifacts.js";
+import { PodsError } from "../../src/pods/format.js";
 import { tarGz, zip, type ArchiveSpec } from "../support/archives.js";
 
 const LINK = troubleshootingUrl("cocoapods-binaries");
@@ -80,6 +81,14 @@ describe("archive listings", () => {
 
   it("stops on a line it cannot read", () => {
     expect(() => parseTarListing("garbage\n")).toThrow(/cannot read/);
+  });
+
+  it("stops on a zip listing line it cannot read, between the header and the summary", () => {
+    const lines = ZIP_LISTING.split("\n");
+    lines.splice(3, 0, "?????  odd line");
+    expect(() => parseZipListing(lines.join("\n"))).toThrow("rn-xtool cannot read this archive listing line: ?????  odd line");
+    expect(parseZipListing("Archive:  e.zip\nZip file size: 22 bytes, number of entries: 0\nEmpty zipfile.\n")).toEqual([]);
+    expect(parseZipListing("Archive:  one.zip\nZip file size: 126 bytes, number of entries: 1\n" + lines[2] + "\n1 file, 3 bytes uncompressed, 3 bytes compressed:  0.0%\n")).toHaveLength(1);
   });
 });
 
@@ -321,6 +330,42 @@ describe("extractPod", () => {
       { type: "hardlink", path: "MLKitFoo-1.0.0/h", target: "Elsewhere/NOTICES" },
     ]);
     await expect(extractPod(request(file, "tar.gz", { flatten: true }), cache)).rejects.toThrow(/its entry "MLKitFoo-1\.0\.0\/h"/);
+  });
+
+  it("names the archive and the pod when the extraction fails, without the cache's path", async () => {
+    const file = write("tar.gz", FOO);
+    const broken: ListRunner = async (cmd, args) => {
+      if (!args.includes("-xzf")) return defaultListRunner(cmd, args);
+      throw Object.assign(new Error(`Command failed with exit code 2: tar -xzf ${file} -C ${cache}/extracted/x`), {
+        exitCode: 2,
+        stderr: `tar: ${file}: Cannot read: Input/output error\ntar: Exiting with failure status`,
+      });
+    };
+    const err = (await extractPod(request(file, "tar.gz"), cache, broken).catch((e: unknown) => e)) as Error;
+    expect(err).toBeInstanceOf(PodsError);
+    expect(err.message).toBe(
+      `rn-xtool could not extract MLKitFoo-1.0.0.tar.gz (MLKitFoo 1.0.0): tar: MLKitFoo-1.0.0.tar.gz: Cannot read: Input/output error. See ${LINK}`,
+    );
+    const silent: ListRunner = async (cmd, args) => {
+      if (!args.includes("-xzf")) return defaultListRunner(cmd, args);
+      throw Object.assign(new Error(`Command failed with exit code 2: tar -xzf ${file}`), { exitCode: 2, stderr: "" });
+    };
+    await expect(extractPod(request(file, "tar.gz"), cache, silent)).rejects.toThrow(
+      `rn-xtool could not extract MLKitFoo-1.0.0.tar.gz (MLKitFoo 1.0.0): tar exited with code 2. See ${LINK}`,
+    );
+    expect(extracted()).toEqual([]);
+  });
+
+  it("names the archive when unzip cannot extract a member under a link", async () => {
+    const file = write("zip", [
+      ...FOO,
+      { type: "symlink", path: "Frameworks/MLKitFoo.framework/sub", target: "." },
+      { type: "file", path: "Frameworks/MLKitFoo.framework/sub/b.h", body: "b" },
+    ]);
+    const err = (await extractPod(request(file, "zip"), cache).catch((e: unknown) => e)) as Error;
+    expect(err).toBeInstanceOf(PodsError);
+    expect(err.message).toMatch(/^rn-xtool could not extract MLKitFoo-1\.0\.0\.zip \(MLKitFoo 1\.0\.0\): /);
+    expect(err.message).not.toContain(dir);
   });
 
   it("refuses an unsafe archive and extracts nothing", async () => {
