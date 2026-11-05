@@ -412,6 +412,7 @@ describe("install with binary pods (row 88)", () => {
         authStatus: async () => ({ loggedIn: true, teamId: "TEAM", appleId: "a@b.c" }),
         listDevices: async () => [{ name: "Phone", udid: "u", transport: "usb" as const }],
         readState: async () => ({ bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20", postPack: POST_PACK, ...over.state }),
+        restagePods: async (root: string, state: { postPack?: unknown }) => void calls.push(`restage ${root} ${state.postPack === POST_PACK}`),
         writeEmptyTargets: async () => void calls.push("empty-objects"),
         devBuild: async (_bin: string, dir: string) => void calls.push(`dev build ${dir}`),
         postPack: async (app: string, pods: unknown) => {
@@ -426,10 +427,11 @@ describe("install with binary pods (row 88)", () => {
     return { deps, calls, writeState };
   };
 
-  it("checks the app xtool builds before xtool dev run installs it", async () => {
+  it("stages the pod binaries again if needed, then checks the app xtool builds before xtool dev run installs it", async () => {
     const { deps, calls } = usb({ state: { emptyTargets: ["GTMDefines"] } });
     await install("/p", deps);
     expect(calls).toEqual([
+      "restage /p true",
       "empty-objects",
       "dev build /p/ios-xtool",
       `post-pack /p/ios-xtool/xtool/App.app ${JSON.stringify(POST_PACK)}`,
@@ -466,6 +468,7 @@ describe("install with binary pods (row 88)", () => {
             bin: () => "/bin/xtool",
             authStatus: async () => ({ loggedIn: true, teamId: "TEAM", appleId: "a@b.c" }),
             readState: async () => ({ bundleIdentifier: "com.a.b", metroPort: 8082, lanIp: "192.168.1.20", postPack: POST_PACK }),
+            restagePods: async () => void calls.push("restage"),
             devBuild: async () => void calls.push("dev build"),
             postPack: async () => {
               calls.push("post-pack");
@@ -482,14 +485,14 @@ describe("install with binary pods (row 88)", () => {
         { network: true },
       );
     await expect(network(async () => {})).rejects.toThrow("stop here");
-    expect(calls).toEqual(["dev build", "post-pack", "dev build --ipa"]);
+    expect(calls).toEqual(["restage", "dev build", "post-pack", "dev build --ipa"]);
     calls.length = 0;
     await expect(
       network(async () => {
         throw new Error(REFUSED);
       }),
     ).rejects.toThrow(REFUSED);
-    expect(calls).toEqual(["dev build", "post-pack"]);
+    expect(calls).toEqual(["restage", "dev build", "post-pack"]);
     expect(installOverWifi).not.toHaveBeenCalled();
   });
 });

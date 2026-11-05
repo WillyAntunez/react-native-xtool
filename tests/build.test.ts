@@ -1,10 +1,12 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import { build, buildSteps, chooseMetroPort, type BuildDeps } from "../src/commands/build.js";
+import { build, buildSteps, chooseMetroPort, restagePods, type BuildDeps } from "../src/commands/build.js";
+import { projectPaths } from "../src/paths.js";
+import { postPackPods } from "../src/pods/postPack.js";
 import { loadConfig as realLoadConfig } from "../src/config.js";
 import { jsiRnHeaderDirs } from "../src/pipeline/jsi.js";
 import { fixLibraryManifests } from "../src/pipeline/manifests.js";
@@ -408,6 +410,81 @@ describe("build", () => {
         pods: LINKS,
         emptyTargets: ["GTMDefines", "Other"],
         resourceBundles: [BUNDLE, svg],
+      });
+    });
+
+    describe("restagePods (row 37)", () => {
+      /** A project as the last build left it: pod-binaries with its archive, the pods' bundles in ios-xtool/Resources. */
+      function built(over: { package?: boolean; bundle?: boolean } = {}) {
+        const t = withPods();
+        const paths = projectPaths(t.root);
+        const archive = join(paths.podBinaries, "archives", "libMLKitCommon.a");
+        const cached = mkdtempSync(join(tmpdir(), "restage-cache-"));
+        mkdirSync(join(cached, "Resources", "LatinOCRResources"), { recursive: true });
+        writeFileSync(join(cached, "Resources", "LatinOCRResources", "model.bin"), "model");
+        const bundle = { ...BUNDLE, baseDir: cached };
+        const result = { ...RESULT, bundles: [bundle] };
+        const staged = { dir: paths.podBinaries, links: { ...LINKS, archives: [archive] }, binaryTargets: ["MLKitCommon"], products: ["GoogleMLKit"] };
+        if (over.package !== false) {
+          mkdirSync(join(paths.podBinaries, "archives"), { recursive: true });
+          writeFileSync(join(paths.podBinaries, "Package.swift"), "// pod-binaries");
+          writeFileSync(archive, "!<arch>\n");
+        }
+        if (over.bundle !== false) {
+          mkdirSync(join(paths.iosXtool, "Resources", "LatinOCRResources.bundle"), { recursive: true });
+          writeFileSync(join(paths.iosXtool, "Resources", "LatinOCRResources.bundle", "Info.plist"), "<plist/>");
+        }
+        const state = { kind: "bare" as const, postPack: postPackPods(staged, result) };
+        const deps: Partial<BuildDeps> = {
+          ...t.deps,
+          exists: existsSync,
+          pods: async (root, _roots, _table, o) => {
+            t.calls.push(`pods ${root === t.root} ${JSON.stringify(o.allowed)}`);
+            return result;
+          },
+          stagePods: async () => {
+            t.calls.push("pod-binaries");
+            return staged;
+          },
+        };
+        return { ...t, paths, deps, state, staged };
+      }
+
+      it("does nothing while pod-binaries and the pods' bundles are there, or without binary pods", async () => {
+        const t = built();
+        await restagePods(t.root, t.state, t.deps);
+        await restagePods(t.root, {}, { ...t.deps, exists: () => false });
+        expect(t.calls).toEqual([]);
+        expect(t.logs).toEqual([]);
+      });
+
+      it("stages pod-binaries again from the cache when it is gone", async () => {
+        const t = built({ package: false });
+        await restagePods(t.root, t.state, t.deps);
+        expect(t.calls).toEqual(["pods true []", "pod-binaries"]);
+        expect(t.logs).toContain(
+          "ℹ pods — ios/build/pod-binaries is missing since the last build; rn-xtool stages it again from rn-xtool-pods.lock.json and its cache.",
+        );
+      });
+
+      it("writes a pod's bundle again when ios-xtool/Resources lost it", async () => {
+        const t = built({ bundle: false });
+        await restagePods(t.root, t.state, t.deps);
+        expect(t.calls).toEqual(["pods true []"]);
+        const bundle = join(t.paths.iosXtool, "Resources", "LatinOCRResources.bundle");
+        expect(readFileSync(join(bundle, "model.bin"), "utf8")).toBe("model");
+        expect(existsSync(join(bundle, "Info.plist"))).toBe(true);
+        expect(t.logs).toContain(
+          "ℹ pods — ios-xtool/Resources/LatinOCRResources.bundle is missing since the last build; rn-xtool stages it again from rn-xtool-pods.lock.json and its cache.",
+        );
+      });
+
+      it("stops when the binary pods changed since the build", async () => {
+        const t = built({ package: false });
+        const changed = { ...t.state, postPack: { ...t.state.postPack, binaryTargets: ["MLKitCommon", "MLKitVision"] } };
+        await expect(restagePods(t.root, changed, t.deps)).rejects.toThrow(
+          "The CocoaPods binaries the project needs changed since the last build. Run `rn-xtool build`, then install again.",
+        );
       });
     });
   });
