@@ -1,0 +1,12 @@
+{
+  "name": "MLKitLegacy",
+  "version": "1.0.0",
+  "summary": "A test-only pod that ships a vendored library",
+  "homepage": "https://example.invalid/mlkit-legacy",
+  "license": { "type": "Copyright", "text": "Copyright 2026 Example" },
+  "authors": "Example",
+  "source": { "http": "https://example.invalid/dl/MLKitLegacy-1.0.0.tar.gz" },
+  "platforms": { "ios": "15.5" },
+  "source_files": "Headers/*.h",
+  "vendored_libraries": "Libraries/libMLKitLegacy.a"
+}

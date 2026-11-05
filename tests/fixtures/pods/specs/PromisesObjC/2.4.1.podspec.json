@@ -1,0 +1,12 @@
+{
+  "name": "PromisesObjC",
+  "version": "2.4.1",
+  "authors": "Google Inc.",
+  "license": { "type": "Apache-2.0", "file": "LICENSE" },
+  "homepage": "https://example.invalid/promises",
+  "source": { "git": "https://example.invalid/git/promises.git", "tag": "2.4.1" },
+  "summary": "Placeholder summary",
+  "platforms": { "ios": "9.0", "osx": "10.11", "tvos": "9.0", "watchos": "2.0", "visionos": "1.0" },
+  "module_name": "FBLPromises",
+  "source_files": "Sources/FBLPromises/**/*.{h,m}"
+}

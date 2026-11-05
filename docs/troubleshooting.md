@@ -429,6 +429,12 @@ the app's. rn-xtool patches and builds the copy in the app's own `node_modules`,
 the app outside the workspace, or keep react-native and expo in the app's `node_modules` (for example with Yarn
 classic's `nohoist`). Only parent folders' `node_modules` are checked, not Node's global folders.
 
+## CocoaPods binaries
+
+Some libraries depend on CocoaPods pods that ship prebuilt binaries (Google's ML Kit, for example): rn-xtool reads
+their specs from the CocoaPods CDN, checks each download against `rn-xtool-pods.lock.json` at the project root, and
+keeps the files in its own cache, `~/.cache/rn-xtool/pods`, never in the project.
+
 ## Build and patches
 
 - **Metal shaders are skipped on Linux:** a library that ships `.metal` files (react-native-svg's `MetalCI` filters)
