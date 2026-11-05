@@ -23,7 +23,11 @@ work as Linux but is untested so far. arm64 Linux is untested (the xtool checksu
      report clean.
      The full check needs the maintainer's local, untracked `.scan-private.local` (private patterns, one per line); without it only generic patterns run.
 8. When `XTOOL_VERSION` changes, update `XTOOL_SHA256` in `src/versions.ts` for both architectures from the official
-   release assets (`gh release download <version> -R xtool-org/xtool -p 'xtool-*.AppImage'`, then `sha256sum`).
+   release assets (`gh release download <version> -R xtool-org/xtool -p 'xtool-*.AppImage'`, then `sha256sum`). Then
+   re-read the entitlement table (`src/project/entitlementTable.ts`) against the new tag's source: the types xtool
+   decodes (`EntitlementContainer.supportedTypes`), which capabilities it marks paid, and its identifier rewrite. Set
+   `ENTITLEMENTS_CHECKED_WITH` to the new version once the table matches: `tests/entitlementTable.test.ts` ("the table
+   was checked with the pinned xtool") fails until then.
 
 ## Release
 
@@ -84,7 +88,10 @@ skipped. Each new fix adds one hunk test to "the patched RN files carry the patc
 
 A CocoaPods pod mapped to its SwiftPM package is data, not a scaffolder change: add it to `data/pods.json`, which
 `tests/podTable.test.ts` checks with the config's `pods` rules. The scaffolder's own `KNOWN_POD_SPM_PACKAGES` keeps its
-one baseline entry, so the 0.88 patches and the scaffold revision stay as they are.
+one baseline entry, so the 0.88 patches and the scaffold revision stay as they are. Pin `exact` to the newest tag the
+library's podspec requirement accepts that builds, and check that the tag ships a `Package.swift`. Changing a shipped
+pin makes every persisted scaffold of that library stale: users get the `⚠ patches/<file> pins <pod> <old>,
+rn-xtool's table says <new>` line until they regenerate it, so name the change in the CHANGELOG.
 
 ## Drift watch
 

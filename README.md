@@ -144,6 +144,13 @@ CommonJS (`module.exports = {...}`) unless your project is ESM. Both are merged,
 | `xtoolPath` | managed copy | Use a specific xtool binary in `setup`, `doctor` and `install` (`setup` skips the download; it must exist and be executable). |
 | `projectKind` | auto-detected | `"expo"` or `"bare"`, to skip [project detection](docs/bare-react-native.md#detection). |
 | `knownLimits` | none | `{ "allow": [...] }`: build anyway a setup rn-xtool refuses early. List a package name, or `"pnpm"`, `"pnp"` or `"hoisted"`; the refusal becomes a warning, and the build may fail later ([details](docs/troubleshooting.md#unsupported-setups)). |
+| `pods` | rn-xtool's table | `{ "<pod>": { "url", "exact", "products" } }`: the SwiftPM package for a CocoaPods pod a library depends on, merged over rn-xtool's own entries (AppAuth, SwiftUIIntrospect) field by field ([details](docs/troubleshooting.md#libraries-that-depend-on-cocoapods-pods)). |
+| `exclude` | none | `["<package>"]`: native modules left out of rn-xtool's iOS builds, without touching `react-native.config.js` ([details](docs/troubleshooting.md#leaving-a-module-out)). |
+
+**Entitlements.** `build` reads the file `CODE_SIGN_ENTITLEMENTS` names in the app target's Debug configuration (on
+Expo, in the Xcode project `expo prebuild` writes) and passes it to xtool when the file has keys. Before compiling it
+prints a `⚠` line for each key a free team does not get, such as push notifications or Wi‑Fi information
+([details](docs/troubleshooting.md#entitlements)).
 
 ## Limits
 
@@ -155,12 +162,14 @@ CommonJS (`module.exports = {...}`) unless your project is ESM. Both are merged,
 - The app icon comes from the `AppIcon` set as one PNG; dark, tinted and Icon Composer icons and custom splash screens
   are not supported (no asset catalog compiler on Linux;
   [details](docs/troubleshooting.md#app-icon-and-launch-screen)).
-- Bare projects: one app target and one `.xcodeproj`, always built for iOS 16.4; `.xcconfig` files, entitlements,
-  capabilities, script phases, storyboards, asset catalogs (except the app icon) and `.xib` files are not used ([details](docs/bare-react-native.md#limits)).
+- Bare projects: one app target and one `.xcodeproj`, always built for iOS 16.4; `.xcconfig` files, capabilities,
+  script phases, storyboards, asset catalogs (except the app icon) and `.xib` files are not used; entitlements come
+  from the Debug `CODE_SIGN_ENTITLEMENTS` file ([details](docs/bare-react-native.md#limits)).
 - Metal shaders are not compiled on Linux: react-native-svg's Metal filters are unavailable.
 - `doctor --project` and `build` refuse early, with the reason and a link, the setups rn-xtool knows it cannot build
-  yet: CocoaPods-only libraries with prebuilt binaries (async-storage 3.x), Expo modules that build vendored C sources
-  (expo-sqlite), pnpm and Yarn PnP installs, and react-native or expo hoisted to a parent folder. `knownLimits.allow`
+  yet: CocoaPods-only libraries with prebuilt binaries (async-storage 3.x) or that depend on a CocoaPods pod without a
+  known SwiftPM package (ML Kit), Expo modules that build vendored C sources (expo-sqlite), pnpm and Yarn PnP installs,
+  and react-native or expo hoisted to a parent folder. `knownLimits.allow`
   in `rn-xtool.config.json` builds them anyway. Other unsupported setups still fail during the build
   ([details](docs/troubleshooting.md#unsupported-setups)).
 - A daily drift watch checks the newest patch of each supported line (version gates, bundled patches, portable library

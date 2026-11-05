@@ -200,15 +200,20 @@ Debug configuration, then the project's:
   copied to `ios-xtool/`).
 - `SWIFT_OBJC_BRIDGING_HEADER`, `GCC_PREPROCESSOR_DEFINITIONS` (valued defines such as `FOO=1` work),
   `HEADER_SEARCH_PATHS` and `CLANG_CXX_LANGUAGE_STANDARD`.
-- Only `$(inherited)`, `$(TARGET_NAME)`, `$(PROJECT_NAME)`, the `:rfc1034identifier` and `:c99extidentifier` modifiers
-  and settings defined in the pbxproj itself (for example `$(PRODUCT_NAME)`) are resolved. Any other `$(VAR)`,
-  `$(SRCROOT)` and `$(PROJECT_DIR)` included, stops the build with `Cannot resolve build setting` naming it. Write
-  paths in `HEADER_SEARCH_PATHS` and the bridging header relative to `ios/` (not `$(SRCROOT)/...`). `.xcconfig` files
-  are ignored.
+- Only `$(inherited)`, Xcode's `$(TARGET_NAME)`, `$(PROJECT_NAME)`, `$(SRCROOT)` and `$(PROJECT_DIR)` (both `ios/`)
+  and `$(CONFIGURATION)` (`Debug`), the `:rfc1034identifier` and `:c99extidentifier` modifiers and settings defined in
+  the pbxproj itself (for example `$(PRODUCT_NAME)`) are resolved. Any other `$(VAR)` stops the build with `Cannot
+  resolve build setting` naming it. Relative paths in `HEADER_SEARCH_PATHS` and the bridging header are relative to
+  `ios/`. `.xcconfig` files are ignored.
 
 Not carried over: `IPHONEOS_DEPLOYMENT_TARGET` (the generated package always targets iOS 16.4, in Swift 5 language
-mode), entitlements, capabilities and script phases. When `OTHER_CFLAGS`, `OTHER_LDFLAGS` or `OTHER_SWIFT_FLAGS` hold
-flags beyond `-ObjC` and `-lc++`, `build` logs them by name as not carried over.
+mode), capabilities and script phases. When `OTHER_CFLAGS`, `OTHER_LDFLAGS` or `OTHER_SWIFT_FLAGS` hold flags beyond
+`-ObjC` and `-lc++`, `build` logs them by name as not carried over.
+
+`CODE_SIGN_ENTITLEMENTS` of the Debug configuration is read: when its file has keys, they go to
+`ios-xtool/App.entitlements`, which `xtool.yml` names, and xtool signs the app with them. Before compiling, `build`
+prints a `⚠` line for each key a free team does not get, and it stops when the file is missing or is not a property
+list dictionary ([troubleshooting.md](troubleshooting.md#entitlements)).
 
 ## Sources
 
@@ -277,8 +282,9 @@ its `Package.swift` fix for Linux needs no patch, rn-xtool applies it on every b
 ## Limits
 
 - One application target and one `.xcodeproj` per project.
-- `.xcconfig` files, entitlements, capabilities and script phases are not read; no asset catalogs or storyboards,
-  except the app icon, which is taken from `AppIcon.appiconset`.
+- `.xcconfig` files, capabilities and script phases are not read; no asset catalogs or storyboards, except the app
+  icon, which is taken from `AppIcon.appiconset`. Entitlements come from the Debug `CODE_SIGN_ENTITLEMENTS` file
+  ([above](#what-is-read-from-projectpbxproj)).
 - Only the React Native lines in [the table above](#supported-react-native-versions), from their floor, are supported.
 
 Implementation notes: the "Bare React Native notes" section of [recipe.md](recipe.md#bare-react-native-notes) and the

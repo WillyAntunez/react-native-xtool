@@ -198,7 +198,7 @@ The spec's failure-walk rulings are binding.
 | 1 | handle | Task C3 `names a pods entry of the wrong shape` (it.each, every key); Task D1 `names an exclude of the wrong shape` |
 | 2 | accept | Task C3 plan note (checking a product or URL needs the network); Task G2 troubleshooting entry quotes SwiftPM's resolve error |
 | 3 | handle | Task C6 `warns when the pinned version misses the podspec's requirement` (doctor and build start), matcher it.each |
-| 4 | accept | Task C1 plan note (the core prefixes are kept as they are); Task G2: the "file not found" troubleshooting entry names `pods` |
+| 4 | accept | Task C1 plan note (the core prefixes are kept as they are; a core name wins over `pods`, which cannot map it); Task G2: the troubleshooting entry for the "file not found" points to `exclude` or an issue |
 | 5 | handle | Task C5 `refuses AppAuth's shape without a table entry`, `refuses ML Kit's shape, naming GoogleMLKit once`; Task F2 step 5 |
 | 6 | handle | Task C5 `ignores pods under a Ruby condition (react-native-video's shape)` |
 | 7 | accept | Task C5 test `knownLimits.allow turns it into a warning`; plan note: the build may then fail at compile time, as the allowed-limit text says |
@@ -249,6 +249,7 @@ The spec's failure-walk rulings are binding.
 | 52 | handle | `fix: pass entitlements only when the file has keys` (D/E review M1), tests `passes no entitlements for the prebuild's empty file: xtool.yml stays byte-identical (row 52)` and `reads the entitlements` (no doctor line for a file without keys) |
 | 53 | handle | `fix: clear ios/ when rn-xtool's prebuild fails` (F3 proof), tests `removes the ios/ a failed prebuild left and says so (row 53)`, `rethrows the error unchanged when the failed prebuild wrote no ios/`, `says so when the half-written ios/ cannot be removed` |
 | 54 | accept | Task H: a bare app with an entitlements file installs and launches on the device (xtool's ad-hoc pass at build leaves `App` and the framework binaries without the exec bit until `install` re-signs; F2, F3) |
+| 55 | accept | final review PR 2, three ways #2: one present-tense sentence in troubleshooting's "Libraries that depend on CocoaPods pods" (rn-xtool reads the top level of `node_modules`; a nested copy is read as an unmapped pod: `npm dedupe`, or add the package to package.json) |
 
 ## Review Focus
 
@@ -874,10 +875,13 @@ export function checkPodEntries(file: string, pods: unknown): void;   // also us
 ```
 - Texts (`ConfigError`, `${file}` is `rn-xtool.config.json` or `rn-xtool.config.js`):
   - `${file}: pods must be an object of CocoaPods pod names`
+  - `${file}: pods.${pod} must be a CocoaPods pod name (no "/", spaces or quotes)` (`pods.""` for an empty name)
   - `${file}: pods.${pod}.url must be a git URL (https://…)`
   - `${file}: pods.${pod}.exact must be a version such as 3.0.0`
   - `${file}: pods.${pod}.products must be a list of product names` (also when neither `products` nor `product` is set)
+  - `${file}: pods.${pod}.subspecs must be an object of subspec names`
   - `${file}: pods.${pod}.subspecs.${name} must be a list of product names`
+  - `${file}: pods.${pod}.forwardHeaders must be an object of header paths`
   - `${file}: pods.${pod}.forwardHeaders.${header} must be a list of module names, under a relative path ending in .h`
 - Plan note (row 2, accept): a well-formed but wrong URL or product is caught by SwiftPM at `xtool-build`, and its
   message names it.

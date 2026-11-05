@@ -18,8 +18,42 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   delete it so rn-xtool regenerates it (also remove node_modules/<package> and reinstall: that copy still has the old
   Package.swift)". Do what it says: delete the patch, remove the library from `node_modules` and reinstall it, then
   build; rn-xtool scaffolds it again and persists the new patch. Until then the build goes on with the older manifest.
+- On React Native 0.88 (bare, and Expo SDK 58), the first build after the upgrade can stop at `patches` with "rn-xtool
+  could not apply its patch to react-native@0.88.1 (patch file: react-native+0.88.1.patch): node_modules/react-native
+  is the version the patch is for, but its files match neither the original package nor the patched one.": this
+  release changes the bundled react-native patch, and `node_modules/react-native` still holds 0.1.0-alpha.5's. Run
+  `rm -rf node_modules/react-native && npm install`, then build again.
 
 ### Added
+- CocoaPods pods with a SwiftPM package: a scaffolded library's dependency on a CocoaPods pod becomes a
+  `.package(url:exact:)` dependency when the pod table names the pod. rn-xtool's table maps AppAuth to AppAuth-iOS
+  3.0.0, so react-native-app-auth 8.5.1 builds on bare React Native 0.88.1 and on Expo SDK 58 (checked by building
+  only, on 2026-11-05). A `pods` object in `rn-xtool.config.json` adds pods or overrides rn-xtool's entries field by
+  field (`url`, `exact`, `products`, and optional `subspecs` and `forwardHeaders`, which forward a pod's umbrella
+  header to its SwiftPM modules). Each scaffold records its pins (`// rn-xtool-pods: AppAuth=3.0.0`), and `build` and
+  `doctor --project` warn about a persisted scaffold whose pins differ from the table, and about a pin outside a
+  podspec's requirement: "⚠ AppAuth 1.0.0 (rn-xtool.config.json) is outside react-native-app-auth's requirement ">=
+  1.7.6"". See [troubleshooting.md](docs/troubleshooting.md#libraries-that-depend-on-cocoapods-pods).
+- `doctor --project` and `build` refuse early a CocoaPods-only library that depends on a pod the pod table does not
+  map, naming the pod and the `pods` entry to add: "<package> <version>: its podspec depends on the CocoaPods pod <pod>,
+  which has no SwiftPM package rn-xtool knows. …". @react-native-ml-kit/text-recognition 2.0.0 is refused this way
+  (GoogleMLKit ships prebuilt binaries). Before, the scaffold was persisted without the pod and the build failed at
+  compile time. A library that depends on a sibling by its pod name (react-native-reanimated's `RNWorklets`) is not
+  refused when the sibling is installed as a peer, outside package.json, on Expo, whose autolinking links it.
+- `"exclude": ["<package>"]` in `rn-xtool.config.json` leaves native modules out of rn-xtool's iOS builds, as
+  `platforms.ios: null` in `react-native.config.js` does, without touching that file. `doctor --project` and `build`
+  print "ℹ exclude — left out of this iOS build: <packages> (rn-xtool.config.json). JavaScript that uses it must check
+  that it is there; …", and a `⚠` line for a name that is not a native iOS dependency, or is an Expo module (those go
+  in `expo.autolinking.exclude`). See [troubleshooting.md](docs/troubleshooting.md#leaving-a-module-out).
+- Entitlements: `build` reads the file `CODE_SIGN_ENTITLEMENTS` names in the app target's Debug configuration (on Expo,
+  in the prebuild's Xcode project) and passes it to xtool when it has keys (`entitlementsPath` in `xtool.yml`). Before
+  compiling, it prints a `⚠` line for each key xtool drops or does not enable on a free team, for example "⚠
+  aps-environment is not available on a free team; the build continues without it; push notifications fail at
+  runtime.", and for a shared keychain group, which xtool replaces with `<Team ID>.XTL-<Team ID>.<bundle id>`. A
+  missing file, or one that is not a property list dictionary, stops the build. `doctor --project` has a new
+  `entitlements` line. See [troubleshooting.md](docs/troubleshooting.md#entitlements).
+- On Expo, the bridging header of the prebuild's Xcode project reaches Swift when it holds more than comments, so a
+  config plugin's imports (react-native-app-auth's `RNAppAuthAuthorizationFlowManager.h`) compile.
 - The red screen "No script URL provided" on the first launch clears by itself after Allow. Debug builds of apps
   without expo-dev-client (Expo and bare) get a small helper that waits for Metro after the red screen and reloads the
   app once it answers: at most once per failure, only in the foreground, for up to 5 minutes. An app opened before
@@ -82,6 +116,14 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   `setup-apple-spm.js scaffold`.
 - Scaffolded Swift compiles in the Swift 5 language mode, as CocoaPods compiles a pod, unless the podspec declares
   `swift_version` 6 or higher.
+- On bare React Native, a sibling a library depends on by its pod name, installed but not listed in package.json, is
+  refused early: "<package> <version>: its podspec depends on <npm>, which is installed but not listed in
+  package.json, so React Native does not link it; add it to dependencies (npm i <npm>). …". The community CLI does not
+  link it, so the build used to fail at compile time.
+- The scaffolder's warning for a CocoaPods pod it cannot map now says where its SwiftPM package goes: `add it under
+  "pods" in rn-xtool.config.json: { "pods": { "<pod>": … } }`.
+- `$(SRCROOT)`, `$(PROJECT_DIR)` (both `ios/`) and `$(CONFIGURATION)` (`Debug`) in the app target's build settings
+  resolve, instead of stopping a bare build with `Cannot resolve build setting`.
 
 ### Fixed
 - react-native-vision-camera 4.7.3, react-native-video 6.19.3, react-native-device-info 15.0.2 and
@@ -108,6 +150,12 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   <reason>", followed by that library's warnings. Nothing is persisted for it, and React Native does not run a second
   time. That second run's error (such as `"react-native-vision-camera" has mixed Swift + Objective-C/C++ sources`)
   used to hide the cause.
+- When `expo prebuild` fails during `build` (a config plugin throws), rn-xtool removes the half-written `ios/` it left,
+  and the error says so: "The failed prebuild left ios/ half-written, so rn-xtool removed it; the next build runs expo
+  prebuild again." The next build used to skip the prebuild and build that half state.
+- A podspec dependency written as a call, `s.dependency('Pod', …)`, is read by the scaffolder (fix 26), and the pods
+  React Native ships or generates (`ReactNativeDependencies`, `FBLazyVector`, `fast_float`, `ReactCodegen`,
+  `SocketRocket`) are read as React Native's own, not as pods to map.
 - A patch left in `patches/` after `npm uninstall` no longer stops the `patches` step. It is skipped, and the other
   patches apply: "⚠ patches/<file> is for <package>, which is not installed; skipped. Delete it if you removed the
   library." `doctor --project` prints the same line. See
