@@ -148,6 +148,22 @@ describe("fetchPodArchive", () => {
     expect(got.sha256).toBe(SHA);
   });
 
+  it("downloads a locked, cached file from its spec's new URL and checks it against the lock", async () => {
+    const moved = "/dl/cpdc/ffff/MLImage-1.0.0-beta7.tar.gz";
+    const s = await serve({ [moved]: { body } });
+    mkdirSync(path.join(cache, "downloads"));
+    writeFileSync(path.join(cache, "downloads", `${SHA}.tar.gz`), body);
+    const got = await fetchPodArchive(plan({ url: `https://${HOST}${moved}`, locked: locked() }), cache);
+    expect(got).toEqual({ file: path.join(cache, "downloads", `${SHA}.tar.gz`), sha256: SHA, size: 7000, moved: true });
+    expect(s.requests).toEqual([`GET ${moved}`]);
+    expect(downloads()).toEqual([`${SHA}.tar.gz`]);
+    s.routes[moved] = { body: other };
+    await expect(fetchPodArchive(plan({ url: `https://${HOST}${moved}`, locked: locked() }), cache)).rejects.toThrow(
+      `is not the one rn-xtool-pods.lock.json records (sha256 ${hex("sha256", other)} instead of ${SHA})`,
+    );
+    expect(readFileSync(path.join(cache, "downloads", `${SHA}.tar.gz`))).toEqual(body);
+  });
+
   it("treats a moved file with another sha256 as a mismatch", async () => {
     const moved = "/dl/cpdc/ffff/MLImage-1.0.0-beta7.tar.gz";
     await serve({ [moved]: { body: other } });

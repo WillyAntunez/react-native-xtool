@@ -65,9 +65,9 @@ const unreachable = (err: unknown): boolean => err instanceof TypeError && err.m
 let sequence = 0;
 
 /**
- * The pod's archive in the cache. A locked entry whose file is cached: no request. Otherwise a download into
- * `<cache>/downloads/.<pod>-<version>.<pid>-<n>.<ext>`, then the sha256 against the lock, then the spec's sha256 or
- * sha1, then a rename to `<sha256>.<ext>` (an existing one wins, and the temporary file is removed). A URL that is not
+ * The pod's archive in the cache. A locked entry whose file is cached, at the URL the lock records: no request.
+ * Otherwise a download into `<cache>/downloads/.<pod>-<version>.<pid>-<n>.<ext>`, then the sha256 against the lock,
+ * then the spec's sha256 or sha1, then a rename to `<sha256>.<ext>` (an existing one wins, and the temporary file is removed). A URL that is not
  * https, or a redirect away from https, is downloaded only when the lock records its sha256.
  */
 export async function fetchPodArchive(
@@ -76,7 +76,9 @@ export async function fetchPodArchive(
 ): Promise<{ file: string; sha256: string; size: number; moved: boolean }> {
   const { pod, version } = plan;
   const locked = plan.locked?.version === version ? plan.locked : undefined;
-  if (locked !== undefined) {
+  // Spec goal 1.7: a spec URL other than the lock's is downloaded and checked against the locked sha256, even when the
+  // cache holds the file, so the lock records the new URL (review M-5).
+  if (locked !== undefined && plan.url === locked.url) {
     const file = cachedArchive(cache, locked.sha256, plan.ext);
     if (file !== undefined) return { file, sha256: locked.sha256, size: (await stat(file)).size, moved: false };
   }
