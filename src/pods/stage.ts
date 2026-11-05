@@ -1,11 +1,12 @@
 /**
  * The generated `ios/build/pod-binaries` package (spec goal 2.5): one product per root pod a library names, listing
  * every headers-only binary target that root reaches and a wrapper C target that depends on the source pods' SwiftPM
- * products (goal 3). The xcframeworks and the thin archives are hard links into the wrapped cache; the archives are
- * linked once, by `-force_load` on the App target (`PodsLinks`). Rebuilt on every build, never under node_modules.
+ * products (goal 3). The xcframeworks and the thin archives are copies of the wrapped cache (row 85: an edit here never
+ * reaches the cache); the archives are linked once, by `-force_load` on the App target (`PodsLinks`). Rebuilt on every
+ * build, never under node_modules.
  */
 import { existsSync, readdirSync, realpathSync } from "node:fs";
-import { copyFile, link as fsLink, mkdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import type { PodEntry } from "../config.js";
@@ -156,25 +157,14 @@ ${binaryLines}${wrapperLines}    ]
 `;
 }
 
-/** A hard link; across filesystems (EXDEV) or where links are not allowed (EPERM), a copy (row 36). */
-export async function linkOrCopy(src: string, dest: string, link: typeof fsLink = fsLink): Promise<void> {
-  try {
-    await link(src, dest);
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code !== "EXDEV" && code !== "EPERM") throw err;
-    await copyFile(src, dest);
-  }
-}
-
-/** `src`'s tree at `dest`: folders made, files linked (or copied). */
-async function linkTree(src: string, dest: string, link: typeof fsLink): Promise<void> {
+/** `src`'s tree at `dest`: folders made, files copied (row 85: never the cache's own inodes). */
+async function copyTree(src: string, dest: string): Promise<void> {
   await mkdir(dest, { recursive: true });
   for (const e of readdirSync(src, { withFileTypes: true })) {
     const from = path.join(src, e.name);
     const to = path.join(dest, e.name);
-    if (e.isDirectory()) await linkTree(from, to, link);
-    else await linkOrCopy(from, to, link);
+    if (e.isDirectory()) await copyTree(from, to);
+    else await copyFile(from, to);
   }
 }
 
@@ -229,20 +219,19 @@ let sequence = 0;
 
 /**
  * Removes and rebuilds `ios/build/pod-binaries` (assembled per pid, swapped in whole): `Package.swift`, `.gitignore`
- * (`*`), `xcframeworks/<Name>.xcframework` and `archives/lib<Name>.a` hard-linked from the cache, and per product
+ * (`*`), `xcframeworks/<Name>.xcframework` and `archives/lib<Name>.a` copied from the cache, and per product
  * `Sources/<Product>Wrapper/{wrapper.c,include/<Product>Wrapper.h}`. `iosMin` is the package's platform, the app's
  * deployment target by default. Throws if the folder would be under node_modules.
  */
 export async function stagePodBinaries(
   paths: ProjectPaths,
   result: PodsResult,
-  opts: { iosMin?: string; link?: typeof fsLink } = {},
+  opts: { iosMin?: string } = {},
 ): Promise<StagedPods> {
   const dir = paths.podBinaries;
   if (underNodeModules(dir)) {
     throw new PodsError(`rn-xtool writes CocoaPods binaries only outside node_modules, and ${dir} is inside it. See ${PODS_LINK}`);
   }
-  const link = opts.link ?? fsLink;
   const input = podBinariesInput(result, opts.iosMin ?? appDeploymentTarget(paths));
   const n = sequence++;
   const tmp = `${dir}.tmp-${process.pid}-${n}`;
@@ -252,10 +241,10 @@ export async function stagePodBinaries(
     await mkdir(tmp, { recursive: true });
     for (const w of result.wrapped) {
       for (const f of w.frameworks) {
-        await linkTree(f.xcframework, path.join(tmp, "xcframeworks", `${f.name}.xcframework`), link);
+        await copyTree(f.xcframework, path.join(tmp, "xcframeworks", `${f.name}.xcframework`));
         if (f.archive === undefined) continue;
         await mkdir(path.join(tmp, "archives"), { recursive: true });
-        await linkOrCopy(f.archive, path.join(tmp, "archives", `lib${f.name}.a`), link);
+        await copyFile(f.archive, path.join(tmp, "archives", `lib${f.name}.a`));
         archives.push(path.join(dir, "archives", `lib${f.name}.a`));
       }
     }

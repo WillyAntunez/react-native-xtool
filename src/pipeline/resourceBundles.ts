@@ -3,15 +3,15 @@
  * the files its globs match and the `Info.plist` CocoaPods writes for a resource bundle. A glob ending in `/**` keeps
  * the layout below its literal folder; any other match goes to the bundle root under its basename, as CocoaPods copies
  * matched files flat (NSBundle's `URLForResource:withExtension:` looks at the root: react-native-svg's filters). Files
- * are hard-linked (or copied), never symlinked: xtool copies a symlink as a symlink.
+ * are copied, never symlinked (xtool copies a symlink as a symlink) nor hard-linked (row 85: an edit in the app's copy
+ * never reaches the cache or the package).
  */
 import { lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import * as plist from "plist";
 import { PODS_LINK, PodsError } from "../pods/format.js";
-import { linkOrCopy } from "../pods/stage.js";
 
 const micromatch = createRequire(import.meta.url)("micromatch") as {
   isMatch: (path: string, patterns: string | string[], options?: { dot?: boolean }) => boolean;
@@ -141,7 +141,7 @@ function usableKey(key: string): boolean {
 }
 
 /**
- * `<resourcesDir>/<key>.bundle/` with the matched files hard-linked or copied (any earlier copy replaced) and its
+ * `<resourcesDir>/<key>.bundle/` with the matched files copied (any earlier copy replaced) and its
  * Info.plist. Logs the ℹ line for compiled resources it leaves out; with no file left, logs the ⚠ line and builds
  * nothing.
  */
@@ -164,9 +164,9 @@ export async function writeResourceBundle(s: BundleSource, resourcesDir: string,
     const dest = path.join(bundle, f.dest);
     await mkdir(path.dirname(dest), { recursive: true });
     // A symlink's target, so the bundle holds a regular file.
-    await linkOrCopy(realpathSync(f.src), dest);
+    await copyFile(realpathSync(f.src), dest);
   }
-  // A matched Info.plist is a link into the cache or the package: removed, never written through.
+  // A matched Info.plist gives way to the bundle's own.
   const info = path.join(bundle, "Info.plist");
   await rm(info, { force: true });
   await writeFile(info, resourceBundleInfoPlist(s.key));

@@ -85,7 +85,7 @@ describe("resourceBundleInfoPlist", () => {
 });
 
 describe("writeResourceBundle", () => {
-  it("hard-links and never writes a symlink", async () => {
+  it("copies and never writes a symlink", async () => {
     write("Resources/LatinOCRResources/model.tflite", "weights");
     symlinkSync("model.tflite", path.join(base, "Resources/LatinOCRResources/alias.tflite"));
     const lines: string[] = [];
@@ -95,7 +95,9 @@ describe("writeResourceBundle", () => {
     expect(files(bundle)).toEqual(["Info.plist", "alias.tflite", "model.tflite"]);
     for (const f of ["alias.tflite", "model.tflite"]) {
       expect(lstatSync(path.join(bundle, f)).isFile()).toBe(true);
-      expect(statSync(path.join(bundle, f)).ino).toBe(statSync(path.join(base, "Resources/LatinOCRResources/model.tflite")).ino);
+      // Row 85: a copy, so an edit in the app's bundle never reaches the cache or the package.
+      expect(statSync(path.join(bundle, f)).ino).not.toBe(statSync(path.join(base, "Resources/LatinOCRResources/model.tflite")).ino);
+      expect(readFileSync(path.join(bundle, f), "utf8")).toBe("weights");
     }
     expect(plist.parse(readFileSync(path.join(bundle, "Info.plist"), "utf8"))).toMatchObject({ CFBundleName: "LatinOCRResources" });
     expect(lines).toEqual([]);
