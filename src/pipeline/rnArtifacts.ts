@@ -146,8 +146,15 @@ export interface XcframeworkLibrary {
   SupportedArchitectures: string[];
 }
 
-/** The slices (`AvailableLibraries`) of an xcframework's `Info.plist`, platform fields only. */
-export function readXcframeworkLibraries(xcframeworkDir: string): XcframeworkLibrary[] {
+/** A slice of an xcframework's `Info.plist`, with the paths inside `<xcframework>/<LibraryIdentifier>/`. */
+export interface XcframeworkSlice extends XcframeworkLibrary {
+  /** `<Name>.framework` or `lib<name>.a`. */
+  LibraryPath?: string;
+  HeadersPath?: string;
+}
+
+/** The slices (`AvailableLibraries`) of an xcframework's `Info.plist`, with their `LibraryPath` and `HeadersPath`. */
+export function readXcframeworkSlices(xcframeworkDir: string): XcframeworkSlice[] {
   const file = path.join(xcframeworkDir, "Info.plist");
   if (!existsSync(file)) throw new Error(`${file} is missing`);
   const info = plist.parse(readFileSync(file, "utf8")) as Record<string, plist.PlistValue>;
@@ -155,23 +162,37 @@ export function readXcframeworkLibraries(xcframeworkDir: string): XcframeworkLib
   if (!Array.isArray(libs)) throw new Error(`${file}: no AvailableLibraries`);
   return libs.map((raw) => {
     const lib = raw as Record<string, plist.PlistValue>;
-    const { LibraryIdentifier, SupportedPlatform, SupportedPlatformVariant, SupportedArchitectures } = lib;
+    const { LibraryIdentifier, SupportedPlatform, SupportedPlatformVariant, SupportedArchitectures, LibraryPath, HeadersPath } = lib;
     if (
       typeof LibraryIdentifier !== "string" ||
       typeof SupportedPlatform !== "string" ||
       !Array.isArray(SupportedArchitectures) ||
       !SupportedArchitectures.every((a) => typeof a === "string") ||
-      (SupportedPlatformVariant !== undefined && typeof SupportedPlatformVariant !== "string")
+      (SupportedPlatformVariant !== undefined && typeof SupportedPlatformVariant !== "string") ||
+      (LibraryPath !== undefined && typeof LibraryPath !== "string") ||
+      (HeadersPath !== undefined && typeof HeadersPath !== "string")
     ) {
       throw new Error(`${file}: malformed AvailableLibraries entry ${JSON.stringify(lib)}`);
     }
     return {
+      ...(HeadersPath !== undefined ? { HeadersPath } : {}),
       LibraryIdentifier,
+      ...(LibraryPath !== undefined ? { LibraryPath } : {}),
+      SupportedArchitectures: SupportedArchitectures as string[],
       SupportedPlatform,
       ...(SupportedPlatformVariant !== undefined ? { SupportedPlatformVariant } : {}),
-      SupportedArchitectures: SupportedArchitectures as string[],
     };
   });
+}
+
+/** The slices (`AvailableLibraries`) of an xcframework's `Info.plist`, platform fields only. */
+export function readXcframeworkLibraries(xcframeworkDir: string): XcframeworkLibrary[] {
+  return readXcframeworkSlices(xcframeworkDir).map(({ LibraryIdentifier, SupportedPlatform, SupportedPlatformVariant, SupportedArchitectures }) => ({
+    LibraryIdentifier,
+    SupportedPlatform,
+    ...(SupportedPlatformVariant !== undefined ? { SupportedPlatformVariant } : {}),
+    SupportedArchitectures,
+  }));
 }
 
 /**

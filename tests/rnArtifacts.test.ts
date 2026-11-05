@@ -19,6 +19,7 @@ import {
   materialiseVirtualTree,
   parseVfsTemplate,
   readXcframeworkLibraries,
+  readXcframeworkSlices,
   renderHeadersModuleMap,
   type LinkFn,
 } from "../src/pipeline/rnArtifacts.js";
@@ -162,6 +163,48 @@ describe("RN 0.86 artifact adapter pieces", () => {
     });
     expect(info.CFBundlePackageType).toBe("XFWK");
     expect(info.XCFrameworkFormatVersion).toBe("1.0");
+  });
+
+  it("reads each slice's LibraryPath and HeadersPath, and the libraries as before", () => {
+    const dir = mkTmp("rn-xcfw-");
+    writeFileSync(
+      path.join(dir, "Info.plist"),
+      plist.build({
+        AvailableLibraries: [
+          { LibraryIdentifier: "ios-arm64", LibraryPath: "Foo.framework", SupportedArchitectures: ["arm64"], SupportedPlatform: "ios" },
+          {
+            HeadersPath: "Headers",
+            LibraryIdentifier: "ios-arm64_x86_64-simulator",
+            LibraryPath: "libFoo.a",
+            SupportedArchitectures: ["arm64", "x86_64"],
+            SupportedPlatform: "ios",
+            SupportedPlatformVariant: "simulator",
+          },
+        ],
+        CFBundlePackageType: "XFWK",
+        XCFrameworkFormatVersion: "1.0",
+      }),
+    );
+    expect(readXcframeworkSlices(dir)).toEqual([
+      { LibraryIdentifier: "ios-arm64", LibraryPath: "Foo.framework", SupportedArchitectures: ["arm64"], SupportedPlatform: "ios" },
+      {
+        HeadersPath: "Headers",
+        LibraryIdentifier: "ios-arm64_x86_64-simulator",
+        LibraryPath: "libFoo.a",
+        SupportedArchitectures: ["arm64", "x86_64"],
+        SupportedPlatform: "ios",
+        SupportedPlatformVariant: "simulator",
+      },
+    ]);
+    expect(readXcframeworkLibraries(dir)).toEqual([
+      { LibraryIdentifier: "ios-arm64", SupportedArchitectures: ["arm64"], SupportedPlatform: "ios" },
+      {
+        LibraryIdentifier: "ios-arm64_x86_64-simulator",
+        SupportedArchitectures: ["arm64", "x86_64"],
+        SupportedPlatform: "ios",
+        SupportedPlatformVariant: "simulator",
+      },
+    ]);
   });
 
   it("reading an xcframework without Info.plist names the file", () => {
