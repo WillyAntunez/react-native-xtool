@@ -232,8 +232,11 @@ export async function runPodsStep(root: string, roots: readonly PodRoot[], table
         if (size !== undefined) t.plan.expectedBytes = size;
       }),
     );
-    // Row 59: the downloads, their extracted trees and their wrapped copies, on the cache's filesystem.
-    const bytes = todo.reduce((a, t) => a + (t.plan.expectedBytes ?? 0), 0);
+    // Row 59: the downloads, their extracted trees and their wrapped copies, on the cache's filesystem. A file HEAD
+    // gives no length for counts with the size the lock records for this version (review M3).
+    const sizeOf = (t: Download): number =>
+      t.plan.expectedBytes ?? (t.plan.locked?.version === t.b.version ? t.plan.locked.size : undefined) ?? 0;
+    const bytes = todo.reduce((a, t) => a + sizeOf(t), 0);
     const need = bytes * POD_DISK_FACTOR;
     const { freeBytes } = await (d.filesystemOf ?? realFilesystemOf)(cache);
     if (freeBytes < need) {

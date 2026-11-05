@@ -322,6 +322,19 @@ describe("runPodsStep", () => {
     expect(existsSync(path.join(root, PODS_LOCK))).toBe(false);
   });
 
+  it("sizes the disk check from the lock when HEAD gives no length", async () => {
+    await runPodsStep(root, ROOTS, table(), deps());
+    rmSync(cache, { recursive: true, force: true });
+    server.requests.length = 0;
+    const silentHead = ((input: string | URL | Request, init?: RequestInit) =>
+      init?.method === "HEAD" ? Promise.resolve(new Response(null, { status: 405 })) : globalThis.fetch(input, init)) as typeof fetch;
+    const run = runPodsStep(root, ROOTS, table(), deps({ fetch: silentHead, filesystemOf: async () => ({ dev: 1, freeBytes: 1000 }) }));
+    await expect(run).rejects.toThrow(
+      `and rn-xtool needs about ${formatSize(total * POD_DISK_FACTOR)} there (10 downloads ${formatSize(total)}, unpacked and wrapped copies`,
+    );
+    expect(downloads()).toEqual([]);
+  });
+
   it("names the host and the cache when offline, before anything is downloaded", async () => {
     const base = await closedPortBase();
     const host = new URL(base).host;
