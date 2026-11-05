@@ -479,8 +479,16 @@ podspec's `~> 1.0`; pinned because `ios-xtool/` has no committed Package.resolve
 A file that cannot be read or has the wrong shape is an error result for each library scaffolded with it:
 `react-native spm scaffold: cannot read the pod table <file>: <reason>`. A manifest that pins at least one pod records
 the pins, sorted by pod, on a line after the importer-paths line (or the revision line):
-`// rn-xtool-pods: AppAuth=3.0.0, SwiftUIIntrospect=1.5.0`. An unmapped pod gets one warning per pod (subspecs
-collapse to the root pod): `Dependency "<pod>" is a CocoaPods pod with no known SwiftPM equivalent; the scaffolded package
+`// rn-xtool-pods: AppAuth=3.0.0, SwiftUIIntrospect=1.5.0`. A pod whose SwiftPM package leaves its umbrella header
+outside every target (AppAuth-iOS 3.0.0's `Sources/AppAuth.h`: `@import AppAuth;` works, `<AppAuth/AppAuth.h>` and
+`"AppAuth.h"` do not, while CocoaPods copies the header into `Headers/Public/AppAuth/`) names the header in
+`forwardHeaders` (`{ "AppAuth/AppAuth.h": ["AppAuthCore", "AppAuth"] }`). The scaffold then writes
+`rn-spm-pod-headers/AppAuth/AppAuth.h` into the library, holding the banner and `@import AppAuthCore;` and
+`@import AppAuth;`, and adds `.headerSearchPath("rn-spm-pod-headers")` to its C and C++ settings. A header key must
+be a relative path ending in `.h` without `.` or `..` segments, and each module a module name; otherwise that library
+gets the error `react-native spm scaffold: pods.<pod>.forwardHeaders.<header> must be a list of module names, under a
+relative path ending in .h`. A scaffold without forwarders removes a `rn-spm-pod-headers/` whose files all carry the
+banner. An unmapped pod gets one warning per pod (subspecs collapse to the root pod): `Dependency "<pod>" is a CocoaPods pod with no known SwiftPM equivalent; the scaffolded package
 may fail to build — add it to the pod→SwiftPM map in scaffold-package-swift.js`. Expo-named pods
 (`expo-*`, `Expo*`, `EX*`) keep the old "Unknown dependency" warning. A remote package makes the first build
 of a clean `.build` need network (SwiftPM clones it). Verified on react-native-pager-view 9.0.7: re-scaffolded

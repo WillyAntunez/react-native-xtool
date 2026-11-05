@@ -562,6 +562,62 @@ function swiftImportableHeaders(
 // no local header but a React one get a forwarding stub here.
 const REACT_BARE_HEADERS_DIR = 'rn-spm-react-headers';
 
+// A pod's umbrella header that its SwiftPM package leaves outside every target
+// (AppAuth-iOS's Sources/AppAuth.h), so neither `<AppAuth/AppAuth.h>` nor
+// `"AppAuth.h"` resolves, while `@import AppAuth;` does. CocoaPods copies the
+// header into Headers/Public/<Pod>/. A pod table entry's `forwardHeaders`
+// (`{"AppAuth/AppAuth.h": ["AppAuthCore", "AppAuth"]}`) makes the scaffold
+// write that path under this directory, holding the `@import` lines, and put
+// the directory on the target's header search path.
+const POD_HEADERS_DIR = 'rn-spm-pod-headers';
+const MODULE_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
+
+// The forwarders of one pod's `forwardHeaders`; throws naming a header key
+// that is not a relative path ending in .h inside the directory, or a module
+// list that is not one.
+function podHeaderForwarders(
+  pod /*: string */,
+  forwardHeaders /*: ?{[header: string]: Array<string>} */,
+) /*: Array<{pod: string, header: string, modules: Array<string>}> */ {
+  return Object.keys(forwardHeaders ?? {}).map(header => {
+    const modules = forwardHeaders?.[header];
+    const segments = header.split('/');
+    if (
+      !/\.h$/.test(header) ||
+      path.posix.isAbsolute(header) ||
+      header.includes('\\') ||
+      segments.some(seg => seg === '' || seg === '.' || seg === '..') ||
+      !Array.isArray(modules) ||
+      modules.length === 0 ||
+      !modules.every(m => typeof m === 'string' && MODULE_NAME_RE.test(m))
+    ) {
+      throw new Error(
+        `react-native spm scaffold: pods.${pod}.forwardHeaders.${header} must be a list of module names, under a relative path ending in .h`,
+      );
+    }
+    return {pod, header, modules};
+  });
+}
+
+// The directory holds only what a scaffold wrote: every file carries the banner.
+function ownPodHeadersDir(dir /*: string */) /*: boolean */ {
+  const files = (d /*: string */) /*: Array<string> */ =>
+    fs
+      .readdirSync(d, {withFileTypes: true})
+      .flatMap(e =>
+        e.isDirectory()
+          ? files(path.join(d, e.name))
+          : [path.join(d, e.name)],
+      );
+  try {
+    return files(dir).every(f =>
+      fs.readFileSync(f, 'utf8').includes(SCAFFOLDER_BANNER),
+    );
+  } catch {
+    return false;
+  }
+}
+
 function bareReactHeaders(
   depRoot /*: string */,
   files /*: Array<string> */,
@@ -883,6 +939,7 @@ function translatePodspecToSpmTarget(
   let coreReactNative = false;
   const siblingNames /*: Array<string> */ = [];
   const externalPackages /*: Array<{pod: string, url: string, exact: string, products: Array<string>, package: string}> */ = [];
+  const podForwarders /*: Array<{pod: string, header: string, modules: Array<string>}> */ = [];
   const unmappedPods /*: Array<string> */ = [];
   const leftOut /*: Array<string> */ = [];
   // Every iOS-autolinked dep has a resolved Swift name.
@@ -933,6 +990,7 @@ function translatePodspecToSpmTarget(
           package: spmPackageIdentity(known.url),
         };
         externalPackages.push(ext);
+        podForwarders.push(...podHeaderForwarders(pod, known.forwardHeaders));
       }
       for (const product of products ?? []) {
         if (!ext.products.includes(product)) {
@@ -1332,6 +1390,9 @@ function translatePodspecToSpmTarget(
   ) {
     headerSearchPaths.push(REACT_BARE_HEADERS_DIR);
   }
+  if (podForwarders.length > 0 && !headerSearchPaths.includes(POD_HEADERS_DIR)) {
+    headerSearchPaths.push(POD_HEADERS_DIR);
+  }
 
   // Mixed Swift + C-family sources → one mixed-language target (see
   // MIXED_TOOLS_VERSION_LINE). Swift Build names the generated header after
@@ -1461,6 +1522,7 @@ function translatePodspecToSpmTarget(
     mixedLanguage,
     clangModuleMap,
     reactBareHeaders,
+    podForwarders,
     sources: expandedSources,
     headerSearchPaths,
     preprocessorDefines,
@@ -2289,6 +2351,23 @@ function scaffoldPackageSwiftForDep(
           'utf8',
         );
       }
+    }
+  }
+
+  if (!ctx.dryRun) {
+    const podHeadersDir = path.join(dep.root, POD_HEADERS_DIR);
+    if (fs.existsSync(podHeadersDir) && ownPodHeadersDir(podHeadersDir)) {
+      fs.rmSync(podHeadersDir, {recursive: true, force: true});
+    }
+    for (const {pod, header, modules} of spec.podForwarders ?? []) {
+      const file = path.join(podHeadersDir, ...header.split('/'));
+      fs.mkdirSync(path.dirname(file), {recursive: true});
+      fs.writeFileSync(
+        file,
+        `// ${SCAFFOLDER_BANNER} — forwards <${header}> to the SwiftPM modules of the pod ${pod}.\n` +
+          modules.map(m => `@import ${m};\n`).join(''),
+        'utf8',
+      );
     }
   }
 

@@ -1059,6 +1059,27 @@ describe("scaffolded manifests in node_modules older than the scaffolder or the 
     expect(read(root, "node_modules/react-native-screens/Package.swift")).toBe(current["Package.swift"]);
   }, 30_000);
 
+  it("replaces a stale copy whose patch also holds a forwarder", async () => {
+    const root = await project();
+    await installPkg(root, "react-native-app-auth", "8.5.1");
+    const forwarder =
+      "// AUTO-SCAFFOLDED by react-native spm scaffold — forwards <AppAuth/AppAuth.h> to the SwiftPM modules of the pod AppAuth.\n" +
+      "@import AppAuthCore;\n@import AppAuth;\n";
+    const current = { "Package.swift": manifest(4, "0.87.1"), "rn-spm-pod-headers/AppAuth/AppAuth.h": forwarder };
+    await put(root, "patches/react-native-app-auth+8.5.1.patch", newFilesPatch("react-native-app-auth", current));
+    await put(root, "node_modules/react-native-app-auth/Package.swift", manifest(3, "0.87.1"));
+    await put(root, "node_modules/react-native-app-auth/rn-spm-pod-headers/AppAuth/AppAuth.h", forwarder);
+    const lines: string[] = [];
+    await applyPatches(root, undefined, { ...noBundled, log: (l) => lines.push(l) });
+    expect(read(root, "node_modules/react-native-app-auth/Package.swift")).toBe(current["Package.swift"]);
+    expect(read(root, "node_modules/react-native-app-auth/rn-spm-pod-headers/AppAuth/AppAuth.h")).toBe(forwarder);
+    expect(lines).toEqual([
+      "ℹ node_modules/react-native-app-auth/Package.swift was scaffolded with revision 3 for React Native 0.87.1, " +
+        "older than patches/react-native-app-auth+8.5.1.patch (revision 4, React Native 0.87.1): rn-xtool replaced it " +
+        "with the persisted one",
+    ]);
+  }, 30_000);
+
   it("keeps an older copy whose persisted patch also edits the library, and names the reinstall", async () => {
     // rn-xtool persists with `patch-package <name>`, so a library that already carries the user's own fix gets one
     // combined patch: the scaffold's new files plus that fix. Removing the scaffold files would make patch-package

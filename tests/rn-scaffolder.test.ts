@@ -160,6 +160,9 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
     it("scaffold-package-swift.js has the fix 25 hunk", () => {
       expect(src("scaffold-package-swift.js")).toContain("onlyDeps?: ReadonlyArray<string>");
     });
+    it("scaffold-package-swift.js has the pod header forwarder hunk", () => {
+      expect(src("scaffold-package-swift.js")).toContain("const POD_HEADERS_DIR = 'rn-spm-pod-headers'");
+    });
     it("scaffold-package-swift.js has the pod table file hunk", () => {
       const f = src("scaffold-package-swift.js");
       expect(f).toContain("function loadPodTable");
@@ -2088,6 +2091,70 @@ describe("scaffolder fix 13: the pod table (vendor/rn-spm)", () => {
     expect(run.statuses["foo"]).toBe("error");
     expect(run.results[0]!.reason).toMatch(new RegExp(`^react-native spm scaffold: cannot read the pod table ${file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}: .+`));
     expect(existsSync(path.join(run.roots["foo"]!, "Package.swift"))).toBe(false);
+  });
+
+  describe("13: pod umbrella header forwarders", () => {
+    const FORWARD = { "AppAuth/AppAuth.h": ["AppAuthCore", "AppAuth"] };
+    const forwarding = (forwardHeaders: unknown) => tableFile({ AppAuth: { ...APPAUTH, forwardHeaders } });
+    const FORWARDER = [
+      "// AUTO-SCAFFOLDED by react-native spm scaffold — forwards <AppAuth/AppAuth.h> to the SwiftPM modules of the pod AppAuth.",
+      "@import AppAuthCore;",
+      "@import AppAuth;",
+      "",
+    ].join("\n");
+    const settings = (pkg: string, key: string) => pkg.split("\n").find((l) => l.trim().startsWith(`${key}:`)) ?? "";
+
+    it("13: writes a forwarding header for each forwardHeaders entry (AppAuth's shape)", () => {
+      const run = scaffold(APPAUTH_DEP, forwarding(FORWARD));
+      const pkg = manifest(run);
+      expect(run.files["foo/rn-spm-pod-headers/AppAuth/AppAuth.h"]).toBe(FORWARDER);
+      expect(settings(pkg, "cSettings")).toContain('.headerSearchPath("rn-spm-pod-headers")');
+      expect(settings(pkg, "cxxSettings")).toContain('.headerSearchPath("rn-spm-pod-headers")');
+      expect(Object.keys(run.files).filter((k) => k.includes("rn-spm-pod-headers"))).toEqual(["foo/rn-spm-pod-headers/AppAuth/AppAuth.h"]);
+    });
+
+    it("13: the forwarder holds no absolute path", () => {
+      const run = scaffold(APPAUTH_DEP, forwarding(FORWARD));
+      const text = readFileSync(path.join(run.roots["foo"]!, "rn-spm-pod-headers/AppAuth/AppAuth.h"), "utf8");
+      expect(text).not.toContain(run.roots["foo"]!);
+      // No path token starting at the root (the comment's own `//` aside).
+      expect(text).not.toMatch(/(^|[\s"<])\/[^/]/m);
+      expect(text).not.toContain("..");
+      expect(manifest(run)).not.toMatch(/headerSearchPath\("(\/|[^"]*\.\.)/);
+    });
+
+    it("13: removes its stale rn-spm-pod-headers on a scaffold without forwarders", () => {
+      const run = scaffold(APPAUTH_DEP, forwarding(FORWARD));
+      const dir = path.join(run.roots["foo"]!, "rn-spm-pod-headers");
+      expect(existsSync(path.join(dir, "AppAuth/AppAuth.h"))).toBe(true);
+      const again = withTable(tableFile({ AppAuth: APPAUTH }), () => run.rerun({}));
+      expect(again.map((r) => r.status)).toEqual(["written"]);
+      expect(existsSync(dir)).toBe(false);
+      expect(readFileSync(path.join(run.roots["foo"]!, "Package.swift"), "utf8")).not.toContain("rn-spm-pod-headers");
+      // A folder of the library's own (no banner) stays.
+      mkdirSync(dir);
+      writeFileSync(path.join(dir, "Own.h"), "// the library's\n");
+      withTable(tableFile({ AppAuth: APPAUTH }), () => run.rerun({}));
+      expect(readFileSync(path.join(dir, "Own.h"), "utf8")).toBe("// the library's\n");
+    });
+
+    it.each(["../x.h", "/abs.h", "AppAuth/../../x.h", "AppAuth/AppAuth.m", "./AppAuth.h"])(
+      "13: refuses a header key that leaves the folder or is not a header (%s)",
+      (key) => {
+        const run = scaffold(APPAUTH_DEP, forwarding({ [key]: ["AppAuth"] }));
+        expect(run.statuses["foo"]).toBe("error");
+        expect(run.results[0]!.reason).toBe(
+          `react-native spm scaffold: pods.AppAuth.forwardHeaders.${key} must be a list of module names, under a relative path ending in .h`,
+        );
+        expect(existsSync(path.join(run.roots["foo"]!, "rn-spm-pod-headers"))).toBe(false);
+      },
+    );
+
+    it("13: refuses a module name that is not one", () => {
+      const run = scaffold(APPAUTH_DEP, forwarding({ "AppAuth/AppAuth.h": ["AppAuth;\n#import <x>"] }));
+      expect(run.statuses["foo"]).toBe("error");
+      expect(run.results[0]!.reason).toContain("pods.AppAuth.forwardHeaders.AppAuth/AppAuth.h must be a list of module names");
+    });
   });
 
   it("13: without the variable, the built-in table", () => {
