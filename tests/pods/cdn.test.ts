@@ -99,8 +99,14 @@ describe("the CocoaPods CDN", () => {
 
   it("does not cache a spec it cannot read", async () => {
     server = await startPodsServer({ [specPath("MLImage", "1.0.0-beta7")]: { body: "<!DOCTYPE html>" } });
+    const host = new URL(server.base).host;
     await expect(podSpec("MLImage", "1.0.0-beta7", opts(server.base))).rejects.toThrow(
-      `The spec of MLImage 1.0.0-beta7 has a "spec" value rn-xtool cannot read ("<!DOCTYPE html>"). See ${LINK}`,
+      `${host} answered ${server.base}${specPath("MLImage", "1.0.0-beta7")} (the spec of MLImage 1.0.0-beta7) with something other than a JSON spec ("<!DOCTYPE html>"). Build again later; if it keeps failing, see ${LINK}`,
+    );
+    expect(cachedSpecVersions("MLImage", cache)).toEqual([]);
+    server.routes[specPath("MLImage", "1.0.0-beta7")] = { body: "[1, 2]" };
+    await expect(podSpec("MLImage", "1.0.0-beta7", opts(server.base))).rejects.toThrow(
+      `The spec of MLImage 1.0.0-beta7 has a "spec" value rn-xtool cannot read ([1,2]). See ${LINK}`,
     );
     expect(cachedSpecVersions("MLImage", cache)).toEqual([]);
   });
@@ -160,6 +166,21 @@ describe("the CocoaPods CDN", () => {
     const err = await podSpec("MLImage", "1.0.0-beta7", { ...opts(server.base), timeoutMs: 200 }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(PodsNetworkError);
     expect((err as PodsNetworkError).reason).toBe("The operation was aborted due to timeout");
+  });
+
+  it("does not cache an answer that is not a version list, and says so", async () => {
+    server = await startPodsServer({ [indexPath("MLKitCommon")]: { body: "<!DOCTYPE html>\n<html><body>Sign in to the Wi-Fi</body></html>\n" } });
+    const host = new URL(server.base).host;
+    await expect(podVersions("MLKitCommon", opts(server.base))).rejects.toThrow(
+      `${host} answered ${server.base}${indexPath("MLKitCommon")} (the versions of MLKitCommon) with something other than a CocoaPods version list ("<!DOCTYPE html> <html><body>Sign in to the Wi-Fi</body></html>"). Build again later; if it keeps failing, see ${LINK}`,
+    );
+    expect(existsSync(path.join(cache, "specs", "index"))).toBe(false);
+  });
+
+  it("does not cache a version list that does not name the pod", async () => {
+    server = await startPodsServer({ [indexPath("PrivatePod")]: { body: "Other/1.0.0\n" } });
+    await expect(podVersions("PrivatePod", opts(server.base))).rejects.toThrow("is not on the CocoaPods trunk");
+    expect(existsSync(path.join(cache, "specs", "index"))).toBe(false);
   });
 
   it("names the HTTP status of any other answer", async () => {

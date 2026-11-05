@@ -133,6 +133,20 @@ async function get(url: string, what: string, plural: boolean, opts: CdnOptions)
   }
 }
 
+/** An answer that is not what was asked for (a proxy's or a captive portal's page): not cached, named. */
+function notWhatWasAsked(url: string, what: string, kind: string, text: string): PodsError {
+  const shown = text.replace(/\s+/g, " ").trim().slice(0, 80);
+  return new PodsError(
+    `${new URL(url).host} answered ${url} (${what}) with something other than ${kind} ("${shown}"). Build again later; if it keeps failing, see ${PODS_LINK}`,
+  );
+}
+
+/** Every line is `Name` or `Name/version/…`. */
+const isVersionIndex = (text: string): boolean => {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim() !== "");
+  return lines.length > 0 && lines.every((l) => /^[^\s/<>"']+(\/[^\s/<>"']+)*$/.test(l.trim()));
+};
+
 function indexFile(cache: string, pod: string): string {
   return path.join(cache, "specs", "index", `all_pods_versions_${podShard(pod).join("_")}.txt`);
 }
@@ -157,9 +171,12 @@ export async function podVersions(pod: string, opts: CdnOptions & { refresh?: bo
     if (cached !== undefined) return cached;
   }
   const url = versionIndexUrl(opts.base ?? CDN_BASE, pod);
-  const text = await get(url, `the versions of ${pod}`, true, opts);
+  const what = `the versions of ${pod}`;
+  const text = await get(url, what, true, opts);
+  if (text !== 404 && !isVersionIndex(text)) throw notWhatWasAsked(url, what, "a CocoaPods version list", text);
   const versions = text === 404 ? undefined : versionsIn(text, pod);
-  if (text !== 404) writeCached(file, text);
+  // Only a list that names the pod is cached: one that does not is read again next time.
+  if (text !== 404 && versions !== undefined) writeCached(file, text);
   if (versions === undefined) {
     throw new PodsError(
       `${pod} (needed by ${opts.neededBy(pod)}) is not on the CocoaPods trunk: its version list ${url} does not name it. ${NOT_ON_TRUNK}`,
@@ -183,17 +200,28 @@ function parseSpecText(text: string, pod: string, version: string): PodSpec {
   return parsePodSpec(json, { pod, version });
 }
 
+const isJson = (text: string): boolean => {
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 /** The spec of `pod` `version`, from `<cache>/specs/<pod>/<version>.podspec.json`; fetched only when missing, never again. */
 export async function podSpec(pod: string, version: string, opts: CdnOptions): Promise<PodSpec> {
   const file = specFile(opts.cache, pod, version);
   if (existsSync(file)) return parseSpecText(readFileSync(file, "utf8"), pod, version);
   const url = specUrl(opts.base ?? CDN_BASE, pod, version);
-  const text = await get(url, `the spec of ${pod} ${version}`, false, opts);
+  const what = `the spec of ${pod} ${version}`;
+  const text = await get(url, what, false, opts);
   if (text === 404) {
     throw new PodsError(
       `${pod} ${version} (needed by ${opts.neededBy(pod)}) is not on the CocoaPods trunk: ${url} answered 404. ${NOT_ON_TRUNK}`,
     );
   }
+  if (!isJson(text)) throw notWhatWasAsked(url, what, "a JSON spec", text);
   const spec = parseSpecText(text, pod, version);
   writeCached(file, text);
   return spec;
