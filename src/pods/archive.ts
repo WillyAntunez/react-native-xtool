@@ -3,8 +3,9 @@
  * special file, or a link that resolves outside the archive (through the archive's own links too) refuses the whole
  * archive. Tar archives are listed with GNU tar (C-quoted names, so no name can pass for a link target), zip archives
  * with `unzip -Z`, a zip symlink's target with `unzip -p`. Then only the paths the spec needs are extracted into
- * `<cache>/extracted/<sha256>/`, assembled beside it per process, stamped, and swapped in whole.
+ * `<cache>/extracted/<sha256>-<stamp hash>/`, assembled beside it per process, stamped, and swapped in whole.
  */
+import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, readdirSync } from "node:fs";
 import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -354,7 +355,15 @@ async function makeReadable(dir: string): Promise<void> {
 let sequence = 0;
 
 /**
- * `<cache>/extracted/<sha256>`: the listing and its checks first; the members `keep` matches are extracted into
+ * `<sha256>-<the first 16 hex digits of the stamp's sha256>`: a cache tree is named by its archive and by everything
+ * its content depends on, so two selections of one archive never share a folder.
+ */
+export function treeName(sha256: string, stamp: unknown): string {
+  return `${sha256}-${createHash("sha256").update(JSON.stringify(stamp)).digest("hex").slice(0, 16)}`;
+}
+
+/**
+ * `<cache>/extracted/<sha256>-<stamp hash>`: the listing and its checks first; the members `keep` matches are extracted into
  * `<dest>.tmp-<pid>-<n>` (with `flatten`, from below the one top-level folder), `required` is checked, the stamp is
  * written last into the finished tree, and the tree is swapped in whole. A tree with the same stamp is reused; one
  * without it is rebuilt. A tree another build stamped meanwhile wins.
@@ -365,14 +374,14 @@ export async function extractPod(
   run: ListRunner = defaultListRunner,
   swap: typeof swapIn = swapIn,
 ): Promise<string> {
-  const dest = path.join(cache, "extracted", req.sha256);
-  const stampFile = path.join(dest, EXTRACTED_STAMP);
   const stamp: ExtractedStamp = {
     extractorVersion: EXTRACTOR_VERSION,
     sha256: req.sha256,
     keep: [...req.keep].sort(),
     flatten: req.flatten,
   };
+  const dest = path.join(cache, "extracted", treeName(req.sha256, stamp));
+  const stampFile = path.join(dest, EXTRACTED_STAMP);
   if (sameStamp(readStamp(stampFile), stamp)) return dest;
 
   const entries = await safeEntries(req.archive, req.ext, req, run);

@@ -85,7 +85,15 @@ async function wrap(pod: string, frameworks: string[] | Record<string, unknown>,
   return wrapPod({ pod, version: "1.0.0", sha256: sha, neededBy: LIB, extracted, spec, layers, headersOnly: false }, cache, ar);
 }
 
-const DEST = (): string => path.join(cache, "wrapped", SHA);
+/** The wrapped trees of SHA in the cache, temporary ones left out. */
+const trees = (): string[] =>
+  existsSync(path.join(cache, "wrapped")) ? readdirSync(path.join(cache, "wrapped")).filter((n) => new RegExp(`^${SHA}-[0-9a-f]{16}$`).test(n)) : [];
+/** The one wrapped tree of SHA. */
+const DEST = (): string => {
+  const names = trees();
+  if (names.length !== 1) throw new Error(`expected one wrapped tree, got ${names.join(", ")}`);
+  return path.join(cache, "wrapped", names[0]!);
+};
 
 describe("wrapPod", () => {
   it("wraps a fat ar framework, a thin ar framework and an MH_OBJECT framework", async () => {
@@ -123,7 +131,7 @@ describe("wrapPod", () => {
       );
       expect(readFileSync(path.join(xcf, "ios-arm64", `lib${name}-ios-arm64.a`))).toEqual(EMPTY_AR_ARCHIVE);
     }
-    expect(readdirSync(path.join(cache, "wrapped"))).toEqual([SHA]);
+    expect(readdirSync(path.join(cache, "wrapped"))).toEqual([path.basename(DEST())]);
     expect(existsSync(path.join(DEST(), WRAPPED_STAMP))).toBe(true);
   });
 
@@ -147,7 +155,7 @@ describe("wrapPod", () => {
       return "";
     };
     await expect(wrap("MLKitOne", ["Frameworks/One.framework"], bad)).rejects.toThrow("does not start with !<arch>");
-    expect(existsSync(DEST())).toBe(false);
+    expect(trees()).toEqual([]);
   });
 
   it.each([
@@ -161,7 +169,7 @@ describe("wrapPod", () => {
         `MLKitFoo 1.0.0 (needed by ${LIB}) ships no arm64 device slice (it has ${arches}): Frameworks/MLKitFoo.framework/MLKitFoo. rn-xtool builds for iPhones only. Leave the library out with "exclude" in rn-xtool.config.json. See ${LINK}`,
       ),
     );
-    expect(existsSync(DEST())).toBe(false);
+    expect(trees()).toEqual([]);
   });
 
   it("stops on a simulator slice, in an object and in an archive member", async () => {
@@ -354,13 +362,22 @@ describe("wrapPod", () => {
     expect(again.warnings).toHaveLength(1);
   });
 
-  it("rebuilds a tree whose stamp names other inputs", async () => {
+  it("keeps one wrapped tree per selection of one archive", async () => {
     framework("Frameworks/A.framework", lib());
     framework("Frameworks/B.framework", lib());
-    await wrap("MLKitFoo", ["Frameworks/A.framework"]);
-    const w = await wrap("MLKitFoo", ["Frameworks/A.framework", "Frameworks/B.framework"], noAr);
-    expect(w.frameworks.map((f) => f.name)).toEqual(["A", "B"]);
-    expect(existsSync(path.join(DEST(), "archives", "libB.a"))).toBe(true);
+    const a = await wrap("MLKitFoo", ["Frameworks/A.framework"]);
+    const ab = await wrap("MLKitFoo", ["Frameworks/A.framework", "Frameworks/B.framework"]);
+    expect(ab.dir).not.toBe(a.dir);
+    expect(ab.frameworks.map((f) => f.name)).toEqual(["A", "B"]);
+    expect(readdirSync(path.join(a.dir, "archives"))).toEqual(["libA.a"]);
+    expect(readdirSync(path.join(ab.dir, "archives"))).toEqual(["libA.a", "libB.a"]);
+    expect(await wrap("MLKitFoo", ["Frameworks/A.framework"], noAr)).toEqual(a);
+    const [x, y] = await Promise.all([
+      wrap("MLKitFoo", ["Frameworks/B.framework"]),
+      wrap("MLKitFoo", ["Frameworks/A.framework", "Frameworks/B.framework"], noAr),
+    ]);
+    expect(readdirSync(path.join(x.dir, "archives"))).toEqual(["libB.a"]);
+    expect(y).toEqual(ab);
   });
 
   it("writes the stamp before the swap, and lets a tree another build stamped win", async () => {
@@ -385,7 +402,7 @@ describe("wrapPod", () => {
       wrap("MLKitFoo", ["Frameworks/MLKitFoo.framework"]),
     ]);
     expect(a).toEqual(b);
-    expect(readdirSync(path.join(cache, "wrapped"))).toEqual([SHA]);
+    expect(readdirSync(path.join(cache, "wrapped"))).toEqual([path.basename(a.dir)]);
   });
 
   it("leaves no temporary tree after a stop", async () => {

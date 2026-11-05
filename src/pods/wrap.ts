@@ -13,6 +13,7 @@ import { readXcframeworkSlices, swapIn } from "../pipeline/rnArtifacts.js";
 import { IOS_MIN } from "../versions.js";
 import { wrapObject, type ArRunner } from "./ar.js";
 import { PODS_LINK, PodsError } from "./format.js";
+import { treeName } from "./archive.js";
 import { arm64Slice, highestMinIos, platformProblem, readBinary } from "./macho.js";
 import type { PodSpec, SpecLayer } from "./spec.js";
 import { frameworkModuleMap, generatedModuleMap, rewriteFrameworkModuleMap, writeHeadersXcframework } from "./xcframework.js";
@@ -317,13 +318,12 @@ function result(i: WrapInput, dest: string, stamp: WrappedStamp): WrappedPod {
 }
 
 /**
- * `<cache>/wrapped/<sha256>/`: `xcframeworks/<Name>.xcframework`, `archives/lib<Name>.a` and the stamp
- * `.rn-xtool-wrapped.json`. The tree is assembled in `<dest>.tmp-<pid>-<n>`, stamped, and swapped in whole; a tree
- * with the same stamp is reused, and one another build stamped meanwhile wins.
+ * `<cache>/wrapped/<sha256>-<stamp hash>/`, named by the archive and the wrap's inputs:
+ * `xcframeworks/<Name>.xcframework`, `archives/lib<Name>.a` and the stamp `.rn-xtool-wrapped.json`. The tree is
+ * assembled in `<dest>.tmp-<pid>-<n>`, stamped, and swapped in whole; a tree with the same stamp is reused, and one
+ * another build stamped meanwhile wins.
  */
 export async function wrapPod(i: WrapInput, cache: string, ar: ArRunner, swap: typeof swapIn = swapIn): Promise<WrappedPod> {
-  const dest = path.join(cache, "wrapped", i.sha256);
-  const stampFile = path.join(dest, WRAPPED_STAMP);
   const key = {
     wrapperVersion: WRAPPER_VERSION,
     sha256: i.sha256,
@@ -336,6 +336,8 @@ export async function wrapPod(i: WrapInput, cache: string, ar: ArRunner, swap: t
       moduleMap: i.layers.map((l) => l.moduleMap).find((m) => m !== undefined) ?? null,
     }),
   };
+  const dest = path.join(cache, "wrapped", treeName(i.sha256, key));
+  const stampFile = path.join(dest, WRAPPED_STAMP);
   const current = readStamp(stampFile);
   if (sameInputs(current, key)) return result(i, dest, current);
 

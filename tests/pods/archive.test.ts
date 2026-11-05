@@ -208,6 +208,10 @@ const KEPT = [
   "Resources/FooResources/sub/labels.txt",
 ];
 const SHA_FOO = "f".repeat(64);
+/** A runner that fails every call: a reused tree must not list or extract. */
+const failingRunner: ListRunner = async () => {
+  throw new Error("must not run");
+};
 const under = (prefix: string, entries: ArchiveSpec[]): ArchiveSpec[] => [
   { type: "dir", path: `${prefix}/` },
   ...entries.map((e) => ({ ...e, path: `${prefix}/${e.path}` }) as ArchiveSpec),
@@ -247,7 +251,7 @@ describe("extractPod", () => {
 
   it.each(["tar.gz", "zip"] as const)("extracts only the paths the spec needs (%s)", async (ext) => {
     const dest = await extractPod(request(write(ext, FOO), ext), cache);
-    expect(dest).toBe(path.join(cache, "extracted", SHA_FOO));
+    expect(path.relative(cache, dest)).toMatch(new RegExp(`^extracted/${SHA_FOO}-[0-9a-f]{16}$`));
     expect(treeFiles(dest)).toEqual(KEPT);
     expect(readFileSync(path.join(dest, "Resources/FooResources/sub/labels.txt"), "utf8")).toBe("labels");
     expect(JSON.parse(readFileSync(path.join(dest, EXTRACTED_STAMP), "utf8"))).toEqual({
@@ -256,7 +260,7 @@ describe("extractPod", () => {
       keep: ["Frameworks/MLKitFoo.framework", "NOTICES", "Resources/FooResources/**"],
       flatten: false,
     });
-    expect(extracted()).toEqual([SHA_FOO]);
+    expect(extracted()).toEqual([path.basename(dest)]);
   });
 
   it.each(["tar.gz", "zip"] as const)("strips the top-level folder of a flatten archive (%s)", async (ext) => {
@@ -315,15 +319,31 @@ describe("extractPod", () => {
     await extractPod(request(file, "tar.gz"), cache);
     expect(treeFiles(dest)).toEqual(KEPT);
     expect(existsSync(path.join(dest, EXTRACTED_STAMP))).toBe(true);
-    expect(extracted()).toEqual([SHA_FOO]);
+    expect(extracted()).toEqual([path.basename(dest)]);
   });
 
-  it("rebuilds a tree stamped for other paths", async () => {
+  it("keeps one tree per selection of one archive, one after the other", async () => {
     const file = write("tar.gz", FOO);
-    const dest = await extractPod(request(file, "tar.gz", { keep: ["NOTICES"], required: [] }), cache);
-    expect(treeFiles(dest)).toEqual(["NOTICES"]);
-    await extractPod(request(file, "tar.gz"), cache);
-    expect(treeFiles(dest)).toEqual(KEPT);
+    const notices = await extractPod(request(file, "tar.gz", { keep: ["NOTICES"], required: [] }), cache);
+    const all = await extractPod(request(file, "tar.gz"), cache);
+    expect(all).not.toBe(notices);
+    expect(treeFiles(notices)).toEqual(["NOTICES"]);
+    expect(treeFiles(all)).toEqual(KEPT);
+    expect(await extractPod(request(file, "tar.gz", { keep: ["NOTICES"], required: [] }), cache, failingRunner)).toBe(notices);
+    expect(extracted().sort()).toEqual([path.basename(notices), path.basename(all)].sort());
+  });
+
+  it("keeps one tree per selection of one archive, at the same time", async () => {
+    const file = write("tar.gz", FOO);
+    const [notices, all, flat] = await Promise.all([
+      extractPod(request(file, "tar.gz", { keep: ["NOTICES"], required: [] }), cache),
+      extractPod(request(file, "tar.gz"), cache),
+      extractPod(request(file, "tar.gz", { flatten: true }), cache),
+    ]);
+    expect(new Set([notices, all, flat]).size).toBe(3);
+    expect(treeFiles(notices)).toEqual(["NOTICES"]);
+    expect(treeFiles(all)).toEqual(KEPT);
+    expect(treeFiles(flat)).toEqual(KEPT);
   });
 
   it.each(["tar.gz", "zip"] as const)("writes the stamp last (%s)", async (ext) => {
@@ -339,7 +359,7 @@ describe("extractPod", () => {
     await expect(extractPod(request(file, ext, { keep: ["NOTICES"], required: [] }), cache, failing)).rejects.toThrow("disk full");
     expect(treeFiles(dest)).toEqual(KEPT);
     expect(existsSync(path.join(dest, EXTRACTED_STAMP))).toBe(true);
-    expect(extracted()).toEqual([SHA_FOO]);
+    expect(extracted()).toEqual([path.basename(dest)]);
   });
 
   it("writes the stamp into the tree before it swaps the tree in", async () => {
@@ -378,6 +398,6 @@ describe("extractPod", () => {
     expect(a).toBe(b);
     expect(treeFiles(a)).toEqual(KEPT);
     expect(existsSync(path.join(a, EXTRACTED_STAMP))).toBe(true);
-    expect(extracted()).toEqual([SHA_FOO]);
+    expect(extracted()).toEqual([path.basename(a)]);
   });
 });
