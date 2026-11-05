@@ -76,6 +76,14 @@ describe("CocoaPods versions", () => {
     expect(sat("1.0.0-beta13", "~> 1.0.0-beta14")).toBe(false);
   });
 
+  it("compares the release part of a prerelease with the ~> upper bound, as RubyGems does", () => {
+    expect(sat("1.1.0-beta1", "~> 1.0.0-beta14")).toBe(false);
+    expect(sat("2.0.0-beta1", "~> 1.0")).toBe(false);
+    expect(sat("1.0.0-beta15", "~> 1.0.0-beta14")).toBe(true);
+    expect(sat("1.0.9-beta1", "~> 1.0.0-beta14")).toBe(true);
+    expect(newestSatisfying(["1.0.0-beta15", "1.1.0-beta1"], parseRequirements(["~> 1.0.0-beta14"]))).toBe("1.0.0-beta15");
+  });
+
   it("picks a prerelease only when a requirement names one", () => {
     const versions = ["0.9.0", "1.0.0-beta6", "1.0.0-beta7"];
     expect(newestSatisfying(versions, parseRequirements([">= 0.1"]))).toBe("0.9.0");

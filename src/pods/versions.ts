@@ -67,11 +67,16 @@ export function parseRequirements(items: readonly string[]): Requirement[] {
     });
 }
 
-/** The upper bound of `~> version`, as Gem::Version#bump: prerelease segments dropped, the last but one raised. */
-function pessimisticUpper(version: string): Segment[] {
+/** Gem::Version#release: the segments before the first letter segment. */
+function releaseSegments(version: string): number[] {
   const segments = versionSegments(version);
   const firstLetter = segments.findIndex((s) => typeof s === "string");
-  const release = (firstLetter === -1 ? segments : segments.slice(0, firstLetter)) as number[];
+  return (firstLetter === -1 ? segments : segments.slice(0, firstLetter)) as number[];
+}
+
+/** The upper bound of `~> version`, as Gem::Version#bump: prerelease segments dropped, the last but one raised. */
+function pessimisticUpper(version: string): Segment[] {
+  const release = releaseSegments(version);
   const upper = release.length > 1 ? release.slice(0, -1) : [...release];
   upper[upper.length - 1]! += 1;
   return upper;
@@ -93,7 +98,8 @@ function satisfies(version: string, req: Requirement): boolean {
     case "<=":
       return c <= 0;
     case "~>":
-      return c >= 0 && compareSegmentLists(versionSegments(version), pessimisticUpper(req.version)) < 0;
+      // RubyGems: version >= r && version.release < r.bump.
+      return c >= 0 && compareSegmentLists(releaseSegments(version), pessimisticUpper(req.version)) < 0;
   }
 }
 
