@@ -14,6 +14,7 @@ import { fakeExpo57Modules } from "./support/expo57.js";
 import { fakeExpo58Modules } from "./support/expo58.js";
 import { makeFakeSlot088 } from "./support/fakeSlots.js";
 import { fakeRnScripts } from "./support/rnScripts.js";
+import { plistOf, withEntitlements } from "./support/entitlements.js";
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
 const tempDirs: string[] = [];
@@ -525,6 +526,124 @@ describe("detectCapabilities", () => {
     await writeFile(path.join(dir, "rn-xtool.config.json"), JSON.stringify({ knownLimits: { allow: [name] } }));
     expect((await detect(dir)).limits?.map((l) => l.allowed)).toEqual([true]);
     expect(limits?.[0]?.reason).toMatch(/^@react-native-async-storage\/async-storage 3\.1\.1: its podspec \(AsyncStorage\.podspec\)/);
+  });
+
+  it("checks the pods with the config's table", async () => {
+    const dir = await expo58();
+    const pkg = JSON.parse(await readFile(path.join(dir, "package.json"), "utf8"));
+    pkg.dependencies["react-native-mmkv-lib"] = "1.0.0";
+    await writeFile(path.join(dir, "package.json"), JSON.stringify(pkg));
+    await writePackage(path.join(dir, "node_modules", "react-native-mmkv-lib"), { name: "react-native-mmkv-lib", version: "1.0.0" }, {
+      "MmkvLib.podspec": "Pod::Spec.new do |s|\n  s.dependency 'React-Core'\n  s.dependency 'MMKV', '~> 2.0'\nend\n",
+    });
+    expect((await detect(dir)).limits?.map((l) => [l.id, l.allowKey])).toEqual([["unmapped-pod", "react-native-mmkv-lib"]]);
+    const pods = { MMKV: { url: "https://github.com/Tencent/MMKV", exact: "2.2.4", products: ["MMKV"] } };
+    await writeFile(path.join(dir, "rn-xtool.config.json"), JSON.stringify({ pods }));
+    expect((await detect(dir)).limits).toEqual([]);
+  });
+
+  it("carries the pod pin warnings", async () => {
+    const dir = await expo58();
+    expect((await detect(dir)).podPins).toEqual([]);
+    const pkg = JSON.parse(await readFile(path.join(dir, "package.json"), "utf8"));
+    pkg.dependencies["react-native-app-auth"] = "8.5.1";
+    await writeFile(path.join(dir, "package.json"), JSON.stringify(pkg));
+    await writePackage(path.join(dir, "node_modules", "react-native-app-auth"), { name: "react-native-app-auth", version: "8.5.1" }, {
+      "react-native-app-auth.podspec": "Pod::Spec.new do |s|\n  s.dependency 'AppAuth', '>= 1.7.6'\nend\n",
+    });
+    expect((await detect(dir)).podPins).toEqual([]);
+    const pods = { AppAuth: { url: "https://github.com/openid/AppAuth-iOS", exact: "1.7.5", products: ["AppAuth"] } };
+    await writeFile(path.join(dir, "rn-xtool.config.json"), JSON.stringify({ pods }));
+    expect((await detect(dir)).podPins).toEqual([
+      '⚠ AppAuth 1.7.5 (rn-xtool.config.json) is outside react-native-app-auth\'s requirement ">= 1.7.6"',
+    ]);
+    // From rn-xtool.config.js, the line names that file.
+    await writeFile(path.join(dir, "rn-xtool.config.js"), `export default ${JSON.stringify({ pods })};\n`);
+    expect((await detect(dir)).podPins).toEqual([
+      '⚠ AppAuth 1.7.5 (rn-xtool.config.js) is outside react-native-app-auth\'s requirement ">= 1.7.6"',
+    ]);
+  });
+
+  it("carries the stale pod pins of the project's scaffold patches", async () => {
+    const dir = await expo58();
+    expect((await detect(dir)).scaffoldPins).toEqual([]);
+    const pkg = JSON.parse(await readFile(path.join(dir, "package.json"), "utf8"));
+    pkg.dependencies["react-native-app-auth"] = "8.5.1";
+    await writeFile(path.join(dir, "package.json"), JSON.stringify(pkg));
+    await writePackage(path.join(dir, "node_modules", "react-native-app-auth"), { name: "react-native-app-auth", version: "8.5.1" }, {
+      "react-native-app-auth.podspec": "Pod::Spec.new do |s|\n  s.dependency 'AppAuth', '>= 1.7.6'\nend\n",
+    });
+    const lines = [
+      "// AUTO-SCAFFOLDED by react-native spm scaffold — safe to edit & commit via patch-package.",
+      "// rn-xtool-scaffold-revision: 4",
+      "// rn-xtool-pods: AppAuth=3.0.0",
+      "// Cache slot: 0.88.1/dual-flavor",
+    ];
+    const target = "node_modules/react-native-app-auth/Package.swift";
+    await mkdir(path.join(dir, "patches"), { recursive: true });
+    await writeFile(
+      path.join(dir, "patches", "react-native-app-auth+8.5.1.patch"),
+      `diff --git a/${target} b/${target}\nnew file mode 100644\n--- /dev/null\n+++ b/${target}\n@@ -0,0 +1,4 @@\n` +
+        `${lines.map((l) => `+${l}`).join("\n")}\n`,
+    );
+    expect((await detect(dir)).scaffoldPins).toEqual([]);
+    const pods = { AppAuth: { url: "https://github.com/openid/AppAuth-iOS", exact: "3.1.0", products: ["AppAuth"] } };
+    await writeFile(path.join(dir, "rn-xtool.config.json"), JSON.stringify({ pods }));
+    expect((await detect(dir)).scaffoldPins).toEqual([
+      "⚠ patches/react-native-app-auth+8.5.1.patch pins AppAuth 3.0.0, the config says 3.1.0; delete it so rn-xtool " +
+        "regenerates it (also remove node_modules/react-native-app-auth and reinstall: that copy still has the old Package.swift)",
+    ]);
+  });
+
+  it("carries the exclude lines and skips the excluded libraries", async () => {
+    const dir = await expo58();
+    expect((await detect(dir)).excluded).toEqual([]);
+    const pkg = JSON.parse(await readFile(path.join(dir, "package.json"), "utf8"));
+    pkg.dependencies["react-native-mmkv-lib"] = "1.0.0";
+    await writeFile(path.join(dir, "package.json"), JSON.stringify(pkg));
+    await writePackage(path.join(dir, "node_modules", "react-native-mmkv-lib"), { name: "react-native-mmkv-lib", version: "1.0.0" }, {
+      "MmkvLib.podspec": "Pod::Spec.new do |s|\n  s.dependency 'MMKV', '~> 2.0'\nend\n",
+    });
+    await writeFile(path.join(dir, "rn-xtool.config.json"), JSON.stringify({ exclude: ["react-native-mmkv-lib", "nope"] }));
+    const c = await detect(dir);
+    expect(c.limits).toEqual([]);
+    expect(c.excluded).toEqual([
+      expect.stringMatching(/^ℹ exclude — left out of this iOS build: react-native-mmkv-lib \(rn-xtool\.config\.json\)\./),
+      "⚠ exclude names nope, which is not a native iOS dependency of this project; ignored",
+    ]);
+    // From rn-xtool.config.js, the line names that file.
+    await writeFile(path.join(dir, "rn-xtool.config.js"), "export default { exclude: ['react-native-mmkv-lib'] };\n");
+    expect((await detect(dir)).excluded).toEqual([
+      expect.stringMatching(/^ℹ exclude — left out of this iOS build: react-native-mmkv-lib \(rn-xtool\.config\.js\)\./),
+    ]);
+  });
+
+  it("reads the entitlements", async () => {
+    // Expo without ios/: read after expo prebuild.
+    expect((await detect(await expo58())).entitlements).toEqual({ pending: true });
+    const dir = await bare("0.88.1", "0.88");
+    expect((await detect(dir)).entitlements).toBeUndefined();
+    const pbxproj = path.join(dir, "ios", "HelloWorld.xcodeproj", "project.pbxproj");
+    await writeFile(pbxproj, withEntitlements(await readFile(pbxproj, "utf8"), "HelloWorld/HelloWorld.entitlements"));
+    expect((await detect(dir)).entitlements).toEqual({
+      error:
+        "CODE_SIGN_ENTITLEMENTS names ios/HelloWorld/HelloWorld.entitlements, which does not exist; xtool cannot sign the " +
+        "app without it. Fix the setting or create the file.",
+    });
+    // A file without keys is not passed to xtool (row 52): no line, as without the setting.
+    await writeFile(path.join(dir, "ios", "HelloWorld", "HelloWorld.entitlements"), plistOf("<dict/>"));
+    expect((await detect(dir)).entitlements).toBeUndefined();
+    await writeFile(
+      path.join(dir, "ios", "HelloWorld", "HelloWorld.entitlements"),
+      plistOf(
+        "<dict>\n<key>keychain-access-groups</key>\n<array>\n<string>$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)</string>\n" +
+          "</array>\n<key>aps-environment</key>\n<string>development</string>\n</dict>",
+      ),
+    );
+    expect((await detect(dir)).entitlements).toEqual({
+      rel: "ios/HelloWorld/HelloWorld.entitlements",
+      lines: ["⚠ aps-environment is not available on a free team; the build continues without it; push notifications fail at runtime."],
+    });
   });
 
   it("leaves the React Native fields out without react-native", async () => {

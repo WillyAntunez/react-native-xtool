@@ -33,7 +33,7 @@ export const GOLDEN_LIBS = [
 
 const SCAFFOLDER_MARKER = "AUTO-SCAFFOLDED by react-native spm scaffold";
 /** What the scaffolder writes into a library besides a marked Package.swift. */
-const SCAFFOLD_OUTPUTS = ["Package@swift-6.5.swift", "react-native-spm-prefix.h", "include", "rn-spm-swift", "rn-spm-react-headers"];
+const SCAFFOLD_OUTPUTS = ["Package@swift-6.5.swift", "react-native-spm-prefix.h", "include", "rn-spm-swift", "rn-spm-react-headers", "rn-spm-pod-headers"];
 /** Not native code: left out of the copies to keep them small. */
 const NOT_COPIED = new Set(["android", "node_modules", "lib", "src", "windows"]);
 

@@ -50,10 +50,11 @@ scaffolded libraries); [recipe.md](recipe.md) has every step with file locations
      resources only Xcode's tools compile (asset catalogs, storyboards); refuses modules built from vendored C sources
      such as expo-sqlite ([upstream/expo-spm-plugin-mixed-modules.md](upstream/expo-spm-plugin-mixed-modules.md)).
    - **React Native** (`patches/react-native+0.88.1.patch`, and its identical copy `react-native+0.88.0.patch` for bare
-     0.88.0; about 2.8k lines across 3 files under
-     `react-native/scripts/spm/`: `read-podspec.js`, `scaffold-package-swift.js`, `spm-utils.js`): 23 generic fixes to
+     0.88.0; about 3.0k lines across 3 files under
+     `react-native/scripts/spm/`: `read-podspec.js`, `scaffold-package-swift.js`, `spm-utils.js`): 24 generic fixes to
      the `spm scaffold` podspec reader and `Package.swift` generator, including mixed Swift + Objective-C/C++ targets,
-     known CocoaPods dependencies mapped to SwiftPM packages, the Swift importer paths of mixed targets, dependencies on
+     CocoaPods dependencies mapped to SwiftPM packages through a pod table file, the Swift importer paths of mixed
+     targets, dependencies on
      packages that are not installed left out, the Swift 5 language mode and Swift compilation conditions, plus two to
      the per-app header farm ([upstream/react-native-scaffolder.md](upstream/react-native-scaffolder.md)).
 
@@ -75,6 +76,11 @@ scaffolded libraries); [recipe.md](recipe.md) has every step with file locations
    frameworks fit together ([G4](#precompiled-frameworks-g4)).
 4. Generates `ios-xtool/` (Package.swift, xtool.yml, Info.plist, ip.txt, app config). It is a regenerable artifact; do
    not edit it by hand. It also gets:
+   - the app's entitlements, as `App.entitlements`, when the file `CODE_SIGN_ENTITLEMENTS` names has keys
+     ([Entitlements](#entitlements));
+   - on Expo, the bridging header the prebuild's Xcode project names (`SWIFT_OBJC_BRIDGING_HEADER`), copied to
+     `Sources/App` and passed to Swift with `-import-objc-header`, unless it holds only comments, as Expo's default
+     does (a config plugin such as react-native-app-auth's adds imports to it);
    - for apps without `expo-dev-client`, the `RNXtoolDevSupport` target, which reloads the app once Metro is reachable
      ([First launch](#first-launch));
    - `AppIcon.png`, the app icon taken from `Images.xcassets/AppIcon.appiconset`, named by `iconPath` in `xtool.yml`
@@ -348,8 +354,7 @@ patch above is what makes that scaffolder work for real-world podspecs.
   `"postinstall": "patch-package"` to your `package.json` scripts and `patch-package` to your devDependencies.
 - If persisting a scaffolded package fails (no lockfile, no network, ...), rn-xtool prints a warning and keeps
   building; the package is simply re-scaffolded after the next fresh install.
-- Mapped external dependencies (for example SwiftUIIntrospect, pinned to an exact version) are fetched from GitHub on
-  the first clean build; offline builds with `rnArtifactsDir` need them already cached in `ios-xtool/.build`.
+- A podspec's dependencies on CocoaPods pods are resolved through a pod table ([Third-party pods](#third-party-pods)).
 - Swift code that imports a scaffolded library (the App, or an Expo module such as expo-router importing RNScreens)
   builds that library's module from its headers, so it needs the library's header search paths. The scaffolder records
   them in the manifest of every mixed library, and of a clang-only one whose search paths go beyond its public
@@ -359,7 +364,8 @@ patch above is what makes that scaffolder work for real-world podspecs.
   `patches` step naming the file to delete and the library to reinstall; rn-xtool then regenerates it.
 - Before anything is scaffolded, `doctor --project` and `build` check every dependency's podspec. A CocoaPods-only
   library whose podspec declares prebuilt binaries (`vendored_frameworks`, `vendored_libraries`) cannot be scaffolded
-  yet: the generated `Package.swift` cannot link them. `build` stops on it before it changes anything, with the reason
+  yet: the generated `Package.swift` cannot link them. Neither can one that depends on a pod the pod table does not
+  map ([Third-party pods](#third-party-pods)). `build` stops on it before it changes anything, with the reason
   and a link, instead of failing minutes later in the build. Expo modules are left to Expo's plugin, which
   links their binaries; an Expo module that builds C sources from its `vendor/` folder (expo-sqlite) is refused the
   same way. A `Package.swift` the library ships or your `patches/` create counts, and `knownLimits.allow` in
@@ -367,6 +373,72 @@ patch above is what makes that scaffolder work for real-world podspecs.
   ([troubleshooting.md](troubleshooting.md#unsupported-setups)).
 
 Which libraries are verified: [libraries.md](libraries.md).
+
+## Third-party pods
+
+The scaffolder classifies each `s.dependency` on an unconditional line of a podspec (lines under a Ruby `if` or
+`unless` are not read), once, as one of:
+
+- a subspec of the same podspec: skipped;
+- a React Native core pod (`React-…`, `RCT…`, `Yoga`, `ReactNativeDependencies`, …): skipped, since the prebuilt
+  runtime provides it;
+- an Expo module's pod: not wired, with a warning;
+- an autolinked sibling, named `react-native-*` or by the pod name of an installed package's podspec (reanimated's
+  `RNWorklets`): wired to that package;
+- a sibling autolinking does not link: left out, with the subspec that declares it;
+- a pod in the pod table: a `.package(url:exact:)` dependency plus its products;
+- anything else: unmapped, with a warning.
+
+**The pod table** is merged per pod, field by field, in this order, the later winning: the scaffolder's own baseline
+(SwiftUIIntrospect), rn-xtool's `data/pods.json` (AppAuth), then the `pods` of `rn-xtool.config.json`. rn-xtool
+writes the merged table to `ios/build/rn-xtool-pods.json` and names it in `RN_SPM_POD_TABLE` for every React Native
+run of the `rn-spm` step; without it the scaffolder falls back to its baseline. A mapped pod's `forwardHeaders` become
+`rn-spm-pod-headers/<Dir/Header.h>` files in the library, each holding `@import <module>;` lines, on the library's
+header search path: AppAuth's umbrella header is outside its SwiftPM targets, and react-native-app-auth imports it as
+`<AppAuth/AppAuth.h>`. Each manifest records the pods it pins on a marker line, `// rn-xtool-pods: AppAuth=3.0.0`.
+
+**Before the build.** `doctor --project` and `build` run the same classifier, loaded from rn-xtool's vendored copy of
+the scaffolder, never the project's. They read podspecs as text, with no `pod ipc` and no network. The linked
+packages are those autolinking links: on bare, what package.json lists in `dependencies`, `devDependencies` and
+`peerDependencies`; on Expo, every installed package too. A library rn-xtool would scaffold is refused when it
+depends on an unmapped pod, and on bare when it depends by pod name on a package that is installed but not listed in
+package.json ([troubleshooting.md](troubleshooting.md#libraries-that-depend-on-cocoapods-pods)). A pin whose version
+misses the podspec's requirement (`=`, `>`, `>=`, `<`, `<=`, `~>`, several of them) gets a `⚠` line, not a refusal.
+
+**After a pin changes.** The `patches` step compares each scaffold's marker line with the table and the library's
+podspec: a persisted patch that pins another version, or none, gets a `⚠` line naming it, and a scaffold without a
+persisted patch is removed so the `rn-spm` step scaffolds it again.
+
+SwiftPM fetches a mapped pod's package from GitHub during `xtool dev build`, as for any package dependency: the first
+clean build needs the network, and offline builds with `rnArtifactsDir` need it already in `ios-xtool/.build`.
+
+## Leaving a module out
+
+With `exclude` in `rn-xtool.config.json`, rn-xtool wraps the autolinking config command every SwiftPM step runs (on
+bare, the one React Native would run; on Expo, `npx expo-modules-autolinking react-native-config --json --platform
+ios`) with `scripts/exclude-config-command.js`. It runs the command and prints its JSON with each listed package's
+`platforms.ios` set to `null`, which is what `platforms: { ios: null }` in `react-native.config.js` produces.
+Autolinking, the scaffolder and codegen (which reads the `autolinking.json` written from that output) then leave the
+package out, and the early checks skip it. Your `react-native.config.js` is not touched. Expo modules are linked by
+Expo's own autolinking, which the command does not feed: they go in `expo.autolinking.exclude`
+([troubleshooting.md](troubleshooting.md#leaving-a-module-out)).
+
+## Entitlements
+
+Before the `patches` step (on Expo, once `expo prebuild` wrote the Xcode project), `build` reads the file
+`CODE_SIGN_ENTITLEMENTS` names in the app target's Debug configuration, resolving `$(PRODUCT_BUNDLE_IDENTIFIER)`,
+`$(CFBundleIdentifier)` and the project's other settings and keeping `$(AppIdentifierPrefix)` and
+`$(TeamIdentifierPrefix)`. It looks each key up in a table read from the source of the xtool release rn-xtool pins
+(1.24.0): which types xtool decodes, which it marks paid, and Apple's free column. It prints a `⚠` line for each key xtool drops or does not enable, and it stops when the
+file is missing or is not a property list dictionary. When the file has keys, the `generate` step writes them to
+`ios-xtool/App.entitlements` and adds `entitlementsPath: App.entitlements` to `xtool.yml`; `xtool dev build` then signs
+the app with them ad hoc. A file without keys (every Expo prebuild writes one) is not passed, so `xtool.yml` stays as
+without the setting. At install, xtool registers the App ID on your team, keeps the entitlements it knows (on a free
+team, those of free capabilities), and rewrites the identifiers: `application-identifier` and the only keychain group
+become `<Team ID>.XTL-<Team ID>.<bundle id>` ([troubleshooting.md](troubleshooting.md#entitlements)).
+
+The `XTL-<Team ID>` segment, here and in the installed bundle id, is what xtool builds from the signed-in account's
+identity, not from the team itself; on every device run so far it matched the Team ID.
 
 ## Reference timings
 

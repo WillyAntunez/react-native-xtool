@@ -191,14 +191,14 @@ The spec's failure-walk rulings are binding.
   - **PR 2** = C, D, E, F2–F3 and G2, from `feature/library-compat` after PR 1 is merged.
   - If F1 fails on a library, PR 1 waits, and the failure goes to the owner as a decision.
 
-### Failure-walk owners (spec rows 1–46)
+### Failure-walk owners (spec rows 1–51)
 
 | # | Ruling | Owner |
 |---|---|---|
 | 1 | handle | Task C3 `names a pods entry of the wrong shape` (it.each, every key); Task D1 `names an exclude of the wrong shape` |
 | 2 | accept | Task C3 plan note (checking a product or URL needs the network); Task G2 troubleshooting entry quotes SwiftPM's resolve error |
 | 3 | handle | Task C6 `warns when the pinned version misses the podspec's requirement` (doctor and build start), matcher it.each |
-| 4 | accept | Task C1 plan note (the core prefixes are kept as they are); Task G2: the "file not found" troubleshooting entry names `pods` |
+| 4 | accept | Task C1 plan note (the core prefixes are kept as they are; a core name wins over `pods`, which cannot map it); Task G2: the troubleshooting entry for the "file not found" points to `exclude` or an issue |
 | 5 | handle | Task C5 `refuses AppAuth's shape without a table entry`, `refuses ML Kit's shape, naming GoogleMLKit once`; Task F2 step 5 |
 | 6 | handle | Task C5 `ignores pods under a Ruby condition (react-native-video's shape)` |
 | 7 | accept | Task C5 test `knownLimits.allow turns it into a warning`; plan note: the build may then fail at compile time, as the allowed-limit text says |
@@ -222,7 +222,7 @@ The spec's failure-walk rulings are binding.
 | 25 | accept | Task G2 docs: the pod table is the one place to align pins |
 | 26 | accept | Task F2 step 2 records whether `AppAuth_AppAuth.bundle` and `AppAuth_AppAuthCore.bundle` reach `App.app`; Task G2 states the result in the present tense |
 | 27 | handle | Task C8 unit tests; Task F3 (Expo SDK 58 with the plugin). Without F3: documented as build-unverified (OQ8) |
-| 28 | handle | Task D3 `warns about a name that is not a native iOS dependency` |
+| 28 | handle | Task D3 `warns about a name that is not a native iOS dependency`; `fix: judge exclude names against the linked set` (D/E review M3), tests `judges each name against the packages autolinking links (row 28)`, `names the config file the exclude comes from` |
 | 29 | accept | Task A1 (the "not installed (or not linked for iOS)" warning names the dependency, and excluded packages count as not linked); Task G2 docs: exclude the dependents too |
 | 30 | handle | Task D2 Step 0 (spike: netinfo excluded in the proof app); Task F2 step 6 |
 | 31 | accept | Task D3 `ℹ exclude` line at every `doctor --project` and `build`; Task G2 present-tense docs with the guard |
@@ -232,7 +232,7 @@ The spec's failure-walk rulings are binding.
 | 35 | handle + accept | Task E4 line tests; Apple's policy is recorded in Task G2 |
 | 36 | accept | Task E4 text says xtool does not enable it on a paid team; spec Non-goals |
 | 37 | handle (pending E1) | Task E4 `several App Groups` line and Task E5 mapping, **only if 1.24.0 has `tooManyAppGroups`**; otherwise App Groups get the generic paid line (owner decision, preflight P1) |
-| 38 | handle + accept | Task E4 `keychain-access-groups` line test; xtool's rewrite recorded in Task G2 |
+| 38 | handle + accept | Task E4 `keychain-access-groups` line test; the app's own group in its `$(TeamIdentifierPrefix)` and `$(CFBundleIdentifier)` forms gets no line (final review PR 2 m3), tests `resolves $(CFBundleIdentifier) as the bundle id, and both own-group forms get no line (row 38)`, `counts $(TeamIdentifierPrefix)<bundle id> as the app's own keychain group (row 38)`; xtool's rewrite recorded in Task G2 |
 | 39 | handle | Task E2 `the table was checked with the pinned xtool` |
 | 40 | handle | Task E1 (1.24.0 tag source read before Task E2) |
 | 41 | handle | Task H (owner's device pass); Task G1/G2 docs call the libraries build-verified until then |
@@ -241,6 +241,15 @@ The spec's failure-walk rulings are binding.
 | 44 | handle | Task B5 `leaves out a value over several lines whose closing line carries a modifier, and reads on after it` |
 | 45 | accept | Task G1 troubleshooting text: the dropped-subspec entry says the subspec stays left out until the library is re-scaffolded after the install |
 | 46 | handle | Task B5 `says privacy manifests are read only at App Store submission only when every resource is one` |
+| 47 | handle | `fix: merge pod overrides field by field` (C1–C4 review M1), test `merges a config entry over the shipped one field by field` |
+| 48 | handle | Task C7 (C1–C4 review M2) `warns when a persisted scaffold of a library with mapped pods pins nothing`, `regenerates an unpersisted copy whose pins differ` |
+| 49 | handle | `fix: index every installed podspec package` (C5–C8 review I1), test `on Expo, does not refuse a sibling installed as a peer, outside package.json (reanimated 4.3.4 and worklets 0.8.3)`; `feat: refuse a pod sibling missing from package.json` (D/E review M2, bare only), tests `on bare, refuses a pod sibling installed but not listed in package.json (row 49)`, `names several unlisted siblings in one refusal`, build `passes the project kind to the library checks (row 49: bare refuses an unlisted pod sibling)` |
+| 50 | handle | `fix: treat all React Native core pods as core` (C5–C8 review I2), tests `<name> is core` and the drift test `classifies every podspec name in react-native@<version> as core` |
+| 51 | handle | `fix: expect pod pins only for kept subspecs` (C5–C8 review M1), test `leaves out the pods of a subspec the scaffolder drops for a missing sibling`; `fix: read parenthesised pod dependencies` (fix 26), tests `26: reads `s.dependency('Pod', …)` as CocoaPods does`, `26: pins a mapped pod named in parentheses` |
+| 52 | handle | `fix: pass entitlements only when the file has keys` (D/E review M1), tests `passes no entitlements for the prebuild's empty file: xtool.yml stays byte-identical (row 52)` and `reads the entitlements` (no doctor line for a file without keys) |
+| 53 | handle | `fix: clear ios/ when rn-xtool's prebuild fails` (F3 proof), tests `removes the ios/ a failed prebuild left and says so (row 53)`, `rethrows the error unchanged when the failed prebuild wrote no ios/`, `says so when the half-written ios/ cannot be removed` |
+| 54 | accept | Task H: a bare app with an entitlements file installs and launches on the device (xtool's ad-hoc pass at build leaves `App` and the framework binaries without the exec bit until `install` re-signs; F2, F3) |
+| 55 | accept | final review PR 2, three ways #2: one present-tense sentence in troubleshooting's "Libraries that depend on CocoaPods pods" (rn-xtool reads the top level of `node_modules`; a nested copy is read as an unmapped pod: `npm dedupe`, or add the package to package.json) |
 
 ## Review Focus
 
@@ -866,10 +875,13 @@ export function checkPodEntries(file: string, pods: unknown): void;   // also us
 ```
 - Texts (`ConfigError`, `${file}` is `rn-xtool.config.json` or `rn-xtool.config.js`):
   - `${file}: pods must be an object of CocoaPods pod names`
+  - `${file}: pods.${pod} must be a CocoaPods pod name (no "/", spaces or quotes)` (`pods.""` for an empty name)
   - `${file}: pods.${pod}.url must be a git URL (https://…)`
   - `${file}: pods.${pod}.exact must be a version such as 3.0.0`
   - `${file}: pods.${pod}.products must be a list of product names` (also when neither `products` nor `product` is set)
+  - `${file}: pods.${pod}.subspecs must be an object of subspec names`
   - `${file}: pods.${pod}.subspecs.${name} must be a list of product names`
+  - `${file}: pods.${pod}.forwardHeaders must be an object of header paths`
   - `${file}: pods.${pod}.forwardHeaders.${header} must be a list of module names, under a relative path ending in .h`
 - Plan note (row 2, accept): a well-formed but wrong URL or product is caught by SwiftPM at `xtool-build`, and its
   message names it.
@@ -1010,7 +1022,9 @@ export function podPinWarnings(projectRoot: string, table: PodTable, opts?: Libr
   - `config` reads `the config says`, and the shipped table reads `rn-xtool's table says`.
 - An unpersisted copy whose `// rn-xtool-pods:` line differs from the table is removed with the existing `ℹ … rn-xtool
   removed it so the rn-spm step scaffolds it again` line, the same rule as an older revision (preflight P10).
-- A manifest without the line (pins nothing recorded) gets no pin warning.
+- A manifest without the line (pins nothing recorded) whose library's podspec maps a pod gets the "does not pin" warning
+  (row 48, C1–C4 review M2); a library whose podspec maps no pod gets none. The expected pins skip a subspec the
+  scaffolder drops for a missing sibling (row 51).
 
 - [ ] **Step 1: Write failing tests:**
   - `warns when a persisted scaffold pins another version than the table` (row 23);
@@ -1122,10 +1136,12 @@ export function configCommandFor(
 
 **Interfaces:**
 ```ts
-export function excludeLines(projectRoot: string, exclude: readonly string[]): string[];
-//   A name is a native iOS dependency when it is a direct dependency with a podspec or a Package.swift (in the package
-//   root or ios/), and no expo-module.config.json naming apple/ios. An Expo module gets the Expo warning; other names
-//   get the "not a native iOS dependency" warning; the rest are joined into the ℹ line.
+export function excludeLines(projectRoot: string, exclude: readonly string[], opts?: { kind?: ProjectKind; file?: string }): string[];
+//   A name is a native iOS dependency when autolinking links it (bare: package.json's dependencies, devDependencies and
+//   peerDependencies; Expo: every installed package too; D/E review M3) and it has a podspec or a Package.swift (in the
+//   package root or ios/), and no expo-module.config.json naming apple/ios. An Expo module gets the Expo warning; other
+//   names get the "not a native iOS dependency" warning; the rest are joined into the ℹ line, which names the config
+//   file `exclude` was read from (`file`: rn-xtool.config.json or rn-xtool.config.js).
 ```
 - Texts:
   - `ℹ exclude — left out of this iOS build: react-native-vision-camera (rn-xtool.config.json). JavaScript that uses it must check that it is there; see ${troubleshootingUrl("leaving-a-module-out")}`
@@ -1271,7 +1287,7 @@ export function entitlementLines(e: AppEntitlements, bundleId: string): string[]
   - known to xtool and paid: `⚠ aps-environment is not available on a free team; the build continues without it; push notifications fail at runtime.`
   - unknown to xtool, not free for Apple: `⚠ com.apple.developer.networking.wifi-info is not available on a free team, and xtool does not enable it on a paid one; the build continues without it; reading the Wi-Fi network name returns nothing at runtime.`
   - free for Apple, unknown to xtool: `⚠ com.apple.developer.default-data-protection is not enabled by xtool; the build continues without it; files keep the default protection.`
-  - shared keychain groups (an entry other than `$(AppIdentifierPrefix)${bundleId}`): `⚠ keychain-access-groups lists other groups; xtool signs the app with its own group only (<Team ID>.${bundleId}); the build continues; sharing keychain items with other apps fails at runtime.`
+  - shared keychain groups (an entry other than `$(AppIdentifierPrefix)${bundleId}`): `⚠ keychain-access-groups lists other groups; xtool signs the app with its own group only (<Team ID>.XTL-<Team ID>.${bundleId}); the build continues; sharing keychain items with other apps fails at runtime.`
   - several App Groups (only if E1 confirms `tooManyAppGroups` and free App Groups): `⚠ com.apple.security.application-groups lists ${n} groups; a free team allows one, and xtool stops at signing with more than one.`
   - known to xtool and free: nothing.
 
@@ -1384,16 +1400,22 @@ No commit. It needs the owner's OK: a `create-expo-app` download, about 1 GB of 
 No commit. It runs after F1 for the four libraries, and after F2 for the rest. Until the owner confirms an item, the
 docs call that library build-verified only (row 41).
 
-- [ ] react-native-video plays a remote MP4 with its controls.
-- [ ] The vision-camera preview shows after the permission prompt (`NSCameraUsageDescription` in Info.plist).
-- [ ] device-info returns plausible values: model, system version and unique id. The name is the generic one.
-- [ ] netinfo reports the connection type and follows Wi‑Fi on and off. The SSID is empty, as the entitlement line
-  says.
-- [ ] The app installs with the entitlements file of F2 step 7, and nothing on the iPhone refuses it.
+**Run 2026-11-05 (the owner, iOS 26, install over Wi‑Fi): pass.** The bare React Native 0.88.1 proof app with the
+five libraries and an entitlements file (keychain groups, `aps-environment`, `wifi-info`, `HotspotConfiguration`, an
+App Group): the five ⚠ lines printed, and the app, signed at build with its binaries left without the exec bit,
+installed and launched normally (row 54). Fast Refresh works. The items left unchecked below were not run.
+
+- [x] react-native-video plays a remote MP4 with its controls.
+- [x] The vision-camera preview shows after the permission prompt (`NSCameraUsageDescription` in Info.plist).
+- [x] device-info returns plausible values: model, system version and unique id. The name is the generic one. (Model
+  and iOS version checked.)
+- [x] netinfo reports the connection type and follows Wi‑Fi on and off. The SSID is empty, as the entitlement line
+  says. (Type `wifi`, connected `true` checked; Wi‑Fi off and on not run.)
+- [x] The app installs with the entitlements file of F2 step 7, and nothing on the iPhone refuses it.
 - [ ] With netinfo excluded and its import guarded, the app launches without a red screen.
 - [ ] Optional: the AppAuth login opens the system browser sheet and returns through the redirect. This needs a test
-  OpenID provider and the redirect scheme in Info.plist.
-- [ ] Results go into `docs/libraries.md` dates, with one `docs:` commit by the controller.
+  OpenID provider and the redirect scheme in Info.plist. (react-native-app-auth is linked: `authorize` is present.)
+- [x] Results go into `docs/libraries.md` dates, with one `docs:` commit by the controller.
 
 ### Task I: Final review (controller)
 
@@ -1560,8 +1582,9 @@ See Fact 1 and the recipe in Global Constraints.
 - **P14 (sequencing).**
   - PR 1 ships revision 4 without the `rn-xtool-pods` line. PR 2 adds the line for libraries with mapped pods and
     does not bump again.
-  - Only a pager-view patch persisted between the two PRs (the owner's work app) lacks the line, and it gets no pin
-    warning.
+  - Only a pager-view patch persisted between the two PRs (the owner's work app) lacks the line. Under row 48 it gets
+    the "does not pin SwiftUIIntrospect" warning once (an unpersisted copy is regenerated), until the patch is deleted
+    and the library re-scaffolded.
   - Proposed accept, since no release happens in between. The alternative is revision 5 in C1.
 - **P15 (downloads).**
   - The approved list covers the five libraries and AppAuth-iOS. These need the owner's OK first:
@@ -1576,7 +1599,8 @@ See Fact 1 and the recipe in Global Constraints.
   - rn-xtool always passes the command explicitly and never reads that record. Proposed accept.
 - **P17 (keychain line).**
   - The spec's example shows `TEAMID0000`. rn-xtool does not know the Team ID at build time.
-  - Planned: `<Team ID>.${bundleId}`.
+  - Planned: `<Team ID>.XTL-<Team ID>.${bundleId}`. xtool registers the app as `XTL-<Team ID>.<bundle id>` and
+    rewrites the keychain group with that id (fact 23), in the README's `XTL-` notation.
 - **P18 (xtool's entitlement decoding, unverified).**
   - `xtool dev build` decodes the file with `PropertyListDecoder` into `Entitlements`. A value type it cannot decode
     would fail the build after compiling.

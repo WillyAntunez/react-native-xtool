@@ -5,10 +5,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { build, buildSteps, chooseMetroPort, type BuildDeps } from "../src/commands/build.js";
+import { loadConfig as realLoadConfig } from "../src/config.js";
 import { jsiRnHeaderDirs } from "../src/pipeline/jsi.js";
 import { fixLibraryManifests } from "../src/pipeline/manifests.js";
-import { libraryFailures as realLibraryFailures, UnsupportedSetupError, type EarlyFailure } from "../src/project/earlyChecks.js";
+import { libraryFailures as realLibraryFailures, podPinWarnings, UnsupportedSetupError, type EarlyFailure } from "../src/project/earlyChecks.js";
+import { mergedPodTable } from "../src/project/podTable.js";
 import { readState, writeState } from "../src/state.js";
+import { withEntitlements } from "./support/entitlements.js";
 
 const expoFlags = { kind: "expo" as const, hasExpoModules: true, hasExpoConstants: true, rnArtifacts: false, expoPlugin: "installed" as const };
 const bareFlags = { kind: "bare" as const, hasExpoModules: false, hasExpoConstants: false, rnArtifacts: false, expoPlugin: "installed" as const };
@@ -88,6 +91,7 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
     loadConfig: async () => ({ metroPort: 8081, ...over.cfg }),
     installFailures: over.installFailures ?? (() => []),
     libraryFailures: over.libraryFailures ?? (() => []),
+    podPinWarnings: () => [],
     readProject: async () =>
       ({
         kind: "expo",
@@ -201,19 +205,70 @@ describe("build", () => {
     await build(t.root, { clean: true }, t.deps);
     expect(t.calls[0]).toBe("prebuild --clean");
   });
+  it("removes the ios/ a failed prebuild left and says so (row 53)", async () => {
+    for (const [hasIos, clean] of [[false, false], [true, true]] as const) {
+      const t = setup({ hasIos });
+      let wroteIos = false;
+      const prebuild = async (_r: string, c: boolean) => {
+        t.calls.push(c ? "prebuild --clean" : "prebuild");
+        wroteIos = true;
+        throw new Error("Command failed with exit code 1: npx expo prebuild --platform ios --no-install");
+      };
+      const exists = () => hasIos || wroteIos;
+      const error = await build(t.root, { clean }, { ...t.deps, prebuild, exists }).catch((e: unknown) => e);
+      expect((error as Error).message).toBe(
+        "Command failed with exit code 1: npx expo prebuild --platform ios --no-install\n" +
+          "The failed prebuild left ios/ half-written, so rn-xtool removed it; the next build runs expo prebuild again.",
+      );
+      expect(t.calls).toEqual([clean ? "prebuild --clean" : "prebuild", `remove ${join(t.root, "ios")}`]);
+    }
+  });
+  it("rethrows the error unchanged when the failed prebuild wrote no ios/", async () => {
+    const t = setup();
+    const failure = new Error("Command failed with exit code 1: npx expo prebuild --platform ios --no-install");
+    const error = await build(t.root, {}, {
+      ...t.deps,
+      prebuild: async () => {
+        t.calls.push("prebuild");
+        throw failure;
+      },
+    }).catch((e: unknown) => e);
+    expect(error).toBe(failure);
+    expect(t.calls).toEqual(["prebuild"]);
+  });
+  it("says so when the half-written ios/ cannot be removed", async () => {
+    const t = setup();
+    let wroteIos = false;
+    const error = await build(t.root, {}, {
+      ...t.deps,
+      exists: () => wroteIos,
+      prebuild: async () => {
+        wroteIos = true;
+        throw new Error("Command failed with exit code 1: npx expo prebuild --platform ios --no-install");
+      },
+      remove: async () => {
+        throw new Error("EACCES: permission denied");
+      },
+    }).catch((e: unknown) => e);
+    expect((error as Error).message).toBe(
+      "Command failed with exit code 1: npx expo prebuild --platform ios --no-install\n" +
+        "The failed prebuild left ios/ half-written, and rn-xtool could not remove it (EACCES: permission denied); delete " +
+        "ios/ before the next build, or run rn-xtool build --clean.",
+    );
+  });
   it("passes the scripts and plugin sources to the patches step", async () => {
     const applyPatches = vi.fn(async () => {});
     const t = setup({ applyPatches, project: { kind: "bare", rnScripts: "vendored" } });
     await build(t.root, {}, t.deps);
-    expect(applyPatches).toHaveBeenCalledWith(t.root, { rnScripts: "vendored", expoPlugin: "installed" });
+    expect(applyPatches).toHaveBeenCalledWith(t.root, { rnScripts: "vendored", expoPlugin: "installed", podTable: mergedPodTable(), kind: "bare" });
     const sdk57 = vi.fn(async () => {});
     const t57 = setup({ applyPatches: sdk57, project: { kind: "expo", rnScripts: "vendored", expoPlugin: "vendored", rnVersion: "0.86.3" } });
     await build(t57.root, {}, t57.deps);
-    expect(sdk57).toHaveBeenCalledWith(t57.root, { rnScripts: "vendored", expoPlugin: "vendored" });
+    expect(sdk57).toHaveBeenCalledWith(t57.root, { rnScripts: "vendored", expoPlugin: "vendored", podTable: mergedPodTable(), kind: "expo" });
     const sdk58 = vi.fn(async () => {});
     const t58 = setup({ applyPatches: sdk58, project: { kind: "expo" } });
     await build(t58.root, {}, t58.deps);
-    expect(sdk58).toHaveBeenCalledWith(t58.root, { rnScripts: "installed", expoPlugin: "installed" });
+    expect(sdk58).toHaveBeenCalledWith(t58.root, { rnScripts: "installed", expoPlugin: "installed", podTable: mergedPodTable(), kind: "expo" });
   });
 
   it("build passes the kind to runRnSpm and skips prebuild for bare", async () => {
@@ -226,6 +281,26 @@ describe("build", () => {
     expect(runRnSpm).toHaveBeenCalledWith(expect.objectContaining({ root: t.root }), { rnArtifactsDir: undefined, kind: "bare", rnScripts: "installed", expoPlugin: "installed" });
     const ctx = (t.writeIosXtool.mock.calls[0] as unknown[])[0] as { frameworks: { name: string }[] };
     expect(ctx.frameworks.map((f) => f.name)).toEqual(["A"]);
+  });
+  it("passes the merged pod table to the patches step", async () => {
+    const pods = { AppAuth: { url: "https://github.com/example/AppAuth-iOS", exact: "2.1.0", products: ["AppAuth"] } };
+    const applyPatches = vi.fn(async () => {});
+    const t = setup({ cfg: { pods }, project: { kind: "bare" }, applyPatches });
+    await build(t.root, {}, t.deps);
+    expect(applyPatches).toHaveBeenCalledWith(t.root, expect.objectContaining({ podTable: mergedPodTable(pods) }));
+  });
+  it("passes the config's pods to runRnSpm", async () => {
+    const pods = { AppAuth: { url: "https://github.com/example/AppAuth-iOS", exact: "2.1.0", products: ["AppAuth"] } };
+    const t = setup({ cfg: { pods }, project: { kind: "bare" } });
+    const runRnSpm = vi.fn(async () => {});
+    await build(t.root, {}, { ...t.deps, runRnSpm });
+    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ pods }));
+  });
+  it("passes the config's exclude to runRnSpm", async () => {
+    const t = setup({ cfg: { exclude: ["react-native-vision-camera"] }, project: { kind: "bare" } });
+    const runRnSpm = vi.fn(async () => {});
+    await build(t.root, {}, { ...t.deps, runRnSpm });
+    expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ exclude: ["react-native-vision-camera"] }));
   });
   it("passes the scripts source to runRnSpm", async () => {
     const t = setup({ project: { kind: "bare", rnScripts: "vendored" } });
@@ -436,7 +511,7 @@ describe("build", () => {
       expect((error as UnsupportedSetupError).failures).toEqual(failures);
       expect(roots).toEqual([t.root]);
       expect(readProject).not.toHaveBeenCalled();
-      expect(libraryFailures).toHaveBeenCalledWith(t.root);
+      expect(libraryFailures).toHaveBeenCalledWith(t.root, {});
       expect(t.calls).toEqual([]);
       expect(t.logs.filter((l) => l.startsWith("▸"))).toEqual([]);
     }
@@ -515,6 +590,180 @@ describe("build", () => {
     await build(persisted.root, {}, persisted.deps);
     expect(persisted.calls).toEqual(buildSteps({ ...expoFlags, hasIos: true, clean: false }));
   });
+  it("stops on an unmapped pod before anything changes", async () => {
+    const name = "@react-native-ml-kit/text-recognition";
+    const files: Record<string, string> = {
+      "package.json": JSON.stringify({ name: "app", dependencies: { [name]: "2.0.0" } }),
+      [`node_modules/${name}/package.json`]: JSON.stringify({ name, version: "2.0.0" }),
+      [`node_modules/${name}/RNMLKitTextRecognition.podspec`]:
+        "Pod::Spec.new do |s|\n  s.dependency 'React'\n  s.dependency 'GoogleMLKit/TextRecognition', '8.0.0'\nend\n",
+    };
+    const t0 = setup({ hasIos: true, libraryFailures: realLibraryFailures });
+    for (const [rel, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(t0.root, rel)), { recursive: true });
+      writeFileSync(join(t0.root, rel), text);
+    }
+    const error = await build(t0.root, {}, t0.deps).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(UnsupportedSetupError);
+    expect((error as UnsupportedSetupError).failures.map((f) => [f.id, f.allowKey])).toEqual([["unmapped-pod", name]]);
+    expect((error as Error).message).toMatch(/^@react-native-ml-kit\/text-recognition 2\.0\.0: its podspec depends on the CocoaPods pod GoogleMLKit,/);
+    expect(t0.calls).toEqual([]);
+
+    // The config's pods map it: the build goes on.
+    const pods = { GoogleMLKit: { url: "https://github.com/example/mlkit", exact: "8.0.0", products: ["MLKitTextRecognition"] } };
+    const mapped = setup({ hasIos: true, cfg: { pods }, libraryFailures: realLibraryFailures });
+    for (const [rel, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(mapped.root, rel)), { recursive: true });
+      writeFileSync(join(mapped.root, rel), text);
+    }
+    await build(mapped.root, {}, mapped.deps);
+    expect(mapped.calls).toEqual(buildSteps({ ...expoFlags, hasIos: true, clean: false }));
+  });
+  it("logs the pod pins that miss a podspec's requirement after the early checks", async () => {
+    const pods = { AppAuth: { url: "https://github.com/openid/AppAuth-iOS", exact: "1.7.5", products: ["AppAuth"] } };
+    const seen: unknown[] = [];
+    const t = setup({ hasIos: true, cfg: { pods } });
+    const line = '⚠ AppAuth 1.7.5 (rn-xtool.config.json) is outside react-native-app-auth\'s requirement ">= 1.7.6"';
+    await build(t.root, {}, {
+      ...t.deps,
+      podPinWarnings: (root, opts) => {
+        seen.push(root, opts);
+        return [line];
+      },
+    });
+    expect(seen).toEqual([t.root, { pods }]);
+    expect(t.logs.indexOf(line)).toBeGreaterThanOrEqual(0);
+    expect(t.logs.indexOf(line)).toBeLessThan(t.logs.findIndex((l) => l.startsWith("▸")));
+
+    // The real check on a project with react-native-app-auth's shape.
+    const real = setup({ hasIos: true, cfg: { pods } });
+    const lib = join(real.root, "node_modules", "react-native-app-auth");
+    mkdirSync(lib, { recursive: true });
+    writeFileSync(join(real.root, "package.json"), JSON.stringify({ name: "app", dependencies: { "react-native-app-auth": "8.5.1" } }));
+    writeFileSync(join(lib, "package.json"), JSON.stringify({ name: "react-native-app-auth", version: "8.5.1" }));
+    writeFileSync(join(lib, "react-native-app-auth.podspec"), "Pod::Spec.new do |s|\n  s.dependency 'AppAuth', '>= 1.7.6'\nend\n");
+    await build(real.root, {}, { ...real.deps, podPinWarnings: (root, opts) => podPinWarnings(root, mergedPodTable(opts.pods), opts) });
+    expect(real.logs).toContain(line);
+
+    // With "pods" in rn-xtool.config.js, the line names that file.
+    writeFileSync(join(real.root, "rn-xtool.config.js"), `export default ${JSON.stringify({ pods })};\n`);
+    real.logs.length = 0;
+    await build(real.root, {}, {
+      ...real.deps,
+      loadConfig: realLoadConfig,
+      podPinWarnings: (root, opts) => podPinWarnings(root, mergedPodTable(opts.pods), opts),
+    });
+    expect(real.logs).toContain(line.replace("rn-xtool.config.json", "rn-xtool.config.js"));
+  });
+
+  it("passes the project kind to the library checks (row 49: bare refuses an unlisted pod sibling)", async () => {
+    const kinds: unknown[] = [];
+    const run = async (files: Record<string, string>, cfg: object = {}) => {
+      const t = setup({
+        cfg,
+        // A refusal stops the build right after the checks.
+        libraryFailures: (_root, opts) => {
+          kinds.push(opts.kind);
+          return [{ id: "unlisted-sibling", allowKey: "lib", reason: "lib 1.0.0: refused." }];
+        },
+      });
+      for (const [rel, text] of Object.entries(files)) {
+        mkdirSync(dirname(join(t.root, rel)), { recursive: true });
+        writeFileSync(join(t.root, rel), text);
+      }
+      await expect(build(t.root, {}, t.deps)).rejects.toBeInstanceOf(UnsupportedSetupError);
+    };
+    await run({ "package.json": JSON.stringify({ name: "app" }), "ios/HelloWorld.xcodeproj/project.pbxproj": "" });
+    await run({ "package.json": JSON.stringify({ name: "app", dependencies: { expo: "*" } }), "app.json": JSON.stringify({ expo: {} }) });
+    await run({ "package.json": JSON.stringify({ name: "app", dependencies: { expo: "*" } }), "app.json": "{}" }, { projectKind: "expo" });
+    // Undetectable: the checks run as before, without a kind.
+    await run({});
+    expect(kinds).toEqual(["bare", "expo", "expo", undefined]);
+  });
+
+  it("prints the exclude lines first and passes exclude to the checks", async () => {
+    const exclude = ["react-native-mmkv-lib"];
+    const seen: unknown[] = [];
+    const t = setup({
+      hasIos: true,
+      cfg: { exclude },
+      libraryFailures: (root, opts) => {
+        seen.push(["libraryFailures", opts]);
+        return [];
+      },
+    });
+    mkdirSync(join(t.root, "node_modules", "react-native-mmkv-lib"), { recursive: true });
+    writeFileSync(join(t.root, "package.json"), JSON.stringify({ name: "app", dependencies: { "react-native-mmkv-lib": "1.0.0" } }));
+    writeFileSync(join(t.root, "node_modules", "react-native-mmkv-lib", "package.json"), JSON.stringify({ name: "react-native-mmkv-lib", version: "1.0.0" }));
+    writeFileSync(join(t.root, "node_modules", "react-native-mmkv-lib", "MmkvLib.podspec"), "Pod::Spec.new do |s|\n  s.dependency 'MMKV'\nend\n");
+    const applyPatches = vi.fn(async () => {});
+    await build(t.root, {}, {
+      ...t.deps,
+      applyPatches,
+      podPinWarnings: (_root, opts) => {
+        seen.push(["podPinWarnings", opts]);
+        return [];
+      },
+    });
+    expect(seen).toEqual([
+      ["libraryFailures", { exclude }],
+      ["podPinWarnings", { exclude }],
+    ]);
+    expect(applyPatches).toHaveBeenCalledWith(t.root, expect.objectContaining({ exclude }));
+    const info = t.logs.findIndex((l) => l.startsWith("ℹ exclude — left out of this iOS build: react-native-mmkv-lib (rn-xtool.config.json)."));
+    expect(info).toBeGreaterThanOrEqual(0);
+    expect(info).toBeLessThan(t.logs.findIndex((l) => l.startsWith("▸")));
+
+    // The real early check: the excluded library's unmapped pod is not refused.
+    const real = setup({ hasIos: true, cfg: { exclude }, libraryFailures: realLibraryFailures });
+    mkdirSync(join(real.root, "node_modules", "react-native-mmkv-lib"), { recursive: true });
+    writeFileSync(join(real.root, "package.json"), JSON.stringify({ name: "app", dependencies: { "react-native-mmkv-lib": "1.0.0" } }));
+    writeFileSync(join(real.root, "node_modules", "react-native-mmkv-lib", "package.json"), JSON.stringify({ name: "react-native-mmkv-lib", version: "1.0.0" }));
+    writeFileSync(join(real.root, "node_modules", "react-native-mmkv-lib", "MmkvLib.podspec"), "Pod::Spec.new do |s|\n  s.dependency 'MMKV'\nend\n");
+    await expect(build(real.root, {}, { ...real.deps, loadConfig: async () => ({ metroPort: 8081 }) })).rejects.toThrow(UnsupportedSetupError);
+    await build(real.root, {}, real.deps);
+    expect(real.calls).toContain("xtool-build");
+  });
+
+  it("prints no exclude line without exclude", async () => {
+    const t = setup({ hasIos: true });
+    await build(t.root, {}, t.deps);
+    expect(t.logs.filter((l) => l.includes("exclude"))).toEqual([]);
+  });
+
+  it("prints the entitlement lines before compiling and stops on a missing file", async () => {
+    const aps = "⚠ aps-environment is not available on a free team; the build continues without it; push notifications fail at runtime.";
+    const ents = { file: "/x/ios/App/App.entitlements", rel: "ios/App/App.entitlements", dict: { "aps-environment": "development" } };
+    for (const kind of ["bare", "expo"] as const) {
+      const seen: unknown[] = [];
+      const t = setup({ hasIos: kind === "bare", project: { kind } });
+      await build(t.root, {}, {
+        ...t.deps,
+        readEntitlements: (project, ios) => {
+          seen.push([project.bundleIdentifier, ios, [...t.calls]]);
+          return ents;
+        },
+      });
+      // Expo: right after expo prebuild; bare: before anything changes.
+      expect(seen).toEqual([["com.example.app", join(t.root, "ios"), kind === "expo" ? ["prebuild"] : []]]);
+      const at = t.logs.indexOf(aps);
+      expect(at).toBeGreaterThanOrEqual(0);
+      expect(at).toBeLessThan(t.logs.indexOf("▸ patches"));
+    }
+
+    // The real reader on a bare app whose CODE_SIGN_ENTITLEMENTS names a missing file.
+    const real = setup({ hasIos: true, project: { kind: "bare" } });
+    mkdirSync(join(real.root, "ios", "HelloWorld.xcodeproj"), { recursive: true });
+    const src = readFileSync(new URL("./fixtures/pbxproj/with-objc.pbxproj", import.meta.url), "utf8");
+    writeFileSync(join(real.root, "ios", "HelloWorld.xcodeproj", "project.pbxproj"), withEntitlements(src, "HelloWorld/HelloWorld.entitlements"));
+    const readProject: BuildDeps["readProject"] = async (...args) => ({ ...(await real.deps.readProject(...args)), root: real.root });
+    await expect(build(real.root, {}, { ...real.deps, readProject })).rejects.toThrow(
+      "CODE_SIGN_ENTITLEMENTS names ios/HelloWorld/HelloWorld.entitlements, which does not exist; xtool cannot sign the app " +
+        "without it. Fix the setting or create the file.",
+    );
+    expect(real.calls).toEqual([]);
+  });
+
   it("warns and builds on when rn-xtool.config.json allows every refusal", async () => {
     const pnpm: EarlyFailure = { id: "pnpm", allowKey: "pnpm", reason: "This project was installed with pnpm." };
     const hoisted: EarlyFailure = { id: "hoisted", allowKey: "hoisted", reason: "react-native is hoisted." };

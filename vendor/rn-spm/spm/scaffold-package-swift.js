@@ -142,18 +142,109 @@ const IMPORTER_PATHS_MARKER = '// rn-xtool-swift-importer-paths: ';
 
 // CocoaPods pods (not React Native / Expo modules, not autolinked siblings) whose
 // SwiftPM package is known: a podspec `s.dependency "<pod>"` becomes
-// `.package(url:exact:)` + `.product(name:package:)`. `exact` is the newest tag
-// the podspecs seen here accept (`~> 1.0` → newest 1.x), pinned for reproducible
-// builds: the generated `ios-xtool/` has no committed Package.resolved, so a
-// range would drift between clean builds. The package identity SwiftPM derives is the URL's last path component.
+// `.package(url:exact:)` + one `.product(name:package:)` per product. `exact` is
+// the newest tag the podspecs seen here accept (`~> 1.0` → newest 1.x), pinned
+// for reproducible builds: the generated `ios-xtool/` has no committed
+// Package.resolved, so a range would drift between clean builds. The package
+// identity SwiftPM derives is the URL's last path component. `subspecs` maps a
+// `<pod>/<subspec>` dependency to its own products. This is the built-in
+// baseline; a caller adds or replaces entries with the JSON file named by
+// RN_SPM_POD_TABLE (loadPodTable).
 // react-native-pager-view 9.x: `s.dependency "SwiftUIIntrospect", '~> 1.0'`.
-const KNOWN_POD_SPM_PACKAGES /*: {[pod: string]: {url: string, exact: string, product: string}} */ = {
+/*::
+type PodTableEntry = {
+  url: string,
+  exact: string,
+  products: Array<string>,
+  subspecs?: {[name: string]: Array<string>},
+  forwardHeaders?: {[header: string]: Array<string>},
+};
+*/
+const KNOWN_POD_SPM_PACKAGES /*: {[pod: string]: PodTableEntry} */ = {
   SwiftUIIntrospect: {
     url: 'https://github.com/siteline/swiftui-introspect',
     exact: '1.5.0',
-    product: 'SwiftUIIntrospect',
+    products: ['SwiftUIIntrospect'],
   },
 };
+const POD_TABLE_ENV = 'RN_SPM_POD_TABLE';
+// The pods a manifest pins, `<pod>=<exact>` sorted by pod, on the line after
+// the importer paths (or the revision line).
+const POD_PINS_MARKER = '// rn-xtool-pods: ';
+
+// One pod table entry in its full shape; `product: string` is read as
+// `products: [product]`. Throws with the key that has the wrong shape.
+function podTableEntry(pod /*: string */, raw /*: mixed */) /*: PodTableEntry */ {
+  const isNames = (v /*: mixed */) =>
+    Array.isArray(v) &&
+    v.length > 0 &&
+    v.every(x => typeof x === 'string' && x !== '');
+  const isNameLists = (v /*: mixed */) =>
+    v != null &&
+    typeof v === 'object' &&
+    !Array.isArray(v) &&
+    Object.values(v).every(isNames);
+  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error(`pods.${pod} is not an object`);
+  }
+  const {url, exact, products, product, subspecs, forwardHeaders} = raw;
+  if (typeof url !== 'string' || url === '') {
+    throw new Error(`pods.${pod}.url is not a URL`);
+  }
+  if (typeof exact !== 'string' || exact === '') {
+    throw new Error(`pods.${pod}.exact is not a version`);
+  }
+  const names =
+    products === undefined && typeof product === 'string' && product !== ''
+      ? [product]
+      : products;
+  if (!isNames(names)) {
+    throw new Error(`pods.${pod}.products is not a list of product names`);
+  }
+  if (subspecs !== undefined && !isNameLists(subspecs)) {
+    throw new Error(`pods.${pod}.subspecs is not an object of product lists`);
+  }
+  if (forwardHeaders !== undefined && !isNameLists(forwardHeaders)) {
+    throw new Error(`pods.${pod}.forwardHeaders is not an object of module lists`);
+  }
+  // $FlowFixMe[incompatible-return] checked above
+  return {
+    url,
+    exact,
+    products: names,
+    ...(subspecs !== undefined ? {subspecs} : {}),
+    ...(forwardHeaders !== undefined ? {forwardHeaders} : {}),
+  };
+}
+
+/**
+ * The pod table: KNOWN_POD_SPM_PACKAGES, with the `pods` object of the JSON
+ * file named by RN_SPM_POD_TABLE merged over it (per pod, the file's entry
+ * wins). Without the variable, the baseline. Throws when the file cannot be
+ * read or has the wrong shape.
+ */
+function loadPodTable() /*: {[pod: string]: PodTableEntry} */ {
+  const file = process.env[POD_TABLE_ENV];
+  if (file == null || file === '') {
+    return {...KNOWN_POD_SPM_PACKAGES};
+  }
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const pods = parsed?.pods;
+    if (pods == null || typeof pods !== 'object' || Array.isArray(pods)) {
+      throw new Error('it has no pods object');
+    }
+    const table = {...KNOWN_POD_SPM_PACKAGES};
+    for (const pod of Object.keys(pods)) {
+      table[pod] = podTableEntry(pod, pods[pod]);
+    }
+    return table;
+  } catch (e) {
+    throw new Error(
+      `react-native spm scaffold: cannot read the pod table ${file}: ${e.message}`,
+    );
+  }
+}
 
 // Pods that belong to Expo's own SwiftPM graph, never a CocoaPods-only pod.
 function isExpoModuleDep(depName /*: string */) /*: boolean */ {
@@ -180,7 +271,8 @@ type PodDependencyKind =
  *   - 'missing-sibling': the same, for a package that is not installed or not
  *     linked for iOS. CocoaPods would not have it either;
  *   - 'expo': an Expo module's pod;
- *   - 'mapped': a CocoaPods pod with a SwiftPM package in `table`;
+ *   - 'mapped': a CocoaPods pod with a SwiftPM package in `table`, with the
+ *     `products` its subspec names (`subspecs`), else the entry's;
  *   - 'unmapped': any other CocoaPods pod.
  * `pod` is the name before any `/<subspec>`.
  */
@@ -193,7 +285,13 @@ function classifyPodDependency(
     linkedNpm: Set<string>,
     table: {[pod: string]: {...}},
   } */,
-) /*: {kind: PodDependencyKind, pod: string, npm?: string, entry?: {...}} */ {
+) /*: {
+  kind: PodDependencyKind,
+  pod: string,
+  npm?: string,
+  entry?: {...},
+  products?: Array<string>,
+} */ {
   const pod = depName.split('/')[0];
   if (
     ctx.selfPodName != null &&
@@ -225,7 +323,13 @@ function classifyPodDependency(
     return {kind: 'expo', pod};
   }
   if (Object.hasOwn(ctx.table, pod)) {
-    return {kind: 'mapped', pod, entry: ctx.table[pod]};
+    const entry = ctx.table[pod];
+    const sub = depName.includes('/') ? depName.slice(pod.length + 1) : null;
+    const products =
+      (sub != null ? entry.subspecs?.[sub] : null) ??
+      entry.products ??
+      (typeof entry.product === 'string' ? [entry.product] : []);
+    return {kind: 'mapped', pod, entry, products};
   }
   return {kind: 'unmapped', pod};
 }
@@ -237,13 +341,14 @@ function missingSiblings(
   dep /*: AutolinkedDep */,
   podToNpm /*: Map<string, string> */,
   linkedNpm /*: Set<string> */,
+  table /*: {[pod: string]: PodTableEntry} */,
 ) /*: Array<string> */ {
   const ctx = {
     selfPodName: model.name,
     ownNpm: dep.name,
     podToNpm,
     linkedNpm,
-    table: KNOWN_POD_SPM_PACKAGES,
+    table,
   };
   return model.dependencies.filter(
     d => classifyPodDependency(d, ctx).kind === 'missing-sibling',
@@ -457,6 +562,62 @@ function swiftImportableHeaders(
 // no local header but a React one get a forwarding stub here.
 const REACT_BARE_HEADERS_DIR = 'rn-spm-react-headers';
 
+// A pod's umbrella header that its SwiftPM package leaves outside every target
+// (AppAuth-iOS's Sources/AppAuth.h), so neither `<AppAuth/AppAuth.h>` nor
+// `"AppAuth.h"` resolves, while `@import AppAuth;` does. CocoaPods copies the
+// header into Headers/Public/<Pod>/. A pod table entry's `forwardHeaders`
+// (`{"AppAuth/AppAuth.h": ["AppAuthCore", "AppAuth"]}`) makes the scaffold
+// write that path under this directory, holding the `@import` lines, and put
+// the directory on the target's header search path.
+const POD_HEADERS_DIR = 'rn-spm-pod-headers';
+const MODULE_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
+
+// The forwarders of one pod's `forwardHeaders`; throws naming a header key
+// that is not a relative path ending in .h inside the directory, or a module
+// list that is not one.
+function podHeaderForwarders(
+  pod /*: string */,
+  forwardHeaders /*: ?{[header: string]: Array<string>} */,
+) /*: Array<{pod: string, header: string, modules: Array<string>}> */ {
+  return Object.keys(forwardHeaders ?? {}).map(header => {
+    const modules = forwardHeaders?.[header];
+    const segments = header.split('/');
+    if (
+      !/\.h$/.test(header) ||
+      path.posix.isAbsolute(header) ||
+      header.includes('\\') ||
+      segments.some(seg => seg === '' || seg === '.' || seg === '..') ||
+      !Array.isArray(modules) ||
+      modules.length === 0 ||
+      !modules.every(m => typeof m === 'string' && MODULE_NAME_RE.test(m))
+    ) {
+      throw new Error(
+        `react-native spm scaffold: pods.${pod}.forwardHeaders.${header} must be a list of module names, under a relative path ending in .h`,
+      );
+    }
+    return {pod, header, modules};
+  });
+}
+
+// The directory holds only what a scaffold wrote: every file carries the banner.
+function ownPodHeadersDir(dir /*: string */) /*: boolean */ {
+  const files = (d /*: string */) /*: Array<string> */ =>
+    fs
+      .readdirSync(d, {withFileTypes: true})
+      .flatMap(e =>
+        e.isDirectory()
+          ? files(path.join(d, e.name))
+          : [path.join(d, e.name)],
+      );
+  try {
+    return files(dir).every(f =>
+      fs.readFileSync(f, 'utf8').includes(SCAFFOLDER_BANNER),
+    );
+  } catch {
+    return false;
+  }
+}
+
 function bareReactHeaders(
   depRoot /*: string */,
   files /*: Array<string> */,
@@ -602,8 +763,18 @@ const REACT_CORE_DEP_PREFIXES = [
   'ReactAppDependencyProvider',
 ];
 
-// Core pods whose name has no separator to match by prefix (`React-` etc.).
-const REACT_CORE_DEP_EXACT = ['React'];
+// Core pods whose name has no separator to match by prefix (`React-` etc.), and the other pods React Native ships
+// (FBLazyVector, ReactNativeDependencies, fast_float), generates (ReactCodegen, FBReactNativeSpec) or links
+// (SocketRocket): the prebuilt runtime provides them all.
+const REACT_CORE_DEP_EXACT = [
+  'React',
+  'ReactNativeDependencies',
+  'FBLazyVector',
+  'FBReactNativeSpec',
+  'fast_float',
+  'ReactCodegen',
+  'SocketRocket',
+];
 
 function isReactCoreDep(name /*: string */) /*: boolean */ {
   return (
@@ -691,6 +862,8 @@ function translatePodspecToSpmTarget(
   // (the React header trees), used to keep C++ headers out of the Swift
   // umbrella of a mixed-language target. Empty: unknown.
   includeRoots /*: Array<string> */ = [],
+  // The pod table (loadPodTable) the CocoaPods pods are mapped with.
+  podTable /*: {[pod: string]: PodTableEntry} */ = loadPodTable(),
 ) /*: SpmScaffoldSpec */ {
   const warnings = [...model.warnings];
 
@@ -775,18 +948,19 @@ function translatePodspecToSpmTarget(
   // out. Unknown names are dropped with a warning.
   let coreReactNative = false;
   const siblingNames /*: Array<string> */ = [];
-  const externalPackages /*: Array<{pod: string, url: string, exact: string, product: string, package: string}> */ = [];
+  const externalPackages /*: Array<{pod: string, url: string, exact: string, products: Array<string>, package: string}> */ = [];
+  const podForwarders /*: Array<{pod: string, header: string, modules: Array<string>}> */ = [];
   const unmappedPods /*: Array<string> */ = [];
   const leftOut /*: Array<string> */ = [];
   // Every iOS-autolinked dep has a resolved Swift name.
   const linkedNpm /*: Set<string> */ = new Set(swiftNameByNpm.keys());
   for (const depName of model.dependencies) {
-    const {kind, pod, npm, entry} = classifyPodDependency(depName, {
+    const {kind, pod, npm, entry, products} = classifyPodDependency(depName, {
       selfPodName: model.name,
       ownNpm: dep.name,
       podToNpm,
       linkedNpm,
-      table: KNOWN_POD_SPM_PACKAGES,
+      table: podTable,
     });
     if (kind === 'subspec') {
       // Cross-subspec refs like "react-native-safe-area-context/common" are a
@@ -812,17 +986,34 @@ function translatePodspecToSpmTarget(
         `Unknown dependency "${depName}" — not wired into the scaffolded Package.swift. Edit manually if needed.`,
       );
     } else if (kind === 'mapped' && entry != null) {
-      // A CocoaPods pod ("SwiftUIIntrospect") wired to its SwiftPM package.
-      if (!externalPackages.some(e => e.pod === pod)) {
-        // $FlowFixMe[incompatible-type] KNOWN_POD_SPM_PACKAGES entry
-        const known /*: {url: string, exact: string, product: string} */ = entry;
-        externalPackages.push({pod, ...known, package: spmPackageIdentity(known.url)});
+      // A CocoaPods pod ("SwiftUIIntrospect") wired to its SwiftPM package,
+      // once, with the products of every subspec the podspec names.
+      // $FlowFixMe[incompatible-type] a pod table entry
+      const known /*: PodTableEntry */ = entry;
+      let ext = externalPackages.find(e => e.pod === pod);
+      if (ext == null) {
+        ext = {
+          pod,
+          url: known.url,
+          exact: known.exact,
+          products: [],
+          package: spmPackageIdentity(known.url),
+        };
+        externalPackages.push(ext);
+        podForwarders.push(...podHeaderForwarders(pod, known.forwardHeaders));
+      }
+      for (const product of products ?? []) {
+        if (!ext.products.includes(product)) {
+          ext.products.push(product);
+        }
       }
     } else if (!unmappedPods.includes(pod)) {
-      // Any other CocoaPods pod ("MMKV"): say loudly that the build may fail.
+      // Any other CocoaPods pod ("MMKV"): say loudly that the build may fail,
+      // and where its SwiftPM package goes (RN_SPM_POD_TABLE's source).
       unmappedPods.push(pod);
       warnings.push(
-        `Dependency "${pod}" is a CocoaPods pod with no known SwiftPM equivalent; the scaffolded package may fail to build — add it to the pod→SwiftPM map in scaffold-package-swift.js`,
+        `Dependency "${pod}" is a CocoaPods pod with no known SwiftPM equivalent; the scaffolded package may fail to build — ` +
+          `add it under "pods" in rn-xtool.config.json: { "pods": { "${pod}": { "url": "<git URL>", "exact": "<version>", "products": ["<product>"] } } }`,
       );
     }
   }
@@ -1211,6 +1402,9 @@ function translatePodspecToSpmTarget(
   ) {
     headerSearchPaths.push(REACT_BARE_HEADERS_DIR);
   }
+  if (podForwarders.length > 0 && !headerSearchPaths.includes(POD_HEADERS_DIR)) {
+    headerSearchPaths.push(POD_HEADERS_DIR);
+  }
 
   // Mixed Swift + C-family sources → one mixed-language target (see
   // MIXED_TOOLS_VERSION_LINE). Swift Build names the generated header after
@@ -1340,6 +1534,7 @@ function translatePodspecToSpmTarget(
     mixedLanguage,
     clangModuleMap,
     reactBareHeaders,
+    podForwarders,
     sources: expandedSources,
     headerSearchPaths,
     preprocessorDefines,
@@ -1555,10 +1750,12 @@ function emitScaffoldedPackageSwift(
       `.product(name: "${swiftSibling}", package: "${swiftSibling}")`,
     );
   }
-  // CocoaPods pods with a known SwiftPM package (KNOWN_POD_SPM_PACKAGES).
+  // CocoaPods pods with a known SwiftPM package (loadPodTable).
   for (const ext of spec.externalPackages ?? []) {
     packageDeps.push(`.package(url: "${ext.url}", exact: "${ext.exact}")`);
-    targetDeps.push(`.product(name: "${ext.product}", package: "${ext.package}")`);
+    for (const product of ext.products) {
+      targetDeps.push(`.product(name: "${product}", package: "${ext.package}")`);
+    }
   }
 
   // sources: emit only when the podspec declared them. If empty (regex-fallback
@@ -1641,6 +1838,14 @@ let rnSpmBridgingHeader = Context.packageDirectory + "/${mixed.bridgingHeader}"
       ? `\n${IMPORTER_PATHS_MARKER}${JSON.stringify(importerPaths)}`
       : '';
 
+  // The pods this manifest pins, sorted by pod, so rn-xtool can tell a
+  // persisted scaffold pinned by another pod table.
+  const pinned = [...(spec.externalPackages ?? [])]
+    .sort((a, b) => (a.pod < b.pod ? -1 : a.pod > b.pod ? 1 : 0))
+    .map(e => `${e.pod}=${e.exact}`);
+  const podsLine =
+    pinned.length > 0 ? `\n${POD_PINS_MARKER}${pinned.join(', ')}` : '';
+
   // The Swift 5 language mode (see swiftLanguageModeV5 in translate).
   const swiftLanguageModesLine =
     spec.swiftLanguageModeV5 === true ? '    swiftLanguageModes: [.v5],\n' : '';
@@ -1648,7 +1853,7 @@ let rnSpmBridgingHeader = Context.packageDirectory + "/${mixed.bridgingHeader}"
   return `${toolsVersionLine}
 ${SCAFFOLDER_MARKER}
 // AUTO-SCAFFOLDED-VERSION: ${SCAFFOLDER_VERSION}
-// rn-xtool-scaffold-revision: ${RN_XTOOL_SCAFFOLD_REVISION}${importerPathsLine}${slotComment}
+// rn-xtool-scaffold-revision: ${RN_XTOOL_SCAFFOLD_REVISION}${importerPathsLine}${podsLine}${slotComment}
 // Edit the contents below if needed and re-run \`npx patch-package <dep-name>\`
 // to persist across \`npm install\`. To regenerate from the podspec, remove
 // this file (or just this marker) and re-run \`npx react-native spm scaffold\`.
@@ -1952,6 +2157,12 @@ function scaffoldPackageSwiftForDep(
     };
   }
 
+  let podTable;
+  try {
+    podTable = loadPodTable();
+  } catch (e) {
+    return {depName, status: 'error', reason: e.message};
+  }
   const podToNpm = ctx.podToNpm ?? new Map();
   const swiftNameByNpm = ctx.swiftNameByNpm ?? new Map();
   let model;
@@ -1968,6 +2179,7 @@ function scaffoldPackageSwiftForDep(
       dep,
       podToNpm,
       new Set(swiftNameByNpm.keys()),
+      podTable,
     );
     const subspecDeps = model.subspecDependencies ?? {};
     const drop = Object.keys(subspecDeps).filter(sub =>
@@ -1997,6 +2209,7 @@ function scaffoldPackageSwiftForDep(
     podToNpm,
     swiftNameByNpm,
     reactIncludeRoots(ctx.appRoot),
+    podTable,
   );
   spec.warnings.push(...subspecWarnings);
 
@@ -2150,6 +2363,23 @@ function scaffoldPackageSwiftForDep(
           'utf8',
         );
       }
+    }
+  }
+
+  if (!ctx.dryRun) {
+    const podHeadersDir = path.join(dep.root, POD_HEADERS_DIR);
+    if (fs.existsSync(podHeadersDir) && ownPodHeadersDir(podHeadersDir)) {
+      fs.rmSync(podHeadersDir, {recursive: true, force: true});
+    }
+    for (const {pod, header, modules} of spec.podForwarders ?? []) {
+      const file = path.join(podHeadersDir, ...header.split('/'));
+      fs.mkdirSync(path.dirname(file), {recursive: true});
+      fs.writeFileSync(
+        file,
+        `// ${SCAFFOLDER_BANNER} — forwards <${header}> to the SwiftPM modules of the pod ${pod}.\n` +
+          modules.map(m => `@import ${m};\n`).join(''),
+        'utf8',
+      );
     }
   }
 
@@ -2465,6 +2695,8 @@ function scaffoldAll(
 
 module.exports = {
   classifyPodDependency,
+  KNOWN_POD_SPM_PACKAGES,
+  loadPodTable,
   refreshScaffoldedPlatformFloors,
   scaffoldAll,
   scaffoldPackageSwiftForDep,

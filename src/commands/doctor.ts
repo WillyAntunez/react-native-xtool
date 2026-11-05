@@ -366,8 +366,8 @@ function podspecsCheck(podspecs: Capabilities["podspecs"]): CheckResult {
 }
 
 const NO_KNOWN_LIMITS =
-  "none of the setups rn-xtool refuses early (CocoaPods-only libraries with prebuilt binaries or vendored C sources, " +
-  "pnpm, Yarn PnP, hoisted packages)";
+  "none of the setups rn-xtool refuses early (CocoaPods-only libraries with prebuilt binaries, vendored C sources " +
+  "or CocoaPods pods without a SwiftPM package, pnpm, Yarn PnP, hoisted packages)";
 
 /**
  * One ok line without known limits, else one line per limit: a warning when the config allows it, else a failure whose
@@ -384,9 +384,11 @@ function knownLimitsChecks(limits: NonNullable<Capabilities["limits"]>): DoctorC
 
 /**
  * `doctor --project`'s capability lines, in order: versions, rn-scripts, rn-artifacts, expo-plugin, expo-modules,
- * podspecs, patches and known-limits. The four in between are left out when the project has no such field (no
- * react-native, no expo), patches unless a patch's package is not installed (one warning each, the build's line without
- * its `⚠ `), and known-limits when `limits` is undefined. `projectError` is why the project could not be read; a
+ * podspecs, exclude, pods, patches, known-limits and entitlements. The four in between are left out when the project has no such field
+ * (no react-native, no expo), exclude without the config's `exclude` (one line per entry: info for the modules left
+ * out, warn for a name it ignores), pods unless a pod pin misses a podspec's requirement, patches unless a patch's package is not
+ * installed or a scaffold patch's pod pins are stale (one warning each, the build's line without its `⚠ `), and
+ * known-limits when `limits` is undefined. `projectError` is why the project could not be read; a
  * `VersionGateError` fails the versions line.
  */
 export function capabilityChecks(c: Capabilities, projectError?: unknown): DoctorCheck[] {
@@ -401,9 +403,35 @@ export function capabilityChecks(c: Capabilities, projectError?: unknown): Docto
   ];
   return [
     ...lines.flatMap(([name, result]) => (result === undefined ? [] : [{ name, ...result }])),
-    ...(c.orphanPatches ?? []).map((line) => ({ name: "patches", status: "warn" as const, detail: line.replace(/^⚠ /, "") })),
+    ...(c.excluded ?? []).map((line) => ({
+      name: "exclude",
+      status: line.startsWith("⚠ ") ? ("warn" as const) : ("info" as const),
+      // The ℹ line starts with the check's own name, which the report prints already.
+      detail: line.replace(/^[ℹ⚠] /, "").replace(/^exclude — /, ""),
+    })),
+    ...(c.podPins ?? []).map((line) => ({ name: "pods", status: "warn" as const, detail: line.replace(/^⚠ /, "") })),
+    ...[...(c.orphanPatches ?? []), ...(c.scaffoldPins ?? [])].map((line) => ({
+      name: "patches",
+      status: "warn" as const,
+      detail: line.replace(/^⚠ /, ""),
+    })),
     ...(c.limits === undefined ? [] : knownLimitsChecks(c.limits)),
+    ...entitlementsChecks(c.entitlements),
   ];
+}
+
+/**
+ * One warn line per entitlement line (the build's text without its `⚠ `); ok when every key is one xtool signs on a free
+ * team; info on an Expo app before expo prebuild; fail on a refusal; none without CODE_SIGN_ENTITLEMENTS.
+ */
+function entitlementsChecks(e: Capabilities["entitlements"]): DoctorCheck[] {
+  if (e === undefined) return [];
+  if ("pending" in e) return [{ name: "entitlements", status: "info", detail: "read after expo prebuild, at build" }];
+  if ("error" in e) return [{ name: "entitlements", status: "fail", detail: e.error }];
+  if (e.lines.length === 0) {
+    return [{ name: "entitlements", status: "ok", detail: `${e.rel}: passed to xtool; every key is one xtool signs on a free team` }];
+  }
+  return e.lines.map((line) => ({ name: "entitlements", status: "warn", detail: line.replace(/^⚠ /, "") }));
 }
 
 type Settled<T> = { value: T } | { error: unknown };

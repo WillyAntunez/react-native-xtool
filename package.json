@@ -27,9 +27,11 @@
   },
   "files": [
     "bin",
+    "data",
     "dist",
     "patches",
     "scripts/rn-spm-generate.js",
+    "scripts/exclude-config-command.js",
     "scripts/package.json",
     "scripts/build-expo-modules-jsi.sh",
     "scripts/stage-frameworks.sh",

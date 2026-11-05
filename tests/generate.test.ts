@@ -14,6 +14,8 @@ import type { ProjectInfo } from "../src/project/index.js";
 import type { RuntimeFramework } from "../src/frameworks.js";
 import { parse as parseYaml } from "yaml";
 import { png } from "./support/png.js";
+import { plistOf, withEntitlements } from "./support/entitlements.js";
+import * as plist from "plist";
 
 const tmps: string[] = [];
 afterEach(async () => {
@@ -269,6 +271,18 @@ describe("renderXtoolYml", () => {
     expect(y).toContain("bundleID: com.example.app");
     for (const r of ["Frameworks", "ip.txt", "EXConstants.bundle"]) expect(y).toContain(`  - ${r}`);
   });
+  it("pins xtool.yml with entitlementsPath", () => {
+    const y = renderXtoolYml({ bundleIdentifier: "com.example.app", entitlementsPath: "App.entitlements" });
+    // xtool ignores a misspelt key without a word (xtool #353): the exact key, after infoPath.
+    expect(y.split("\n").slice(0, 5)).toEqual([
+      "version: 1",
+      "bundleID: com.example.app",
+      "product: App",
+      "infoPath: Info.plist",
+      "entitlementsPath: App.entitlements",
+    ]);
+    expect(renderXtoolYml({ bundleIdentifier: "com.example.app" })).not.toContain("entitlementsPath");
+  });
   it("honours explicit resources", () => {
     const y = renderXtoolYml({ bundleIdentifier: "a.b", resources: ["X"] });
     expect(y).toContain("  - X");
@@ -417,6 +431,128 @@ describe("writeIosXtool", () => {
     expect(sceneDelegateClassNames(await plistText("ios-target"))).toEqual(["$(PRODUCT_MODULE_NAME).SceneDelegate"]);
   });
 
+  describe("the Expo prebuild's bridging header", () => {
+    const DEFAULT_HEADER = "//\n// Use this file to import your target's public headers that you would like to expose to Swift.\n//\n";
+    /** An Expo app laid out as expo prebuild writes it: ios/LibApp.xcodeproj and the target folder ios/LibApp. */
+    async function libApp(
+      header: string | undefined,
+      entitlements = plistOf("<dict/>"),
+      pbxproj: (src: string) => string = (src) => src,
+    ) {
+      const root = await mkdtemp(join(tmpdir(), "xt7-libapp-"));
+      tmps.push(root);
+      const ios = join(root, "ios");
+      const target = join(ios, "LibApp");
+      await mkdir(join(ios, "LibApp.xcodeproj"), { recursive: true });
+      await cp(new URL("./fixtures/ios-target", import.meta.url).pathname, target, { recursive: true });
+      const src = await readFile(new URL("./fixtures/pbxproj/expo-libapp.pbxproj", import.meta.url), "utf8");
+      await writeFile(join(ios, "LibApp.xcodeproj", "project.pbxproj"), pbxproj(src));
+      if (header !== undefined) await writeFile(join(target, "LibApp-Bridging-Header.h"), header);
+      await writeFile(join(target, "LibApp.entitlements"), entitlements);
+      const project: ProjectInfo = {
+        kind: "expo", root, name: "LibApp", slug: "lib-app", version: "1.0.0", buildNumber: "1",
+        bundleIdentifier: "com.example.app", moduleName: "main", sdkVersion: 58, rnVersion: "0.88.1",
+        rnScripts: "installed", expoPlugin: "installed",
+        iosTargetName: "LibApp", iosTargetDir: target, infoPlistPath: join(target, "Info.plist"),
+        hasExpoModules: true, hasExpoConstants: true, hasDevClient: false,
+      };
+      const paths = projectPaths(root);
+      return { paths, ctx: { project, paths, frameworks, metroPort: 8081, lanIp: "192.168.1.5", log: () => {} } };
+    }
+    const manifestOf = (paths: { iosXtool: string }) => readFile(join(paths.iosXtool, "Package.swift"), "utf8");
+
+    it("passes the Expo prebuild's bridging header to Swift", async () => {
+      const header = `${DEFAULT_HEADER}#import "RNAppAuthAuthorizationFlowManager.h"\n`;
+      const { paths, ctx } = await libApp(header);
+      await writeIosXtool(ctx);
+      const copy = join(paths.sources, "LibApp-Bridging-Header.h");
+      expect(await readFile(copy, "utf8")).toBe(header);
+      expect(await manifestOf(paths)).toContain(`.unsafeFlags(["-import-objc-header", "${copy}"]),`);
+    });
+
+    it("keeps the manifest byte-identical for a comment-only header", async () => {
+      const plain = await expoProject("ios-target");
+      await writeIosXtool(plain.ctx);
+      const expected = (await manifestOf(plain.paths)).split(plain.paths.root).join("<root>");
+      for (const header of [DEFAULT_HEADER, `/* nothing */\n\n   \n// still nothing\n`]) {
+        const { paths, ctx } = await libApp(header);
+        await writeIosXtool(ctx);
+        expect((await manifestOf(paths)).split(paths.root).join("<root>")).toBe(expected);
+        expect((await readdir(paths.sources)).sort()).toEqual(["AppDelegate.swift", "ExpoModulesProvider.swift", "SceneDelegate.swift"]);
+      }
+    });
+
+    it("reads the Expo prebuild's entitlements", async () => {
+      const { paths, ctx } = await libApp(DEFAULT_HEADER, plistOf("<dict>\n<key>aps-environment</key>\n<string>development</string>\n</dict>"));
+      await writeIosXtool(ctx);
+      expect(plist.parse(await readFile(join(paths.iosXtool, "App.entitlements"), "utf8"))).toEqual({ "aps-environment": "development" });
+      expect(await readFile(join(paths.iosXtool, "xtool.yml"), "utf8")).toContain("\ninfoPath: Info.plist\nentitlementsPath: App.entitlements\n");
+    });
+
+    it("passes no entitlements for the prebuild's empty file: xtool.yml stays byte-identical (row 52)", async () => {
+      // Every Expo prebuild sets CODE_SIGN_ENTITLEMENTS to a file holding only <dict/>.
+      const plain = await expoProject("ios-target");
+      await writeIosXtool(plain.ctx);
+      const expected = await readFile(join(plain.paths.iosXtool, "xtool.yml"), "utf8");
+      for (const empty of [plistOf("<dict/>"), plistOf("<dict>\n</dict>")]) {
+        const { paths, ctx } = await libApp(DEFAULT_HEADER, empty);
+        await mkdir(paths.iosXtool, { recursive: true });
+        await writeFile(join(paths.iosXtool, "App.entitlements"), plistOf("<dict/>"));
+        await writeIosXtool(ctx);
+        expect(await readFile(join(paths.iosXtool, "xtool.yml"), "utf8")).toBe(expected);
+        expect(await readdir(paths.iosXtool)).not.toContain("App.entitlements");
+      }
+    });
+
+    it("resolves $(SRCROOT) and $(PROJECT_DIR) in the bridging header setting", async () => {
+      const header = `${DEFAULT_HEADER}#import "RNAppAuthAuthorizationFlowManager.h"\n`;
+      for (const builtin of ["$(SRCROOT)", "$(PROJECT_DIR)"]) {
+        const { paths, ctx } = await libApp(header, undefined, (src) =>
+          src.replaceAll('SWIFT_OBJC_BRIDGING_HEADER = "LibApp/', `SWIFT_OBJC_BRIDGING_HEADER = "${builtin}/LibApp/`),
+        );
+        await writeIosXtool(ctx);
+        expect(await readFile(join(paths.sources, "LibApp-Bridging-Header.h"), "utf8")).toBe(header);
+      }
+    });
+
+    it("builds on without the bridging header and entitlements when ios/ holds two Xcode projects", async () => {
+      const header = `${DEFAULT_HEADER}#import "RNAppAuthAuthorizationFlowManager.h"\n`;
+      const { paths, ctx } = await libApp(header);
+      await mkdir(join(paths.ios, "Other.xcodeproj"), { recursive: true });
+      await cp(join(paths.ios, "LibApp.xcodeproj", "project.pbxproj"), join(paths.ios, "Other.xcodeproj", "project.pbxproj"));
+      const logs: string[] = [];
+      await writeIosXtool({ ...ctx, log: (l: string) => logs.push(l) });
+      expect(await readdir(paths.sources)).not.toContain("LibApp-Bridging-Header.h");
+      expect(await readdir(paths.iosXtool)).not.toContain("App.entitlements");
+      expect(logs).toContainEqual(expect.stringMatching(/^⚠ .*holds more than one \.xcodeproj \(LibApp\.xcodeproj, Other\.xcodeproj\).*; rn-xtool reads no bridging header or entitlements from it$/));
+    });
+
+    it("builds on when the Xcode project has a second application target", async () => {
+      const { paths, ctx } = await libApp(DEFAULT_HEADER);
+      await cp(new URL("./fixtures/pbxproj/two-apps.pbxproj", import.meta.url).pathname, join(paths.ios, "LibApp.xcodeproj", "project.pbxproj"));
+      const logs: string[] = [];
+      await writeIosXtool({ ...ctx, log: (l: string) => logs.push(l) });
+      expect(logs).toContainEqual(expect.stringMatching(/more than one application target \(HelloWorld, HelloWorldTwo\).*; rn-xtool reads no bridging header or entitlements from it$/));
+    });
+
+    it("names the bridging header setting when it cannot be resolved", async () => {
+      const { ctx } = await libApp(DEFAULT_HEADER, undefined, (src) =>
+        src.replaceAll('SWIFT_OBJC_BRIDGING_HEADER = "LibApp/', 'SWIFT_OBJC_BRIDGING_HEADER = "$(NO_SUCH_SETTING)/'),
+      );
+      await expect(writeIosXtool(ctx)).rejects.toThrow(
+        'SWIFT_OBJC_BRIDGING_HEADER in ios/LibApp.xcodeproj could not be read: Cannot resolve build setting $(NO_SUCH_SETTING) in "$(NO_SUCH_SETTING)/LibApp-Bridging-Header.h"',
+      );
+    });
+
+    it("names a missing bridging header", async () => {
+      const { ctx } = await libApp(undefined);
+      await expect(writeIosXtool(ctx)).rejects.toThrow(
+        "SWIFT_OBJC_BRIDGING_HEADER in ios/LibApp.xcodeproj names LibApp/LibApp-Bridging-Header.h, which does not exist. " +
+          "Run rn-xtool build --clean to run expo prebuild again.",
+      );
+    });
+  });
+
   /** A bare project laid out like the with-objc pbxproj fixture, with every listed file on disk. */
   async function bareProject(o: { pbxproj?: (src: string) => string } = {}) {
     const root = await mkdtemp(join(tmpdir(), "xt7-bare-"));
@@ -457,6 +593,35 @@ describe("writeIosXtool", () => {
     const ctx = { project, paths, frameworks, metroPort: 8081, lanIp: "192.168.1.5", log: (s: string) => logs.push(s) };
     return { root, app, paths, project, ctx, logs };
   }
+
+  it("writes App.entitlements from CODE_SIGN_ENTITLEMENTS (bare)", async () => {
+    const { app, paths, ctx } = await bareProject({ pbxproj: (src) => withEntitlements(src, "HelloWorld/HelloWorld.entitlements") });
+    await writeFile(
+      join(app, "HelloWorld.entitlements"),
+      plistOf("<dict>\n<key>com.apple.security.application-groups</key>\n<array>\n<string>group.$(PRODUCT_BUNDLE_IDENTIFIER)</string>\n</array>\n</dict>"),
+    );
+    await writeIosXtool(ctx);
+    expect(plist.parse(await readFile(join(paths.iosXtool, "App.entitlements"), "utf8"))).toEqual({
+      "com.apple.security.application-groups": ["group.org.reactjs.native.example.HelloWorld"],
+    });
+    expect(await readFile(join(paths.iosXtool, "xtool.yml"), "utf8")).toContain("\nentitlementsPath: App.entitlements\n");
+  });
+
+  it("without the setting: no file and no key, and a stale file goes", async () => {
+    const { paths, ctx } = await bareProject();
+    await mkdir(paths.iosXtool, { recursive: true });
+    await writeFile(join(paths.iosXtool, "App.entitlements"), plistOf("<dict/>"));
+    await writeIosXtool(ctx);
+    expect(await readdir(paths.iosXtool)).not.toContain("App.entitlements");
+    expect(await readFile(join(paths.iosXtool, "xtool.yml"), "utf8")).not.toContain("entitlementsPath");
+  });
+
+  it("refuses a missing entitlements file at generate", async () => {
+    const { ctx } = await bareProject({ pbxproj: (src) => withEntitlements(src, "HelloWorld/HelloWorld.entitlements") });
+    await expect(writeIosXtool(ctx)).rejects.toThrow(
+      "CODE_SIGN_ENTITLEMENTS names ios/HelloWorld/HelloWorld.entitlements, which does not exist;",
+    );
+  });
 
   it("writeIosXtool copies bare sources and resources", async () => {
     const { paths, ctx, logs } = await bareProject();

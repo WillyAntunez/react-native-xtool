@@ -1,10 +1,13 @@
+import { readdirSync } from "node:fs";
 import { copyFile, cp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import * as plist from "plist";
 import type { RuntimeFramework } from "../frameworks.js";
 import { swiftHeadersDir, type ProjectPaths } from "../paths.js";
 import { transformInfoPlist } from "../plist.js";
 import { buildVars, type ProjectInfo } from "../project/index.js";
+import { readEntitlements } from "../project/entitlements.js";
+import { AmbiguousProjectError, openPbxproj, resolveSetting, type Pbxproj } from "../project/pbxproj.js";
 import { packageRoot } from "../tools/exec.js";
 import { IOS_MIN } from "../versions.js";
 import { APP_ICON_FILE, findAppIcon, type IconRecord } from "./appIcon.js";
@@ -26,6 +29,8 @@ export interface GenerateContext {
 }
 
 const MANIFEST_6_5 = "Package@swift-6.5.swift";
+/** The app's entitlements in ios-xtool, which xtool.yml's `entitlementsPath` names. */
+export const ENTITLEMENTS_FILE = "App.entitlements";
 
 /** The app gets the auto-reload helper target: apps without expo-dev-client only. */
 export function hasDevSupport(project: Pick<ProjectInfo, "hasDevClient">): boolean {
@@ -115,7 +120,70 @@ async function writeAppSources(ctx: GenerateContext, headersDir: string, resourc
       );
     }
   }
-  return { app: { mixed: false, defines: [], headerSearchPaths: [], swiftHeadersDir: headersDir }, resources: [] };
+  const bridgingHeader = await expoBridgingHeader(paths.ios, paths.sources, ctx.log ?? console.log);
+  return {
+    app: {
+      mixed: false,
+      ...(bridgingHeader && { bridgingHeader }),
+      defines: [],
+      headerSearchPaths: [],
+      swiftHeadersDir: headersDir,
+    },
+    resources: [],
+  };
+}
+
+/** Whether a header holds anything besides comments and blank lines. */
+function hasDeclarations(text: string): boolean {
+  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "").trim() !== "";
+}
+
+/**
+ * The Expo prebuild's bridging header (`SWIFT_OBJC_BRIDGING_HEADER` of the app target, Debug, relative to ios/),
+ * copied into Sources/App for Swift when it holds more than comments: a config plugin adds imports to it
+ * (react-native-app-auth's `RNAppAuthAuthorizationFlowManager.h`). The prebuild's default holds only a comment and is
+ * not passed, so such an app's manifest stays as it was. Undefined without an Xcode project or the setting, and with a
+ * ⚠ line when ios/ holds several Xcode projects or application targets; a setting naming a missing file, or one that
+ * cannot be resolved, throws naming the setting.
+ */
+async function expoBridgingHeader(iosDir: string, sourcesDir: string, log: (s: string) => void): Promise<string | undefined> {
+  let projects: string[];
+  try {
+    projects = readdirSync(iosDir).filter((n) => n.endsWith(".xcodeproj")).sort();
+  } catch {
+    return undefined;
+  }
+  if (projects.length === 0) return undefined;
+  const unreadable = (where: string, e: unknown) =>
+    new Error(`SWIFT_OBJC_BRIDGING_HEADER in ${where} could not be read: ${e instanceof Error ? e.message : String(e)}`);
+  let p: Pbxproj;
+  try {
+    p = openPbxproj(iosDir);
+  } catch (e) {
+    if (e instanceof AmbiguousProjectError) {
+      log(`⚠ ${e.what}; rn-xtool reads no bridging header or entitlements from it`);
+      return undefined;
+    }
+    throw unreadable(`ios/${projects[0]}`, e);
+  }
+  let rel: string | undefined;
+  try {
+    rel = resolveSetting(p, "SWIFT_OBJC_BRIDGING_HEADER")?.trim();
+  } catch (e) {
+    throw unreadable(`ios/${p.projectName}.xcodeproj`, e);
+  }
+  if (!rel) return undefined;
+  const text = await readOptional(resolve(iosDir, rel));
+  if (text === undefined) {
+    throw new Error(
+      `SWIFT_OBJC_BRIDGING_HEADER in ios/${p.projectName}.xcodeproj names ${rel}, which does not exist. ` +
+        "Run rn-xtool build --clean to run expo prebuild again.",
+    );
+  }
+  if (!hasDeclarations(text)) return undefined;
+  const copy = join(sourcesDir, basename(rel));
+  await writeFile(copy, text);
+  return copy;
 }
 
 export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
@@ -166,6 +234,13 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
   // DEV_CLIENT_DEFAULT_LAUNCHER_URL or from a deep link.
   const packagerHost = project.kind === "bare" ? `${ctx.lanIp}:${ctx.metroPort}` : ctx.lanIp;
   await writeFile(join(paths.iosXtool, "ip.txt"), `${packagerHost}\n`);
+  // CODE_SIGN_ENTITLEMENTS (Debug; on Expo, the prebuild's pbxproj): removed when the setting goes. A file without keys
+  // (every Expo prebuild writes one holding only <dict/>) is not passed, so xtool skips its signing pass with it.
+  const read = readEntitlements(project, paths.ios);
+  const entitlements = read !== undefined && Object.keys(read.dict).length > 0 ? read : undefined;
+  const entitlementsFile = join(paths.iosXtool, ENTITLEMENTS_FILE);
+  if (entitlements !== undefined) await writeFile(entitlementsFile, plist.build(entitlements.dict as plist.PlistValue));
+  else await rm(entitlementsFile, { force: true });
   await writeFile(
     join(paths.iosXtool, "xtool.yml"),
     renderXtoolYml({
@@ -175,6 +250,7 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
         ...resources.map((r) => `Resources/${r}`),
       ],
       iconPath: icon.source !== undefined ? APP_ICON_FILE : undefined,
+      entitlementsPath: entitlements !== undefined ? ENTITLEMENTS_FILE : undefined,
     }),
   );
   const { manifest, manifest65 } = renderPackageSwift({

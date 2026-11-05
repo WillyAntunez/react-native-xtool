@@ -559,8 +559,8 @@ describe("doctor --project", () => {
       name: "known-limits",
       status: "ok",
       detail:
-        "none of the setups rn-xtool refuses early (CocoaPods-only libraries with prebuilt binaries or vendored C sources, " +
-        "pnpm, Yarn PnP, hoisted packages)",
+        "none of the setups rn-xtool refuses early (CocoaPods-only libraries with prebuilt binaries, vendored C sources " +
+        "or CocoaPods pods without a SwiftPM package, pnpm, Yarn PnP, hoisted packages)",
     });
     expect(none.checks.filter((c) => c.name === "known-limits")).toHaveLength(1);
     expect(none.ok).toBe(true);
@@ -606,6 +606,79 @@ describe("doctor --project", () => {
       projectOnly: true,
     });
     expect(none.checks.some((c) => c.name === "patches")).toBe(false);
+  });
+
+  it("--project warns when a pod pin misses the podspec's requirement", async () => {
+    const line = 'AppAuth 3.0.0 (rn-xtool table) is outside react-native-app-auth\'s requirement ">= 4.0"';
+    const r = await doctorWithProbes(
+      {
+        ...good,
+        capabilities: async () => ({ ...expo58Caps, podPins: [`⚠ ${line}`], orphanPatches: ["⚠ patches/x+1.0.0.patch is for x."] }),
+      },
+      "/proj",
+      { projectOnly: true },
+    );
+    expect(r.checks.filter((c) => c.name === "pods")).toEqual([{ name: "pods", status: "warn", detail: line }]);
+    expect(r.checks.map((c) => c.name).slice(-3)).toEqual(["podspecs", "pods", "patches"]);
+    expect(renderReport(r.checks)).toContain(`⚠ pods — ${line}`);
+    expect(r.ok).toBe(true);
+    const none = await doctorWithProbes({ ...good, capabilities: async () => ({ ...expo58Caps, podPins: [] }) }, "/proj", {
+      projectOnly: true,
+    });
+    expect(none.checks.some((c) => c.name === "pods")).toBe(false);
+  });
+
+  it("--project names scaffold patches with stale pod pins", async () => {
+    const line = "patches/react-native-app-auth+8.5.1.patch pins AppAuth 3.0.0, the config says 3.1.0; delete it so rn-xtool regenerates it";
+    const orphan = "patches/x+1.0.0.patch is for x, which is not installed; skipped. Delete it if you removed the library.";
+    const r = await doctorWithProbes(
+      { ...good, capabilities: async () => ({ ...expo58Caps, orphanPatches: [`⚠ ${orphan}`], scaffoldPins: [`⚠ ${line}`] }) },
+      "/proj",
+      { projectOnly: true },
+    );
+    expect(r.checks.filter((c) => c.name === "patches")).toEqual([
+      { name: "patches", status: "warn", detail: orphan },
+      { name: "patches", status: "warn", detail: line },
+    ]);
+    expect(r.ok).toBe(true);
+  });
+
+  it("--project prints an exclude line per entry", async () => {
+    const info = "exclude — left out of this iOS build: react-native-vision-camera (rn-xtool.config.json). JavaScript that uses it must check that it is there; see https://example.invalid";
+    const warn = "exclude names lodash, which is not a native iOS dependency of this project; ignored";
+    const r = await doctorWithProbes(
+      { ...good, capabilities: async () => ({ ...expo58Caps, excluded: [`ℹ ${info}`, `⚠ ${warn}`] }) },
+      "/proj",
+      { projectOnly: true },
+    );
+    expect(r.checks.filter((c) => c.name === "exclude")).toEqual([
+      { name: "exclude", status: "info", detail: info.replace(/^exclude — /, "") },
+      { name: "exclude", status: "warn", detail: warn },
+    ]);
+    // The rendered line names the check once.
+    expect(renderReport(r.checks.filter((c) => c.name === "exclude")).split("\n")[0]).toBe(`ℹ ${info}`);
+    const names = r.checks.map((c) => c.name);
+    expect(names.indexOf("exclude")).toBeGreaterThan(names.indexOf("podspecs"));
+    expect(r.ok).toBe(true);
+    const none = await doctorWithProbes({ ...good, capabilities: async () => ({ ...expo58Caps, excluded: [] }) }, "/proj", {
+      projectOnly: true,
+    });
+    expect(none.checks.map((c) => c.name)).not.toContain("exclude");
+  });
+
+  it("--project prints the entitlements lines", async () => {
+    const run = async (entitlements: unknown) =>
+      (await doctorWithProbes({ ...good, capabilities: async () => ({ ...expo58Caps, entitlements }) as never }, "/proj", { projectOnly: true })).checks
+        .filter((c) => c.name === "entitlements");
+    const aps = "aps-environment is not available on a free team; the build continues without it; push notifications fail at runtime.";
+    expect(await run({ rel: "ios/App/App.entitlements", lines: [`⚠ ${aps}`] })).toEqual([{ name: "entitlements", status: "warn", detail: aps }]);
+    expect(await run({ rel: "ios/App/App.entitlements", lines: [] })).toEqual([
+      { name: "entitlements", status: "ok", detail: "ios/App/App.entitlements: passed to xtool; every key is one xtool signs on a free team" },
+    ]);
+    expect(await run({ pending: true })).toEqual([{ name: "entitlements", status: "info", detail: "read after expo prebuild, at build" }]);
+    const missing = "CODE_SIGN_ENTITLEMENTS names ios/App/App.entitlements, which does not exist; xtool cannot sign the app without it. Fix the setting or create the file.";
+    expect(await run({ error: missing })).toEqual([{ name: "entitlements", status: "fail", detail: missing }]);
+    expect(await run(undefined)).toEqual([]);
   });
 
   it("plain doctor prints no capability lines", async () => {

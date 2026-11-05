@@ -27,7 +27,7 @@ export function readJson(file: string): Record<string, any> | undefined {
  * The directory `pkg` resolves to from `root`, along Node's node_modules lookup paths (a package whose `exports`
  * hides package.json still counts).
  */
-function packageDir(root: string, pkg: string): string | undefined {
+export function packageDir(root: string, pkg: string): string | undefined {
   const lookup = createRequire(path.join(root, "package.json")).resolve.paths(pkg) ?? [];
   return lookup.map((dir) => path.join(dir, pkg)).find((dir) => existsSync(path.join(dir, "package.json")));
 }
@@ -128,4 +128,62 @@ export function unconditionalLineIndexes(text: string): number[] {
     for (let i = (code.match(/\bend\b/g) ?? []).length; i > 0 && stack.length > 0; i--) stack.pop();
   }
   return kept;
+}
+
+const SUBSPEC_OPENER = /\.subspec\s*\(?\s*(["'])([^"']+)\1[^\n]*?\bdo\b/;
+
+/**
+ * For each of `podspecLines(text)`, the top-level subspec block it is in (`s.subspec 'Name' do |ss|` … `end`), else
+ * undefined: the subspec the scaffolder's reader gives its dependencies to (nested subspecs count as their outermost
+ * one). Block depth is counted as in `unconditionalLineIndexes`.
+ */
+export function subspecOfLines(text: string): (string | undefined)[] {
+  const stack: (string | undefined)[] = [];
+  return podspecLines(text).map((raw) => {
+    const code = rubyCode(raw);
+    const current = stack.find((name) => name !== undefined);
+    // Only a top-level subspec is named: one inside another counts as its outermost.
+    const opened = current === undefined ? SUBSPEC_OPENER.exec(raw)?.[2] : undefined;
+    if (COND_OPENER.test(code) || OTHER_OPENER.test(code)) stack.push(undefined);
+    const dos = (code.match(/\bdo\b/g) ?? []).length;
+    for (let i = 0; i < dos; i++) stack.push(i === 0 ? opened : undefined);
+    for (let i = (code.match(/\bend\b/g) ?? []).length; i > 0 && stack.length > 0; i--) stack.pop();
+    return current;
+  });
+}
+
+/** `<spec>.dependency` or `<spec>.ios.dependency` at the start of a line, with an optional `(`. */
+const DEPENDENCY = /^\s*[A-Za-z_]\w*\.(?:ios\.)?dependency\b\s*\(?\s*/;
+const STRING = /^(["'])((?:(?!\1)[^\\]|\\.)*)\1/;
+
+/**
+ * The pod dependencies on `lines` (podspec lines as written, such as `unconditionalLines(text, "source")`):
+ * `<spec>.dependency 'Name'` or `<spec>.ios.dependency 'Name'`, with the requirement strings that follow, one by one or
+ * in one `[…]` list, each trimmed. Another platform's dependency, a name built with `#{…}`, and a line that does not
+ * start with the call are left out; the requirements stop at the first value that is not a string.
+ */
+export function podDependencies(lines: readonly string[]): { name: string; requirements: string[] }[] {
+  return lines.flatMap((line) => {
+    const head = DEPENDENCY.exec(line);
+    if (head === null) return [];
+    let rest = line.slice(head[0].length);
+    const take = (re: RegExp): RegExpExecArray | null => {
+      const m = re.exec(rest);
+      if (m !== null) rest = rest.slice(m[0].length);
+      return m;
+    };
+    const name = take(STRING)?.[2];
+    if (name === undefined || name === "" || name.includes("#{")) return [];
+    const requirements: string[] = [];
+    items: while (take(/^\s*,\s*/) !== null) {
+      const list = take(/^\[\s*/) !== null;
+      do {
+        const item = take(STRING);
+        if (item === null) break items;
+        requirements.push(item[2]!.trim());
+      } while (list && take(/^\s*,\s*/) !== null);
+      if (list && take(/^\s*\]/) === null) break;
+    }
+    return [{ name, requirements }];
+  });
 }

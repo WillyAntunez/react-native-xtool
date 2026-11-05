@@ -1,0 +1,10 @@
+{
+  "pods": {
+    "AppAuth": {
+      "url": "https://github.com/openid/AppAuth-iOS",
+      "exact": "3.0.0",
+      "products": ["AppAuth"],
+      "forwardHeaders": { "AppAuth/AppAuth.h": ["AppAuthCore", "AppAuth"] }
+    }
+  }
+}

@@ -226,6 +226,181 @@ the library, or take it out of iOS autolinking (`expo.autolinking.exclude`) if t
 `expo-sqlite/kv-store` comes from the same package, so it is not a way around it. An Expo module that ships a
 precompiled copy, or has a `Package.swift` of its own or from your project's `patches/`, passes.
 
+### Libraries that depend on CocoaPods pods
+
+`<package> <version>: its podspec depends on the CocoaPods pod <pod>, which has no SwiftPM package rn-xtool knows. Add
+one under "pods" in rn-xtool.config.json: { "pods": { "<pod>": { "url": "<git URL>", "exact": "<version>", "products":
+["<product>"] } } }, or leave the library out with "exclude". See <this section>`
+
+The library's podspec depends on a CocoaPods pod, and neither rn-xtool's pod table nor the `pods` of your
+`rn-xtool.config.json` names a SwiftPM package for it. With several such pods the text names them all (`the CocoaPods
+pods GoogleMLKit and GoogleToolboxForMac, which have no SwiftPM package rn-xtool knows. Add them …`), and the snippet
+names the first. Pods under a Ruby condition (`if`, `unless`) do not count, nor do those of a subspec the
+scaffolder leaves out for a missing dependency
+([Scaffolded libraries](#scaffolded-libraries)). @react-native-ml-kit/text-recognition 2.0.0 is refused this way, for
+GoogleMLKit: ML Kit ships as prebuilt binaries with no SwiftPM package, which needs a later rn-xtool. Until then,
+`exclude` builds the app without it ([Leaving a module out](#leaving-a-module-out)).
+
+rn-xtool's pod table maps AppAuth (react-native-app-auth) to AppAuth-iOS 3.0.0 and SwiftUIIntrospect
+(react-native-pager-view) to swiftui-introspect 1.5.0. A mapped pod becomes a `.package(url:exact:)` dependency of the
+library's scaffolded `Package.swift`, and SwiftPM fetches it from GitHub at the `xtool-build` step. The first build, and
+any build after `ios-xtool/.build` is deleted, needs the network for it; an offline or rate-limited fetch fails with
+SwiftPM's resolve error naming the URL.
+
+**Adding a pod.** When the pod has a SwiftPM package (a git repository with a `Package.swift`), add it under `pods` in
+`rn-xtool.config.json`. rn-xtool's own AppAuth entry is the example to copy:
+
+```json
+{
+  "pods": {
+    "AppAuth": {
+      "url": "https://github.com/openid/AppAuth-iOS",
+      "exact": "3.0.0",
+      "products": ["AppAuth"],
+      "forwardHeaders": { "AppAuth/AppAuth.h": ["AppAuthCore", "AppAuth"] }
+    }
+  }
+}
+```
+
+- `url`: the package's git URL, `https://…`.
+- `exact`: the version SwiftPM pins, a full version such as `3.0.0` (a tag of the repository).
+- `products`: the package's products the library links (`"product": "AppAuth"` works for one).
+- `subspecs` (optional): `{ "<subspec>": ["<product>", …] }`, the products for a dependency on `<pod>/<subspec>`; any
+  other subspec gets `products`.
+- `forwardHeaders` (optional): `{ "<Dir/Header.h>": ["<module>", …] }`, for a pod whose umbrella header is not part
+  of its SwiftPM targets. The scaffolder writes `rn-spm-pod-headers/<Dir/Header.h>` into the library, holding one
+  `@import <module>;` per module, and adds `rn-spm-pod-headers` to the library's header search paths, so
+  `#import <AppAuth/AppAuth.h>` resolves as it does under CocoaPods.
+
+Every command checks the shape, offline, and names the key: `rn-xtool.config.json: pods.AppAuth.products must be a
+list of product names`. The other texts end in `pods must be an object of CocoaPods pod names`, `pods.<pod> must be a
+CocoaPods pod name (no "/", spaces or quotes)`, `pods.<pod>.url must be a git URL (https://…)`, `pods.<pod>.exact must
+be a version such as 3.0.0`, `pods.<pod>.subspecs must be an object of subspec names`,
+`pods.<pod>.subspecs.<name> must be a list of product names`, `pods.<pod>.forwardHeaders must be an object of header
+paths` and `pods.<pod>.forwardHeaders.<header> must be a list of module names, under a relative path ending in .h`. A
+URL or product that is well formed but wrong is named by SwiftPM at `xtool-build`, in its resolve error.
+
+**Changing a shipped pod.** An entry for a pod rn-xtool's table maps overrides only the fields it names, and the
+others stay. It still needs `url`, `exact` and `products`. To pin AppAuth 2.1.0:
+
+```json
+{
+  "pods": {
+    "AppAuth": { "url": "https://github.com/openid/AppAuth-iOS", "exact": "2.1.0", "products": ["AppAuth"] }
+  }
+}
+```
+
+The shipped `forwardHeaders` stay; `"forwardHeaders": {}` removes them, and `"subspecs": {}` removes subspecs.
+
+**A pin outside the podspec's requirement.** `doctor --project` (its `pods` line) and the start of `build` print, for
+example, `⚠ AppAuth 1.0.0 (rn-xtool.config.json) is outside react-native-app-auth's requirement ">= 1.7.6"`
+(`(rn-xtool.config.js)` when `pods` comes from that file, `(rn-xtool table)` for a pin of rn-xtool's own). The build
+goes on with the pinned version; SwiftPM or the compiler gives the verdict.
+
+**A persisted scaffold with another pin.** Each scaffolded `Package.swift` records the pods it pins on a marker line
+(`// rn-xtool-pods: AppAuth=3.0.0`). After you change a pin, the library's persisted patch still holds the old one,
+and the `patches` step (and `doctor --project`) says so, for example `⚠ patches/react-native-app-auth+8.5.1.patch
+pins AppAuth 3.0.0, the config says 2.1.0; delete it so rn-xtool regenerates it (also remove
+node_modules/react-native-app-auth and reinstall: that copy still has the old Package.swift)`. The build goes on with
+the old pin until you re-scaffold the library through `rn-xtool build`:
+
+```sh
+rm patches/react-native-app-auth+8.5.1.patch
+rm -rf node_modules/react-native-app-auth && npm install
+rn-xtool build
+```
+
+A library without a persisted patch is re-scaffolded by `build` itself: `ℹ
+node_modules/react-native-app-auth/Package.swift pins AppAuth 3.0.0, not 2.1.0: rn-xtool removed it so the rn-spm step
+scaffolds it again`. A scaffold that pins nothing although the podspec depends on a mapped pod was made without
+rn-xtool's pod table, for example by running `npx react-native spm scaffold` by hand: `⚠ patches/<file> does not pin
+AppAuth, rn-xtool's table says 3.0.0: it was scaffolded without rn-xtool's pod table (not through rn-xtool build);
+delete it so rn-xtool regenerates it (…)`. It lacks the forwarder too; the same three steps fix it.
+
+**One version of each package.** SwiftPM resolves one version of a package for the whole app. When a library with a
+`Package.swift` of its own, or the app, needs the same package at a version the pin excludes, `xtool-build` stops with
+SwiftPM's version conflict naming both; align the pin under `pods`.
+
+**A pod named like React Native's own.** A pod whose name starts like a React Native core pod (`React-`, `RCT`,
+`Yoga`, `glog`, …) is read as part of React Native and left out without a warning, so the refusal above does not
+appear; the build fails later with a "file not found" naming one of its headers. `pods` cannot map such a name,
+because the core names are read first. Leave the library out with `exclude`, or report it with the "My library does
+not build" template ([Reporting a problem](#reporting-a-problem)).
+
+**react-native-app-auth on Expo SDK 58.** Use 8.5.1: `npx expo install react-native-app-auth@8.5.1`, with its config
+plugin in the app config. `npx expo install react-native-app-auth` picks 9.0.0, whose config plugin stops `expo
+prebuild` on SDK 58 with `react-native-app-auth could not find application(_:continue:restorationHandler:) in the Expo
+AppDelegate` (SDK 58's AppDelegate has no such method; the error is the library's, and a plain `npx expo prebuild`
+fails the same way). The plugin's bridging header reaches Swift: rn-xtool passes the `SWIFT_OBJC_BRIDGING_HEADER` of
+the Xcode project `expo prebuild` writes, so `RNAppAuthAuthorizationFlowManager` compiles in `AppDelegate.swift`.
+
+**A sibling installed but not listed in package.json** (bare React Native):
+
+`<package> <version>: its podspec depends on <npm>, which is installed but not listed in package.json, so React Native
+does not link it; add it to dependencies (npm i <npm>). See <this section>`
+
+The library's podspec depends on another React Native library by its pod name (react-native-reanimated's
+`s.dependency "RNWorklets"`), and that library is in `node_modules`, installed as a peer or as a dependency of another
+package, but not in your package.json. On bare React Native the community CLI links only the packages package.json
+lists (`dependencies`, `devDependencies` and `peerDependencies`), so the scaffolder would read the name as a CocoaPods
+pod it cannot map. Run the `npm i` the text gives. With several, the text names them all (`npm i <a> <b>`). Expo's
+autolinking links every installed package, so Expo apps do not get this refusal.
+
+rn-xtool reads the packages at the top level of `node_modules` (and of `node_modules/@scope/`); a nested copy, which
+npm installs under the library that depends on it after a version conflict
+(`node_modules/<library>/node_modules/react-native-worklets`), is read as a CocoaPods pod with no SwiftPM package, and
+the refusal at the top of this section names its pod (`RNWorklets`): instead of adding it under `pods`, run `npm
+dedupe`, or add the package to package.json.
+
+### Leaving a module out
+
+List a native module in `exclude` in `rn-xtool.config.json` to leave it out of rn-xtool's iOS builds:
+
+```json
+{ "exclude": ["react-native-vision-camera"] }
+```
+
+rn-xtool sets the module's `platforms.ios` to `null` in the autolinking configuration the SwiftPM steps read, on bare
+and Expo apps alike: the same as `platforms.ios: null` in `react-native.config.js`, but only for rn-xtool. Use
+`exclude` when Xcode, CocoaPods or Android builds of the same project still need the module, since your
+`react-native.config.js` stays as it is; use `react-native.config.js` when the app needs the module on no iOS build.
+The early checks skip an excluded module, so `exclude` is also the way through a refusal above. A persisted scaffold
+patch of an excluded module stays applied, and harmless, and gets no warnings.
+
+`doctor --project` and `build` then print `ℹ exclude — left out of this iOS build: react-native-vision-camera
+(rn-xtool.config.json). JavaScript that uses it must check that it is there; see <this section>` (rn-xtool.config.js
+when the key comes from there). A name that is not a native iOS dependency of the project prints `⚠ exclude names
+<name>, which is not a native iOS dependency of this project; ignored`.
+
+**Expo modules** are linked by Expo's autolinking, which `exclude` does not reach:
+`⚠ exclude names <name>, an Expo module: Expo's autolinking links it anyway; list it in expo.autolinking.exclude in
+package.json to leave it out`. List it there instead:
+
+```json
+{ "expo": { "autolinking": { "exclude": ["expo-camera"] } } }
+```
+
+**Libraries that depend on it.** A library whose podspec depends on an excluded one gets the scaffolder's `Dependency
+"<name>" is not installed (or not linked for iOS); left out …` warning, and fails to compile when it needs it. Exclude
+those libraries too.
+
+**The JavaScript is still bundled.** A module looked up when it is imported (`TurboModuleRegistry.getEnforcing`)
+throws at the import, and one looked up later throws on first use: on the iPhone, a red screen. Wrap the import and
+its use:
+
+```js
+let NetInfo;
+try {
+  NetInfo = require('@react-native-community/netinfo').default;
+} catch {
+  NetInfo = undefined; // left out of this iOS build
+}
+```
+
+Do not render a native view whose module is left out.
+
 ### pnpm and Yarn PnP
 
 `This project was installed with pnpm (pnpm-lock.yaml and a node_modules/.pnpm store); rn-xtool needs the flat
@@ -268,6 +443,13 @@ classic's `nohoist`). Only parent folders' `node_modules` are checked, not Node'
 - **An Expo config plugin change is missing from the app** (for example expo-image-picker's photo library text in
   Info.plist): `build` runs `expo prebuild` only when `ios/` is missing. After adding or changing a config plugin in
   `app.json`, run `rn-xtool build --clean` (or `run --clean`), which re-runs `expo prebuild --clean`.
+- **`expo prebuild` fails at `▸ prebuild`** (a config plugin throws, for example): rn-xtool removes the half-written
+  `ios/` the failed prebuild left, and the error ends with "The failed prebuild left ios/ half-written, so rn-xtool
+  removed it; the next build runs expo prebuild again." Fix the cause (the config plugin, or the library's version)
+  and build again. When `ios/` cannot be removed, the error ends with "…, and rn-xtool could not remove it (<reason>);
+  delete ios/ before the next build, or run rn-xtool build --clean." instead: a build that finds `ios/` does not run
+  the prebuild again, and would build the half-written one. A prebuild that fails before it writes `ios/` (an
+  `app.config.js` that throws, for example) ends with its own error only.
 - **A committed project patch no longer applies** (after a library upgrade): delete it from `patches/` and let
   `rn-xtool build` re-scaffold it.
 - **"⚠ patches/<file> is for <package>, which is not installed; skipped. Delete it if you removed the library.":** a
@@ -699,15 +881,27 @@ checks, so it also runs on a machine without Swift or xtool. Run it from the pro
 - **podspecs** (information only): the podspec features the dependencies use that rn-xtool tracks (`subspecs`,
   `compiler_flags`, `header_dir`, `header_mappings_dir`, `vendored_frameworks`, `resource_bundles`), each with the
   packages that use it, or `no tracked podspec features in the dependencies`.
-- **patches** (only when a patch's package is not installed): one ⚠ line per such patch in `patches/`, the `build` line
-  without its `⚠`: `patches/<file> is for <package>, which is not installed; skipped. Delete it if you removed the
-  library.` ([details](#build-and-patches)).
+- **exclude** (only with `exclude` in `rn-xtool.config.json`): an ℹ line naming the modules left out of the build, and
+  a ⚠ line for each name it ignores ([Leaving a module out](#leaving-a-module-out)).
+- **pods** (only when a pin misses a requirement): one ⚠ line per pod whose version in the pod table is outside the
+  requirement of a library's podspec, the `build` line without its `⚠`: `AppAuth 3.0.0 (rn-xtool table) is outside
+  react-native-app-auth's requirement ">= 4.0"`. The build goes on with the pinned version.
+- **patches** (only when a patch's package is not installed, or a scaffold patch's pod pins are stale): one ⚠ line per
+  such patch in `patches/`, the `build` line without its `⚠`: `patches/<file> is for <package>, which is not
+  installed; skipped. Delete it if you removed the library.` ([details](#build-and-patches)), and one per pod a
+  persisted scaffold pins at another version than the pod table (`patches/<file> pins AppAuth 3.0.0, the config says
+  3.1.0; delete it so rn-xtool regenerates it …`) or does not pin although the library's podspec maps it.
 - **known-limits**: the setups rn-xtool refuses before a build ([Unsupported setups](#unsupported-setups)). With none,
-  it reads `none of the setups rn-xtool refuses early (CocoaPods-only libraries with prebuilt binaries or vendored C
-  sources, pnpm, Yarn PnP, hoisted packages)`. Otherwise there is one ✖ line per refusal, with its reason and a link
-  to its section, followed by `To build anyway, add "<name>" to knownLimits.allow in rn-xtool.config.json.` on the
-  next line, and `doctor --project` exits non-zero. A refusal that `knownLimits.allow` lets through is a ⚠ warning
-  instead, ending with `(allowed by rn-xtool.config.json knownLimits.allow; the build may fail later)`.
+  it reads `none of the setups rn-xtool refuses early (CocoaPods-only libraries with prebuilt binaries, vendored C
+  sources or CocoaPods pods without a SwiftPM package, pnpm, Yarn PnP, hoisted packages)`. Otherwise there is one ✖ line
+  per refusal, with its reason and a link to its section, followed by `To build anyway, add "<name>" to
+  knownLimits.allow in rn-xtool.config.json.` on the next line, and `doctor --project` exits non-zero. A refusal that
+  `knownLimits.allow` lets through is a ⚠ warning instead, ending with `(allowed by rn-xtool.config.json
+  knownLimits.allow; the build may fail later)`.
+- **entitlements** (only when `CODE_SIGN_ENTITLEMENTS` names a file with keys): one ⚠ line per key xtool drops or does
+  not enable, the `build` line without its `⚠` ([Entitlements](#entitlements)); `<file>: passed to xtool; every key is
+  one xtool signs on a free team` when there is none; ✖ when the file is missing or not a property list dictionary, or
+  the setting cannot be resolved. On an Expo app without `ios/` it reads `read after expo prebuild, at build`.
 
 The rn-scripts, rn-artifacts, expo-plugin and expo-modules lines are left out when the project has no react-native or
 no expo. On a version no line covers, the rn-scripts and rn-artifacts lines are information only, and they do not
@@ -771,6 +965,63 @@ and install it again, or restart the phone.
 **Not supported:** dark and tinted icons, Icon Composer `.icon` icons, and a custom splash colour or image. The launch
 screen is the system background colour. They need Xcode's asset catalog compiler (`actool`), which does not run on
 Linux.
+
+## Entitlements
+
+rn-xtool reads the file `CODE_SIGN_ENTITLEMENTS` names in the app target's Debug configuration. On Expo it reads the
+Xcode project `expo prebuild` writes, so the keys config plugins and `ios.entitlements` add are included. rn-xtool
+builds Debug only, so a different Release file is not read. `$(PRODUCT_BUNDLE_IDENTIFIER)`, `$(CFBundleIdentifier)`
+(both the bundle id) and the project's other settings in the values are resolved; `$(AppIdentifierPrefix)` and
+`$(TeamIdentifierPrefix)` are kept, for xtool to fill in. When the file has keys, rn-xtool writes them to
+`ios-xtool/App.entitlements`, names it as `entitlementsPath` in `xtool.yml`, and xtool signs the app with them
+("Applying entitlements..." in the build log). An app built with an entitlements file installs and launches on the
+iPhone as any other (checked on 2026-11-05). The file every Expo prebuild writes holds no keys, so it is not passed,
+and `doctor --project` prints no `entitlements` line for it, as for a project without the setting.
+
+**What xtool keeps.** xtool registers the app and signs it on your team, and it keeps only the entitlements it knows,
+on a free team only those of free capabilities. Before compiling, `build` prints one line per key it drops or does not
+enable, in the file's order (`doctor --project` prints the same lines on its `entitlements` line, without the `⚠`):
+
+- a key xtool knows and marks paid: `⚠ aps-environment is not available on a free team; the build continues without
+  it; push notifications fail at runtime.`
+- App Groups, which xtool 1.24.0 marks paid although Apple gives them to free teams: `⚠
+  com.apple.security.application-groups is not available on a free team; the build continues without it; sharing data
+  with other apps and extensions through the group fails at runtime.`
+- a key xtool does not know, which Apple does not give free teams: `⚠ com.apple.developer.networking.wifi-info is not
+  available on a free team, and xtool does not enable it on a paid one; the build continues without it; reading the
+  Wi-Fi network name returns nothing at runtime.`
+- a key Apple gives free teams that xtool does not know, or a key rn-xtool's table does not list: `⚠
+  com.apple.developer.default-data-protection is not enabled by xtool; the build continues without it; files keep the
+  default protection.` (`the feature that needs it does not work at runtime` for a key without its own phrase)
+- `keychain-access-groups` with a group other than the app's own (`$(AppIdentifierPrefix)` or
+  `$(TeamIdentifierPrefix)` followed by the bundle id): `⚠ keychain-access-groups lists other groups; xtool
+  signs the app with its own group only (<Team ID>.XTL-<Team ID>.com.example.app); the build continues; sharing
+  keychain items with other apps fails at runtime.`
+
+The lines say what happens on a free team: rn-xtool does not know your team when it builds. On a paid team xtool keeps
+the paid keys it knows. A key it does not know stays in the signature there, but xtool enables no capability for it on
+the App ID ([xtool issue #352](https://github.com/xtool-org/xtool/issues/352)), so the feature may still not work, or
+the iPhone may refuse the install.
+
+**The keychain group.** xtool installs the app as `XTL-<Team ID>.<bundle id>` and rewrites the keychain group to
+`<Team ID>.XTL-<Team ID>.<bundle id>`, the only group in the signature. A library that takes a keychain access group
+(react-native-keychain's `accessGroup`) must get that group, for example `TEAMID0000.XTL-TEAMID0000.com.example.app`,
+or leave the option out to use the app's default group.
+
+**Refusals.** `build` stops before the patches and SwiftPM steps, and `doctor --project` fails its `entitlements`
+line, when xtool cannot sign with the file:
+
+- `CODE_SIGN_ENTITLEMENTS names <file>, which does not exist; xtool cannot sign the app without it. Fix the setting or
+  create the file.`
+- `<file> (CODE_SIGN_ENTITLEMENTS) is not a property list dictionary; xtool cannot sign the app with it.`
+- `CODE_SIGN_ENTITLEMENTS in ios/<project>.xcodeproj could not be read: <reason>`, when the setting names a build
+  setting rn-xtool cannot resolve.
+
+On an Expo app without `ios/`, `doctor --project` reads `entitlements — read after expo prebuild, at build`. When the
+prebuild's `ios/` holds two Xcode projects, or a project with two application targets, `build` reads neither
+entitlements nor bridging header from it and says so: `⚠ ios/ holds more than one .xcodeproj (<projects>); rn-xtool
+reads no bridging header or entitlements from it`, or `⚠ ios/<project>.xcodeproj has more than one application target
+(<targets>); rn-xtool reads no bridging header or entitlements from it`.
 
 ## Device and signing
 

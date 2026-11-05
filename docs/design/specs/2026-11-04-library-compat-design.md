@@ -243,8 +243,10 @@ header layout, an entitlement key), never a library name or a version number.
       is printed.
     - More than one App Group on a free team throws `tooManyAppGroups` (line 192): this is the only refusal found.
     - Then `update(teamID:bundleID:)` rewrites application-identifier, team-identifier and keychain-access-groups to
-      `<team>.<bundle id>` (`EntitlementWithTeamOrBundleID.swift:15-31`). A shared keychain group is replaced by the
-      app's own.
+      `<Team ID>.<App ID>` (`EntitlementWithTeamOrBundleID.swift:15-31`). The App ID is the one xtool registers,
+      `XTL-<Team ID>.<bundle id>` (`ProvisioningIdentifiers.identifier(fromSanitized:)`,
+      `DeveloperServicesAddAppOperation.swift:46` and `:190-196` in 1.24.0), so the only keychain group in the signature
+      is `<Team ID>.XTL-<Team ID>.<bundle id>`. A shared keychain group is replaced by the app's own.
     - xtool's free/paid flags (`DeveloperServicesCapability.swift`):
       - free: App Groups, HealthKit, HomeKit, inter-app audio, wireless accessory;
       - paid: Sign in with Apple, associated domains, multipath, network extension, VPN, push, Siri, Wi-Fi Aware.
@@ -463,11 +465,12 @@ All five are generic, go into `docs/upstream/react-native-scaffolder.md` as fixe
    - free for Apple but unknown to xtool: `⚠ com.apple.developer.default-data-protection is not enabled by xtool; the
      build continues without it; files keep the default protection.`
    - shared keychain groups: `⚠ keychain-access-groups lists other groups; xtool signs the app with its own group
-     only (TEAMID0000.com.example.app); the build continues; sharing keychain items with other apps fails at
-     runtime.`
-   - several App Groups: `⚠ com.apple.security.application-groups lists 2 groups; a free team allows one, and xtool
-     stops at signing with more than one.` `src/tools/xtoolErrors.ts` maps xtool's `tooManyAppGroups` error to the
-     same sentence.
+     only (<Team ID>.XTL-<Team ID>.com.example.app); the build continues; sharing keychain items with other apps fails
+     at runtime.`
+   - App Groups: xtool 1.24.0 marks them paid (`isFree: false`, "FIXME: Enable app groups on free accounts") and has
+     no `tooManyAppGroups`, so they get the paid line: `⚠ com.apple.security.application-groups is not available on a
+     free team; the build continues without it; sharing data with other apps and extensions through the group fails
+     at runtime.` There is no line for several groups and no `xtoolErrors.ts` mapping (Task E1).
    - known to xtool and free: nothing.
 4. **Refusals.**
    - The only refusals: the file named by `CODE_SIGN_ENTITLEMENTS` is missing, or it is not a plist dictionary.
@@ -543,7 +546,7 @@ The process, end to end:
 | 1 | Config | `pods`, `exclude` or an entry of the wrong shape | user, in every command: `rn-xtool.config.json: pods.AppAuth.products must be a list of product names` | handle: shape checks like `knownLimits`, unit tests |
 | 2 | Config `pods` | a product name or URL that is wrong but well formed | user at `xtool-build`: SwiftPM's resolve error names the product or the package | accept: checking it needs the network; the troubleshooting entry shows SwiftPM's message |
 | 3 | Resolver, requirement | the pinned version is outside the podspec's requirement | user: `⚠ AppAuth 3.0.0 (rn-xtool table) is outside react-native-app-auth's requirement ">= 4.0"` at doctor and build start | handle: warning, not refusal (open question 6) |
-| 4 | Resolver, classification | a third-party pod named like React Native core (an `RCT…` prefix) is skipped as core | user: a compile error naming its header | accept: the existing prefixes are kept; the troubleshooting entry for "file not found" names `pods` |
+| 4 | Resolver, classification | a third-party pod named like React Native core (an `RCT…` prefix) is skipped as core | user: a compile error naming its header | accept: the existing prefixes are kept, and a core name wins over `pods`, which cannot map it; the troubleshooting entry for "file not found" points to `exclude` or an issue |
 | 5 | Resolver, unmapped | a pod with no mapping (AppAuth before the table, ML Kit) | user at `doctor --project` and build start, before anything changes: the refusal with the config snippet | handle: new early check, offline, fixture tests for both libraries' shapes |
 | 6 | Resolver, unmapped | the pod sits under a Ruby condition (video's `$RNVideoUse…` pods) | nobody: it is not refused, and the scaffolder only warns, as CocoaPods would not install it | handle: the check reads `unconditionalLines`; a test with video's podspec shape |
 | 7 | Resolver, unmapped, allowed | the user lists the library in `knownLimits.allow` | user: the allowed-limit warning; the build fails at compile time as today, and the scaffold is persisted for the user to edit | accept: the allow is the user's choice; the warning says the build may fail later |
@@ -576,8 +579,8 @@ The process, end to end:
 | 34 | Entitlements, read | Debug and Release name different files | nobody: rn-xtool builds Debug | accept: the Debug one is read, and the docs say so |
 | 35 | Entitlements, free team | a paid or unknown key is dropped by xtool | user: the ⚠ line before the build; on the device the feature does not work | handle (the line) and accept (Apple's policy) |
 | 36 | Entitlements, paid team | an unknown key stays in the signature without a capability on the App ID | user: the ⚠ line; possibly an install error from the iPhone | accept: unverified without a paid account (Non-goals); the line says xtool does not enable it |
-| 37 | Entitlements, App Groups | more than one group on a free team | user: the ⚠ line, then xtool's `tooManyAppGroups` at signing, mapped to the same sentence | handle: line plus `xtoolErrors.ts` mapping |
-| 38 | Entitlements, keychain | a shared group is replaced by the app's own | user: the ⚠ line; on the device, shared items are not found | handle (the line) and accept (xtool's rewrite) |
+| 37 | Entitlements, App Groups | App Groups on a free team (xtool 1.24.0 marks them paid and has no `tooManyAppGroups`) | user: the paid ⚠ line for `com.apple.security.application-groups`; on the device, sharing through the group fails | handle: the paid line from the entitlement table (Task E1: no several-groups line, no `xtoolErrors.ts` mapping) |
+| 38 | Entitlements, keychain | a shared group is replaced by the app's own | user: the ⚠ line; on the device, shared items are not found | handle (the line) and accept (xtool's rewrite); the app's own group, written `$(AppIdentifierPrefix)` or `$(TeamIdentifierPrefix)` followed by the bundle id, `$(PRODUCT_BUNDLE_IDENTIFIER)` or `$(CFBundleIdentifier)`, gets no line (tests `resolves $(CFBundleIdentifier) as the bundle id, and both own-group forms get no line (row 38)`, `counts $(TeamIdentifierPrefix)<bundle id> as the app's own keychain group (row 38)`) |
 | 39 | Entitlements, table drift | a newer xtool knows more types or changes the free filter | maintainer: the `XTOOL_VERSION` guard test fails on the bump | handle: goal 5.5 |
 | 40 | Entitlements, xtool 1.24.0 | the pinned release differs from the `main` source that was read | user: lines that are wrong about what xtool drops | handle: the builder reads the 1.24.0 tag's source before coding the table (open question 5) |
 | 41 | Device | a scaffold compiles but registers nothing (vision-camera without frame processors, device-info through the shim) | user: the library does nothing, or "not linked" at runtime | handle: the owner's device pass (Verification) before any doc calls these device-verified |
@@ -586,6 +589,15 @@ The process, end to end:
 | 44 | Build, resource line | a resource value over several lines whose closing line carries an `if`/`unless` modifier runs on to the end of the podspec | user: the `ℹ` line names source globs and dependencies as resources | handle: the value is read from the raw lines, and such an assignment is left out (test `leaves out a value over several lines whose closing line carries a modifier`) |
 | 45 | Scaffold, only named × missing sibling | the user installs a dependency the scaffolder left out (row 8) after the library's scaffold was persisted; React Native names only the new package, and the persisted scaffold is current, so the subspec stays left out with no warning | user: on the device, when the left-out feature (vision-camera's frame processors) fails at run time | accept: troubleshooting's dropped-subspec entry says the subspec stays out until the library is re-scaffolded, next to the re-scaffold steps |
 | 46 | Build, resource line | the `ℹ` line says development builds run without resources that code loads at run time (fonts, images, svg's `RNSVGFilters.bundle`) | user: blank icons or a missing feature on the device, after a line that said nothing was needed | handle: the second sentence depends on the kinds: the privacy sentence only when every item is a `.xcprivacy`, else `Code that loads them at run time does not find them.` (test `says privacy manifests are read only at App Store submission only when every resource is one`) |
+| 47 | Config `pods`, override | a config entry pins a shipped pod to another version with the `{url, exact, products}` shape the refusal teaches, and so drops the shipped `forwardHeaders` | user at `xtool-build`: `"AppAuth.h" file not found` | handle: per pod, a config entry overrides only the fields it names; an empty `forwardHeaders` removes them (test `merges a config entry over the shipped one field by field`) |
+| 48 | Patches, persisted pins | a library with mapped pods was re-scaffolded without the pod table (a bare `npx react-native spm scaffold`, or before the `rn-xtool-pods` line existed), so its manifest pins nothing and the forwarder is gone | user: `⚠ patches/<x> does not pin AppAuth, rn-xtool's table says 3.0.0: it was scaffolded without rn-xtool's pod table (not through rn-xtool build); delete it …` in build and doctor; an unpersisted copy is regenerated | handle: the expected pins come from the podspec's mapped dependencies, not only from the line (tests `warns when a persisted scaffold of a library with mapped pods pins nothing`, `regenerates an unpersisted copy whose pins differ`) |
+| 49 | Early checks, pod index | a library's podspec names a sibling by its pod name (reanimated's `RNWorklets`), and the sibling is installed as a peer or a transitive dependency, not listed in package.json. Expo's autolinking links it (it scans dependencies recursively); on bare the community CLI links only the app's `dependencies`, `devDependencies` and `peerDependencies`, so the scaffolder reads the name as a CocoaPods pod it cannot map | user at doctor and build start: a refusal telling them to map `RNWorklets` to a SwiftPM package; on bare without one, the scaffold's unmapped warning and a compile error minutes later | handle: the pod-name index covers every package installed at the top of node_modules (and `@scope/*`). On Expo the name reads as a sibling (test `on Expo, does not refuse a sibling installed as a peer, outside package.json`). On bare the build and doctor refuse early: `<lib> <version>: its podspec depends on <npm>, which is installed but not listed in package.json, so React Native does not link it; add it to dependencies (npm i <npm>). See …` and the `knownLimits.allow` line, which turns it into a warning (tests `on bare, refuses a pod sibling installed but not listed in package.json (row 49)`, `names several unlisted siblings in one refusal`, `passes the project kind to the library checks`) |
+| 50 | Early checks, core pods | a podspec names a pod React Native itself ships or generates outside the scaffolder's core prefixes (`ReactNativeDependencies`, `FBLazyVector`, `fast_float`, `ReactCodegen`, `SocketRocket`) | user at doctor and build start: a refusal asking for a SwiftPM package for a React Native pod | handle: those names are core in the scaffolder (fix 13), and a drift test reads every podspec name in the cached react-native tarballs and expects `core` (tests `<name> is core`, `classifies every podspec name in react-native@<version> as core`) |
+| 51 | Early checks and stale pins, what the scaffold reads | a mapped or unmapped pod sits in a subspec the scaffolder drops for a missing sibling (fix 20), or is written as a call, `s.dependency('Pod', …)` | user: a refusal for a pod the scaffold never uses, or a `does not pin` ⚠ on every build (an unpersisted copy removed and rewritten each time) | handle: the early checks drop the same subspecs with their dependencies, so their pods are neither expected nor refused (test `leaves out the pods of a subspec the scaffolder drops for a missing sibling`); a dependency written as a call, `s.dependency('Pod', …)`, which the early checks read and the scaffolder did not, is read by the scaffolder too (fix 26, tests `26: reads `s.dependency('Pod', …)` as CocoaPods does`, `26: pins a mapped pod named in parentheses`) |
+| 52 | Entitlements, Expo default | every Expo prebuild sets `CODE_SIGN_ENTITLEMENTS` to a file holding only `<dict/>`; passed on, it makes xtool run an ad-hoc signing pass ("Applying entitlements...") that no Expo build ran before | user: if that pass fails on some host, every Expo build fails after compiling, entitlements or not | handle: a file without keys is not passed: no `ios-xtool/App.entitlements`, no `entitlementsPath`, so `xtool.yml` stays byte-identical, and doctor prints no entitlements line, as without the setting (tests `passes no entitlements for the prebuild's empty file: xtool.yml stays byte-identical (row 52)`, `reads the entitlements`) |
+| 53 | Expo prebuild | rn-xtool's own `npx expo prebuild` exits non-zero (a config plugin throws, as react-native-app-auth 9.0.0's does on SDK 58) and leaves a half-written `ios/`; rn-xtool prebuilds only without `ios/` or on `--clean`, so the next plain build would skip prebuild and build that half state (an unpatched AppDelegate, a bridging header that imports a missing class) | user: the prebuild's error at `▸ prebuild`; then, from the next build, a compile error or an app without the plugin's changes | handle: rn-xtool removes the `ios/` its failed prebuild left and adds `The failed prebuild left ios/ half-written, so rn-xtool removed it; the next build runs expo prebuild again.` to the error; a prebuild that failed before writing `ios/` (an `app.config.js` that throws) keeps its error as it is; when the removal fails, the error says to delete `ios/` or run `rn-xtool build --clean` (tests `removes the ios/ a failed prebuild left and says so (row 53)`, `rethrows the error unchanged when the failed prebuild wrote no ios/`, `says so when the half-written ios/ cannot be removed`) |
+| 54 | Entitlements, ad-hoc signing | with an entitlements file passed (`entitlementsPath`), xtool 1.24.0 signs the packed app ad hoc at build ("Applying entitlements..."), and `App` and every `Frameworks/*` binary in `App.app` lose the exec bit until `install` signs them again (seen in F2 and F3) | user on the device: the app would not launch if installing did not restore them | accept: xtool's behaviour; Task H checks on the device that a bare app with an entitlements file installs and launches |
+| 55 | Early checks, where packages are read | the pod index and the linked set read the top level of `node_modules` (and `node_modules/@scope/*`); npm nests a sibling under its dependent on a version conflict (`node_modules/<library>/node_modules/react-native-worklets`) | user at doctor and build start: the sibling's pod name (`RNWorklets`) is read as an unmapped CocoaPods pod, and the refusal's fix ("Add one under "pods"") is the wrong one | accept: rn-xtool reads the top level only; troubleshooting's "Libraries that depend on CocoaPods pods" says so in the present tense and gives the fix: `npm dedupe`, or add the package to package.json |
 
 ## Verification
 
@@ -623,6 +635,21 @@ The process, end to end:
     OpenID provider and the redirect scheme in Info.plist.
 
   Until the owner confirms these, the docs call the libraries build-verified only.
+- **Device pass, run 2026-11-05** (the owner, iOS 26, install over Wi‑Fi), on the bare React Native 0.88.1 app of the
+  build-only proof with the five libraries and an entitlements file set as `CODE_SIGN_ENTITLEMENTS` (keychain groups,
+  `aps-environment`, `wifi-info`, `HotspotConfiguration`, an App Group):
+  - `build` printed the five ⚠ lines, xtool signed the app at build (its binaries without the exec bit), and the app
+    installed and launched normally (row 54);
+  - vision-camera: the camera permission prompt, then the back-camera preview;
+  - video: a remote MP4 plays with the native controls;
+  - device-info: the model and the iOS version are shown;
+  - netinfo: type `wifi`, connected `true`;
+  - react-native-app-auth: linked (`authorize` is present); the login flow was not run;
+  - Fast Refresh works.
+
+  Not part of this pass: netinfo following Wi‑Fi off and on, device-info's unique id, the app with netinfo excluded,
+  and the AppAuth login. The docs call vision-camera, video, device-info and netinfo verified on a device on bare
+  React Native 0.88.1, and react-native-app-auth linked on a device with its login flow unchecked.
 
 ## Open questions
 

@@ -7,6 +7,8 @@ import { swiftHeadersEnv, type ProjectPaths } from "../paths.js";
 import type { ProjectKind } from "../project/index.js";
 import type { ExpoPlugin, RnScripts } from "../versions.js";
 import { packageRoot, runArgv, toolEnv } from "../tools/exec.js";
+import type { PodEntry } from "../config.js";
+import { POD_TABLE_ENV, mergedPodTable, writePodTable, type PodTable } from "../project/podTable.js";
 
 export const AUTOLINKING_CONFIG_COMMAND = [
   "npx",
@@ -16,6 +18,32 @@ export const AUTOLINKING_CONFIG_COMMAND = [
   "--platform",
   "ios",
 ];
+
+/** The vendored scaffolder's resolution of RN's own config command: RCT_SPM_AUTOLINKING_CONFIG_COMMAND, else the CLI's. */
+function rnConfigCommand(root: string): string[] {
+  const file = path.join(vendoredScriptsRoot(), "spm", "generate-spm-autolinking-config.js");
+  const { resolveConfigCommand } = createRequire(import.meta.url)(file) as { resolveConfigCommand: (root: string) => string[] };
+  return resolveConfigCommand(root);
+}
+
+/**
+ * The autolinking config command the SwiftPM steps get. Without `exclude`: Expo's for an Expo app, none for bare (RN
+ * resolves its own, today's argv). With `exclude`: that command (on bare, the one RN would run) wrapped by
+ * `scripts/exclude-config-command.js`, which sets `platforms.ios` to null for each listed package, as
+ * react-native.config.js would, for rn-xtool's builds only.
+ */
+export function configCommandFor(root: string, kind: ProjectKind, exclude: readonly string[]): string[] | undefined {
+  if (exclude.length === 0) return kind === "expo" ? AUTOLINKING_CONFIG_COMMAND : undefined;
+  const inner = kind === "expo" ? AUTOLINKING_CONFIG_COMMAND : rnConfigCommand(root);
+  return [
+    process.execPath,
+    path.join(packageRoot(), "scripts", "exclude-config-command.js"),
+    "--exclude",
+    JSON.stringify(exclude),
+    "--",
+    ...inner,
+  ];
+}
 
 export function resolveRnDir(paths: ProjectPaths): string {
   const require = createRequire(import.meta.url);
@@ -49,7 +77,7 @@ export function vendoredExpoPlugin(): string {
 
 export function rnSpmArgs(
   paths: ProjectPaths,
-  opts: { rnArtifactsDir?: string },
+  opts: { rnArtifactsDir?: string; exclude?: readonly string[] },
   rnDir: string = resolveRnDir(paths),
 ): string[] {
   const mode = hasSpmMarker(paths.ios) ? "update" : "add";
@@ -57,7 +85,7 @@ export function rnSpmArgs(
     path.join(rnDir, "scripts", "setup-apple-spm.js"),
     mode,
     "--config-command",
-    JSON.stringify(AUTOLINKING_CONFIG_COMMAND),
+    JSON.stringify(configCommandFor(paths.root, "expo", opts.exclude ?? [])),
     // stdin is ignored by the runner, so prompts can never be answered: auto-accept them.
     "--yes",
     ...(opts.rnArtifactsDir
@@ -72,13 +100,15 @@ export function rnSpmArgs(
  * (which `add` refuses anyway on a CocoaPods-integrated pbxproj). Only `ios/build/` is written.
  * Expo SDK 57 (the vendored Expo plugin) runs the driver too, with Expo's autolinking config command.
  * Expo SDK 58 (kind "expo", the installed plugin) gets the same config command, for its scaffold step.
+ * With the config's `exclude`, every kind gets its config command wrapped by the exclude filter (configCommandFor).
  */
 export function rnSpmGenerateArgs(
   paths: ProjectPaths,
-  opts: { rnArtifactsDir?: string; rnScripts: RnScripts; expoPlugin?: ExpoPlugin; kind?: ProjectKind },
+  opts: { rnArtifactsDir?: string; rnScripts: RnScripts; expoPlugin?: ExpoPlugin; kind?: ProjectKind; exclude?: readonly string[] },
   rnDir: string = resolveRnDir(paths),
 ): string[] {
   const expo = opts.expoPlugin === "vendored" || opts.kind === "expo";
+  const configCommand = configCommandFor(paths.root, expo ? "expo" : "bare", opts.exclude ?? []);
   return [
     path.join(packageRoot(), "scripts", "rn-spm-generate.js"),
     "--rn-dir",
@@ -87,7 +117,7 @@ export function rnSpmGenerateArgs(
     paths.root,
     "--scripts-root",
     opts.rnScripts === "vendored" ? vendoredScriptsRoot() : path.join(rnDir, "scripts"),
-    ...(expo ? ["--config-command", JSON.stringify(AUTOLINKING_CONFIG_COMMAND)] : []),
+    ...(configCommand !== undefined ? ["--config-command", JSON.stringify(configCommand)] : []),
     ...(opts.expoPlugin === "vendored" ? ["--expo-plugin", vendoredExpoPlugin()] : []),
     ...(opts.rnArtifactsDir ? ["--artifacts", opts.rnArtifactsDir] : []),
   ];
@@ -100,7 +130,7 @@ export function rnSpmGenerateArgs(
  */
 export function rnSpmScaffoldArgs(
   paths: ProjectPaths,
-  opts: { rnArtifactsDir?: string; rnScripts: RnScripts; expoPlugin?: ExpoPlugin; kind: ProjectKind },
+  opts: { rnArtifactsDir?: string; rnScripts: RnScripts; expoPlugin?: ExpoPlugin; kind: ProjectKind; exclude?: readonly string[] },
   names: readonly string[],
   rnDir: string = resolveRnDir(paths),
 ): string[] {
@@ -181,12 +211,14 @@ function scaffoldFailureMessage(failed: ScaffoldOutcome["failed"]): string {
 /**
  * Env of every React Native run. RN's scaffolder warns about mixed-language libraries when the
  * Swift headers dir is unset, and any manifest it evaluates must see the same value the xtool build
- * uses. The vendored Expo plugin takes its precompiled modules from `ios/build/expo-precompiled`.
+ * uses. The vendored Expo plugin takes its precompiled modules from `ios/build/expo-precompiled`. The scaffolder
+ * maps CocoaPods pods with the pod table file, when given.
  */
-export function rnSpmEnv(paths: ProjectPaths, expoPlugin: ExpoPlugin): Record<string, string> {
+export function rnSpmEnv(paths: ProjectPaths, expoPlugin: ExpoPlugin, podTableFile?: string): Record<string, string> {
   return {
     ...swiftHeadersEnv(paths.iosXtool),
     ...(expoPlugin === "vendored" ? { EXPO_PRECOMPILED_MODULES_PATH: paths.expoPrecompiled } : {}),
+    ...(podTableFile !== undefined ? { [POD_TABLE_ENV]: podTableFile } : {}),
   };
 }
 
@@ -205,6 +237,7 @@ export interface RnSpmDeps {
   runner: RnRunner;
   log: (s: string) => void;
   rnDir?: string;
+  writePodTable: (paths: ProjectPaths, table: PodTable) => string;
 }
 
 /** Runs a command with nice, streaming its output live while buffering it. */
@@ -289,7 +322,16 @@ function tail(output: string): string {
 
 export async function runRnSpm(
   paths: ProjectPaths,
-  opts: { rnArtifactsDir?: string; kind: ProjectKind; rnScripts: RnScripts; expoPlugin: ExpoPlugin },
+  opts: {
+    rnArtifactsDir?: string;
+    kind: ProjectKind;
+    rnScripts: RnScripts;
+    expoPlugin: ExpoPlugin;
+    /** The config's pods, merged over rn-xtool's table for the scaffolder. */
+    pods?: Record<string, PodEntry>;
+    /** The config's exclude: left out of the autolinking JSON every run reads (configCommandFor). */
+    exclude?: readonly string[];
+  },
   deps: Partial<RnSpmDeps> = {},
 ): Promise<void> {
   // Expo 58 runs `setup-apple-spm.js add --yes`, which may edit the xcodeproj: never pick it by default.
@@ -313,7 +355,9 @@ export async function runRnSpm(
   // Bare apps and Expo SDK 57 never run `setup-apple-spm.js add|update`: only the driver.
   const driver = opts.kind === "bare" || opts.expoPlugin === "vendored";
   const rnArgs = driver ? rnSpmGenerateArgs(paths, opts, rnDir) : rnSpmArgs(paths, opts, rnDir);
-  const env = rnSpmEnv(paths, opts.expoPlugin);
+  // Every run gets the table: the scaffold step reads it, whichever project kind runs it.
+  const podTableFile = (deps.writePodTable ?? writePodTable)(paths, mergedPodTable(opts.pods));
+  const env = rnSpmEnv(paths, opts.expoPlugin, podTableFile);
 
   const first = await runner("node", rnArgs, { cwd: paths.ios, env });
   if (first.exitCode === 0) return;

@@ -5,13 +5,19 @@ import path from "node:path";
 import Module, { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  allowedLimitText,
   allowKnownLimits,
   earlyFailures,
+  excludeLines,
   installFailures,
   knownLimitHint,
   libraryFailures,
+  podPinWarnings,
+  scaffoldedPods,
   UnsupportedSetupError,
 } from "../src/project/earlyChecks.js";
+import { mergedPodTable, type PodTable } from "../src/project/podTable.js";
+import { podDependencies } from "../src/project/podspecs.js";
 
 const tempDirs: string[] = [];
 
@@ -600,5 +606,472 @@ describe("knownLimits.allow", () => {
         '- installed with pnpm.\n  To build anyway, add "pnpm" to knownLimits.allow in rn-xtool.config.json.\n' +
         `- ${ASYNC_STORAGE_REASON}\n  ${hint}`,
     );
+  });
+});
+
+describe("unmapped pods", () => {
+  const NO_POD_TABLE: PodTable = { pods: {}, source: {} };
+  const UNMAPPED_DOCS = `${DOCS}#libraries-that-depend-on-cocoapods-pods`;
+  const unmapped = (lib: string, pods: string, first: string, several: boolean) =>
+    `${lib}: its podspec depends on the CocoaPods ${several ? "pods" : "pod"} ${pods}, which ${several ? "have" : "has"} no ` +
+    `SwiftPM package rn-xtool knows. Add ${several ? "them" : "one"} under "pods" in rn-xtool.config.json: ` +
+    `{ "pods": { "${first}": { "url": "<git URL>", "exact": "<version>", "products": ["<product>"] } } }, or leave the ` +
+    `library out with "exclude". See ${UNMAPPED_DOCS}`;
+
+  /** react-native-app-auth 8.5.1's shape: the pod name comes from package.json, AppAuth is a CocoaPods pod. */
+  const appAuth = (): Record<string, string> => ({
+    "package.json": JSON.stringify({ name: "react-native-app-auth", version: "8.5.1" }),
+    "react-native-app-auth.podspec":
+      "require 'json'\npackage = JSON.parse(File.read(File.join(__dir__, 'package.json')))\n\n" +
+      "Pod::Spec.new do |s|\n  s.name         = package['name']\n  s.source_files  = 'ios/**/*.{h,m}'\n" +
+      "  s.dependency 'React-Core'\n  s.dependency 'AppAuth', '>= 1.7.6'\nend\n",
+  });
+
+  /** @react-native-ml-kit/text-recognition 2.0.0's shape: five subspecs of the one pod GoogleMLKit. */
+  const mlKit = (): Record<string, string> => ({
+    "package.json": JSON.stringify({ name: "@react-native-ml-kit/text-recognition", version: "2.0.0" }),
+    "RNMLKitTextRecognition.podspec":
+      'Pod::Spec.new do |s|\n  s.name         = "RNMLKitTextRecognition"\n  s.dependency "React"\n' +
+      "  # To recognize Latin script\n  s.dependency 'GoogleMLKit/TextRecognition', '8.0.0'\n" +
+      ["Chinese", "Devanagari", "Japanese", "Korean"].map((l) => `  s.dependency 'GoogleMLKit/TextRecognition${l}', '8.0.0'\n`).join("") +
+      "end\n",
+  });
+
+  it("refuses AppAuth's shape without a table entry", async () => {
+    const root = await project({ "react-native-app-auth": appAuth() });
+    expect(libraryFailures(root, { table: NO_POD_TABLE })).toEqual([
+      {
+        id: "unmapped-pod",
+        allowKey: "react-native-app-auth",
+        reason: unmapped("react-native-app-auth 8.5.1", "AppAuth", "AppAuth", false),
+      },
+    ]);
+  });
+
+  it("lets AppAuth through with rn-xtool's table", async () => {
+    const root = await project({ "react-native-app-auth": appAuth() });
+    expect(libraryFailures(root)).toEqual([]);
+    expect(libraryFailures(root, { table: mergedPodTable() })).toEqual([]);
+  });
+
+  it("maps a pod the config's pods name", async () => {
+    const root = await project({ "react-native-app-auth": appAuth() });
+    const pods = { MMKV: { url: "https://github.com/Tencent/MMKV", exact: "2.2.4", products: ["MMKV"] } };
+    await writeFiles(path.join(root, "node_modules", "react-native-app-auth"), {
+      "react-native-app-auth.podspec": "Pod::Spec.new do |s|\n  s.dependency 'MMKV', '~> 2.0'\nend\n",
+    });
+    expect(libraryFailures(root).map((f) => f.id)).toEqual(["unmapped-pod"]);
+    expect(libraryFailures(root, { pods })).toEqual([]);
+  });
+
+  it("refuses ML Kit's shape, naming GoogleMLKit once", async () => {
+    const root = await project({ "@react-native-ml-kit/text-recognition": mlKit() });
+    expect(libraryFailures(root)).toEqual([
+      {
+        id: "unmapped-pod",
+        allowKey: "@react-native-ml-kit/text-recognition",
+        reason: unmapped("@react-native-ml-kit/text-recognition 2.0.0", "GoogleMLKit", "GoogleMLKit", false),
+      },
+    ]);
+  });
+
+  it("names several unmapped pods", async () => {
+    const two = await project({
+      lib: {
+        "Lib.podspec":
+          "Pod::Spec.new do |s|\n  s.dependency 'GoogleMLKit/TextRecognition', '8.0.0'\n" +
+          '  s.dependency "GoogleToolboxForMac/Logger", "~> 4.2"\n  s.dependency \'GoogleMLKit/Vision\'\nend\n',
+      },
+    });
+    expect(libraryFailures(two).map((f) => f.reason)).toEqual([
+      unmapped("lib 1.0.0", "GoogleMLKit and GoogleToolboxForMac", "GoogleMLKit", true),
+    ]);
+    const three = await project({
+      lib: {
+        "ios/Lib.podspec": "Pod::Spec.new do |s|\n  s.dependency 'MMKV'\n  s.ios.dependency('Lottie', '~> 4.0')\nend\n",
+        "Other.podspec": "Pod::Spec.new do |s|\n  s.dependency 'Firebase/Core'\n  s.dependency 'MMKV'\nend\n",
+      },
+    });
+    expect(libraryFailures(three).map((f) => f.reason)).toEqual([
+      unmapped("lib 1.0.0", "Firebase, MMKV and Lottie", "Firebase", true),
+    ]);
+  });
+
+  it("ignores pods under a Ruby condition (react-native-video's shape)", async () => {
+    const root = await project({
+      "react-native-video": {
+        "package.json": JSON.stringify({ name: "react-native-video", version: "6.19.3" }),
+        "react-native-video.podspec":
+          "fabric_enabled = ENV['RCT_NEW_ARCH_ENABLED'] == '1'\n\nPod::Spec.new do |s|\n  s.name           = 'react-native-video'\n" +
+          '  s.subspec "Video" do |ss|\n    ss.source_files = "ios/Video/**/*.{h,m,swift,mm}"\n' +
+          '    if fabric_enabled\n      ss.dependency "react-native-video/Fabric"\n    end\n' +
+          '    if defined?($RNVideoUseGoogleIMA)\n      Pod::UI.puts "RNVideo: enable IMA SDK"\n\n' +
+          "      ss.ios.dependency 'GoogleAds-IMA-iOS-SDK', '~> 3.22.1'\n      ss.tvos.dependency 'GoogleAds-IMA-tvOS-SDK', '~> 4.2'\n" +
+          "    end\n    if defined?($RNVideoUseVideoCaching)\n" +
+          '      ss.dependency "SPTPersistentCache", "~> 1.1.0"\n      ss.dependency "DVAssetLoaderDelegate", "~> 0.3.1"\n' +
+          "    end\n  end\n\n  if respond_to?(:install_modules_dependencies, true)\n    install_modules_dependencies(s)\n" +
+          '  else\n    s.dependency "React-Core"\n    s.dependency "Folly" if fabric_enabled\n  end\n' +
+          "  s.tvos.dependency 'TVOnlyPod'\n  s.default_subspec = \"Video\"\nend\n",
+      },
+    });
+    expect(libraryFailures(root, { table: NO_POD_TABLE })).toEqual([]);
+  });
+
+  it("does not refuse siblings, core, Expo or subspec dependencies", async () => {
+    const root = await project({
+      lib: {
+        "Self.podspec":
+          "Pod::Spec.new do |s|\n  s.name = 'Self'\n  s.dependency 'react-native-missing'\n  s.dependency 'RNWorklets'\n" +
+          "  s.dependency 'React-Core'\n  s.dependency 'ExpoModulesCore'\n  s.dependency 'Self/Sub'\n" +
+          "  s.dependency 'RNSibling', '>= 1.0'\nend\n",
+      },
+      "react-native-worklets": { "RNWorklets.podspec": "Pod::Spec.new do |s|\n  s.name = 'RNWorklets'\nend\n" },
+      sibling: { "RNSibling.podspec": "Pod::Spec.new do |s|\nend\n" },
+    });
+    await writeFiles(root, {
+      "react-native.config.js": "module.exports = { dependencies: { 'react-native-worklets': { platforms: { ios: null } } } };\n",
+    });
+    expect(libraryFailures(root, { table: NO_POD_TABLE })).toEqual([]);
+  });
+
+  it("knownLimits.allow turns it into a warning", async () => {
+    const root = await project({ "@react-native-ml-kit/text-recognition": mlKit() });
+    const [failure] = allowKnownLimits(libraryFailures(root), ["@react-native-ml-kit/text-recognition"]);
+    expect(failure).toMatchObject({ id: "unmapped-pod", allowed: true });
+    expect(allowedLimitText(failure!)).toBe(
+      `${unmapped("@react-native-ml-kit/text-recognition 2.0.0", "GoogleMLKit", "GoogleMLKit", false)} ` +
+        "(allowed by rn-xtool.config.json knownLimits.allow; the build may fail later)",
+    );
+  });
+
+  it("skips libraries with their own Package.swift or swiftpmConfig.scaffold false", async () => {
+    const cases = [
+      await project({ "react-native-app-auth": { ...appAuth(), "Package.swift": "// swift-tools-version: 6.0\n" } }),
+      await project({ "react-native-app-auth": { ...appAuth(), "ios/Package.swift": "// swift-tools-version: 6.0\n" } }),
+      await project({
+        "react-native-app-auth": {
+          ...appAuth(),
+          "package.json": JSON.stringify({ name: "react-native-app-auth", version: "8.5.1", swiftpmConfig: { scaffold: false } }),
+        },
+      }),
+      await project({
+        "expo-thing": {
+          "expo-module.config.json": JSON.stringify({ platforms: ["apple"] }),
+          "ios/ExpoThing.podspec": "Pod::Spec.new do |s|\n  s.dependency 'AppAuth'\nend\n",
+        },
+      }),
+    ];
+    for (const root of cases) expect(libraryFailures(root, { table: NO_POD_TABLE })).toEqual([]);
+    const scaffolded = await project({
+      "react-native-app-auth": { ...appAuth(), "Package.swift": `${SCAFFOLD_MARKER}\n// swift-tools-version: 6.0\n` },
+    });
+    expect(libraryFailures(scaffolded, { table: NO_POD_TABLE }).map((f) => f.id)).toEqual(["unmapped-pod"]);
+  });
+
+  /** reanimated 4.3.4's shape: its podspec names react-native-worklets by its pod name, RNWorklets. */
+  const reanimated = {
+    "package.json": JSON.stringify({ name: "react-native-reanimated", version: "4.3.4", peerDependencies: { "react-native-worklets": ">=0.8.0" } }),
+    "RNReanimated.podspec":
+      'Pod::Spec.new do |s|\n  s.name         = "RNReanimated"\n  s.source_files = "apple/**/*.{mm,h,m}"\n' +
+      '  s.dependency "RNWorklets"\n  install_modules_dependencies(s)\n  s.dependency \'React-jsi\'\nend\n',
+  };
+  const worklets = {
+    "package.json": JSON.stringify({ name: "react-native-worklets", version: "0.8.3" }),
+    "RNWorklets.podspec": 'Pod::Spec.new do |s|\n  s.name         = "RNWorklets"\n  install_modules_dependencies(s)\nend\n',
+  };
+  const unlisted = (lib: string, npm: string) =>
+    `${lib}: its podspec depends on ${npm}, which is installed but not listed in package.json, so React Native does not ` +
+    `link it; add it to dependencies (npm i ${npm}). See ${DOCS}#libraries-that-depend-on-cocoapods-pods`;
+
+  it("on bare, refuses a pod sibling installed but not listed in package.json (row 49)", async () => {
+    // The community CLI links only the app's dependencies, devDependencies and peerDependencies: worklets installed as
+    // reanimated's peer is not linked, so the scaffolder reads RNWorklets as a CocoaPods pod and reanimated fails.
+    const root = await project({ "react-native-reanimated": reanimated });
+    await writeFiles(path.join(root, "node_modules", "react-native-worklets"), worklets);
+    const failures = libraryFailures(root, { table: NO_POD_TABLE, kind: "bare" });
+    expect(failures).toEqual([
+      {
+        id: "unlisted-sibling",
+        allowKey: "react-native-reanimated",
+        reason: unlisted("react-native-reanimated 4.3.4", "react-native-worklets"),
+      },
+    ]);
+    const [allowed] = allowKnownLimits(failures, ["react-native-reanimated"]);
+    expect(allowed).toMatchObject({ id: "unlisted-sibling", allowed: true });
+    // Under a subspec too: the scaffolder does not drop it, since it reads the pod as unmapped.
+    const sub = await project({
+      "react-native-reanimated": {
+        ...reanimated,
+        "RNReanimated.podspec": reanimated["RNReanimated.podspec"].replace(
+          '  s.dependency "RNWorklets"\n',
+          "  s.subspec 'Worklets' do |w|\n    w.dependency \"RNWorklets\"\n  end\n",
+        ),
+      },
+    });
+    await writeFiles(path.join(sub, "node_modules", "react-native-worklets"), worklets);
+    expect(libraryFailures(sub, { table: NO_POD_TABLE, kind: "bare" }).map((f) => f.id)).toEqual(["unlisted-sibling"]);
+    // Listed in devDependencies or peerDependencies, the CLI links it.
+    for (const field of ["devDependencies", "peerDependencies"]) {
+      const listed = await project({ "react-native-reanimated": reanimated }, {
+        dependencies: { "react-native-reanimated": "*" },
+        [field]: { "react-native-worklets": "*" },
+      });
+      await writeFiles(path.join(listed, "node_modules", "react-native-worklets"), worklets);
+      expect(libraryFailures(listed, { table: NO_POD_TABLE, kind: "bare" })).toEqual([]);
+    }
+    // A scoped package names itself in the text.
+    const scoped = await project({
+      "react-native-reanimated": { ...reanimated, "RNReanimated.podspec": reanimated["RNReanimated.podspec"].replace("RNWorklets", "ScopedPeer") },
+    });
+    await writeFiles(path.join(scoped, "node_modules", "@scope", "peer"), {
+      "package.json": JSON.stringify({ name: "@scope/peer", version: "1.0.0" }),
+      "ios/ScopedPeer.podspec": "Pod::Spec.new do |s|\nend\n",
+    });
+    expect(libraryFailures(scoped, { table: NO_POD_TABLE, kind: "bare" }).map((f) => f.reason)).toEqual([
+      unlisted("react-native-reanimated 4.3.4", "@scope/peer"),
+    ]);
+  });
+
+  it("names several unlisted siblings in one refusal", async () => {
+    const root = await project({
+      lib: { "Lib.podspec": "Pod::Spec.new do |s|\n  s.dependency 'PeerA'\n  s.dependency 'PeerB'\n  s.dependency 'PeerA'\nend\n" },
+    });
+    for (const n of ["PeerA", "PeerB"]) {
+      await writeFiles(path.join(root, "node_modules", `peer-${n.slice(-1).toLowerCase()}`), { [`${n}.podspec`]: "Pod::Spec.new do |s|\nend\n" });
+    }
+    expect(libraryFailures(root, { table: NO_POD_TABLE, kind: "bare" }).map((f) => f.reason)).toEqual([
+      "lib 1.0.0: its podspec depends on peer-a and peer-b, which are installed but not listed in package.json, so React " +
+        "Native does not link them; add them to dependencies (npm i peer-a peer-b). " +
+        `See ${DOCS}#libraries-that-depend-on-cocoapods-pods`,
+    ]);
+  });
+
+  it("on Expo, does not refuse a sibling installed as a peer, outside package.json (reanimated 4.3.4 and worklets 0.8.3)", async () => {
+    // npm installs react-native-worklets as reanimated's peer; Expo's autolinking links it, and the scaffolder wires
+    // RNWorklets as a sibling, so the pod name is an installed package's, not a CocoaPods pod.
+    const root = await project({ "react-native-reanimated": reanimated });
+    await writeFiles(path.join(root, "node_modules", "react-native-worklets"), worklets);
+    expect(libraryFailures(root, { table: NO_POD_TABLE, kind: "expo" })).toEqual([]);
+    // A scoped package's podspec counts too.
+    const scoped = await project({
+      "react-native-reanimated": { ...reanimated, "RNReanimated.podspec": reanimated["RNReanimated.podspec"].replace("RNWorklets", "ScopedPeer") },
+    });
+    await writeFiles(path.join(scoped, "node_modules", "@scope", "peer"), {
+      "package.json": JSON.stringify({ name: "@scope/peer", version: "1.0.0" }),
+      "ios/ScopedPeer.podspec": "Pod::Spec.new do |s|\nend\n",
+    });
+    expect(libraryFailures(scoped, { table: NO_POD_TABLE, kind: "expo" })).toEqual([]);
+    // Not installed at all: still read as a CocoaPods pod (preflight P9's accepted remainder), on bare too.
+    const missing = await project({ "react-native-reanimated": reanimated });
+    for (const kind of ["expo", "bare"] as const) {
+      expect(libraryFailures(missing, { table: NO_POD_TABLE, kind }).map((f) => f.id)).toEqual(["unmapped-pod"]);
+    }
+  });
+
+  it("leaves out the pods of a subspec the scaffolder drops for a missing sibling", async () => {
+    // vision-camera 4.7.3's shape: FrameProcessors depends on react-native-worklets-core, which is not installed, so the
+    // scaffolder drops the subspec with its dependencies (fix 20); its pods are neither pinned nor refused.
+    const camera = (subspecPods: string) => ({
+      "package.json": JSON.stringify({ name: "react-native-vision-camera", version: "4.7.3" }),
+      "VisionCamera.podspec":
+        'Pod::Spec.new do |s|\n  s.name = "VisionCamera"\n  s.dependency "React-Core"\n' +
+        '  s.subspec \'Core\' do |core|\n    core.source_files = "ios/Core/**/*.{h,m,swift}"\n  end\n' +
+        `  s.subspec 'FrameProcessors' do |fp|\n    fp.dependency "react-native-worklets-core"\n${subspecPods}  end\nend\n`,
+    });
+    const dropped = await project({ "react-native-vision-camera": camera("    fp.dependency 'MMKV', '~> 2.0'\n") });
+    expect(libraryFailures(dropped, { table: NO_POD_TABLE })).toEqual([]);
+    const mapped = await project({ "react-native-vision-camera": camera("    fp.dependency 'AppAuth', '>= 1.7.6'\n") });
+    expect(scaffoldedPods(mapped, mergedPodTable())).toEqual(new Map());
+    expect(podPinWarnings(mapped, mergedPodTable({ AppAuth: { url: "https://github.com/openid/AppAuth-iOS", exact: "1.0.0", products: ["AppAuth"] } }))).toEqual([]);
+    // A subspec without a missing sibling is kept: its pods count.
+    const kept = await project({
+      "react-native-vision-camera": {
+        ...camera(""),
+        "VisionCamera.podspec": camera("")["VisionCamera.podspec"].replace(
+          "  s.subspec 'Core' do |core|\n",
+          "  s.subspec 'Core' do |core|\n    core.dependency 'AppAuth'\n    core.dependency 'MMKV'\n",
+        ),
+      },
+    });
+    expect(scaffoldedPods(kept, mergedPodTable())).toEqual(new Map([["react-native-vision-camera", ["AppAuth"]]]));
+    expect(libraryFailures(kept, { table: NO_POD_TABLE }).map((f) => f.reason)).toEqual([
+      expect.stringContaining("depends on the CocoaPods pods AppAuth and MMKV"),
+    ]);
+  });
+
+  it("keeps a subspec whose sibling autolinking links outside dependencies, as the scaffolder does", async () => {
+    // The scaffolder's linked set is what autolinking links: on Expo every installed package (a peer included), on bare
+    // what package.json lists in dependencies, devDependencies and peerDependencies. A subspec that declares such a
+    // sibling is kept, so its pods are refused or pinned like the library's own.
+    const camera = {
+      "package.json": JSON.stringify({ name: "react-native-vision-camera", version: "4.7.3" }),
+      "VisionCamera.podspec":
+        'Pod::Spec.new do |s|\n  s.name = "VisionCamera"\n' +
+        "  s.subspec 'FrameProcessors' do |fp|\n    fp.dependency \"react-native-worklets-core\"\n" +
+        "    fp.dependency 'MMKV', '~> 2.0'\n    fp.dependency 'AppAuth', '>= 1.7.6'\n  end\nend\n",
+    };
+    const workletsCore = {
+      "package.json": JSON.stringify({ name: "react-native-worklets-core", version: "1.6.2" }),
+      "react-native-worklets-core.podspec": "Pod::Spec.new do |s|\nend\n",
+    };
+    const peer = await project({ "react-native-vision-camera": camera });
+    await writeFiles(path.join(peer, "node_modules", "react-native-worklets-core"), workletsCore);
+    const dev = await project({ "react-native-vision-camera": camera }, { devDependencies: { "react-native-worklets-core": "*" } });
+    await writeFiles(path.join(dev, "node_modules", "react-native-worklets-core"), workletsCore);
+    for (const [root, kind] of [[peer, "expo"], [dev, "bare"]] as const) {
+      expect(libraryFailures(root, { table: mergedPodTable(), kind }).map((f) => f.reason)).toEqual([
+        expect.stringContaining("depends on the CocoaPods pod MMKV,"),
+      ]);
+      expect(scaffoldedPods(root, mergedPodTable(), { kind })).toEqual(new Map([["react-native-vision-camera", ["AppAuth"]]]));
+    }
+  });
+
+  it("skips the packages the config leaves out", async () => {
+    const root = await project({ "react-native-app-auth": appAuth(), "@react-native-ml-kit/text-recognition": mlKit() });
+    expect(libraryFailures(root, { table: NO_POD_TABLE, exclude: ["react-native-app-auth"] }).map((f) => f.allowKey)).toEqual([
+      "@react-native-ml-kit/text-recognition",
+    ]);
+  });
+
+  it("names the binaries and the unmapped pods of one library", async () => {
+    const root = await project({
+      [ASYNC_STORAGE]: asyncStorage({
+        "Extra.podspec": "Pod::Spec.new do |s|\n  s.dependency 'MMKV'\nend\n",
+      }),
+    });
+    expect(libraryFailures(root, { table: NO_POD_TABLE }).map((f) => f.id)).toEqual(["vendored-binaries", "unmapped-pod"]);
+  });
+
+  it("loads only rn-xtool's vendored scaffolder", async () => {
+    const root = await project({ "react-native-app-auth": appAuth() });
+    await writeFiles(root, { "node_modules/react-native/scripts/spm/scaffold-package-swift.js": "throw new Error('project code');\n" });
+    const req = createRequire(import.meta.url);
+    for (const key of Object.keys(req.cache)) if (key.includes(`${path.sep}vendor${path.sep}`)) delete req.cache[key];
+    const loader = Module as unknown as { _load(request: string, parent: { filename?: string } | undefined, isMain: boolean): unknown };
+    const seen: string[] = [];
+    const real = loader._load;
+    const spy = vi.spyOn(loader, "_load").mockImplementation(function (this: unknown, request, parent, isMain) {
+      seen.push(request, parent?.filename ?? "");
+      return real.call(this, request, parent, isMain);
+    });
+    try {
+      expect(libraryFailures(root, { table: NO_POD_TABLE }).map((f) => f.id)).toEqual(["unmapped-pod"]);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(seen.some((s) => s.endsWith(path.join("vendor", "rn-spm", "spm", "scaffold-package-swift.js")))).toBe(true);
+    expect(seen.filter((s) => s.startsWith(root))).toEqual([]);
+  });
+
+  it("reads each dependency's name and requirements from the given lines", () => {
+    expect(
+      podDependencies([
+        "  s.dependency 'AppAuth', '>= 1.7.6'",
+        '  ss.ios.dependency "GoogleMLKit/TextRecognition", " ~> 8.0", "< 9 " # note',
+        "  s.dependency('Lottie', ['>= 4.0', '  < 5.0'])",
+        "  s.dependency 'React-Core'",
+        "  s.tvos.dependency 'TVOnly'",
+        "  # s.dependency 'Commented'",
+        "  s.dependency \"#{prefix}Pod\"",
+        "  s.dependency 'Folly', folly_version",
+        "  dependency_list = 'not one'",
+      ]),
+    ).toEqual([
+      { name: "AppAuth", requirements: [">= 1.7.6"] },
+      { name: "GoogleMLKit/TextRecognition", requirements: ["~> 8.0", "< 9"] },
+      { name: "Lottie", requirements: [">= 4.0", "< 5.0"] },
+      { name: "React-Core", requirements: [] },
+      { name: "Folly", requirements: [] },
+    ]);
+  });
+});
+
+describe("exclude lines", () => {
+  const LEAVING = `${DOCS}#leaving-a-module-out`;
+  const camera = {
+    "package.json": JSON.stringify({ name: "react-native-vision-camera", version: "4.7.3" }),
+    "VisionCamera.podspec": "Pod::Spec.new do |s|\n  s.name = 'VisionCamera'\nend\n",
+  };
+  const netinfoIos = {
+    "package.json": JSON.stringify({ name: "@react-native-community/netinfo", version: "11.5.2" }),
+    "ios/Package.swift": "// swift-tools-version: 6.0\n",
+  };
+
+  it("prints the ℹ line for an excluded native dependency", async () => {
+    const root = await project({ "react-native-vision-camera": camera, "@react-native-community/netinfo": netinfoIos });
+    expect(excludeLines(root, ["react-native-vision-camera"])).toEqual([
+      "ℹ exclude — left out of this iOS build: react-native-vision-camera (rn-xtool.config.json). JavaScript that uses " +
+        `it must check that it is there; see ${LEAVING}`,
+    ]);
+    expect(excludeLines(root, ["react-native-vision-camera", "@react-native-community/netinfo", "react-native-vision-camera"])).toEqual([
+      "ℹ exclude — left out of this iOS build: react-native-vision-camera, @react-native-community/netinfo " +
+        `(rn-xtool.config.json). JavaScript that uses it must check that it is there; see ${LEAVING}`,
+    ]);
+    expect(excludeLines(root, [])).toEqual([]);
+  });
+
+  it("warns about a name that is not a native iOS dependency", async () => {
+    const root = await project({
+      "react-native-vision-camera": camera,
+      lodash: { "index.js": "module.exports = {};\n" },
+    });
+    // Misspelt, JavaScript only, and installed but not listed in the project's dependencies.
+    await writeFiles(root, { "node_modules/react-native-other/Other.podspec": "Pod::Spec.new do |s|\nend\n" });
+    expect(excludeLines(root, ["react-native-vision-camra", "lodash", "react-native-other", "react-native-vision-camera"], { kind: "bare" })).toEqual([
+      "ℹ exclude — left out of this iOS build: react-native-vision-camera (rn-xtool.config.json). JavaScript that uses " +
+        `it must check that it is there; see ${LEAVING}`,
+      "⚠ exclude names react-native-vision-camra, which is not a native iOS dependency of this project; ignored",
+      "⚠ exclude names lodash, which is not a native iOS dependency of this project; ignored",
+      "⚠ exclude names react-native-other, which is not a native iOS dependency of this project; ignored",
+    ]);
+  });
+
+  it("judges each name against the packages autolinking links (row 28)", async () => {
+    const pod = { "Lib.podspec": "Pod::Spec.new do |s|\nend\n" };
+    const root = await project({ "react-native-vision-camera": camera }, {
+      dependencies: { "react-native-vision-camera": "*" },
+      devDependencies: { "react-native-dev": "*" },
+      peerDependencies: { "react-native-peer": "*" },
+    });
+    for (const name of ["react-native-dev", "react-native-peer", "react-native-transitive"]) {
+      await writeFiles(path.join(root, "node_modules", name), { "package.json": JSON.stringify({ name, version: "1.0.0" }), ...pod });
+    }
+    const names = ["react-native-dev", "react-native-peer", "react-native-transitive"];
+    const info = (left: string) =>
+      `ℹ exclude — left out of this iOS build: ${left} (rn-xtool.config.json). JavaScript that uses it must check that ` +
+      `it is there; see ${LEAVING}`;
+    // Bare: the community CLI links dependencies, devDependencies and peerDependencies.
+    expect(excludeLines(root, names, { kind: "bare" })).toEqual([
+      info("react-native-dev, react-native-peer"),
+      "⚠ exclude names react-native-transitive, which is not a native iOS dependency of this project; ignored",
+    ]);
+    // Expo: its autolinking links every installed package with native code, a transitive one too.
+    expect(excludeLines(root, names, { kind: "expo" })).toEqual([info("react-native-dev, react-native-peer, react-native-transitive")]);
+  });
+
+  it("names the config file the exclude comes from", async () => {
+    const root = await project({ "react-native-vision-camera": camera });
+    expect(excludeLines(root, ["react-native-vision-camera"], { file: "rn-xtool.config.js" })).toEqual([
+      "ℹ exclude — left out of this iOS build: react-native-vision-camera (rn-xtool.config.js). JavaScript that uses " +
+        `it must check that it is there; see ${LEAVING}`,
+    ]);
+  });
+
+  it("warns that an Expo module needs expo.autolinking.exclude", async () => {
+    const root = await project({ "expo-sqlite": expoSqlite() });
+    expect(excludeLines(root, ["expo-sqlite"])).toEqual([
+      "⚠ exclude names expo-sqlite, an Expo module: Expo's autolinking links it anyway; list it in " +
+        "expo.autolinking.exclude in package.json to leave it out",
+    ]);
+  });
+
+  it("an excluded library is not refused", async () => {
+    const root = await project({
+      [ASYNC_STORAGE]: asyncStorage(),
+      "react-native-mmkv-lib": { "MmkvLib.podspec": "Pod::Spec.new do |s|\n  s.dependency 'MMKV'\nend\n" },
+    });
+    expect(libraryFailures(root).map((f) => f.id)).toEqual(["vendored-binaries", "unmapped-pod"]);
+    expect(libraryFailures(root, { exclude: [ASYNC_STORAGE, "react-native-mmkv-lib"] })).toEqual([]);
+    expect(earlyFailures(root, { exclude: [ASYNC_STORAGE, "react-native-mmkv-lib"] })).toEqual([]);
   });
 });

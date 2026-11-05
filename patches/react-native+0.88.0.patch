@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native/scripts/spm/read-podspec.js b/node_modules/react-native/scripts/spm/read-podspec.js
-index 8fcf04b..6dbb951 100644
+index 8fcf04b..b3e3a53 100644
 --- a/node_modules/react-native/scripts/spm/read-podspec.js
 +++ b/node_modules/react-native/scripts/spm/read-podspec.js
 @@ -102,13 +102,12 @@ function runPodIpcSpec(podspecPath /*: string */) /*: RawSpec | null */ {
@@ -417,7 +417,7 @@ index 8fcf04b..6dbb951 100644
      if (mArr != null) {
        const inner = mArr[1];
        const out /*: Array<string> */ = [];
-@@ -249,16 +545,34 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -249,16 +545,37 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
        }
        return out;
      }
@@ -441,22 +441,26 @@ index 8fcf04b..6dbb951 100644
      return single != null ? [single] : [];
    }
  
-   // Matches:  s.dependency "Name"  (with optional version constraint)
+-  // Matches:  s.dependency "Name"  (with optional version constraint)
 -  function getDependencies() /*: Array<string> */ {
++  // Matches:  s.dependency "Name"  (with optional version constraint), and the call form s.dependency("Name", ...)
 +  function getDependencies(
 +    text /*: string */ = main,
 +    recv /*: string */ = MAIN_RECV,
 +  ) /*: Array<string> */ {
      const out /*: Array<string> */ = [];
 -    const re = /(?:s|spec)\.dependency\s+["']([^"']+)["']/g;
-+    const re = new RegExp(`${recv}\\.(?:ios\\.)?dependency\\s+["']([^"']+)["']`, 'g');
++    const re = new RegExp(
++      `${recv}\\.(?:ios\\.)?dependency(?:\\s*\\(\\s*|\\s+)["']([^"']+)["']`,
++      'g',
++    );
      while (true) {
 -      const m = re.exec(content);
 +      const m = re.exec(text);
        if (m == null) break;
        out.push(m[1]);
      }
-@@ -269,21 +583,25 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -269,21 +586,25 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    //   s.framework "X"          → ["X"]
    //   s.framework = "X"        → ["X"]
    //   s.frameworks = ["X","Y"] → ["X","Y"]
@@ -487,7 +491,7 @@ index 8fcf04b..6dbb951 100644
        if (m == null) break;
        const itemRe = /["']([^"']+)["']/g;
        while (true) {
-@@ -298,12 +616,14 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -298,12 +619,14 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    // Matches:  'HEADER_SEARCH_PATHS' => '...'   or  => ["...","..."]
    // Returns the raw token strings (still containing $(PODS_TARGET_SRCROOT)
    // etc.); substitution happens at translation time.
@@ -504,7 +508,7 @@ index 8fcf04b..6dbb951 100644
        if (m == null) break;
        const itemRe = /["']((?:[^"'\\]|\\.)+)["']/g;
        while (true) {
-@@ -321,7 +641,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -321,7 +644,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      const strRe =
        /["']HEADER_SEARCH_PATHS["']\s*=>\s*["']((?:[^"'\\]|\\.)+)["']/g;
      while (true) {
@@ -513,7 +517,7 @@ index 8fcf04b..6dbb951 100644
        if (m == null) break;
        for (const token of m[1].split(/\s+/)) {
          if (token.length > 0) {
-@@ -332,15 +652,53 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -332,15 +655,53 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      return Array.from(new Set(out));
    }
  
@@ -569,7 +573,7 @@ index 8fcf04b..6dbb951 100644
      );
    }
    if (/install_modules_dependencies/.test(content)) {
-@@ -354,24 +712,100 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -354,24 +715,100 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      );
    }
  
@@ -683,7 +687,7 @@ index 8fcf04b..6dbb951 100644
      __regex_partial__: true,
      __warnings__: warnings,
    };
-@@ -423,6 +857,58 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
+@@ -423,6 +860,58 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
    return tokens;
  }
  
@@ -742,7 +746,7 @@ index 8fcf04b..6dbb951 100644
  // ---------------------------------------------------------------------------
  // Subspec flattening
  // ---------------------------------------------------------------------------
-@@ -438,8 +924,16 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
+@@ -438,8 +927,16 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
   *   - String fields → top-level wins; if absent, take the first subspec's value
   *   - pod_target_xcconfig HEADER_SEARCH_PATHS → array-union across all selected subspecs
   *   - dependencies  → array-union of name strings (version constraints dropped)
@@ -760,7 +764,7 @@ index 8fcf04b..6dbb951 100644
    const warnings /*: Array<string> */ = [];
    // $FlowFixMe[prop-missing] dynamic shape
    const partial /*: boolean */ = rawSpec.__regex_partial__ === true;
-@@ -456,7 +950,12 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -456,7 +953,12 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
    //   - `default_subspecs`: array of names (or undefined → use all subspecs)
    const subspecs = Array.isArray(rawSpec.subspecs) ? rawSpec.subspecs : [];
    let selected = subspecs;
@@ -774,7 +778,7 @@ index 8fcf04b..6dbb951 100644
      const wanted = new Set(rawSpec.default_subspecs);
      selected = subspecs.filter(s => {
        // $FlowFixMe[prop-missing] dynamic shape
-@@ -464,6 +963,10 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -464,6 +966,10 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        return name != null && wanted.has(name);
      });
    }
@@ -785,7 +789,7 @@ index 8fcf04b..6dbb951 100644
    const layers = [rawSpec, ...selected];
  
    function mergeArrayField(key /*: string */) /*: Array<string> */ {
-@@ -482,6 +985,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -482,6 +988,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return Array.from(new Set(out));
    }
  
@@ -803,7 +807,7 @@ index 8fcf04b..6dbb951 100644
    // Only the spec's own value: a subspec's `header_dir` names that subspec's
    // headers, and several subspecs can disagree.
    function specStringField(key /*: string */) /*: string | null */ {
-@@ -544,6 +1058,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -544,6 +1061,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
    // `-D`s are safe to forward; arbitrary flags may be machine- or
    // example-app-specific. $(inherited), unresolved $(...) tokens, and invalid
    // C identifiers are skipped.
@@ -824,7 +828,7 @@ index 8fcf04b..6dbb951 100644
    function mergePreprocessorDefines() /*: Array<PreprocessorDefine> */ {
      const out /*: Array<PreprocessorDefine> */ = [];
      const seen /*: Set<string> */ = new Set();
-@@ -554,7 +1082,23 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -554,7 +1085,23 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        config /*: ?('debug' | 'release') */,
      ) => {
        if (!validName.test(name)) return;
@@ -849,7 +853,7 @@ index 8fcf04b..6dbb951 100644
          return; // unresolved Xcode/Ruby token — don't emit a broken define
        }
        const key = `${name}|${config ?? ''}`;
-@@ -571,6 +1115,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -571,6 +1118,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        'xcconfig',
        'user_target_xcconfig',
      ];
@@ -870,7 +874,7 @@ index 8fcf04b..6dbb951 100644
      for (const layer of layers) {
        if (layer == null || typeof layer !== 'object') continue;
        for (const xcKey of XCCONFIG_KEYS) {
-@@ -627,44 +1185,119 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -627,44 +1188,119 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return out;
    }
  
@@ -1015,7 +1019,7 @@ index 8fcf04b..6dbb951 100644
        }
      }
      return out;
-@@ -677,6 +1310,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -677,6 +1313,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        ? false
        : true; // RN ecosystem default
  
@@ -1036,7 +1040,7 @@ index 8fcf04b..6dbb951 100644
    return {
      name: specStringField('name') ?? '',
      version: specStringField('version') ?? '',
-@@ -693,15 +1340,42 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -693,15 +1343,42 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      // header_mappings_dir copy step, which SPM has no equivalent for.
      headerMappingsDirs: mergeArrayField('header_mappings_dir'),
      headerDir: specStringField('header_dir'),
@@ -1081,7 +1085,7 @@ index 8fcf04b..6dbb951 100644
      requiresArc,
      warnings,
      partial,
-@@ -722,15 +1396,18 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -722,15 +1399,18 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
   * Throws when the file doesn't exist. Otherwise always returns a
   * PodspecModel — warnings on the model surface partial parses to the
   * caller, who can decide whether to proceed or abort scaffolding for that
@@ -1104,7 +1108,7 @@ index 8fcf04b..6dbb951 100644
    // Record whether the podspec calls `install_modules_dependencies(s)`. We
    // strip that helper before `pod ipc` and the regex parser can't expand it,
    // so the React-Core family it injects never lands in `model.dependencies`.
-@@ -746,21 +1423,46 @@ function readPodspec(podspecPath /*: string */) /*: PodspecModel */ {
+@@ -746,21 +1426,46 @@ function readPodspec(podspecPath /*: string */) /*: PodspecModel */ {
    return model;
  }
  
@@ -1155,7 +1159,7 @@ index 8fcf04b..6dbb951 100644
    podspecModels.set(key, model);
    return model;
  }
-@@ -794,12 +1496,13 @@ function readPodspecNames(
+@@ -794,12 +1499,13 @@ function readPodspecNames(
    if (hasShadowingSubspec(source)) {
      return null;
    }
@@ -1171,7 +1175,7 @@ index 8fcf04b..6dbb951 100644
    const name = field('name');
    const moduleName = field('module_name');
 diff --git a/node_modules/react-native/scripts/spm/scaffold-package-swift.js b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
-index cf7e587..bf8a249 100644
+index cf7e587..f4340cc 100644
 --- a/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 +++ b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 @@ -54,6 +54,7 @@ const {
@@ -1182,7 +1186,7 @@ index cf7e587..bf8a249 100644
  } = require('./spm-utils');
  const {readSwiftpmConfig, writeSwiftpmName} = require('./swiftpm-config');
  const fs = require('node:fs');
-@@ -113,6 +114,146 @@ const {log, warn} = makeLogger('scaffold-package-swift');
+@@ -113,6 +114,251 @@ const {log, warn} = makeLogger('scaffold-package-swift');
  const SCAFFOLDER_VERSION = 20;
  const SCAFFOLDER_VERSION_LINE_RE = /^\/\/ AUTO-SCAFFOLDED-VERSION: (\d+)$/m;
  
@@ -1214,18 +1218,109 @@ index cf7e587..bf8a249 100644
 +
 +// CocoaPods pods (not React Native / Expo modules, not autolinked siblings) whose
 +// SwiftPM package is known: a podspec `s.dependency "<pod>"` becomes
-+// `.package(url:exact:)` + `.product(name:package:)`. `exact` is the newest tag
-+// the podspecs seen here accept (`~> 1.0` → newest 1.x), pinned for reproducible
-+// builds: the generated `ios-xtool/` has no committed Package.resolved, so a
-+// range would drift between clean builds. The package identity SwiftPM derives is the URL's last path component.
++// `.package(url:exact:)` + one `.product(name:package:)` per product. `exact` is
++// the newest tag the podspecs seen here accept (`~> 1.0` → newest 1.x), pinned
++// for reproducible builds: the generated `ios-xtool/` has no committed
++// Package.resolved, so a range would drift between clean builds. The package
++// identity SwiftPM derives is the URL's last path component. `subspecs` maps a
++// `<pod>/<subspec>` dependency to its own products. This is the built-in
++// baseline; a caller adds or replaces entries with the JSON file named by
++// RN_SPM_POD_TABLE (loadPodTable).
 +// react-native-pager-view 9.x: `s.dependency "SwiftUIIntrospect", '~> 1.0'`.
-+const KNOWN_POD_SPM_PACKAGES /*: {[pod: string]: {url: string, exact: string, product: string}} */ = {
++/*::
++type PodTableEntry = {
++  url: string,
++  exact: string,
++  products: Array<string>,
++  subspecs?: {[name: string]: Array<string>},
++  forwardHeaders?: {[header: string]: Array<string>},
++};
++*/
++const KNOWN_POD_SPM_PACKAGES /*: {[pod: string]: PodTableEntry} */ = {
 +  SwiftUIIntrospect: {
 +    url: 'https://github.com/siteline/swiftui-introspect',
 +    exact: '1.5.0',
-+    product: 'SwiftUIIntrospect',
++    products: ['SwiftUIIntrospect'],
 +  },
 +};
++const POD_TABLE_ENV = 'RN_SPM_POD_TABLE';
++// The pods a manifest pins, `<pod>=<exact>` sorted by pod, on the line after
++// the importer paths (or the revision line).
++const POD_PINS_MARKER = '// rn-xtool-pods: ';
++
++// One pod table entry in its full shape; `product: string` is read as
++// `products: [product]`. Throws with the key that has the wrong shape.
++function podTableEntry(pod /*: string */, raw /*: mixed */) /*: PodTableEntry */ {
++  const isNames = (v /*: mixed */) =>
++    Array.isArray(v) &&
++    v.length > 0 &&
++    v.every(x => typeof x === 'string' && x !== '');
++  const isNameLists = (v /*: mixed */) =>
++    v != null &&
++    typeof v === 'object' &&
++    !Array.isArray(v) &&
++    Object.values(v).every(isNames);
++  if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
++    throw new Error(`pods.${pod} is not an object`);
++  }
++  const {url, exact, products, product, subspecs, forwardHeaders} = raw;
++  if (typeof url !== 'string' || url === '') {
++    throw new Error(`pods.${pod}.url is not a URL`);
++  }
++  if (typeof exact !== 'string' || exact === '') {
++    throw new Error(`pods.${pod}.exact is not a version`);
++  }
++  const names =
++    products === undefined && typeof product === 'string' && product !== ''
++      ? [product]
++      : products;
++  if (!isNames(names)) {
++    throw new Error(`pods.${pod}.products is not a list of product names`);
++  }
++  if (subspecs !== undefined && !isNameLists(subspecs)) {
++    throw new Error(`pods.${pod}.subspecs is not an object of product lists`);
++  }
++  if (forwardHeaders !== undefined && !isNameLists(forwardHeaders)) {
++    throw new Error(`pods.${pod}.forwardHeaders is not an object of module lists`);
++  }
++  // $FlowFixMe[incompatible-return] checked above
++  return {
++    url,
++    exact,
++    products: names,
++    ...(subspecs !== undefined ? {subspecs} : {}),
++    ...(forwardHeaders !== undefined ? {forwardHeaders} : {}),
++  };
++}
++
++/**
++ * The pod table: KNOWN_POD_SPM_PACKAGES, with the `pods` object of the JSON
++ * file named by RN_SPM_POD_TABLE merged over it (per pod, the file's entry
++ * wins). Without the variable, the baseline. Throws when the file cannot be
++ * read or has the wrong shape.
++ */
++function loadPodTable() /*: {[pod: string]: PodTableEntry} */ {
++  const file = process.env[POD_TABLE_ENV];
++  if (file == null || file === '') {
++    return {...KNOWN_POD_SPM_PACKAGES};
++  }
++  try {
++    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
++    const pods = parsed?.pods;
++    if (pods == null || typeof pods !== 'object' || Array.isArray(pods)) {
++      throw new Error('it has no pods object');
++    }
++    const table = {...KNOWN_POD_SPM_PACKAGES};
++    for (const pod of Object.keys(pods)) {
++      table[pod] = podTableEntry(pod, pods[pod]);
++    }
++    return table;
++  } catch (e) {
++    throw new Error(
++      `react-native spm scaffold: cannot read the pod table ${file}: ${e.message}`,
++    );
++  }
++}
 +
 +// Pods that belong to Expo's own SwiftPM graph, never a CocoaPods-only pod.
 +function isExpoModuleDep(depName /*: string */) /*: boolean */ {
@@ -1252,7 +1347,8 @@ index cf7e587..bf8a249 100644
 + *   - 'missing-sibling': the same, for a package that is not installed or not
 + *     linked for iOS. CocoaPods would not have it either;
 + *   - 'expo': an Expo module's pod;
-+ *   - 'mapped': a CocoaPods pod with a SwiftPM package in `table`;
++ *   - 'mapped': a CocoaPods pod with a SwiftPM package in `table`, with the
++ *     `products` its subspec names (`subspecs`), else the entry's;
 + *   - 'unmapped': any other CocoaPods pod.
 + * `pod` is the name before any `/<subspec>`.
 + */
@@ -1265,7 +1361,13 @@ index cf7e587..bf8a249 100644
 +    linkedNpm: Set<string>,
 +    table: {[pod: string]: {...}},
 +  } */,
-+) /*: {kind: PodDependencyKind, pod: string, npm?: string, entry?: {...}} */ {
++) /*: {
++  kind: PodDependencyKind,
++  pod: string,
++  npm?: string,
++  entry?: {...},
++  products?: Array<string>,
++} */ {
 +  const pod = depName.split('/')[0];
 +  if (
 +    ctx.selfPodName != null &&
@@ -1297,7 +1399,13 @@ index cf7e587..bf8a249 100644
 +    return {kind: 'expo', pod};
 +  }
 +  if (Object.hasOwn(ctx.table, pod)) {
-+    return {kind: 'mapped', pod, entry: ctx.table[pod]};
++    const entry = ctx.table[pod];
++    const sub = depName.includes('/') ? depName.slice(pod.length + 1) : null;
++    const products =
++      (sub != null ? entry.subspecs?.[sub] : null) ??
++      entry.products ??
++      (typeof entry.product === 'string' ? [entry.product] : []);
++    return {kind: 'mapped', pod, entry, products};
 +  }
 +  return {kind: 'unmapped', pod};
 +}
@@ -1309,13 +1417,14 @@ index cf7e587..bf8a249 100644
 +  dep /*: AutolinkedDep */,
 +  podToNpm /*: Map<string, string> */,
 +  linkedNpm /*: Set<string> */,
++  table /*: {[pod: string]: PodTableEntry} */,
 +) /*: Array<string> */ {
 +  const ctx = {
 +    selfPodName: model.name,
 +    ownNpm: dep.name,
 +    podToNpm,
 +    linkedNpm,
-+    table: KNOWN_POD_SPM_PACKAGES,
++    table,
 +  };
 +  return model.dependencies.filter(
 +    d => classifyPodDependency(d, ctx).kind === 'missing-sibling',
@@ -1329,7 +1438,7 @@ index cf7e587..bf8a249 100644
  const AUTOGEN_MARKER =
    '// AUTO-GENERATED by scripts/generate-spm-autolinking.js';
  
-@@ -145,6 +286,297 @@ const SCAFFOLD_PREFIX_HEADER_CONTENTS = `// AUTO-SCAFFOLDED by react-native spm
+@@ -145,6 +391,353 @@ const SCAFFOLD_PREFIX_HEADER_CONTENTS = `// AUTO-SCAFFOLDED by react-native spm
  #endif
  `;
  
@@ -1504,6 +1613,62 @@ index cf7e587..bf8a249 100644
 +// no local header but a React one get a forwarding stub here.
 +const REACT_BARE_HEADERS_DIR = 'rn-spm-react-headers';
 +
++// A pod's umbrella header that its SwiftPM package leaves outside every target
++// (AppAuth-iOS's Sources/AppAuth.h), so neither `<AppAuth/AppAuth.h>` nor
++// `"AppAuth.h"` resolves, while `@import AppAuth;` does. CocoaPods copies the
++// header into Headers/Public/<Pod>/. A pod table entry's `forwardHeaders`
++// (`{"AppAuth/AppAuth.h": ["AppAuthCore", "AppAuth"]}`) makes the scaffold
++// write that path under this directory, holding the `@import` lines, and put
++// the directory on the target's header search path.
++const POD_HEADERS_DIR = 'rn-spm-pod-headers';
++const MODULE_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
++
++// The forwarders of one pod's `forwardHeaders`; throws naming a header key
++// that is not a relative path ending in .h inside the directory, or a module
++// list that is not one.
++function podHeaderForwarders(
++  pod /*: string */,
++  forwardHeaders /*: ?{[header: string]: Array<string>} */,
++) /*: Array<{pod: string, header: string, modules: Array<string>}> */ {
++  return Object.keys(forwardHeaders ?? {}).map(header => {
++    const modules = forwardHeaders?.[header];
++    const segments = header.split('/');
++    if (
++      !/\.h$/.test(header) ||
++      path.posix.isAbsolute(header) ||
++      header.includes('\\') ||
++      segments.some(seg => seg === '' || seg === '.' || seg === '..') ||
++      !Array.isArray(modules) ||
++      modules.length === 0 ||
++      !modules.every(m => typeof m === 'string' && MODULE_NAME_RE.test(m))
++    ) {
++      throw new Error(
++        `react-native spm scaffold: pods.${pod}.forwardHeaders.${header} must be a list of module names, under a relative path ending in .h`,
++      );
++    }
++    return {pod, header, modules};
++  });
++}
++
++// The directory holds only what a scaffold wrote: every file carries the banner.
++function ownPodHeadersDir(dir /*: string */) /*: boolean */ {
++  const files = (d /*: string */) /*: Array<string> */ =>
++    fs
++      .readdirSync(d, {withFileTypes: true})
++      .flatMap(e =>
++        e.isDirectory()
++          ? files(path.join(d, e.name))
++          : [path.join(d, e.name)],
++      );
++  try {
++    return files(dir).every(f =>
++      fs.readFileSync(f, 'utf8').includes(SCAFFOLDER_BANNER),
++    );
++  } catch {
++    return false;
++  }
++}
++
 +function bareReactHeaders(
 +  depRoot /*: string */,
 +  files /*: Array<string> */,
@@ -1627,16 +1792,26 @@ index cf7e587..bf8a249 100644
  // Names of deps the scaffolder always refuses to touch — `react-native`
  // itself is handled by the xcframework subpackage, never as an autolinked
  // target.
-@@ -167,10 +599,17 @@ const REACT_CORE_DEP_PREFIXES = [
+@@ -167,10 +760,27 @@ const REACT_CORE_DEP_PREFIXES = [
    'DoubleConversion',
    'Yoga',
    'hermes-engine',
 +  'ReactAppDependencyProvider',
++];
++
++// Core pods whose name has no separator to match by prefix (`React-` etc.), and the other pods React Native ships
++// (FBLazyVector, ReactNativeDependencies, fast_float), generates (ReactCodegen, FBReactNativeSpec) or links
++// (SocketRocket): the prebuilt runtime provides them all.
++const REACT_CORE_DEP_EXACT = [
++  'React',
++  'ReactNativeDependencies',
++  'FBLazyVector',
++  'FBReactNativeSpec',
++  'fast_float',
++  'ReactCodegen',
++  'SocketRocket',
  ];
  
-+// Core pods whose name has no separator to match by prefix (`React-` etc.).
-+const REACT_CORE_DEP_EXACT = ['React'];
-+
  function isReactCoreDep(name /*: string */) /*: boolean */ {
 -  return REACT_CORE_DEP_PREFIXES.some(p => name.startsWith(p));
 +  return (
@@ -1646,7 +1821,7 @@ index cf7e587..bf8a249 100644
  }
  
  // True when the dep ships a `codegenConfig` in package.json — RN's standard
-@@ -248,6 +687,10 @@ function translatePodspecToSpmTarget(
+@@ -248,6 +858,12 @@ function translatePodspecToSpmTarget(
    // npm name → resolved Swift name for every autolinked dep, so a sibling
    // reference honors that sibling's `spm.name` instead of re-deriving it.
    swiftNameByNpm /*: Map<string, string> */ = new Map(),
@@ -1654,10 +1829,12 @@ index cf7e587..bf8a249 100644
 +  // (the React header trees), used to keep C++ headers out of the Swift
 +  // umbrella of a mixed-language target. Empty: unknown.
 +  includeRoots /*: Array<string> */ = [],
++  // The pod table (loadPodTable) the CocoaPods pods are mapped with.
++  podTable /*: {[pod: string]: PodTableEntry} */ = loadPodTable(),
  ) /*: SpmScaffoldSpec */ {
    const warnings = [...model.warnings];
  
-@@ -322,46 +765,65 @@ function translatePodspecToSpmTarget(
+@@ -322,46 +938,83 @@ function translatePodspecToSpmTarget(
      }
    }
  
@@ -1675,7 +1852,8 @@ index cf7e587..bf8a249 100644
    let coreReactNative = false;
    const siblingNames /*: Array<string> */ = [];
 -  const selfPodspecName = model.name;
-+  const externalPackages /*: Array<{pod: string, url: string, exact: string, product: string, package: string}> */ = [];
++  const externalPackages /*: Array<{pod: string, url: string, exact: string, products: Array<string>, package: string}> */ = [];
++  const podForwarders /*: Array<{pod: string, header: string, modules: Array<string>}> */ = [];
 +  const unmappedPods /*: Array<string> */ = [];
 +  const leftOut /*: Array<string> */ = [];
 +  // Every iOS-autolinked dep has a resolved Swift name.
@@ -1686,12 +1864,12 @@ index cf7e587..bf8a249 100644
 -    // SAME podspec. After flattenSubspecs has merged everything into one
 -    // target the subspec ref is meaningless — drop silently.
 -    if (depName.includes('/') && depName.startsWith(`${selfPodspecName}/`)) {
-+    const {kind, pod, npm, entry} = classifyPodDependency(depName, {
++    const {kind, pod, npm, entry, products} = classifyPodDependency(depName, {
 +      selfPodName: model.name,
 +      ownNpm: dep.name,
 +      podToNpm,
 +      linkedNpm,
-+      table: KNOWN_POD_SPM_PACKAGES,
++      table: podTable,
 +    });
 +    if (kind === 'subspec') {
 +      // Cross-subspec refs like "react-native-safe-area-context/common" are a
@@ -1736,22 +1914,39 @@ index cf7e587..bf8a249 100644
          `Unknown dependency "${depName}" — not wired into the scaffolded Package.swift. Edit manually if needed.`,
        );
 +    } else if (kind === 'mapped' && entry != null) {
-+      // A CocoaPods pod ("SwiftUIIntrospect") wired to its SwiftPM package.
-+      if (!externalPackages.some(e => e.pod === pod)) {
-+        // $FlowFixMe[incompatible-type] KNOWN_POD_SPM_PACKAGES entry
-+        const known /*: {url: string, exact: string, product: string} */ = entry;
-+        externalPackages.push({pod, ...known, package: spmPackageIdentity(known.url)});
++      // A CocoaPods pod ("SwiftUIIntrospect") wired to its SwiftPM package,
++      // once, with the products of every subspec the podspec names.
++      // $FlowFixMe[incompatible-type] a pod table entry
++      const known /*: PodTableEntry */ = entry;
++      let ext = externalPackages.find(e => e.pod === pod);
++      if (ext == null) {
++        ext = {
++          pod,
++          url: known.url,
++          exact: known.exact,
++          products: [],
++          package: spmPackageIdentity(known.url),
++        };
++        externalPackages.push(ext);
++        podForwarders.push(...podHeaderForwarders(pod, known.forwardHeaders));
++      }
++      for (const product of products ?? []) {
++        if (!ext.products.includes(product)) {
++          ext.products.push(product);
++        }
 +      }
 +    } else if (!unmappedPods.includes(pod)) {
-+      // Any other CocoaPods pod ("MMKV"): say loudly that the build may fail.
++      // Any other CocoaPods pod ("MMKV"): say loudly that the build may fail,
++      // and where its SwiftPM package goes (RN_SPM_POD_TABLE's source).
 +      unmappedPods.push(pod);
 +      warnings.push(
-+        `Dependency "${pod}" is a CocoaPods pod with no known SwiftPM equivalent; the scaffolded package may fail to build — add it to the pod→SwiftPM map in scaffold-package-swift.js`,
++        `Dependency "${pod}" is a CocoaPods pod with no known SwiftPM equivalent; the scaffolded package may fail to build — ` +
++          `add it under "pods" in rn-xtool.config.json: { "pods": { "${pod}": { "url": "<git URL>", "exact": "<version>", "products": ["<product>"] } } }`,
 +      );
      }
    }
  
-@@ -427,15 +889,55 @@ function translatePodspecToSpmTarget(
+@@ -427,15 +1080,55 @@ function translatePodspecToSpmTarget(
      f =>
        f !== SCAFFOLD_PREFIX_HEADER &&
        f !== 'Package.swift' &&
@@ -1809,7 +2004,7 @@ index cf7e587..bf8a249 100644
    try {
      for (const f of expandSpmSourceGlobs(dep.root, model.publicHeaderFiles)) {
        if (/\.(h|hh|hpp)$/i.test(f)) headerFiles.push(f);
-@@ -497,6 +999,51 @@ function translatePodspecToSpmTarget(
+@@ -497,6 +1190,51 @@ function translatePodspecToSpmTarget(
      }
    }
    let namespacedShimHeaders /*: Array<string> */ = [];
@@ -1861,7 +2056,7 @@ index cf7e587..bf8a249 100644
    if (publicHeadersPath == null) {
      // Root-level podspecs (`s.source_files = "*.{h,m,mm}"`) keep their
      // headers in the package root. CocoaPods exposes them to dependents as
-@@ -518,6 +1065,101 @@ function translatePodspecToSpmTarget(
+@@ -518,6 +1256,101 @@ function translatePodspecToSpmTarget(
      );
    }
  
@@ -1963,7 +2158,7 @@ index cf7e587..bf8a249 100644
    const siblingSwiftNames /*: {[npmName: string]: string} */ = {};
    for (const npmName of siblingNames) {
      const resolved = swiftNameByNpm.get(npmName);
-@@ -526,21 +1168,196 @@ function translatePodspecToSpmTarget(
+@@ -526,21 +1359,200 @@ function translatePodspecToSpmTarget(
      }
    }
  
@@ -2009,6 +2204,9 @@ index cf7e587..bf8a249 100644
 +    !headerSearchPaths.includes(REACT_BARE_HEADERS_DIR)
 +  ) {
 +    headerSearchPaths.push(REACT_BARE_HEADERS_DIR);
++  }
++  if (podForwarders.length > 0 && !headerSearchPaths.includes(POD_HEADERS_DIR)) {
++    headerSearchPaths.push(POD_HEADERS_DIR);
 +  }
 +
 +  // Mixed Swift + C-family sources → one mixed-language target (see
@@ -2139,6 +2337,7 @@ index cf7e587..bf8a249 100644
 +    mixedLanguage,
 +    clangModuleMap,
 +    reactBareHeaders,
++    podForwarders,
      sources: expandedSources,
      headerSearchPaths,
 -    preprocessorDefines: model.preprocessorDefines,
@@ -2162,7 +2361,7 @@ index cf7e587..bf8a249 100644
      warnings,
    };
  }
-@@ -629,10 +1446,25 @@ function emitScaffoldedPackageSwift(
+@@ -629,10 +1641,25 @@ function emitScaffoldedPackageSwift(
    const prefixFlag = spec.needsObjCPrefix
      ? `.unsafeFlags(["-include", "${SCAFFOLD_PREFIX_HEADER}"])`
      : '';
@@ -2189,19 +2388,21 @@ index cf7e587..bf8a249 100644
        ...(customFlagsCxx.length > 0
          ? [`.unsafeFlags([${customFlagsCxx.join(', ')}])`]
          : []),
-@@ -723,6 +1555,11 @@ function emitScaffoldedPackageSwift(
+@@ -723,6 +1750,13 @@ function emitScaffoldedPackageSwift(
        `.product(name: "${swiftSibling}", package: "${swiftSibling}")`,
      );
    }
-+  // CocoaPods pods with a known SwiftPM package (KNOWN_POD_SPM_PACKAGES).
++  // CocoaPods pods with a known SwiftPM package (loadPodTable).
 +  for (const ext of spec.externalPackages ?? []) {
 +    packageDeps.push(`.package(url: "${ext.url}", exact: "${ext.exact}")`);
-+    targetDeps.push(`.product(name: "${ext.product}", package: "${ext.package}")`);
++    for (const product of ext.products) {
++      targetDeps.push(`.product(name: "${product}", package: "${ext.package}")`);
++    }
 +  }
  
    // sources: emit only when the podspec declared them. If empty (regex-fallback
    // podspec), no `sources:`/`exclude:` is emitted and SPM auto-scans the target
-@@ -740,6 +1577,11 @@ function emitScaffoldedPackageSwift(
+@@ -740,6 +1774,11 @@ function emitScaffoldedPackageSwift(
        ? `\n            publicHeadersPath: "${spec.publicHeadersPath}",`
        : '';
  
@@ -2213,7 +2414,7 @@ index cf7e587..bf8a249 100644
    const resourcesLine =
      spec.resources.length > 0
        ? `\n            resources: [${spec.resources.map(r => `.copy("${r}")`).join(', ')}],`
-@@ -755,9 +1597,58 @@ function emitScaffoldedPackageSwift(
+@@ -755,9 +1794,66 @@ function emitScaffoldedPackageSwift(
        ? `\n            dependencies: [${targetDeps.join(', ')}],`
        : '';
  
@@ -2262,6 +2463,14 @@ index cf7e587..bf8a249 100644
 +      ? `\n${IMPORTER_PATHS_MARKER}${JSON.stringify(importerPaths)}`
 +      : '';
 +
++  // The pods this manifest pins, sorted by pod, so rn-xtool can tell a
++  // persisted scaffold pinned by another pod table.
++  const pinned = [...(spec.externalPackages ?? [])]
++    .sort((a, b) => (a.pod < b.pod ? -1 : a.pod > b.pod ? 1 : 0))
++    .map(e => `${e.pod}=${e.exact}`);
++  const podsLine =
++    pinned.length > 0 ? `\n${POD_PINS_MARKER}${pinned.join(', ')}` : '';
++
 +  // The Swift 5 language mode (see swiftLanguageModeV5 in translate).
 +  const swiftLanguageModesLine =
 +    spec.swiftLanguageModeV5 === true ? '    swiftLanguageModes: [.v5],\n' : '';
@@ -2270,11 +2479,11 @@ index cf7e587..bf8a249 100644
  ${SCAFFOLDER_MARKER}
 -// AUTO-SCAFFOLDED-VERSION: ${SCAFFOLDER_VERSION}${slotComment}
 +// AUTO-SCAFFOLDED-VERSION: ${SCAFFOLDER_VERSION}
-+// rn-xtool-scaffold-revision: ${RN_XTOOL_SCAFFOLD_REVISION}${importerPathsLine}${slotComment}
++// rn-xtool-scaffold-revision: ${RN_XTOOL_SCAFFOLD_REVISION}${importerPathsLine}${podsLine}${slotComment}
  // Edit the contents below if needed and re-run \`npx patch-package <dep-name>\`
  // to persist across \`npm install\`. To regenerate from the podspec, remove
  // this file (or just this marker) and re-run \`npx react-native spm scaffold\`.
-@@ -768,7 +1659,7 @@ ${SCAFFOLDER_MARKER}
+@@ -768,7 +1864,7 @@ ${SCAFFOLDER_MARKER}
  // (dropping the file) anyway.
  
  import PackageDescription
@@ -2283,7 +2492,7 @@ index cf7e587..bf8a249 100644
  let package = Package(
      name: "${spec.swiftName}",
      platforms: [.iOS("${iosDeploymentTarget}")],
-@@ -778,13 +1669,13 @@ let package = Package(
+@@ -778,13 +1874,13 @@ let package = Package(
  ${packageDepsBlock}    targets: [
          .target(
              name: "${spec.swiftName}",${targetDepsLine}
@@ -2300,7 +2509,7 @@ index cf7e587..bf8a249 100644
  )
  `;
  }
-@@ -844,6 +1735,65 @@ function reportSwiftName(
+@@ -844,6 +1940,65 @@ function reportSwiftName(
    }
  }
  
@@ -2366,7 +2575,7 @@ index cf7e587..bf8a249 100644
  // ---------------------------------------------------------------------------
  // Per-dep orchestrator
  // ---------------------------------------------------------------------------
-@@ -953,7 +1903,11 @@ function scaffoldPackageSwiftForDep(
+@@ -953,7 +2108,11 @@ function scaffoldPackageSwiftForDep(
        // regenerating existing files; --force is not needed here.
        const vMatch = existing.match(SCAFFOLDER_VERSION_LINE_RE);
        const existingVersion = vMatch != null ? parseInt(vMatch[1], 10) : 1;
@@ -2379,7 +2588,7 @@ index cf7e587..bf8a249 100644
        if (!ctx.force && !versionStale) {
          // Slot label change is the other auto-regen trigger — bumps SPM's
          // manifest hash so the cache-slot path gets re-resolved.
-@@ -970,7 +1924,7 @@ function scaffoldPackageSwiftForDep(
+@@ -970,7 +2129,7 @@ function scaffoldPackageSwiftForDep(
        }
        if (versionStale) {
          log(
@@ -2388,10 +2597,16 @@ index cf7e587..bf8a249 100644
          );
        }
        // Fall through: regenerate (force, slot changed, or version bumped).
-@@ -998,9 +1952,37 @@ function scaffoldPackageSwiftForDep(
+@@ -998,9 +2157,44 @@ function scaffoldPackageSwiftForDep(
      };
    }
  
++  let podTable;
++  try {
++    podTable = loadPodTable();
++  } catch (e) {
++    return {depName, status: 'error', reason: e.message};
++  }
 +  const podToNpm = ctx.podToNpm ?? new Map();
 +  const swiftNameByNpm = ctx.swiftNameByNpm ?? new Map();
    let model;
@@ -2408,6 +2623,7 @@ index cf7e587..bf8a249 100644
 +      dep,
 +      podToNpm,
 +      new Set(swiftNameByNpm.keys()),
++      podTable,
 +    );
 +    const subspecDeps = model.subspecDependencies ?? {};
 +    const drop = Object.keys(subspecDeps).filter(sub =>
@@ -2426,7 +2642,7 @@ index cf7e587..bf8a249 100644
    } catch (e) {
      return {
        depName,
-@@ -1012,35 +1994,16 @@ function scaffoldPackageSwiftForDep(
+@@ -1012,35 +2206,17 @@ function scaffoldPackageSwiftForDep(
    const spec = translatePodspecToSpmTarget(
      model,
      dep,
@@ -2435,6 +2651,7 @@ index cf7e587..bf8a249 100644
 +    podToNpm,
 +    swiftNameByNpm,
 +    reactIncludeRoots(ctx.appRoot),
++    podTable,
    );
 +  spec.warnings.push(...subspecWarnings);
  
@@ -2470,7 +2687,7 @@ index cf7e587..bf8a249 100644
  
    // Relative paths into the app, embedded in the scaffolded Package.swift.
    //
-@@ -1083,6 +2046,19 @@ function scaffoldPackageSwiftForDep(
+@@ -1083,6 +2259,19 @@ function scaffoldPackageSwiftForDep(
  
    if (!ctx.dryRun) {
      fs.writeFileSync(pkgSwiftPath, content, 'utf8');
@@ -2490,7 +2707,7 @@ index cf7e587..bf8a249 100644
      // Emit the ambient-import prefix header next to the manifest when the
      // target has ObjC(++) sources (the manifest `-include`s it by bare name).
      if (spec.needsObjCPrefix) {
-@@ -1099,16 +2075,82 @@ function scaffoldPackageSwiftForDep(
+@@ -1099,16 +2288,99 @@ function scaffoldPackageSwiftForDep(
        const shimDir = path.join(dep.root, 'include', spec.swiftName);
        fs.mkdirSync(shimDir, {recursive: true});
        for (const header of spec.namespacedShimHeaders) {
@@ -2572,10 +2789,27 @@ index cf7e587..bf8a249 100644
 +        );
 +      }
 +    }
++  }
++
++  if (!ctx.dryRun) {
++    const podHeadersDir = path.join(dep.root, POD_HEADERS_DIR);
++    if (fs.existsSync(podHeadersDir) && ownPodHeadersDir(podHeadersDir)) {
++      fs.rmSync(podHeadersDir, {recursive: true, force: true});
++    }
++    for (const {pod, header, modules} of spec.podForwarders ?? []) {
++      const file = path.join(podHeadersDir, ...header.split('/'));
++      fs.mkdirSync(path.dirname(file), {recursive: true});
++      fs.writeFileSync(
++        file,
++        `// ${SCAFFOLDER_BANNER} — forwards <${header}> to the SwiftPM modules of the pod ${pod}.\n` +
++          modules.map(m => `@import ${m};\n`).join(''),
++        'utf8',
++      );
++    }
    }
  
    reportSwiftName(dep, spec.swiftName, model);
-@@ -1141,7 +2183,7 @@ function collectAutolinkedDeps(
+@@ -1141,7 +2413,7 @@ function collectAutolinkedDeps(
    opts /*: {
      autolinkingJsonPath: string,
      remote: ?{url: string, version: string, identity: string},
@@ -2584,7 +2818,7 @@ index cf7e587..bf8a249 100644
    } */,
  ) /*: ?Array<AutolinkedDep> */ {
    const {autolinkingJsonPath, remote, onSkipped} = opts;
-@@ -1162,7 +2204,7 @@ function collectAutolinkedDeps(
+@@ -1162,7 +2434,7 @@ function collectAutolinkedDeps(
      const root = raw.root;
      const ios = raw.platforms?.ios;
      if (typeof root !== 'string' || ios == null) {
@@ -2593,7 +2827,7 @@ index cf7e587..bf8a249 100644
        continue;
      }
      // $FlowFixMe[incompatible-type] `ios` shape is runtime-validated above
-@@ -1294,6 +2336,11 @@ type ScaffoldAllOptions = {
+@@ -1294,6 +2566,11 @@ type ScaffoldAllOptions = {
    // confirmation prompt for first-time scaffolds. Skipped deps still
    // appear in the returned results array with status='skipped-opt-out'.
    skipDeps?: ReadonlyArray<string>,
@@ -2605,7 +2839,7 @@ index cf7e587..bf8a249 100644
  };
  */
  
-@@ -1323,6 +2370,17 @@ function scaffoldAll(
+@@ -1323,6 +2600,17 @@ function scaffoldAll(
    // scaffolded here — leaving `react-native spm scaffold` unable to clear the
    // autolinker's missing-manifest error.
    const results /*: Array<ScaffoldResult> */ = [];
@@ -2623,7 +2857,7 @@ index cf7e587..bf8a249 100644
    // Outside collectAutolinkedDeps' own try: a malformed remote config
    // (RemoteVersionError) is a misconfiguration to surface, not an expansion
    // failure to degrade past.
-@@ -1330,24 +2388,23 @@ function scaffoldAll(
+@@ -1330,24 +2618,23 @@ function scaffoldAll(
    const allDeps = collectAutolinkedDeps({
      autolinkingJsonPath,
      remote,
@@ -2659,7 +2893,7 @@ index cf7e587..bf8a249 100644
    for (const dep of allDeps) {
      const podspecPath = dep.platforms?.ios?.podspecPath;
      if (typeof podspecPath === 'string' && podspecPath.length > 0) {
-@@ -1386,6 +2443,9 @@ function scaffoldAll(
+@@ -1386,6 +2673,9 @@ function scaffoldAll(
    const skipSet /*: Set<string> */ = new Set(opts.skipDeps ?? []);
  
    for (const dep of allDeps) {
@@ -2669,11 +2903,13 @@ index cf7e587..bf8a249 100644
      if (skipSet.has(dep.name)) {
        results.push({
          depName: dep.name,
-@@ -1404,6 +2464,7 @@ function scaffoldAll(
+@@ -1404,6 +2694,9 @@ function scaffoldAll(
  }
  
  module.exports = {
 +  classifyPodDependency,
++  KNOWN_POD_SPM_PACKAGES,
++  loadPodTable,
    refreshScaffoldedPlatformFloors,
    scaffoldAll,
    scaffoldPackageSwiftForDep,

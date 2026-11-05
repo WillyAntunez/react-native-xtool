@@ -1,16 +1,37 @@
 /**
  * Setups rn-xtool cannot build yet, found before the build starts: `doctor --project` names them and `build` stops on
  * them, instead of failing minutes later inside rn-spm or SwiftPM. Every check reads files only. Nothing installed in
- * the project is run or `require`d; the only code loaded is rn-xtool's own vendored copy of the Expo plugin's readers.
+ * the project is run or `require`d; the only code loaded is rn-xtool's own vendored copies of the Expo plugin's readers
+ * and of React Native's scaffolder (its pod classifier).
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
+import type { PodEntry } from "../config.js";
+import type { ProjectKind } from "./types.js";
 import { troubleshootingUrl } from "../docs.js";
 import { packageRoot } from "../tools/exec.js";
-import { attribute, dependencyDirs, podspecFiles, unconditionalLines } from "./podspecs.js";
+import { mergedPodTable, podRequirementSatisfied, type PodTable } from "./podTable.js";
+import {
+  attribute,
+  dependencyDirs,
+  packageDir,
+  podDependencies,
+  podspecFiles,
+  podspecLines,
+  subspecOfLines,
+  unconditionalLineIndexes,
+  unconditionalLines,
+} from "./podspecs.js";
 
-export type EarlyCheckId = "vendored-binaries" | "vendored-sources" | "pnpm" | "yarn-pnp" | "hoisted";
+export type EarlyCheckId =
+  | "vendored-binaries"
+  | "vendored-sources"
+  | "unmapped-pod"
+  | "unlisted-sibling"
+  | "pnpm"
+  | "yarn-pnp"
+  | "hoisted";
 
 export interface EarlyFailure {
   id: EarlyCheckId;
@@ -69,6 +90,32 @@ function expoSpmReaders(): ExpoSpmReaders {
   const { sourceFacts } = require(path.join(spm, "podspec.js")) as Pick<ExpoSpmReaders, "sourceFacts">;
   const { walkSourceTree } = require(path.join(spm, "classify.js")) as Pick<ExpoSpmReaders, "walkSourceTree">;
   return { sourceFacts, walkSourceTree };
+}
+
+/** What the scaffolder makes of a podspec's `s.dependency` (classifyPodDependency in scaffold-package-swift.js). */
+interface PodClassification {
+  kind: "subspec" | "core" | "expo" | "sibling" | "missing-sibling" | "mapped" | "unmapped";
+  /** The name before any `/<subspec>`. */
+  pod: string;
+  /** For a sibling or a missing sibling: its npm package. */
+  npm?: string;
+}
+
+type ClassifyPodDependency = (
+  depName: string,
+  ctx: {
+    selfPodName: string | null;
+    ownNpm: string;
+    podToNpm: Map<string, string>;
+    linkedNpm: Set<string>;
+    table: Record<string, PodEntry>;
+  },
+) => PodClassification;
+
+/** rn-xtool's vendored scaffolder's classifier, the one the build's scaffold runs: never the project's copy. */
+function podClassifier(): ClassifyPodDependency {
+  const file = path.join(packageRoot(), "vendor", "rn-spm", "spm", "scaffold-package-swift.js");
+  return (createRequire(import.meta.url)(file) as { classifyPodDependency: ClassifyPodDependency }).classifyPodDependency;
 }
 
 function readJson(file: string): Record<string, any> | undefined {
@@ -268,49 +315,378 @@ function iosExcluded(root: string): (pkg: string) => boolean {
     });
 }
 
+/** What the library checks read besides the project. */
+export interface LibraryCheckOptions {
+  /** The config's `pods`, merged over rn-xtool's table (`mergedPodTable`). */
+  pods?: Record<string, PodEntry>;
+  /** The config file `pods` came from (`configFileOf`), named in the pin lines; rn-xtool.config.json by default. */
+  podsFile?: string;
+  /** Packages the config leaves out of the iOS build: skipped, like those taken out of iOS autolinking. */
+  exclude?: readonly string[];
+  /** The pod table to classify with, instead of `mergedPodTable(pods)` (a test seam). */
+  table?: PodTable;
+  /**
+   * The project kind. On bare, a pod sibling that is installed but not listed in package.json is not linked by the
+   * community CLI, so it is refused (`unlisted-sibling`); Expo's autolinking links such a package.
+   */
+  kind?: ProjectKind;
+}
+
+/** A dependency with podspecs: its name, folder, version and podspec texts. */
+interface Library {
+  name: string;
+  dir: string;
+  version: string;
+  podspecs: Podspec[];
+  /** An Expo module (it has an expo-module.config.json): the Expo plugin builds it, not rn-xtool's scaffolder. */
+  expoModule: boolean;
+}
+
 /**
- * The project's dependencies rn-xtool cannot build, by name: a CocoaPods-only library with prebuilt binaries that
- * rn-xtool would have to scaffold (packages with an expo-module.config.json are left out: the Expo plugin links their
- * binaries), and an Expo module that builds C sources from its vendor/ folder without a Package.swift or prebuilds.
- * A Package.swift the project's patches/ create counts, and so does a scaffold the user edited. Dependencies the
- * project takes out of iOS autolinking, binaries under a test spec or a Ruby condition, and other unsupported shapes
- * pass here (the last fail in the build). Never throws; [] without a readable package.json.
+ * A pod dependency as the early checks read it: the scaffolder's classification, or `unlisted-sibling` on bare for a
+ * sibling installed but not listed in package.json (the scaffolder reads it as an unmapped pod).
  */
-export function libraryFailures(projectRoot: string): EarlyFailure[] {
-  const root = path.resolve(projectRoot);
-  let readers: ExpoSpmReaders | undefined;
-  let excluded: (pkg: string) => boolean = () => false;
-  const failureOf = (name: string, dir: string): EarlyFailure | undefined => {
+type DependencyClassification = Omit<PodClassification, "kind"> & { kind: PodClassification["kind"] | "unlisted-sibling" };
+
+/** The names the root package.json lists in dependencies, devDependencies and peerDependencies (findDependencies). */
+function listedPackages(root: string): Set<string> {
+  const pkg = readJson(path.join(root, "package.json"));
+  return new Set(
+    [pkg?.dependencies, pkg?.devDependencies, pkg?.peerDependencies].flatMap((deps: unknown) =>
+      deps !== null && typeof deps === "object" ? Object.keys(deps) : [],
+    ),
+  );
+}
+
+/** The project's direct dependencies, read once for every library check. */
+class Libraries {
+  readonly root: string;
+  readonly deps: { name: string; dir: string }[];
+  /** The names package.json lists in dependencies, devDependencies or peerDependencies: those the community CLI links. */
+  readonly listed: Set<string>;
+  private readonly excluded: (pkg: string) => boolean;
+  private readonly opts: LibraryCheckOptions;
+  private podIndex?: { podToNpm: Map<string, string>; linkedNpm: Set<string>; listedPodToNpm: Map<string, string> };
+  private podTable?: PodTable;
+  private classifier?: ClassifyPodDependency;
+
+  constructor(root: string, opts: LibraryCheckOptions) {
+    this.root = root;
+    this.opts = opts;
+    this.deps = dependencyDirs(root);
+    this.listed = listedPackages(root);
+    const autolinking = iosExcluded(root);
+    const config = new Set(opts.exclude ?? []);
+    this.excluded = (pkg) => config.has(pkg) || autolinking(pkg);
+  }
+
+  /** The dependency at `dir` with its readable podspecs; undefined without one, or when the project leaves it out of iOS. */
+  library(name: string, dir: string): Library | undefined {
     const podspecs = podspecFiles(dir).flatMap((file) => {
       const text = readText(file);
       return text === undefined ? [] : [{ rel: path.relative(dir, file), text }];
     });
-    if (podspecs.length === 0 || excluded(name)) return undefined;
+    if (podspecs.length === 0 || this.excluded(name)) return undefined;
     const pkg = readJson(path.join(dir, "package.json"));
     const version = typeof pkg?.version === "string" ? pkg.version : "unknown";
-    if (existsSync(path.join(dir, "expo-module.config.json"))) {
-      if (!isAppleExpoModule(dir) || hasPrebuilds(dir) || hasOwnManifest(root, name, dir, EXPO_MODULE_MANIFESTS)) return undefined;
-      return sourcesFailure(name, version, dir, podspecs, (readers ??= expoSpmReaders()));
+    return { name, dir, version, podspecs, expoModule: existsSync(path.join(dir, "expo-module.config.json")) };
+  }
+
+  /**
+   * Whether rn-xtool's scaffolder would write the library's Package.swift: not an Expo module, no
+   * `swiftpmConfig.scaffold: false`, and no manifest of its own (a Package.swift the project's patches/ create counts).
+   */
+  scaffolded(lib: Library): boolean {
+    if (lib.expoModule) return false;
+    if (readJson(path.join(lib.dir, "package.json"))?.swiftpmConfig?.scaffold === false) return false;
+    return !hasOwnManifest(this.root, lib.name, lib.dir, LIBRARY_MANIFESTS);
+  }
+
+  /**
+   * Each pod dependency on the unconditional lines of the library's podspecs, as the scaffolder classifies it: the
+   * pod-name index covers the podspecs of every package installed at the top of node_modules and of every direct
+   * dependency (those left out of iOS too), and the linked packages are those autolinking links (`linkedPackageDirs`:
+   * on bare what package.json lists, on Expo every installed package too) with a podspec or a Package.swift that the
+   * project keeps on iOS. As in the scaffolder (fix 20), a subspec that declares a missing sibling is left out with its
+   * dependencies: its pods are neither pinned nor refused.
+   */
+  podDependencies(lib: Library): (DependencyClassification & { name: string; requirements: string[] })[] {
+    const classifier = (this.classifier ??= podClassifier());
+    const table = this.table();
+    const { podToNpm, linkedNpm, listedPodToNpm } = (this.podIndex ??= this.index());
+    const bare = this.opts.kind === "bare";
+    // On bare, the scaffolder knows only the pod names of the packages the CLI links (those package.json lists): a
+    // sibling installed outside package.json reads to it as a CocoaPods pod it cannot map.
+    const classify = (name: string, selfPodName: string): DependencyClassification => {
+      const ctx = { selfPodName, ownNpm: lib.name, linkedNpm, table: table.pods };
+      const c = classifier(name, { ...ctx, podToNpm });
+      if (!bare || c.kind !== "missing-sibling" || c.npm === undefined || this.listed.has(c.npm)) return c;
+      return classifier(name, { ...ctx, podToNpm: listedPodToNpm }).kind === "unmapped" ? { ...c, kind: "unlisted-sibling" } : c;
+    };
+    return lib.podspecs.flatMap(({ rel, text }) => {
+      const all = podspecLines(text);
+      const subspecOf = subspecOfLines(text);
+      const kept = unconditionalLineIndexes(text);
+      const literal = kept
+        .map((i) => /^\s*[A-Za-z_]\w*\.name\s*=\s*(["'])([\w.+-]+)\1\s*(?:#.*)?$/.exec(all[i]!)?.[2])
+        .find((n) => n !== undefined);
+      const selfPodName = literal ?? path.basename(rel, ".podspec");
+      const deps = kept.flatMap((i) =>
+        podDependencies([all[i]!]).map((dep) => ({
+          ...dep,
+          ...classify(dep.name, selfPodName),
+          subspec: subspecOf[i],
+        })),
+      );
+      // The scaffolder leaves out a subspec that declares a missing sibling, with its dependencies (fix 20).
+      const dropped = new Set(deps.filter((d) => d.kind === "missing-sibling" && d.subspec !== undefined).map((d) => d.subspec));
+      return deps.filter((d) => d.subspec === undefined || !dropped.has(d.subspec)).map(({ subspec: _subspec, ...dep }) => dep);
+    });
+  }
+
+  /** The pod table the checks classify with. */
+  table(): PodTable {
+    return (this.podTable ??= this.opts.table ?? mergedPodTable(this.opts.pods));
+  }
+
+  private index(): { podToNpm: Map<string, string>; linkedNpm: Set<string>; listedPodToNpm: Map<string, string> } {
+    const podToNpm = new Map<string, string>();
+    const linkedNpm = new Set<string>();
+    // Every installed package's pod names: autolinking links peers and transitive dependencies too (react-native-worklets
+    // as reanimated's peer), and the scaffolder wires such a pod name as a sibling, never as a CocoaPods pod.
+    for (const { name, dir } of installedPackages(this.root)) {
+      for (const file of podspecFiles(dir)) if (existsSync(file)) podToNpm.set(path.basename(file, ".podspec"), name);
     }
-    if (pkg?.swiftpmConfig?.scaffold === false || hasOwnManifest(root, name, dir, LIBRARY_MANIFESTS)) return undefined;
-    return binariesFailure(name, version, podspecs);
+    for (const { name, dir } of this.deps) {
+      for (const file of podspecFiles(dir)) if (existsSync(file)) podToNpm.set(path.basename(file, ".podspec"), name);
+    }
+    // The packages autolinking links, as the scaffolder's own linked set (and `excludeLines`) reads them: a sibling
+    // installed as a peer on Expo, or listed in devDependencies on bare, is linked, so a subspec declaring it is kept.
+    for (const [name, dir] of linkedPackageDirs(this.root, this.opts.kind)) {
+      const native =
+        podspecFiles(dir).some((file) => existsSync(file)) || LIBRARY_MANIFESTS.some((rel) => existsSync(path.join(dir, rel)));
+      if (native && !this.excluded(name)) linkedNpm.add(name);
+    }
+    const listedPodToNpm = new Map([...podToNpm].filter(([, npm]) => this.listed.has(npm)));
+    return { podToNpm, linkedNpm, listedPodToNpm };
+  }
+}
+
+/** The packages at the top level of the project's node_modules (`<name>` and `@scope/<name>`), with their folders. */
+function installedPackages(root: string): { name: string; dir: string }[] {
+  const modules = path.join(root, "node_modules");
+  const entries = (dir: string): string[] => {
+    try {
+      return readdirSync(dir).filter((n) => !n.startsWith("."));
+    } catch {
+      return [];
+    }
   };
-  let deps: { name: string; dir: string }[];
+  return entries(modules).flatMap((n) =>
+    n.startsWith("@")
+      ? entries(path.join(modules, n)).map((m) => ({ name: `${n}/${m}`, dir: path.join(modules, n, m) }))
+      : [{ name: n, dir: path.join(modules, n) }],
+  );
+}
+
+/** "a", "a and b", "a, b and c" */
+function andList(items: readonly string[]): string {
+  return items.length <= 1 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+}
+
+function unmappedFailure(libs: Libraries, lib: Library): EarlyFailure | undefined {
+  const pods: string[] = [];
+  for (const dep of libs.podDependencies(lib)) if (dep.kind === "unmapped" && !pods.includes(dep.pod)) pods.push(dep.pod);
+  if (pods.length === 0) return undefined;
+  const several = pods.length > 1;
+  const snippet = `{ "pods": { "${pods[0]}": { "url": "<git URL>", "exact": "<version>", "products": ["<product>"] } } }`;
+  return {
+    id: "unmapped-pod",
+    allowKey: lib.name,
+    reason:
+      `${lib.name} ${lib.version}: its podspec depends on the CocoaPods ${several ? "pods" : "pod"} ${andList(pods)}, ` +
+      `which ${several ? "have" : "has"} no SwiftPM package rn-xtool knows. Add ${several ? "them" : "one"} under "pods" ` +
+      `in rn-xtool.config.json: ${snippet}, or leave the library out with "exclude". ` +
+      `See ${troubleshootingUrl("libraries-that-depend-on-cocoapods-pods")}`,
+  };
+}
+
+function unlistedFailure(libs: Libraries, lib: Library): EarlyFailure | undefined {
+  const npms: string[] = [];
+  for (const dep of libs.podDependencies(lib)) {
+    if (dep.kind === "unlisted-sibling" && dep.npm !== undefined && !npms.includes(dep.npm)) npms.push(dep.npm);
+  }
+  if (npms.length === 0) return undefined;
+  const several = npms.length > 1;
+  return {
+    id: "unlisted-sibling",
+    allowKey: lib.name,
+    reason:
+      `${lib.name} ${lib.version}: its podspec depends on ${andList(npms)}, which ${several ? "are" : "is"} installed but ` +
+      `not listed in package.json, so React Native does not link ${several ? "them" : "it"}; add ` +
+      `${several ? "them" : "it"} to dependencies (npm i ${npms.join(" ")}). ` +
+      `See ${troubleshootingUrl("libraries-that-depend-on-cocoapods-pods")}`,
+  };
+}
+
+/**
+ * The project's dependencies rn-xtool cannot build, by name:
+ * - a CocoaPods-only library rn-xtool would scaffold whose podspec declares prebuilt binaries (packages with an
+ *   expo-module.config.json are left out: the Expo plugin links their binaries);
+ * - the same kind of library depending, on an unconditional podspec line, on a CocoaPods pod the pod table does not map
+ *   (one failure per library, naming every such pod);
+ * - on bare, the same kind of library depending by pod name on a package that is installed but not listed in
+ *   package.json, which the community CLI does not link (one failure per library, naming every such package);
+ * - an Expo module that builds C sources from its vendor/ folder without a Package.swift or prebuilds.
+ * A Package.swift the project's patches/ create counts, and so does a scaffold the user edited. Dependencies the
+ * project takes out of iOS autolinking or the config leaves out (`exclude`), binaries and pods under a test spec or a
+ * Ruby condition, and other unsupported shapes pass here (the last fail in the build). Never throws; [] without a
+ * readable package.json.
+ */
+export function libraryFailures(projectRoot: string, opts: LibraryCheckOptions = {}): EarlyFailure[] {
+  let libs: Libraries;
   try {
-    deps = dependencyDirs(root);
-    excluded = iosExcluded(root);
+    libs = new Libraries(path.resolve(projectRoot), opts);
   } catch {
     return [];
   }
-  return deps.flatMap(({ name, dir }) => {
+  let readers: ExpoSpmReaders | undefined;
+  const failuresOf = (name: string, dir: string): (EarlyFailure | undefined)[] => {
+    const lib = libs.library(name, dir);
+    if (lib === undefined) return [];
+    if (lib.expoModule) {
+      if (!isAppleExpoModule(dir) || hasPrebuilds(dir) || hasOwnManifest(libs.root, name, dir, EXPO_MODULE_MANIFESTS)) return [];
+      return [sourcesFailure(name, lib.version, dir, lib.podspecs, (readers ??= expoSpmReaders()))];
+    }
+    if (!libs.scaffolded(lib)) return [];
+    // Each check on its own: an unreadable pod table says nothing about the binaries.
+    return [
+      settled(() => binariesFailure(name, lib.version, lib.podspecs), undefined),
+      settled(() => unmappedFailure(libs, lib), undefined),
+      settled(() => unlistedFailure(libs, lib), undefined),
+    ];
+  };
+  return libs.deps.flatMap(({ name, dir }) => {
     try {
-      const failure = failureOf(name, dir);
-      return failure === undefined ? [] : [failure];
+      return failuresOf(name, dir).filter((f): f is EarlyFailure => f !== undefined);
     } catch {
       // One unreadable package says nothing about the others; the build reports it if it matters.
       return [];
     }
   });
+}
+
+/**
+ * A `⚠` line for each pod a library rn-xtool would scaffold depends on (unconditional podspec lines) whose pinned
+ * version in `table` misses the podspec's requirement: the scaffold still pins it, and SwiftPM builds that version.
+ * The libraries are those `libraryFailures` checks. Never throws.
+ */
+export function podPinWarnings(projectRoot: string, table: PodTable, opts: LibraryCheckOptions = {}): string[] {
+  let libs: Libraries;
+  try {
+    libs = new Libraries(path.resolve(projectRoot), { ...opts, table });
+  } catch {
+    return [];
+  }
+  const lines: string[] = [];
+  for (const { name, dir } of libs.deps) {
+    try {
+      const lib = libs.library(name, dir);
+      if (lib === undefined || !libs.scaffolded(lib)) continue;
+      for (const dep of libs.podDependencies(lib)) {
+        const exact = table.pods[dep.pod]?.exact;
+        if (dep.kind !== "mapped" || exact === undefined || podRequirementSatisfied(exact, dep.requirements)) continue;
+        const source = table.source[dep.pod] === "config" ? (opts.podsFile ?? "rn-xtool.config.json") : "rn-xtool table";
+        const line =
+          `⚠ ${dep.pod} ${exact} (${source}) is outside ${name}'s requirement "${dep.requirements.join(", ")}"`;
+        if (!lines.includes(line)) lines.push(line);
+      }
+    } catch {
+      // One unreadable package says nothing about the others.
+    }
+  }
+  return lines;
+}
+
+/**
+ * For each library rn-xtool would scaffold (those `libraryFailures` checks), the pods its unconditional podspec lines
+ * depend on that `table` maps, in podspec order: the pods its scaffold pins. Never throws.
+ */
+export function scaffoldedPods(projectRoot: string, table: PodTable, opts: LibraryCheckOptions = {}): Map<string, string[]> {
+  const pods = new Map<string, string[]>();
+  let libs: Libraries;
+  try {
+    libs = new Libraries(path.resolve(projectRoot), { ...opts, table });
+  } catch {
+    return pods;
+  }
+  for (const { name, dir } of libs.deps) {
+    try {
+      const lib = libs.library(name, dir);
+      if (lib === undefined || !libs.scaffolded(lib)) continue;
+      const mapped = [...new Set(libs.podDependencies(lib).filter((d) => d.kind === "mapped").map((d) => d.pod))];
+      if (mapped.length > 0) pods.set(name, mapped);
+    } catch {
+      // One unreadable package says nothing about the others.
+    }
+  }
+  return pods;
+}
+
+/**
+ * The lines `doctor --project` and `build` print for the config's `exclude`: one `ℹ` line naming the native iOS
+ * dependencies it leaves out and the config file it comes from (`file`, rn-xtool.config.json by default), then a `⚠`
+ * per other name. A name is a native iOS dependency when autolinking links it and it has a podspec or a Package.swift
+ * (in the package root or ios/): on bare, the community CLI links what package.json lists in dependencies,
+ * devDependencies and peerDependencies; on Expo, its autolinking links every installed package too, a transitive one
+ * included. An Expo module for Apple platforms is linked by Expo's autolinking anyway, so it gets a warning pointing at
+ * `expo.autolinking.exclude`. Without `kind`, the bare rule. Never throws; [] without `exclude`.
+ */
+export function excludeLines(
+  projectRoot: string,
+  exclude: readonly string[],
+  opts: { kind?: ProjectKind; file?: string } = {},
+): string[] {
+  if (exclude.length === 0) return [];
+  const root = path.resolve(projectRoot);
+  const linked = settled(() => linkedPackageDirs(root, opts.kind), new Map<string, string>());
+  const native = (dir: string): boolean =>
+    podspecFiles(dir).some((file) => existsSync(file)) || LIBRARY_MANIFESTS.some((rel) => existsSync(path.join(dir, rel)));
+  const left: string[] = [];
+  const warnings: string[] = [];
+  for (const name of new Set(exclude)) {
+    const dir = linked.get(name);
+    if (dir !== undefined && settled(() => isAppleExpoModule(dir), false)) {
+      warnings.push(
+        `⚠ exclude names ${name}, an Expo module: Expo's autolinking links it anyway; list it in expo.autolinking.exclude ` +
+          "in package.json to leave it out",
+      );
+    } else if (dir !== undefined && settled(() => native(dir), false)) {
+      left.push(name);
+    } else {
+      warnings.push(`⚠ exclude names ${name}, which is not a native iOS dependency of this project; ignored`);
+    }
+  }
+  const info =
+    `ℹ exclude — left out of this iOS build: ${left.join(", ")} (${opts.file ?? "rn-xtool.config.json"}). JavaScript ` +
+    `that uses it must check that it is there; see ${troubleshootingUrl("leaving-a-module-out")}`;
+  return [...(left.length > 0 ? [info] : []), ...warnings];
+}
+
+/**
+ * The packages autolinking reads, with their folders (react-native itself left out): those package.json lists in
+ * dependencies, devDependencies and peerDependencies that resolve from the root, and on Expo every package at the top of
+ * node_modules (and `@scope/*`) too.
+ */
+function linkedPackageDirs(root: string, kind: ProjectKind | undefined): Map<string, string> {
+  const dirs = new Map<string, string>();
+  if (kind === "expo") for (const { name, dir } of installedPackages(root)) dirs.set(name, dir);
+  for (const name of listedPackages(root)) {
+    const dir = dirs.get(name) ?? packageDir(root, name);
+    if (dir !== undefined) dirs.set(name, dir);
+  }
+  dirs.delete("react-native");
+  return dirs;
 }
 
 /** Where the parent-folder lookup stops (inclusive); `/` by default. Tests pass their own temp folder. */
@@ -436,6 +812,7 @@ export function installFailures(projectRoot: string, opts: LookupOptions = {}): 
 }
 
 /** Every setup rn-xtool refuses before a build: the install's, then the libraries'. Never throws. */
-export function earlyFailures(root: string, opts: LookupOptions = {}): EarlyFailure[] {
-  return [...installFailures(root, opts), ...libraryFailures(root)];
+export function earlyFailures(root: string, opts: LookupOptions & LibraryCheckOptions = {}): EarlyFailure[] {
+  const { stopAt, ...library } = opts;
+  return [...installFailures(root, stopAt === undefined ? {} : { stopAt }), ...libraryFailures(root, library)];
 }

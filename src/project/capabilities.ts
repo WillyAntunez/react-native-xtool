@@ -8,14 +8,16 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { loadConfig } from "../config.js";
+import { configFileOf, loadConfig } from "../config.js";
 import { projectPaths } from "../paths.js";
 import { rawSlotComplete, rnArtifactsCacheRoot, type Flavor } from "../pipeline/rnArtifactsStep.js";
-import { orphanPatchLine, orphanPatches } from "../pipeline/patches.js";
+import { orphanPatchLine, orphanPatches, scaffoldPinWarnings } from "../pipeline/patches.js";
 import { resolveRnDir, vendoredScriptsRoot } from "../pipeline/rnSpm.js";
 import { bareLines, compareVersions, expoPluginFor, releaseLine, rnLineStatus } from "../versions.js";
 import { DetectError, detectProjectKind } from "./detect.js";
-import { allowKnownLimits, earlyFailures, type EarlyFailure } from "./earlyChecks.js";
+import { allowKnownLimits, earlyFailures, excludeLines, podPinWarnings, type EarlyFailure, type LibraryCheckOptions } from "./earlyChecks.js";
+import { entitlementsCapability, type EntitlementsCapability } from "./entitlements.js";
+import { mergedPodTable } from "./podTable.js";
 import { attribute, dependencyDirs, podspecFiles, readJson } from "./podspecs.js";
 import { andList, expoPackageDir, installedExpoMajor, installedExpoVersion } from "./expo.js";
 import { scriptsCapability, type ScriptsCapability } from "./scriptsShape.js";
@@ -220,6 +222,8 @@ export interface Capabilities {
   /** The version of that expo-modules-core; undefined without it. */
   expoModulesCoreVersion?: string;
   podspecs: Record<PodspecFeature, string[]>;
+  /** The `ℹ`/`⚠` lines for the config's `exclude` (`excludeLines`); detectCapabilities always sets it. */
+  excluded?: string[];
   /**
    * The setups rn-xtool refuses before a build (`earlyFailures`), those the config's `knownLimits.allow` names marked
    * allowed; detectCapabilities always sets it.
@@ -227,6 +231,15 @@ export interface Capabilities {
   limits?: EarlyFailure[];
   /** The `⚠` line for each of the project's patches whose package is not installed; detectCapabilities always sets it. */
   orphanPatches?: string[];
+  /** The `⚠` line for each pod pin that misses a library's podspec requirement; detectCapabilities always sets it. */
+  podPins?: string[];
+  /**
+   * The `⚠` line for each pod a persisted scaffold patch pins at another version than the pod table, or does not pin;
+   * detectCapabilities always sets it.
+   */
+  scaffoldPins?: string[];
+  /** The app's entitlements (`entitlementsCapability`); undefined when CODE_SIGN_ENTITLEMENTS is unset. */
+  entitlements?: EntitlementsCapability;
 }
 
 /** The SwiftPM settings reader the build's plugin discovery uses (vendor/rn-spm/spm/swiftpm-config.js). */
@@ -302,12 +315,25 @@ export async function detectCapabilities(projectRoot: string, opts: ProbeOptions
   const kind = kindOf(root, config.projectKind);
   const rn = installedRn(root);
   const expoVersion = installedExpoVersion(root);
+  const podsFile = configFileOf(config, "pods");
+  const libraryChecks: LibraryCheckOptions = {
+    ...(config.pods !== undefined ? { pods: config.pods } : {}),
+    ...(podsFile !== undefined ? { podsFile } : {}),
+    ...(config.exclude !== undefined ? { exclude: config.exclude } : {}),
+    ...(kind !== undefined ? { kind } : {}),
+  };
+  const podTable = mergedPodTable(config.pods);
   const caps: Capabilities = {
     podspecs: podspecFeatures(root),
-    limits: allowKnownLimits(earlyFailures(root), config.knownLimits?.allow ?? []),
+    excluded: excludeLines(root, config.exclude ?? [], { kind, file: configFileOf(config, "exclude") }),
+    limits: allowKnownLimits(earlyFailures(root, libraryChecks), config.knownLimits?.allow ?? []),
+    podPins: podPinWarnings(root, podTable, libraryChecks),
     orphanPatches: orphanPatches(root).map(orphanPatchLine),
+    scaffoldPins: scaffoldPinWarnings(root, podTable, config.exclude, kind),
   };
   if (kind !== undefined) caps.kind = kind;
+  const entitlements = entitlementsCapability(root, kind);
+  if (entitlements !== undefined) caps.entitlements = entitlements;
   if (expoVersion !== undefined) {
     caps.expoVersion = expoVersion;
     const sdk = installedExpoMajor(root);

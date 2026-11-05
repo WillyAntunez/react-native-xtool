@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { depsFingerprint } from "../deps.js";
-import { loadConfig, type ExpoXtoolConfig } from "../config.js";
+import { configFileOf, loadConfig, type ExpoXtoolConfig, type PodEntry } from "../config.js";
 import { readFlavoredFrameworks, stageFrameworks, type RuntimeFramework } from "../frameworks.js";
 import { hasDevSupport, writeIosXtool } from "../generate/iosXtool.js";
 import { detectLanIp, detectLanRoute, findFreePort, isMetroRunning, isPortFree, suspiciousLanRoute, tunnelWarning, type LanRoute } from "../net.js";
@@ -18,12 +18,24 @@ import { checkFrameworkSymbols } from "../pipeline/symbols.js";
 import {
   allowedLimitText,
   allowKnownLimits,
+  excludeLines,
   installFailures,
   libraryFailures,
+  podPinWarnings,
   UnsupportedSetupError,
   type EarlyFailure,
+  type LibraryCheckOptions,
 } from "../project/earlyChecks.js";
-import { readProject, RN_CLI_MISSING, type ProjectInfo, type ProjectKind, type ReadProjectOptions } from "../project/index.js";
+import { entitlementLines, readEntitlements, type AppEntitlements } from "../project/entitlements.js";
+import { mergedPodTable, type PodTable } from "../project/podTable.js";
+import {
+  detectProjectKind,
+  readProject,
+  RN_CLI_MISSING,
+  type ProjectInfo,
+  type ProjectKind,
+  type ReadProjectOptions,
+} from "../project/index.js";
 import { appIconRecord } from "../generate/appIcon.js";
 import { readState, writeState, type BuildState } from "../state.js";
 import { run } from "../tools/exec.js";
@@ -112,21 +124,37 @@ export interface BuildDeps {
   loadConfig: (root: string) => Promise<ExpoXtoolConfig>;
   /** The install layouts rn-xtool refuses before reading the project (pnpm, Yarn PnP, hoisted packages). */
   installFailures: (root: string) => EarlyFailure[];
-  /** The libraries rn-xtool refuses (a Package.swift the project's patches/ create counts), checked with the installs. */
-  libraryFailures: (root: string) => EarlyFailure[];
+  /**
+   * The libraries rn-xtool refuses (a Package.swift the project's patches/ create counts, the config's pods map pods),
+   * checked with the installs.
+   */
+  libraryFailures: (root: string, opts: LibraryCheckOptions) => EarlyFailure[];
+  /** After the early checks: the `⚠` lines for pod pins that miss a library's podspec requirement. */
+  podPinWarnings: (root: string, opts: LibraryCheckOptions) => string[];
   readProject: (root: string, opts?: ReadProjectOptions) => Promise<ProjectInfo>;
   exists: (path: string) => boolean;
   /** Deletes a directory tree (no error when it is missing). */
   remove: (path: string) => Promise<void>;
   prebuild: (root: string, clean: boolean) => Promise<void>;
-  applyPatches: (root: string, sources: { rnScripts: RnScripts; expoPlugin: ExpoPlugin }) => Promise<void>;
+  /** `podTable`: the merged pod table, for the stale-pin checks of scaffolds. */
+  applyPatches: (
+    root: string,
+    sources: { rnScripts: RnScripts; expoPlugin: ExpoPlugin; podTable?: PodTable; exclude?: readonly string[]; kind?: ProjectKind },
+  ) => Promise<void>;
   /** After patch-package, before rn-spm: rewrites known non-portable snippets in the libraries' own manifests. */
   fixLibraryManifests: (root: string, log: (s: string) => void) => Promise<void>;
   /** Downloads (and adapts when needed) RN's prebuilt artifacts; returns the root for `rn-spm --artifacts`. */
   prepareRnArtifacts: (paths: ProjectPaths, rnVersion: string) => Promise<string>;
   runRnSpm: (
     paths: ProjectPaths,
-    opts: { rnArtifactsDir?: string; kind: ProjectKind; rnScripts: RnScripts; expoPlugin: ExpoPlugin },
+    opts: {
+      rnArtifactsDir?: string;
+      kind: ProjectKind;
+      rnScripts: RnScripts;
+      expoPlugin: ExpoPlugin;
+      pods?: Record<string, PodEntry>;
+      exclude?: readonly string[];
+    },
   ) => Promise<void>;
   buildJsi: (paths: ProjectPaths, opts?: { rnHeaders?: JsiRnHeaders; headersXcframework?: boolean }) => Promise<RuntimeFramework>;
   generateAppConfig: (paths: ProjectPaths) => Promise<void>;
@@ -146,13 +174,16 @@ export interface BuildDeps {
   depsFingerprint: (root: string) => Promise<string>;
   /** After rn-spm: the resources scaffolded libraries declare that do not reach the app. */
   unbundledResources: (root: string) => { pkg: string; items: string[] }[];
+  /** The app's CODE_SIGN_ENTITLEMENTS file (Debug); throws an EntitlementsError when xtool could not sign with it. */
+  readEntitlements: (project: ProjectInfo, iosDir: string) => AppEntitlements | undefined;
   log: (s: string) => void;
 }
 
 const realDeps: BuildDeps = {
   loadConfig,
   installFailures: (root) => installFailures(root),
-  libraryFailures,
+  libraryFailures: (root, opts) => libraryFailures(root, opts),
+  podPinWarnings: (root, opts) => podPinWarnings(root, mergedPodTable(opts.pods), opts),
   readProject,
   exists: existsSync,
   remove: (path) => rm(path, { recursive: true, force: true }),
@@ -180,8 +211,24 @@ const realDeps: BuildDeps = {
   readState,
   depsFingerprint: depsFingerprint,
   unbundledResources,
+  readEntitlements,
   log: (s) => console.log(s),
 };
+
+/** The failed prebuild's error, after removing the ios/ it left half-written, saying so. */
+async function prebuildFailure(e: unknown, removeIos: () => Promise<void>): Promise<Error> {
+  const reason = e instanceof Error ? e.message : String(e);
+  let tail: string;
+  try {
+    await removeIos();
+    tail = "The failed prebuild left ios/ half-written, so rn-xtool removed it; the next build runs expo prebuild again.";
+  } catch (r) {
+    tail =
+      `The failed prebuild left ios/ half-written, and rn-xtool could not remove it (${r instanceof Error ? r.message : String(r)}); ` +
+      "delete ios/ before the next build, or run rn-xtool build --clean.";
+  }
+  return new Error(`${reason}\n${tail}`, { cause: e });
+}
 
 export async function build(
   root: string,
@@ -207,7 +254,24 @@ export async function build(
   };
   // Before reading the project or writing anything (prebuild, --clean, patches): these setups would otherwise fail
   // minutes into rn-spm or SwiftPM. A Package.swift the project's patches/ create counts already, as in doctor.
-  stopOnKnownLimits([...d.installFailures(root), ...d.libraryFailures(root)]);
+  // The kind as readProject will detect it; undetectable here, the checks run without it and readProject says why.
+  let kind: ProjectKind | undefined;
+  try {
+    kind = detectProjectKind(root, config.projectKind);
+  } catch {
+    kind = undefined;
+  }
+  const podsFile = configFileOf(config, "pods");
+  const libraryChecks: LibraryCheckOptions = {
+    ...(config.pods !== undefined ? { pods: config.pods } : {}),
+    ...(podsFile !== undefined ? { podsFile } : {}),
+    ...(config.exclude !== undefined ? { exclude: config.exclude } : {}),
+    ...(kind !== undefined ? { kind } : {}),
+  };
+  // What the config leaves out comes first: a refusal below may point at "exclude".
+  for (const line of excludeLines(root, config.exclude ?? [], { kind, file: configFileOf(config, "exclude") })) d.log(line);
+  stopOnKnownLimits([...d.installFailures(root), ...d.libraryFailures(root, libraryChecks)]);
+  for (const line of d.podPinWarnings(root, libraryChecks)) d.log(line);
   const project = await d.readProject(root, { log: d.log });
   // Bare rn-spm runs RN's default autolinking config command, `npx --no-install @react-native-community/cli config`.
   if (project.kind === "bare" && project.hasRnCli === false) throw new Error(RN_CLI_MISSING);
@@ -234,7 +298,23 @@ export async function build(
   const planned = (name: string): boolean => steps.includes(name);
 
   const prebuilds = planned("prebuild") || planned("prebuild --clean");
-  if (prebuilds) await step(clean ? "prebuild --clean" : "prebuild", () => d.prebuild(paths.root, clean));
+  if (prebuilds) {
+    await step(clean ? "prebuild --clean" : "prebuild", async () => {
+      try {
+        await d.prebuild(paths.root, clean);
+      } catch (e) {
+        // rn-xtool prebuilds only without ios/ or on --clean, so this ios/ is the failed run's own: the next build
+        // would otherwise skip prebuild and build the half state. A prebuild that failed before writing ios/ (a
+        // config that throws) leaves nothing to remove, and its error stays as it is.
+        if (!d.exists(paths.ios)) throw e;
+        throw await prebuildFailure(e, () => d.remove(paths.ios));
+      }
+    });
+  }
+  // Before anything else changes (on Expo, once prebuild wrote the pbxproj): what xtool drops when it signs, or why it
+  // cannot sign at all.
+  const entitlements = d.readEntitlements(project, paths.ios);
+  if (entitlements !== undefined) for (const line of entitlementLines(entitlements, project.bundleIdentifier)) d.log(line);
   // The app config icon this prebuild turned into the icon set; without a prebuild, the last one's record stays.
   // With no record (the user ran expo prebuild, or the state predates it), the current icon is recorded silently,
   // so a later change warns.
@@ -251,7 +331,13 @@ export async function build(
   }
   // Library manifests last: idempotent, so a project's persisted patch-package fix of the same snippet applies first.
   await step("patches", async () => {
-    await d.applyPatches(paths.root, { rnScripts: project.rnScripts, expoPlugin: project.expoPlugin });
+    await d.applyPatches(paths.root, {
+      rnScripts: project.rnScripts,
+      expoPlugin: project.expoPlugin,
+      podTable: mergedPodTable(config.pods),
+      ...(config.exclude !== undefined ? { exclude: config.exclude } : {}),
+      kind: project.kind,
+    });
     await d.fixLibraryManifests(paths.root, d.log);
   });
   const preparedArtifacts = planned("rn-artifacts")
@@ -272,6 +358,8 @@ export async function build(
       kind: project.kind,
       rnScripts: project.rnScripts,
       expoPlugin: project.expoPlugin,
+      ...(config.pods !== undefined ? { pods: config.pods } : {}),
+      ...(config.exclude !== undefined ? { exclude: config.exclude } : {}),
     }),
   );
   const resources = unbundledResourcesLine(d.unbundledResources(paths.root));
