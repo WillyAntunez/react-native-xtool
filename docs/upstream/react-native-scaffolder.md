@@ -756,6 +756,16 @@ named dep whose scaffold has an older revision or another cache slot. The podspe
 every autolinked dep. Found when a scaffold run for react-native-vision-camera 4.7.3 rewrote react-native-device-info
 15.0.2's hand-fixed `Package.swift`. Changes no manifest, so no revision bump.
 
+## 26. `scripts/spm/read-podspec.js`: a dependency written as a call, `s.dependency('Pod', …)`, is not read
+
+The regex reader matches `s.dependency "Pod"` (a space after `dependency`), so the call form CocoaPods accepts as
+well, `s.dependency('Pod', '~> 1.0')` or `ss.dependency("Pod")`, is not seen: a mapped pod gets no `.package`, a
+sibling no wiring, and an unmapped pod no warning; the scaffolded package then fails to build on the missing module.
+
+Fix: `getDependencies` also reads `dependency(` with optional spaces around the parenthesis, on the main spec and on
+each subspec. Found while checking rn-xtool's pin check against the scaffolder (the early checks read both forms).
+Libraries that use only the space form get the same manifest, so no revision bump.
+
 ## Known limitation (deferred): pure-Swift packages importing a mixed Expo module
 
 A Swift module built with a bridging header (every mixed target) makes each Swift importer re-read that

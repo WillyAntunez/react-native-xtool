@@ -135,6 +135,9 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
       expect(f).toContain("function importsOwnSwiftHeader");
       expect(f).toContain("function clangModuleExcludes");
     });
+    it("read-podspec.js has the parenthesised dependency hunk (fix 26)", () => {
+      expect(src("read-podspec.js")).toContain("dependency(?:\\\\s*\\\\(\\\\s*|\\\\s+)");
+    });
     it("spm-utils.js has the header-less ReactAppHeaders module map hunk", () => {
       expect(src("spm-utils.js")).toContain("module ReactAppHeaders {");
     });
@@ -1510,10 +1513,10 @@ describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
   });
 });
 
-// Fixes 20–25 (React Native 0.88.0 patch), exercised on the vendored copy, so they never skip. The podspec fixtures are
+// Fixes 20–26 (React Native 0.88.0 patch), exercised on the vendored copy, so they never skip. The podspec fixtures are
 // written in each library's shape (react-native-vision-camera 4.7.3, react-native-video 6.19.3,
 // react-native-device-info 15.0.2, @react-native-community/netinfo 11.5.2), not copied from the libraries.
-describe("scaffolder fixes 20–25 (vendor/rn-spm)", () => {
+describe("scaffolder fixes 20–26 (vendor/rn-spm)", () => {
   const req = createRequire(import.meta.url);
   const load = <T>(f: string) => req(path.join(VENDORED_RN_SPM, f)) as T;
   /** A library with the given files and podspec body, as a temp dir. */
@@ -1963,6 +1966,32 @@ describe("scaffolder fixes 20–25 (vendor/rn-spm)", () => {
     it("25: without onlyDeps every dep, as before", () => {
       const run = twoLibs({ force: false });
       expect(run.statuses).toEqual({ a: "written", b: "written" });
+    });
+  });
+
+  describe("26: parenthesised dependencies", () => {
+    type Deps = { dependencies: string[]; subspecDependencies?: Record<string, string[]> };
+    it("26: reads `s.dependency('Pod', …)` as CocoaPods does", () => {
+      const root = lib(
+        {},
+        "  s.source_files = \"ios/**/*.swift\"\n  s.dependency('PodA')\n  s.ios.dependency ( \"PodB\", '~> 1.0' )\n" +
+          "  s.dependency \"PodC\"\n  s.subspec 'Sub' do |ss|\n    ss.dependency('PodD', '>= 2')\n  end",
+      );
+      const model = withRnRoot("0.88.0", () =>
+        load<{ readPodspecCached(file: string): Deps }>("read-podspec.js").readPodspecCached(path.join(root, "Foo.podspec")),
+      );
+      expect([...model.dependencies].sort()).toEqual(["PodA", "PodB", "PodC", "PodD"]);
+      expect(model.subspecDependencies?.["Sub"]).toEqual(["PodD"]);
+    });
+
+    it("26: pins a mapped pod named in parentheses", () => {
+      const run = scaffoldLibraries(VENDORED_RN_SPM, {
+        foo: lib({ "ios/Foo.swift": "import SwiftUIIntrospect\n" }, `  s.source_files = "ios/**/*.swift"\n  s.dependency('SwiftUIIntrospect', '~> 1.0')`),
+      });
+      expect(run.statuses["foo"]).toBe("written");
+      const pkg = run.files["foo/Package.swift"]!;
+      expect(pkg).toContain('.package(url: "https://github.com/siteline/swiftui-introspect", exact: "1.5.0")');
+      expect(pkg).toContain("// rn-xtool-pods: SwiftUIIntrospect=1.5.0");
     });
   });
 });

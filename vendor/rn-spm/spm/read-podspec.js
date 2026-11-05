@@ -564,13 +564,16 @@ function regexPodspec(
     return single != null ? [single] : [];
   }
 
-  // Matches:  s.dependency "Name"  (with optional version constraint)
+  // Matches:  s.dependency "Name"  (with optional version constraint), and the call form s.dependency("Name", ...)
   function getDependencies(
     text /*: string */ = main,
     recv /*: string */ = MAIN_RECV,
   ) /*: Array<string> */ {
     const out /*: Array<string> */ = [];
-    const re = new RegExp(`${recv}\\.(?:ios\\.)?dependency\\s+["']([^"']+)["']`, 'g');
+    const re = new RegExp(
+      `${recv}\\.(?:ios\\.)?dependency(?:\\s*\\(\\s*|\\s+)["']([^"']+)["']`,
+      'g',
+    );
     while (true) {
       const m = re.exec(text);
       if (m == null) break;

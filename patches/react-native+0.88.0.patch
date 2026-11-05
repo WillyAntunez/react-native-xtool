@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native/scripts/spm/read-podspec.js b/node_modules/react-native/scripts/spm/read-podspec.js
-index 8fcf04b..6dbb951 100644
+index 8fcf04b..b3e3a53 100644
 --- a/node_modules/react-native/scripts/spm/read-podspec.js
 +++ b/node_modules/react-native/scripts/spm/read-podspec.js
 @@ -102,13 +102,12 @@ function runPodIpcSpec(podspecPath /*: string */) /*: RawSpec | null */ {
@@ -417,7 +417,7 @@ index 8fcf04b..6dbb951 100644
      if (mArr != null) {
        const inner = mArr[1];
        const out /*: Array<string> */ = [];
-@@ -249,16 +545,34 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -249,16 +545,37 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
        }
        return out;
      }
@@ -441,22 +441,26 @@ index 8fcf04b..6dbb951 100644
      return single != null ? [single] : [];
    }
  
-   // Matches:  s.dependency "Name"  (with optional version constraint)
+-  // Matches:  s.dependency "Name"  (with optional version constraint)
 -  function getDependencies() /*: Array<string> */ {
++  // Matches:  s.dependency "Name"  (with optional version constraint), and the call form s.dependency("Name", ...)
 +  function getDependencies(
 +    text /*: string */ = main,
 +    recv /*: string */ = MAIN_RECV,
 +  ) /*: Array<string> */ {
      const out /*: Array<string> */ = [];
 -    const re = /(?:s|spec)\.dependency\s+["']([^"']+)["']/g;
-+    const re = new RegExp(`${recv}\\.(?:ios\\.)?dependency\\s+["']([^"']+)["']`, 'g');
++    const re = new RegExp(
++      `${recv}\\.(?:ios\\.)?dependency(?:\\s*\\(\\s*|\\s+)["']([^"']+)["']`,
++      'g',
++    );
      while (true) {
 -      const m = re.exec(content);
 +      const m = re.exec(text);
        if (m == null) break;
        out.push(m[1]);
      }
-@@ -269,21 +583,25 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -269,21 +586,25 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    //   s.framework "X"          → ["X"]
    //   s.framework = "X"        → ["X"]
    //   s.frameworks = ["X","Y"] → ["X","Y"]
@@ -487,7 +491,7 @@ index 8fcf04b..6dbb951 100644
        if (m == null) break;
        const itemRe = /["']([^"']+)["']/g;
        while (true) {
-@@ -298,12 +616,14 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -298,12 +619,14 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    // Matches:  'HEADER_SEARCH_PATHS' => '...'   or  => ["...","..."]
    // Returns the raw token strings (still containing $(PODS_TARGET_SRCROOT)
    // etc.); substitution happens at translation time.
@@ -504,7 +508,7 @@ index 8fcf04b..6dbb951 100644
        if (m == null) break;
        const itemRe = /["']((?:[^"'\\]|\\.)+)["']/g;
        while (true) {
-@@ -321,7 +641,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -321,7 +644,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      const strRe =
        /["']HEADER_SEARCH_PATHS["']\s*=>\s*["']((?:[^"'\\]|\\.)+)["']/g;
      while (true) {
@@ -513,7 +517,7 @@ index 8fcf04b..6dbb951 100644
        if (m == null) break;
        for (const token of m[1].split(/\s+/)) {
          if (token.length > 0) {
-@@ -332,15 +652,53 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -332,15 +655,53 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      return Array.from(new Set(out));
    }
  
@@ -569,7 +573,7 @@ index 8fcf04b..6dbb951 100644
      );
    }
    if (/install_modules_dependencies/.test(content)) {
-@@ -354,24 +712,100 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -354,24 +715,100 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      );
    }
  
@@ -683,7 +687,7 @@ index 8fcf04b..6dbb951 100644
      __regex_partial__: true,
      __warnings__: warnings,
    };
-@@ -423,6 +857,58 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
+@@ -423,6 +860,58 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
    return tokens;
  }
  
@@ -742,7 +746,7 @@ index 8fcf04b..6dbb951 100644
  // ---------------------------------------------------------------------------
  // Subspec flattening
  // ---------------------------------------------------------------------------
-@@ -438,8 +924,16 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
+@@ -438,8 +927,16 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
   *   - String fields → top-level wins; if absent, take the first subspec's value
   *   - pod_target_xcconfig HEADER_SEARCH_PATHS → array-union across all selected subspecs
   *   - dependencies  → array-union of name strings (version constraints dropped)
@@ -760,7 +764,7 @@ index 8fcf04b..6dbb951 100644
    const warnings /*: Array<string> */ = [];
    // $FlowFixMe[prop-missing] dynamic shape
    const partial /*: boolean */ = rawSpec.__regex_partial__ === true;
-@@ -456,7 +950,12 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -456,7 +953,12 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
    //   - `default_subspecs`: array of names (or undefined → use all subspecs)
    const subspecs = Array.isArray(rawSpec.subspecs) ? rawSpec.subspecs : [];
    let selected = subspecs;
@@ -774,7 +778,7 @@ index 8fcf04b..6dbb951 100644
      const wanted = new Set(rawSpec.default_subspecs);
      selected = subspecs.filter(s => {
        // $FlowFixMe[prop-missing] dynamic shape
-@@ -464,6 +963,10 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -464,6 +966,10 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        return name != null && wanted.has(name);
      });
    }
@@ -785,7 +789,7 @@ index 8fcf04b..6dbb951 100644
    const layers = [rawSpec, ...selected];
  
    function mergeArrayField(key /*: string */) /*: Array<string> */ {
-@@ -482,6 +985,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -482,6 +988,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return Array.from(new Set(out));
    }
  
@@ -803,7 +807,7 @@ index 8fcf04b..6dbb951 100644
    // Only the spec's own value: a subspec's `header_dir` names that subspec's
    // headers, and several subspecs can disagree.
    function specStringField(key /*: string */) /*: string | null */ {
-@@ -544,6 +1058,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -544,6 +1061,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
    // `-D`s are safe to forward; arbitrary flags may be machine- or
    // example-app-specific. $(inherited), unresolved $(...) tokens, and invalid
    // C identifiers are skipped.
@@ -824,7 +828,7 @@ index 8fcf04b..6dbb951 100644
    function mergePreprocessorDefines() /*: Array<PreprocessorDefine> */ {
      const out /*: Array<PreprocessorDefine> */ = [];
      const seen /*: Set<string> */ = new Set();
-@@ -554,7 +1082,23 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -554,7 +1085,23 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        config /*: ?('debug' | 'release') */,
      ) => {
        if (!validName.test(name)) return;
@@ -849,7 +853,7 @@ index 8fcf04b..6dbb951 100644
          return; // unresolved Xcode/Ruby token — don't emit a broken define
        }
        const key = `${name}|${config ?? ''}`;
-@@ -571,6 +1115,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -571,6 +1118,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        'xcconfig',
        'user_target_xcconfig',
      ];
@@ -870,7 +874,7 @@ index 8fcf04b..6dbb951 100644
      for (const layer of layers) {
        if (layer == null || typeof layer !== 'object') continue;
        for (const xcKey of XCCONFIG_KEYS) {
-@@ -627,44 +1185,119 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -627,44 +1188,119 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return out;
    }
  
@@ -1015,7 +1019,7 @@ index 8fcf04b..6dbb951 100644
        }
      }
      return out;
-@@ -677,6 +1310,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -677,6 +1313,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        ? false
        : true; // RN ecosystem default
  
@@ -1036,7 +1040,7 @@ index 8fcf04b..6dbb951 100644
    return {
      name: specStringField('name') ?? '',
      version: specStringField('version') ?? '',
-@@ -693,15 +1340,42 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -693,15 +1343,42 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      // header_mappings_dir copy step, which SPM has no equivalent for.
      headerMappingsDirs: mergeArrayField('header_mappings_dir'),
      headerDir: specStringField('header_dir'),
@@ -1081,7 +1085,7 @@ index 8fcf04b..6dbb951 100644
      requiresArc,
      warnings,
      partial,
-@@ -722,15 +1396,18 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -722,15 +1399,18 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
   * Throws when the file doesn't exist. Otherwise always returns a
   * PodspecModel — warnings on the model surface partial parses to the
   * caller, who can decide whether to proceed or abort scaffolding for that
@@ -1104,7 +1108,7 @@ index 8fcf04b..6dbb951 100644
    // Record whether the podspec calls `install_modules_dependencies(s)`. We
    // strip that helper before `pod ipc` and the regex parser can't expand it,
    // so the React-Core family it injects never lands in `model.dependencies`.
-@@ -746,21 +1423,46 @@ function readPodspec(podspecPath /*: string */) /*: PodspecModel */ {
+@@ -746,21 +1426,46 @@ function readPodspec(podspecPath /*: string */) /*: PodspecModel */ {
    return model;
  }
  
@@ -1155,7 +1159,7 @@ index 8fcf04b..6dbb951 100644
    podspecModels.set(key, model);
    return model;
  }
-@@ -794,12 +1496,13 @@ function readPodspecNames(
+@@ -794,12 +1499,13 @@ function readPodspecNames(
    if (hasShadowingSubspec(source)) {
      return null;
    }

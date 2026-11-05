@@ -245,7 +245,7 @@ The spec's failure-walk rulings are binding.
 | 48 | handle | Task C7 (C1–C4 review M2) `warns when a persisted scaffold of a library with mapped pods pins nothing`, `regenerates an unpersisted copy whose pins differ` |
 | 49 | handle | `fix: index every installed podspec package` (C5–C8 review I1), test `does not refuse a sibling installed as a peer, outside package.json (reanimated 4.3.4 and worklets 0.8.3)` |
 | 50 | handle | `fix: treat all React Native core pods as core` (C5–C8 review I2), tests `<name> is core` and the drift test `classifies every podspec name in react-native@<version> as core` |
-| 51 | handle | `fix: expect pod pins only for kept subspecs` (C5–C8 review M1), test `leaves out the pods of a subspec the scaffolder drops for a missing sibling` |
+| 51 | handle | `fix: expect pod pins only for kept subspecs` (C5–C8 review M1), test `leaves out the pods of a subspec the scaffolder drops for a missing sibling`; `fix: read parenthesised pod dependencies` (fix 26), tests `26: reads `s.dependency('Pod', …)` as CocoaPods does`, `26: pins a mapped pod named in parentheses` |
 
 ## Review Focus
 
