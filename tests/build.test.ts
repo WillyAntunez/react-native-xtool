@@ -8,7 +8,7 @@ import { build, buildSteps, chooseMetroPort, type BuildDeps } from "../src/comma
 import { loadConfig as realLoadConfig } from "../src/config.js";
 import { jsiRnHeaderDirs } from "../src/pipeline/jsi.js";
 import { fixLibraryManifests } from "../src/pipeline/manifests.js";
-import { libraryFailures as realLibraryFailures, podPinWarnings, UnsupportedSetupError, type EarlyFailure } from "../src/project/earlyChecks.js";
+import { binaryPodCandidates as realBinaryPodCandidates, libraryFailures as realLibraryFailures, podPinWarnings, UnsupportedSetupError, type EarlyFailure } from "../src/project/earlyChecks.js";
 import { mergedPodTable } from "../src/project/podTable.js";
 import { readState, writeState } from "../src/state.js";
 import { withEntitlements } from "./support/entitlements.js";
@@ -17,6 +17,28 @@ const expoFlags = { kind: "expo" as const, hasExpoModules: true, hasExpoConstant
 const bareFlags = { kind: "bare" as const, hasExpoModules: false, hasExpoConstants: false, rnArtifacts: false, expoPlugin: "installed" as const };
 
 describe("buildSteps", () => {
+  it("runs pods first and pod-binaries right before rn-spm, only with binary pods", () => {
+    expect(buildSteps({ ...bareFlags, rnArtifacts: true, hasIos: true, clean: true, pods: true })).toEqual([
+      "pods", "clean", "patches", "rn-artifacts", "pod-binaries", "rn-spm", "frameworks", "generate", "xtool-build",
+    ]);
+    expect(buildSteps({ ...expoFlags, hasIos: false, clean: false, pods: true })).toEqual([
+      "pods", "prebuild", "patches", "pod-binaries", "rn-spm", "jsi", "app-config", "frameworks", "generate", "xtool-build",
+    ]);
+    const sdk57 = { ...expoFlags, expoPlugin: "vendored" as const, rnArtifacts: true, hasIos: true, clean: false };
+    expect(buildSteps({ ...sdk57, pods: true })).toEqual([
+      "pods", "patches", "rn-artifacts", "jsi", "pod-binaries", "rn-spm", "app-config", "frameworks", "generate", "xtool-build",
+    ]);
+  });
+  it("plans today's steps for a project without binary pods", () => {
+    for (const flags of [expoFlags, bareFlags]) {
+      for (const clean of [false, true]) {
+        const plain = buildSteps({ ...flags, hasIos: true, clean });
+        expect(buildSteps({ ...flags, hasIos: true, clean, pods: false })).toEqual(plain);
+        expect(plain).not.toContain("pods");
+        expect(plain).not.toContain("pod-binaries");
+      }
+    }
+  });
   it("starts with prebuild when ios/ is missing", () => {
     expect(buildSteps({ ...expoFlags, hasIos: false, clean: false })[0]).toBe("prebuild");
   });
@@ -138,6 +160,13 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
     depsFingerprint: async () => "fp-test",
     unbundledResources: () => [],
     resourceBundles: () => [],
+    binaryPodCandidates: () => [],
+    pods: async () => {
+      throw new Error("no pods step without candidates");
+    },
+    stagePods: async () => {
+      throw new Error("no pod-binaries step without pods");
+    },
     emptyTargets: over.emptyTargets ?? (() => []),
     log: (s) => logs.push(s),
   };
@@ -179,6 +208,117 @@ describe("build", () => {
     const plain = setup();
     await build(plain.root, {}, plain.deps);
     expect((plain.writeIosXtool.mock.calls[0] as unknown[])[0]).not.toHaveProperty("resourceBundles");
+  });
+
+  describe("binary pods", () => {
+    const LIB = "@react-native-ml-kit/text-recognition";
+    const ROOT = { library: LIB, libraryVersion: "2.0.0", dependency: "GoogleMLKit/TextRecognition", requirements: ["8.0.0"] };
+    const BUNDLE = { key: "LatinOCRResources", baseDir: "/c/extracted/x", globs: ["Resources/LatinOCRResources/**"], owner: "MLKitTextRecognition 6.0.0" };
+    const LINKS = { archives: ["/r/ios/build/pod-binaries/archives/libMLKitCommon.a"], frameworks: ["UIKit"], libraries: ["z"], weakFrameworks: [], emptyTargets: ["GTMDefines"] };
+    const RESULT = {
+      resolution: { binary: [], sources: [], roots: [{ pod: "GoogleMLKit", libraries: [LIB] }], changed: [] },
+      wrapped: [],
+      binary: { GoogleMLKit: { product: "GoogleMLKit" } },
+      lock: { lockfileVersion: 1 as const, pods: {} },
+      bundles: [BUNDLE],
+    };
+    function withPods(over: Parameters<typeof setup>[0] = {}) {
+      const t = setup(over);
+      const seen: { roots?: unknown; table?: unknown; staged?: unknown } = {};
+      const deps: BuildDeps = {
+        ...t.deps,
+        binaryPodCandidates: () => [ROOT],
+        pods: async (root, roots, table) => {
+          t.calls.push(`pods ${root === t.root}`);
+          seen.roots = roots;
+          seen.table = table;
+          return RESULT;
+        },
+        stagePods: async (_paths, result) => {
+          t.calls.push("pod-binaries");
+          seen.staged = result;
+          return { dir: "/r/ios/build/pod-binaries", links: LINKS, binaryTargets: ["MLKitCommon"], products: ["GoogleMLKit"] };
+        },
+      };
+      return { ...t, deps, seen };
+    }
+
+    it("runs pods before prebuild and pod-binaries before rn-spm", async () => {
+      const t = withPods();
+      await build(t.root, {}, t.deps);
+      expect(t.calls.slice(0, 5)).toEqual(["pods true", "prebuild", "patches", "pod-binaries", "rn-spm"]);
+      expect(t.seen.roots).toEqual([ROOT]);
+      expect(t.seen.table).toEqual(mergedPodTable());
+      expect(t.seen.staged).toBe(RESULT);
+      expect(t.logs).toContain("▸ pods");
+      expect(t.logs).toContain("▸ pod-binaries");
+    });
+
+    it("stops on an unreachable CDN before anything changes", async () => {
+      const t = withPods();
+      const pods = async () => {
+        t.calls.push("pods");
+        throw new Error("Cannot reach cdn.cocoapods.org (getaddrinfo ENOTFOUND) to read the versions of GoogleMLKit, which are not in rn-xtool's cache (~/.cache/rn-xtool/pods).");
+      };
+      await expect(build(t.root, {}, { ...t.deps, pods })).rejects.toThrow("Cannot reach cdn.cocoapods.org");
+      expect(t.calls).toEqual(["pods"]);
+    });
+
+    it("stages pod-binaries on every build before rn-spm", async () => {
+      const t = withPods({ hasIos: true });
+      await build(t.root, {}, t.deps);
+      await build(t.root, {}, t.deps);
+      expect(t.calls.filter((c) => c === "pod-binaries")).toHaveLength(2);
+      expect(t.calls.filter((c) => c === "pod-binaries" || c === "rn-spm")).toEqual(["pod-binaries", "rn-spm", "pod-binaries", "rn-spm"]);
+    });
+
+    it("stops when staging fails", async () => {
+      const t = withPods();
+      const stagePods = async () => {
+        throw new Error("rn-xtool writes CocoaPods binaries only outside node_modules");
+      };
+      await expect(build(t.root, {}, { ...t.deps, stagePods })).rejects.toThrow("only outside node_modules");
+      expect(t.calls).not.toContain("rn-spm");
+      expect(t.calls).not.toContain("generate");
+    });
+
+    it("does no pods work for an excluded library", async () => {
+      const t = withPods({ cfg: { exclude: [LIB] } });
+      const pkg = join(t.root, "node_modules", LIB);
+      mkdirSync(pkg, { recursive: true });
+      writeFileSync(join(t.root, "package.json"), JSON.stringify({ name: "app", dependencies: { [LIB]: "2.0.0" } }));
+      writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: LIB, version: "2.0.0" }));
+      writeFileSync(join(pkg, "RNMLKitTextRecognition.podspec"), "Pod::Spec.new do |s|\n  s.dependency 'GoogleMLKit/TextRecognition', '8.0.0'\nend\n");
+      await build(t.root, {}, { ...t.deps, binaryPodCandidates: realBinaryPodCandidates });
+      expect(t.calls.some((c) => c.startsWith("pods") || c === "pod-binaries")).toBe(false);
+      const kept = withPods();
+      mkdirSync(join(kept.root, "node_modules"), { recursive: true });
+      writeFileSync(join(kept.root, "package.json"), JSON.stringify({ name: "app", dependencies: { [LIB]: "2.0.0" } }));
+      mkdirSync(join(kept.root, "node_modules", LIB), { recursive: true });
+      for (const f of ["package.json", "RNMLKitTextRecognition.podspec"]) writeFileSync(join(kept.root, "node_modules", LIB, f), readFileSync(join(pkg, f)));
+      await build(kept.root, {}, { ...kept.deps, binaryPodCandidates: realBinaryPodCandidates });
+      expect(kept.calls).toContain("pods true");
+    });
+
+    it("passes the binary pods to the patches and rn-spm steps", async () => {
+      const applyPatches = vi.fn(async () => {});
+      const t = withPods({ applyPatches });
+      const runRnSpm = vi.fn(async () => {});
+      await build(t.root, {}, { ...t.deps, runRnSpm });
+      expect(applyPatches).toHaveBeenCalledWith(t.root, expect.objectContaining({ podTable: mergedPodTable(undefined, RESULT.binary) }));
+      expect(runRnSpm).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ binary: RESULT.binary }));
+    });
+
+    it("passes the links and the bundles to generate", async () => {
+      const svg = { key: "RNSVGFilters", baseDir: "/p/svg", globs: ["apple/**/*.iphoneos.metallib"], owner: "react-native-svg" };
+      const t = withPods({ emptyTargets: () => ["GTMDefines", "Other"] });
+      await build(t.root, {}, { ...t.deps, resourceBundles: () => [svg] });
+      expect((t.writeIosXtool.mock.calls[0] as unknown[])[0]).toMatchObject({
+        pods: LINKS,
+        emptyTargets: ["GTMDefines", "Other"],
+        resourceBundles: [BUNDLE, svg],
+      });
+    });
   });
 
   it("leaves no fingerprint in the state when xtool-build fails", async () => {

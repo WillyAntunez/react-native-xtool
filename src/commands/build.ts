@@ -19,6 +19,7 @@ import { checkFrameworkSymbols } from "../pipeline/symbols.js";
 import {
   allowedLimitText,
   allowKnownLimits,
+  binaryPodCandidates,
   excludeLines,
   installFailures,
   libraryFailures,
@@ -29,7 +30,7 @@ import {
   type LibraryCheckOptions,
 } from "../project/earlyChecks.js";
 import { entitlementLines, readEntitlements, type AppEntitlements } from "../project/entitlements.js";
-import { mergedPodTable, type PodTable } from "../project/podTable.js";
+import { mergedPodTable, type PodBinary, type PodTable } from "../project/podTable.js";
 import {
   detectProjectKind,
   readProject,
@@ -43,6 +44,9 @@ import { readState, writeState, type BuildState } from "../state.js";
 import { run } from "../tools/exec.js";
 import { devBuild, xtoolBin } from "../tools/xtool.js";
 import { emptyTargetsOf } from "../pods/emptyTargets.js";
+import type { PodRoot } from "../pods/resolve.js";
+import { stagePodBinaries, type StagedPods } from "../pods/stage.js";
+import { runPodsStep, type PodsStepResult } from "../pods/step.js";
 
 export const BUILD_STEP_NAMES = [
   "patches",
@@ -67,6 +71,8 @@ export interface BuildPlanInput {
    */
   rnArtifacts: boolean;
   expoPlugin: ExpoPlugin;
+  /** Binary CocoaPods pods to resolve: `pods` first, `pod-binaries` right before rn-spm. */
+  pods?: boolean;
 }
 
 /** Whether `installed` is xtool's signed form of `bundleIdentifier`: XTL-<one segment>.<bundleIdentifier>, exactly. */
@@ -81,8 +87,15 @@ function signedIdOf(installed: string, bundleIdentifier: string): boolean {
  * because the plugin needs the JSI headers.
  * Bare: never prebuild (`--clean` removes the build outputs instead), rn-artifacts only for the
  * vendored scripts, ExpoModulesJSI only with Expo modules set up, app-config only with expo-constants.
+ * With binary pods, `pods` comes first (before anything changes in the project) and `pod-binaries` right before rn-spm.
  */
 export function buildSteps(state: BuildPlanInput): string[] {
+  const steps = plainSteps(state);
+  if (!state.pods) return steps;
+  return ["pods", ...steps.flatMap((s) => (s === "rn-spm" ? ["pod-binaries", s] : [s]))];
+}
+
+function plainSteps(state: BuildPlanInput): string[] {
   if (state.kind === "expo") {
     const vendored = state.expoPlugin === "vendored";
     const steps: string[] = BUILD_STEP_NAMES.filter(
@@ -157,6 +170,7 @@ export interface BuildDeps {
       expoPlugin: ExpoPlugin;
       pods?: Record<string, PodEntry>;
       exclude?: readonly string[];
+      binary?: Record<string, PodBinary>;
     },
   ) => Promise<void>;
   buildJsi: (paths: ProjectPaths, opts?: { rnHeaders?: JsiRnHeaders; headersXcframework?: boolean }) => Promise<RuntimeFramework>;
@@ -181,6 +195,12 @@ export interface BuildDeps {
   unbundledResources: (root: string) => { pkg: string; items: string[] }[];
   /** After rn-spm: the scaffolded libraries' `resource_bundles` generate builds into the app. */
   resourceBundles: (root: string) => BundleSource[];
+  /** The binary CocoaPods pods the scaffolded libraries depend on (`unmapped` dependencies; excluded libraries skipped). */
+  binaryPodCandidates: (root: string, opts: LibraryCheckOptions) => PodRoot[];
+  /** The `pods` step: resolve, announce, download, verify, wrap, record the lock. */
+  pods: (root: string, roots: PodRoot[], table: PodTable, opts: { podsFile?: string; log: (s: string) => void }) => Promise<PodsStepResult>;
+  /** The `pod-binaries` step: ios/build/pod-binaries, rebuilt on every build. */
+  stagePods: (paths: ProjectPaths, result: PodsStepResult) => Promise<StagedPods>;
   /** The app's CODE_SIGN_ENTITLEMENTS file (Debug); throws an EntitlementsError when xtool could not sign with it. */
   readEntitlements: (project: ProjectInfo, iosDir: string) => AppEntitlements | undefined;
   log: (s: string) => void;
@@ -219,6 +239,9 @@ const realDeps: BuildDeps = {
   depsFingerprint: depsFingerprint,
   unbundledResources,
   resourceBundles: scaffoldedResourceBundles,
+  binaryPodCandidates: (root, opts) => binaryPodCandidates(root, opts),
+  pods: (root, roots, table, opts) => runPodsStep(root, roots, table, { ...(opts.podsFile !== undefined ? { podsFile: opts.podsFile } : {}), log: opts.log }),
+  stagePods: (paths, result) => stagePodBinaries(paths, result),
   emptyTargets: (root, opts) => {
     const table = mergedPodTable(opts.pods);
     return emptyTargetsOf(table, [...scaffoldedPods(root, table, opts).values()].flat());
@@ -298,6 +321,7 @@ export async function build(
 
   // SDK 57: the vendored Expo plugin builds against RN's prebuilt artifacts and needs the JSI headers first.
   const vendoredExpo = project.kind === "expo" && project.expoPlugin === "vendored";
+  const podRoots = d.binaryPodCandidates(root, libraryChecks);
   const steps = buildSteps({
     kind: project.kind,
     hasIos: d.exists(paths.ios),
@@ -306,8 +330,16 @@ export async function build(
     hasExpoConstants: project.hasExpoConstants,
     rnArtifacts: (project.rnScripts === "vendored" || vendoredExpo) && !config.rnArtifactsDir,
     expoPlugin: project.expoPlugin,
+    pods: podRoots.length > 0,
   });
   const planned = (name: string): boolean => steps.includes(name);
+
+  // Before anything changes in the project: an unreachable host, a changed file or a short disk stops here.
+  const table = mergedPodTable(config.pods);
+  const pods = planned("pods")
+    ? await step("pods", () => d.pods(paths.root, podRoots, table, { ...(podsFile !== undefined ? { podsFile } : {}), log: d.log }))
+    : undefined;
+  const binary = pods !== undefined && Object.keys(pods.binary).length > 0 ? pods.binary : undefined;
 
   const prebuilds = planned("prebuild") || planned("prebuild --clean");
   if (prebuilds) {
@@ -346,7 +378,7 @@ export async function build(
     await d.applyPatches(paths.root, {
       rnScripts: project.rnScripts,
       expoPlugin: project.expoPlugin,
-      podTable: mergedPodTable(config.pods),
+      podTable: mergedPodTable(config.pods, binary),
       ...(config.exclude !== undefined ? { exclude: config.exclude } : {}),
       kind: project.kind,
     });
@@ -364,6 +396,8 @@ export async function build(
     return d.buildJsi(paths, { rnHeaders: jsiRnHeaderDirs(artifactsRoot), headersXcframework: true });
   };
   let jsi = vendoredExpo && planned("jsi") ? await step("jsi", buildJsi) : undefined;
+  // On every build: the scaffolds link ../pod-binaries, and generate force-loads its archives.
+  const staged = pods !== undefined && planned("pod-binaries") ? await step("pod-binaries", () => d.stagePods(paths, pods)) : undefined;
   await step("rn-spm", () =>
     d.runRnSpm(paths, {
       rnArtifactsDir: artifactsRoot,
@@ -372,11 +406,12 @@ export async function build(
       expoPlugin: project.expoPlugin,
       ...(config.pods !== undefined ? { pods: config.pods } : {}),
       ...(config.exclude !== undefined ? { exclude: config.exclude } : {}),
+      ...(binary !== undefined ? { binary } : {}),
     }),
   );
   const resources = unbundledResourcesLine(d.unbundledResources(paths.root));
   if (resources !== undefined) d.log(resources);
-  const resourceBundles = d.resourceBundles(paths.root);
+  const resourceBundles = [...(pods?.bundles ?? []), ...d.resourceBundles(paths.root)];
   // Expo 58 and bare: jsi after rn-spm, as before.
   if (!vendoredExpo && planned("jsi")) jsi = await step("jsi", buildJsi);
   if (planned("app-config")) await step("app-config", () => d.generateAppConfig(paths));
@@ -430,7 +465,7 @@ export async function build(
         installedBundleId: previousState.installedBundleId,
       }),
   };
-  const emptyTargets = d.emptyTargets(root, libraryChecks);
+  const emptyTargets = [...new Set([...d.emptyTargets(root, libraryChecks), ...(staged?.links.emptyTargets ?? [])])].sort();
   await step("generate", async () => {
     await d.writeIosXtool({
       project,
@@ -440,6 +475,7 @@ export async function build(
       lanIp,
       log: d.log,
       prebuildIcon,
+      ...(staged !== undefined ? { pods: staged.links } : {}),
       ...(emptyTargets.length > 0 ? { emptyTargets } : {}),
       ...(resourceBundles.length > 0 ? { resourceBundles } : {}),
     });
