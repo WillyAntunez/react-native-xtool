@@ -37,8 +37,11 @@ node node_modules/react-native/scripts/setup-apple-spm.js add|update \
 ```
 
 `add` the first time, `update` once the marker `ios/<App>.xcodeproj/.spm-injected.json` exists. The `--config-command` makes Expo's autolinking
-supply the module list (needed for Expo modules). Artifacts come from Maven (`repo.reactnative.dev/maven2`, falling back
-to `repo1.maven.org/maven2`): `react-native-artifacts-<v>-reactnative-{core,dependencies}-{debug,release}.tar.gz` and
+supply the module list (needed for Expo modules). When it reports libraries without a `Package.swift`, rn-xtool
+scaffolds them with the bare path's driver: `scripts/rn-spm-generate.js --scripts-root node_modules/react-native/scripts`
+with the same `--config-command`, plus `--scaffold --results ios/build/rn-xtool-scaffold-results.json` and one
+`--only <name>` per library. Then it runs `add|update` again. Artifacts come from Maven (`repo.reactnative.dev/maven2`,
+falling back to `repo1.maven.org/maven2`): `react-native-artifacts-<v>-reactnative-{core,dependencies}-{debug,release}.tar.gz` and
 `hermes-ios-<hv>-hermes-ios-<flavor>.tar.gz`, cached in `~/Library/Caches/ReactNative/spm-artifacts/<v>/<flavor>`.
 `rnArtifactsDir` (config) skips the download for offline use; release resolves to a symlink to debug. The Hermes
 framework is named `hermesvm.framework`. Expo SDK 57 never runs `setup-apple-spm.js`: it uses the driver of the bare
@@ -67,7 +70,7 @@ SDK 58 project gets these four:
 | `patches/expo-modules-autolinking+58.0.16.patch` | Removes the `process.platform !== 'darwin'` gate in the `@ExpoModule` scanner (the Linux macros binary `@expo/modules-macros-linux-x64` works). |
 | `patches/expo+58.0.21.patch` | Expo's SPM plugin (`expo/scripts/spm/`): resolves the macro plugin binary per platform; adds the umbrella Foundation/UIKit imports to pure-Swift modules; builds mixed Swift + Objective-C and Objective-C-only modules; skips meta pods and placeholder files; links generated packages to their podspec dependencies (`s.dependency` and `add_dependency(s, "<Pod>")`, React Native libraries with a Package.swift included); leaves headers that import the module's own `<Product>-Swift.h` out of the Swift umbrella (X3); adds a scaffolded mixed dependency's importer paths to `swiftSettings` (X6c); excludes Xcode-only resources; refuses vendored-C modules (expo-sqlite). See `docs/upstream/expo-spm-plugin-umbrella.md` and `docs/upstream/expo-spm-plugin-mixed-modules.md`. |
 | `patches/expo-modules-jsi+58.0.21.patch` | Swift 6.4 rejects a `public` member in an extension of a C++ type under library evolution (`CppError.message`); made internal. |
-| `patches/react-native+0.88.1.patch` | About 1.95k lines across `read-podspec.js`, `scaffold-package-swift.js` and `spm-utils.js`: 17 generic fixes to RN's `spm scaffold` (Ruby bare lists and locals, subspecs, `header_dir`, platform-scoped fields, defines, mixed Swift + Objective-C/C++ targets, known CocoaPods dependencies mapped to SwiftPM packages, Swift umbrellas without the module's own `-Swift.h`, `#{package['version']}` in flags and defines, subspec `header_mappings_dir`, the `// rn-xtool-swift-importer-paths:` marker, ...) and a header-less module map for the per-app header farm. Scaffold revision 3. See `docs/upstream/react-native-scaffolder.md`. |
+| `patches/react-native+0.88.1.patch` | About 2.8k lines across `read-podspec.js`, `scaffold-package-swift.js` and `spm-utils.js`: 23 generic fixes to RN's `spm scaffold` (Ruby bare lists and locals, subspecs, `header_dir`, platform-scoped fields, defines, mixed Swift + Objective-C/C++ targets, known CocoaPods dependencies mapped to SwiftPM packages, Swift umbrellas without the module's own `-Swift.h`, `#{package['version']}` in flags and defines, subspec `header_mappings_dir`, the `// rn-xtool-swift-importer-paths:` marker, dependencies on packages that are not installed left out, the Swift 5 language mode, Swift compilation conditions, `onlyDeps`, ...) and two to the per-app header farm (a header-less module map, bare forwarders to codegen headers). Scaffold revision 4. See `docs/upstream/react-native-scaffolder.md`. |
 
 Two more are bundled. `patches/react-native+0.88.0.patch` is a byte-identical copy of the react-native patch for bare
 React Native 0.88.0 (a test keeps the two identical, so a fix edits both). `patches/expo-modules-jsi+57.1.3.patch` is
@@ -210,8 +213,9 @@ differences:
   with `EXPO_PRECOMPILED_MODULES_PATH=ios/build/expo-precompiled` next to `RN_SPM_SWIFT_HEADERS_DIR`. The driver sets
   `RN_SPM_EXPO_PLUGIN` (edit E5 of `vendor/rn-spm` loads it as `expo`'s autolinking plugin, since SDK 57's `expo`
   declares none) and `RN_XTOOL_PROJECT_ROOT` (P2: the plugin resolves `@expo/config-plugins` through the app's `expo`,
-  and `xcode` next to it, never from rn-xtool's own copies). The scaffold rerun adds `--scaffold` and skips `expo`
-  (D1): the plugin provides it, and refuses an `expo` with a scaffolded `Package.swift`.
+  and `xcode` next to it, never from rn-xtool's own copies). The scaffold rerun adds `--scaffold`, `--results <file>` and
+  one `--only <name>` per library, and skips `expo` (D1): the plugin provides it, and refuses an `expo` with a
+  scaffolded `Package.swift`.
 - **Section 3**: `selectBundledPatches` with `lineOnly` stages, per package, the patch for the installed version, else
   the highest bundled one of its release line, and never another SDK's: today only `expo-modules-jsi+57.1.3.patch`
   (also on a newer 57.x jsi). A patch that does not apply gets the SDK 57 `"overrides"` remedy (`floorRemedy` in

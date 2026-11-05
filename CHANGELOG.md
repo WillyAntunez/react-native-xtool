@@ -13,6 +13,11 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 - With expo-dev-client, run `rn-xtool install` once, so that `rn-xtool start` can announce Metro under the installed
   app's bundle id. Until then `start` prints "ℹ No installed bundle id recorded: run `rn-xtool install` once so
   `start` can announce Metro under the app's real id (Expo SDK 58's dev launcher hides other servers)."
+- The scaffolder is now revision 4, so every scaffold patch rn-xtool persisted in your `patches/` before this release
+  gets a warning at each `build`: "⚠ patches/<name> was written by an older rn-xtool scaffolder (revision <n>, now 4);
+  delete it so rn-xtool regenerates it (also remove node_modules/<package> and reinstall: that copy still has the old
+  Package.swift)". Do what it says: delete the patch, remove the library from `node_modules` and reinstall it, then
+  build; rn-xtool scaffolds it again and persists the new patch. Until then the build goes on with the older manifest.
 
 ### Added
 - The red screen "No script URL provided" on the first launch clears by itself after Allow. Debug builds of apps
@@ -51,6 +56,11 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   (also worklets 0.10.x when it is scaffolded again), so it no longer looks for the legacy Hermes inspector headers.
   0.85.1 and 0.85.2 build with a warning that says to move to 0.85.3. The daily drift watch checks 0.85, and the
   weekly exploration covers 0.81–0.84. See [bare-react-native.md](docs/bare-react-native.md#react-native-085).
+- `build` names the resources of scaffolded libraries that do not reach the app, in one line after `rn-spm`, for
+  example "ℹ Not copied into the app: react-native-svg (RNSVGFilters.bundle). Code that loads them at run time does
+  not find them." When every resource is a privacy manifest, the line ends "Development builds run without them;
+  privacy manifests are read only at App Store submission." It reads the podspec's `resource_bundles` and
+  `resources`. See [troubleshooting.md](docs/troubleshooting.md#scaffolded-libraries).
 
 ### Changed
 - The first-run checklist line about the red screen now reads: "On the first launch iOS asks for Local Network access,
@@ -63,6 +73,45 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 - The README asks for about 25 GB of free disk for setup and the first build, plus the Xcode.xip (was about 15 GB).
 - The SDK-only check "Need at least 10 GB free in your home filesystem (~/.swiftpm) to install the Darwin SDK" is
   replaced by the setup-wide check above.
+- The scaffold step scaffolds only the libraries React Native reports without a `Package.swift`, and forces nothing:
+  every other library's `Package.swift`, persisted or edited by hand, stays as it is. To re-scaffold a library after
+  editing its podspec, delete its `Package.swift`, its `react-native-spm-prefix.h` and its patch in `patches/`, then
+  build. See [troubleshooting.md](docs/troubleshooting.md#scaffolded-libraries).
+- Expo SDK 58 scaffolds through rn-xtool's driver (`scripts/rn-spm-generate.js --scaffold`), as bare apps and Expo
+  SDK 57 do, with Expo's autolinking command as its config command, instead of React Native's
+  `setup-apple-spm.js scaffold`.
+- Scaffolded Swift compiles in the Swift 5 language mode, as CocoaPods compiles a pod, unless the podspec declares
+  `swift_version` 6 or higher.
+
+### Fixed
+- react-native-vision-camera 4.7.3, react-native-video 6.19.3, react-native-device-info 15.0.2 and
+  @react-native-community/netinfo 11.5.2 build without hand fixes on bare React Native 0.88.1, and device-info on Expo
+  SDK 58 (checked by building only, on 2026-11-04). Scaffolder fixes 20–24, in
+  [upstream/react-native-scaffolder.md](docs/upstream/react-native-scaffolder.md):
+  - a dependency on a React Native library that is not autolinked for iOS is left out, as CocoaPods leaves it out,
+    with the subspec that declares it: vision-camera without react-native-worklets-core builds without frame
+    processors, and the scaffold says so (`Dependency "react-native-worklets-core" is not installed (or not linked for
+    iOS); left out with the subspec "FrameProcessors" that declares it (its sources, headers, settings and
+    dependencies), as CocoaPods leaves it out.`);
+  - the Swift 5 language mode above (video and vision-camera);
+  - an umbrella directory next to other directories in the public headers gets the `include/<Name>/` shim
+    (device-info);
+  - a library's bare `#import "<Name>Spec.h"` of its codegen header resolves (netinfo);
+  - literal `SWIFT_ACTIVE_COMPILATION_CONDITIONS` reach the Swift compiler. vision-camera's location tagging stays
+    compiled out: its podspec switches it with a Ruby ternary.
+
+  react-native-video's Google IMA ads and video caching, which its podspec adds only on a Podfile flag, are not wired.
+  See [libraries.md](docs/libraries.md).
+- Installing a library no longer rewrites the `Package.swift` of the libraries scaffolded before it: hand edits and
+  persisted scaffolds stay as they are.
+- A library that fails to scaffold is reported first, with the scaffolder's reason: "✖ Scaffolding <library> failed:
+  <reason>", followed by that library's warnings. Nothing is persisted for it, and React Native does not run a second
+  time. That second run's error (such as `"react-native-vision-camera" has mixed Swift + Objective-C/C++ sources`)
+  used to hide the cause.
+- A patch left in `patches/` after `npm uninstall` no longer stops the `patches` step. It is skipped, and the other
+  patches apply: "⚠ patches/<file> is for <package>, which is not installed; skipped. Delete it if you removed the
+  library." `doctor --project` prints the same line. See
+  [troubleshooting.md](docs/troubleshooting.md#build-and-patches).
 
 ## [0.1.0-alpha.5] - 2026-11-04
 

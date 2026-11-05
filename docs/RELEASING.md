@@ -36,6 +36,51 @@ git push --follow-tags
 Then create a GitHub release from the tag with the notes (what changed, known limits, tested xtool/Swift/Expo
 versions). Check the result: `npm view react-native-xtool dist-tags` and `npx react-native-xtool@alpha doctor`.
 
+## Scaffolder changes
+
+React Native's scaffolder ships twice: as `patches/react-native+0.88.0.patch` and its byte-identical copy
+`react-native+0.88.1.patch`, applied to an installed 0.88.x, and as `vendor/rn-spm/`, pristine 0.88.0 with that patch
+and `vendor/rn-spm/rn-xtool-edits.patch` (E1–E5) applied, for 0.85–0.87 and Expo SDK 57. A change to the scaffolder:
+
+1. Edits the vendored copy (`vendor/rn-spm/spm/*.js`), and documents the fix in
+   [upstream/react-native-scaffolder.md](upstream/react-native-scaffolder.md) and the count in
+   [vendor/rn-spm/README.md](../vendor/rn-spm/README.md).
+2. Regenerates both 0.88 patches from it, never by editing them as text, so they stay identical. From the repo root:
+
+   ```sh
+   T=$(mktemp -d); mkdir -p "$T/x" "$T/a/node_modules/react-native" "$T/b/node_modules/react-native/scripts"
+   tar -xzf tests/.cache/react-native-0.88.0.tgz -C "$T/x" package/scripts/setup-apple-spm.js package/scripts/spm \
+     package/scripts/codegen/templates/Package.swift.spm-template
+   cp -a "$T/x/package/scripts" "$T/a/node_modules/react-native/scripts"
+   cp -a vendor/rn-spm/setup-apple-spm.js vendor/rn-spm/spm vendor/rn-spm/codegen \
+     "$T/b/node_modules/react-native/scripts/"
+   patch -R -p1 -F0 -d "$T/b/node_modules/react-native/scripts" -i "$PWD/vendor/rn-spm/rn-xtool-edits.patch"
+   (cd "$T" && git diff --no-index --no-color --src-prefix= --dst-prefix= \
+      a/node_modules/react-native/scripts b/node_modules/react-native/scripts) > "$T/rn.patch"
+   cp "$T/rn.patch" patches/react-native+0.88.0.patch && cp "$T/rn.patch" patches/react-native+0.88.1.patch
+   ```
+
+   When the reverse `patch` fails, the change moved the context of an E-edit. That `b/` is half-reversed and holds
+   `.rej` files, so a diff from it would drop the E-edit from `rn-xtool-edits.patch` and move it into the 0.88 patch.
+   Copy the vendored files into a new `b/`, rerun the reverse without `-F0` (`patch -R -p1 --no-backup-if-mismatch`),
+   and check that it leaves no `.rej` file (`find "$T/b" -name '*.rej'` prints nothing; if it does, update that hunk of
+   `rn-xtool-edits.patch` by hand first). Regenerate `rn-xtool-edits.patch` as the diff from that `b/` tree to
+   `vendor/rn-spm/` (`git diff --no-index --src-prefix=a/ --dst-prefix=b/`, paths relative to `scripts/`), delete
+   `$T`, then run the steps again.
+3. Bumps the scaffold revision when the change alters what a scaffold writes (a manifest, a shim, a marker):
+   `RN_XTOOL_SCAFFOLD_REVISION` in `vendor/rn-spm/spm/scaffold-package-swift.js` and `SCAFFOLD_REVISION` in
+   `src/pipeline/patches.ts`, together (a test keeps them equal). Users then get the "older rn-xtool scaffolder"
+   warning for each persisted scaffold patch, so the CHANGELOG's "Upgrading" section says so. A change that alters no
+   scaffold output keeps the revision.
+4. Regenerates the goldens in `tests/fixtures/scaffold-golden/` when the reference app's manifests change (the golden
+   test reads `RN_XTOOL_REF_APP`, else `../app`).
+
+The byte tests need the pinned tarballs in `tests/.cache` (`node scripts/fetch-test-tarballs.mjs`); without them they
+skip, and the vitest summary says so. Before committing a scaffolder change, run `npx vitest run
+tests/vendor-rn-spm.test.ts tests/patches.test.ts tests/patches-upstream.test.ts tests/rn-scaffolder.test.ts` and check
+that none of the provenance, identical-patch, upstream dry-run or "the patched RN files carry the patch" tests is
+skipped. Each new fix adds one hunk test to "the patched RN files carry the patch".
+
 ## Drift watch
 
 `.github/workflows/drift-watch.yml` checks every day that rn-xtool still works with the newest patch release of each

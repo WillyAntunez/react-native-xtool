@@ -261,14 +261,23 @@ classic's `nohoist`). Only parent folders' `node_modules` are checked, not Node'
   scaffolder excludes them and prints `Skipped N Metal shader(s)`; the library works, but features that rely on those
   shaders are unavailable in the build.
 - **svg Metal filters stay unavailable under SwiftPM:** react-native-svg loads its prebuilt `*.metallib` files from
-  `RNSVGFilters.bundle`, declared in the podspec through `s.ios.resource_bundles`. The scaffolder does not read resource
-  bundles yet (on any host, macOS included), so the bundle is never built or copied into the app. Skipping `.metal`
-  compilation is the only Linux-specific part. Rendering that does not use those filters is unaffected.
+  `RNSVGFilters.bundle`, declared in the podspec through `s.ios.resource_bundles`. A scaffolded library's resources are
+  not copied into the app (on any host, macOS included), so the bundle is never built, and `build` names it in its
+  `ℹ Not copied into the app` line ([below](#scaffolded-libraries)). Skipping `.metal` compilation is the only
+  Linux-specific part. Rendering that does not use those filters is unaffected.
 - **An Expo config plugin change is missing from the app** (for example expo-image-picker's photo library text in
   Info.plist): `build` runs `expo prebuild` only when `ios/` is missing. After adding or changing a config plugin in
   `app.json`, run `rn-xtool build --clean` (or `run --clean`), which re-runs `expo prebuild --clean`.
 - **A committed project patch no longer applies** (after a library upgrade): delete it from `patches/` and let
   `rn-xtool build` re-scaffold it.
+- **"⚠ patches/<file> is for <package>, which is not installed; skipped. Delete it if you removed the library.":** a
+  patch in your `patches/` (subfolders included) is for a package that has no `node_modules/<package>/package.json`,
+  usually after `npm uninstall`. patch-package stops on such a patch, so the `patches` step leaves it out, applies the
+  other patches from a copy in `ios-xtool/.project-patches`, and the build goes on. `doctor --project` prints the same
+  line (`⚠ patches — patches/<file> is for <package>, …`). If you removed the library, delete the patch; if not, run
+  `npm install`, and the next build applies the patch again. A nested package's patch
+  (`<parent>++<child>+<version>.patch`) is named `<parent> => <child>`. A package installed at another version than
+  its patch's is not skipped: patch-package applies the patch with its own version warning.
 - **"⚠ patches/<name> was written by an older rn-xtool scaffolder (revision <n>, now 4); delete it so rn-xtool
   regenerates it (also remove node_modules/<package> and reinstall: that copy still has the old Package.swift)":** the
   `patches` step found a persisted scaffold patch from an older scaffolder. Revision 1 patches lack the Swift importer
@@ -278,7 +287,11 @@ classic's `nohoist`). Only parent folders' `node_modules` are checked, not Node'
   can fail with `'RNSReactBaseView.h' file not found` (a mixed library, such as react-native-screens 4.26) or
   `'RNSDefines.h' file not found` (a clang-only one, such as react-native-screens 4.30). Do what the warning says:
   delete the patch, remove the library from `node_modules` and reinstall it, then build; rn-xtool scaffolds it again and
-  persists the new patch.
+  persists the new patch. This release's scaffolder is revision 4, so each scaffold patch persisted before it gets the
+  line at every build until it is regenerated, for example `⚠ patches/react-native-screens+4.30.0.patch was written by
+  an older rn-xtool scaffolder (revision 3, now 4); delete it so rn-xtool regenerates it (also remove
+  node_modules/react-native-screens and reinstall: that copy still has the old Package.swift)`. Until then the build
+  goes on with the older manifest.
 - **"⚠ patches/<name> was scaffolded for React Native <version>; delete it so rn-xtool regenerates it for <installed>
   (also remove node_modules/<package> and reinstall: that copy still has the old Package.swift)":** the persisted
   scaffold patch was made for another React Native version, for example after moving a project from 0.88.0 to 0.88.1.
@@ -351,6 +364,62 @@ classic's `nohoist`). Only parent folders' `node_modules` are checked, not Node'
 - **"Could not write node_modules/<package>/Package.swift (EACCES) to make it portable to Linux":** `node_modules` is
   read-only, often after `sudo npm install`. Make it writable (reinstall without `sudo`), or apply the portable
   manifest yourself.
+
+### Scaffolded libraries
+
+The `rn-spm` step scaffolds only the libraries React Native reports without a `Package.swift`, and it forces nothing:
+the `Package.swift` of every other library, persisted in `patches/` or edited by hand, stays as it is
+([how it works](how-it-works.md#cocoapods-only-libraries)).
+
+- **"✖ Scaffolding <library> failed: <reason>":** the scaffolder wrote no `Package.swift` for a library React Native
+  named, and the build stops there. The first line is the real cause, in the scaffolder's words, for example
+  `✖ Scaffolding @react-native-community/netinfo failed: Podspec read failed: EACCES: permission denied, open
+  '<project>/node_modules/@react-native-community/netinfo/react-native-netinfo.podspec'`. That library's own scaffold
+  warnings follow, one `  ! <warning>` line each, and a blank line separates the libraries when several failed. The
+  reason is `no Package.swift was written` when the scaffolder gave none, and `the scaffolder did not find <library>
+  among the autolinked iOS libraries` when React Native named a library the scaffolder did not see. Nothing is
+  persisted for a failed library, and React Native does not run a second time; the libraries that did scaffold are
+  persisted as usual (`✔ scaffold — persisted patches/<file>`). Fix the cause and build again.
+- **A library keeps its old `Package.swift` after you edit its podspec, or install a dependency it left out:** a
+  library is scaffolded again only when React Native reports it without a `Package.swift`. To re-scaffold one now,
+  delete its `Package.swift`, its `react-native-spm-prefix.h` (when it has one) and its patch in `patches/`, then
+  build:
+
+  ```sh
+  rm -f node_modules/<package>/Package.swift node_modules/<package>/react-native-spm-prefix.h
+  rm patches/<package>+<version>.patch
+  rn-xtool build
+  ```
+
+  Delete all three. With the patch kept, the `patches` step puts the old `Package.swift` back, and a patch whose new
+  files are only partly in `node_modules` (the `Package.swift` deleted, the prefix header left) no longer applies: the
+  build stops with `✖ Applying the project's patches/ failed.` Removing the library from `node_modules`, reinstalling
+  it and deleting its patch works too.
+- **"! react-native-vision-camera: Dependency "react-native-worklets-core" is not installed (or not linked for iOS);
+  left out with the subspec "FrameProcessors" that declares it (its sources, headers, settings and dependencies), as
+  CocoaPods leaves it out.":** a podspec depends on a React Native library that is not autolinked for iOS. The
+  scaffolder leaves that dependency out, as CocoaPods does, and with it the subspec that declares it, so
+  react-native-vision-camera builds without frame processors. A dependency of the main spec is left out alone, and
+  every source stays: `Dependency "<name>" is not installed (or not linked for iOS); left out, as CocoaPods leaves it
+  out.` Installing the dependency later does not bring the subspec back, and `build` prints no warning about it: the
+  library's persisted scaffold is current, and React Native scaffolds only the new package. To get the subspec,
+  install the dependency, then re-scaffold the library as above.
+- **Swift language mode:** scaffolded Swift compiles in the Swift 5 language mode (`swiftLanguageModes: [.v5]` in the
+  generated `Package.swift`), as CocoaPods compiles a pod, unless the podspec declares `swift_version` 6 or higher; an
+  interpolated or computed value counts as not declared. A library that declares Swift 6 compiles in Swift 6, as under
+  CocoaPods. In a library that declares no Swift 6, strict-concurrency errors such as `static property 'shared' is not
+  concurrency-safe because non-'Sendable' type 'AudioSessionManager' may have shared mutable state` (react-native-video
+  6.19.3) come from a scaffold of revision 3 or older: see the revision warning above.
+- **"ℹ Not copied into the app: <library> (<resources>), …. Code that loads them at run time does not find them.":**
+  `build` prints it once, right after `rn-spm`, for the scaffolded libraries whose podspec declares resources
+  (`resource_bundles`, `resources`): the scaffolded `Package.swift` holds no resources, and rn-xtool copies no bundle
+  into `App.app`. A bundle made only of privacy manifests is named by its files, any other bundle as `<name>.bundle`
+  (react-native-svg's `RNSVGFilters.bundle`), and a plain resource by its file name. Values under a Ruby condition,
+  and those for other platforms than iOS, are not read. A feature that loads one of these resources at run time is
+  unavailable, such as svg's Metal filters. When every resource named is a privacy manifest, the line ends
+  "Development builds run without them; privacy manifests are read only at App Store submission." instead, for
+  example `ℹ Not copied into the app: react-native-device-info (PrivacyInfo.xcprivacy). Development builds run without
+  them; privacy manifests are read only at App Store submission.`; there is nothing to do for a development build.
 
 ## Newer than the verified versions
 
@@ -630,6 +699,9 @@ checks, so it also runs on a machine without Swift or xtool. Run it from the pro
 - **podspecs** (information only): the podspec features the dependencies use that rn-xtool tracks (`subspecs`,
   `compiler_flags`, `header_dir`, `header_mappings_dir`, `vendored_frameworks`, `resource_bundles`), each with the
   packages that use it, or `no tracked podspec features in the dependencies`.
+- **patches** (only when a patch's package is not installed): one ⚠ line per such patch in `patches/`, the `build` line
+  without its `⚠`: `patches/<file> is for <package>, which is not installed; skipped. Delete it if you removed the
+  library.` ([details](#build-and-patches)).
 - **known-limits**: the setups rn-xtool refuses before a build ([Unsupported setups](#unsupported-setups)). With none,
   it reads `none of the setups rn-xtool refuses early (CocoaPods-only libraries with prebuilt binaries or vendored C
   sources, pnpm, Yarn PnP, hoisted packages)`. Otherwise there is one ✖ line per refusal, with its reason and a link
