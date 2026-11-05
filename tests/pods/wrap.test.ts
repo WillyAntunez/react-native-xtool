@@ -349,6 +349,21 @@ describe("wrapPod", () => {
       expect(readFileSync(path.join(headers, "module.modulemap"), "utf8")).toContain('header "MLKitFoo/MLKitFoo.h"');
     });
 
+    it.each([
+      ["LibraryPath", { LibraryPath: "../../../outside/libX.a" }],
+      ["LibraryPath", { LibraryPath: "/usr/lib/libX.a" }],
+      ["HeadersPath", { LibraryPath: "libMLKitFoo.a", HeadersPath: "../../.." }],
+      ["LibraryIdentifier", { LibraryIdentifier: "../ios-arm64" }],
+    ])("stops on a slice whose %s leaves the xcframework (row 82)", async (key, over) => {
+      const slice = { ...device, ...over };
+      xcframework([slice]);
+      await expect(wrap("MLKitFoo", [XCF])).rejects.toThrow(
+        new PodsError(
+          `MLKitFoo 1.0.0 (needed by ${LIB}) ships ${XCF}, whose ${slice.LibraryIdentifier} slice names a ${key} that leaves it (${(slice as Record<string, string>)[key]}). See ${LINK}`,
+        ),
+      );
+    });
+
     it("stops without a device slice", async () => {
       xcframework([simulator]);
       await expect(wrap("MLKitFoo", [XCF])).rejects.toThrow(

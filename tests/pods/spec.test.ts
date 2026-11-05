@@ -142,6 +142,30 @@ describe("parsePodSpec", () => {
     );
   });
 
+  it.each([
+    ["vendored_frameworks", "/opt/Frameworks/X.framework"],
+    ["vendored_frameworks", "../X.framework"],
+    ["vendored_libraries", "lib/../../libX.a"],
+    ["source_files", "../secret.h"],
+    ["preserve_paths", "/etc"],
+    ["resources", "Resources/../../x.png"],
+    ["module_map", "../module.modulemap"],
+    ["ios.source_files", "Sources/..\\..\\x.h"],
+    ["resource_bundles", { X: ["../Res/*"] }],
+  ] as [string, unknown][])("refuses a %s path that leaves the pod's folder (row 82)", (key, value) => {
+    const json = key.startsWith("ios.") ? { ios: { [key.slice(4)]: value } } : { [key]: value };
+    const shown = (JSON.stringify(value) ?? "").slice(0, 80);
+    expect(() => spec(json)).toThrow(PodSpecError);
+    expect(() => spec(json)).toThrow(
+      `The spec of Example 1.0.0 has a "${key}" path that leaves the pod's folder (${shown}). See ${LINK}`,
+    );
+  });
+
+  it("accepts paths that stay in the pod's folder", () => {
+    const parsed = spec({ source_files: ["Sources/**/*.h", "./A..h"], module_map: "Sources/module.modulemap" });
+    expect(parsed.layer.sourceFiles).toEqual(["Sources/**/*.h", "./A..h"]);
+  });
+
   it("names an ios-scoped key and shows at most 80 characters of the value", () => {
     const long = { a: "x".repeat(200) };
     expect(() => spec({ ios: { libraries: long } })).toThrow(

@@ -16,7 +16,7 @@ import { PODS_LINK, PodsError } from "./format.js";
 import { treeName } from "./archive.js";
 import { durable, treeIntact, treeMeasure } from "./durable.js";
 import { arm64Slice, highestMinIos, platformProblem, readBinary } from "./macho.js";
-import type { PodSpec, SpecLayer } from "./spec.js";
+import { leavesFolder, type PodSpec, type SpecLayer } from "./spec.js";
 import { frameworkModuleMap, generatedModuleMap, rewriteFrameworkModuleMap, writeHeadersXcframework } from "./xcframework.js";
 
 const micromatch = createRequire(import.meta.url)("micromatch") as {
@@ -237,6 +237,13 @@ class Wrapper {
       (s) => s.SupportedPlatform === "ios" && s.SupportedPlatformVariant === undefined && s.SupportedArchitectures.includes("arm64"),
     );
     if (device === undefined) throw this.noArm64(rel, slices.map((s) => s.LibraryIdentifier));
+    // Row 82: the slice's paths stay inside the xcframework.
+    for (const key of ["LibraryIdentifier", "LibraryPath", "HeadersPath"] as const) {
+      const value = device[key];
+      if (value !== undefined && leavesFolder(value)) {
+        throw new PodsError(`${this.label} ships ${rel}, whose ${device.LibraryIdentifier} slice names a ${key} that leaves it (${value}). See ${PODS_LINK}`);
+      }
+    }
     const sliceRel = `${rel}/${device.LibraryIdentifier}`;
     const sliceDir = path.join(dir, device.LibraryIdentifier);
     const lp = device.LibraryPath;

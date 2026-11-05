@@ -73,6 +73,14 @@ const LIST_KEYS = {
   libraries: "libraries",
 } as const;
 
+/** The list attributes that hold paths in the pod's folder (row 82: none may leave it). */
+const PATH_KEYS = new Set(["vendored_frameworks", "vendored_libraries", "source_files", "preserve_paths", "resources"]);
+
+/** Whether a spec or Info.plist path leaves the folder it is relative to: absolute, or with a `..` segment. */
+export function leavesFolder(p: string): boolean {
+  return p.startsWith("/") || p.startsWith("\\") || p.split(/[\\/]/).includes("..");
+}
+
 /** Source keys rn-xtool reads, or that only qualify a git or http source. */
 const SOURCE_KEYS = new Set(["http", "git", "tag", "type", "flatten", "sha256", "sha1", "branch", "commit", "submodules", "headers"]);
 
@@ -83,6 +91,15 @@ class Reader {
     const shown = (JSON.stringify(value) ?? String(value)).slice(0, 80);
     throw new PodSpecError(
       `The spec of ${this.where.pod} ${this.where.version} has a "${key}" value rn-xtool cannot read (${shown}). See ${PODS_LINK}`,
+    );
+  }
+
+  /** Row 82: a path that is absolute or goes up stops, naming the pod and the key. */
+  inside(key: string, paths: readonly string[], value: unknown): void {
+    if (!paths.some(leavesFolder)) return;
+    const shown = (JSON.stringify(value) ?? String(value)).slice(0, 80);
+    throw new PodSpecError(
+      `The spec of ${this.where.pod} ${this.where.version} has a "${key}" path that leaves the pod's folder (${shown}). See ${PODS_LINK}`,
     );
   }
 
@@ -111,7 +128,10 @@ class Reader {
   /** The layer's attributes from `obj`, with `prefix` naming where they sit (`ios.`). */
   layerInto(layer: SpecLayer, obj: Record<string, unknown>, prefix: string): void {
     for (const [key, field] of Object.entries(LIST_KEYS)) {
-      if (obj[key] !== undefined) layer[field].push(...this.list(`${prefix}${key}`, obj[key]));
+      if (obj[key] === undefined) continue;
+      const items = this.list(`${prefix}${key}`, obj[key]);
+      if (PATH_KEYS.has(key)) this.inside(`${prefix}${key}`, items, obj[key]);
+      layer[field].push(...items);
     }
     if (obj.dependencies !== undefined) {
       for (const [pod, reqs] of Object.entries(this.dependencies(`${prefix}dependencies`, obj.dependencies))) {
@@ -124,11 +144,13 @@ class Reader {
       for (const [name, globs] of Object.entries(bundles as Record<string, unknown>)) {
         const list = typeof globs === "string" ? [globs] : Array.isArray(globs) && globs.every((g) => typeof g === "string") ? globs : undefined;
         if (list === undefined) this.fail(`${prefix}resource_bundles`, bundles);
+        this.inside(`${prefix}resource_bundles`, list as string[], bundles);
         layer.resourceBundles[name] = [...(layer.resourceBundles[name] ?? []), ...(list as string[])];
       }
     }
     if (obj.module_map !== undefined && obj.module_map !== false) {
       layer.moduleMap = this.string(`${prefix}module_map`, obj.module_map);
+      this.inside(`${prefix}module_map`, [layer.moduleMap], obj.module_map);
     }
   }
 
