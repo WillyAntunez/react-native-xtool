@@ -653,6 +653,14 @@ describe("doctor --project", () => {
     expect(none.checks.some((c) => c.name === "pods")).toBe(false);
   });
 
+  it("--project shows a checked pod pin as info", async () => {
+    const line = 'GoogleToolboxForMac 6.0.1 (rn-xtool table) is outside lib\'s requirement "~> 4.2": checked';
+    const r = await doctorWithProbes({ ...good, capabilities: async () => ({ ...expo58Caps, podPins: [`ℹ ${line}`] }) }, "/proj", {
+      projectOnly: true,
+    });
+    expect(r.checks.filter((c) => c.name === "pods")).toEqual([{ name: "pods", status: "info", detail: line }]);
+  });
+
   it("--project names scaffold patches with stale pod pins", async () => {
     const line = "patches/react-native-app-auth+8.5.1.patch pins AppAuth 3.0.0, the config says 3.1.0; delete it so rn-xtool regenerates it";
     const orphan = "patches/x+1.0.0.patch is for x, which is not installed; skipped. Delete it if you removed the library.";

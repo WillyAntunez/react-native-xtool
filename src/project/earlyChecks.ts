@@ -11,7 +11,7 @@ import type { PodEntry } from "../config.js";
 import type { ProjectKind } from "./types.js";
 import { troubleshootingUrl } from "../docs.js";
 import { packageRoot } from "../tools/exec.js";
-import { mergedPodTable, podRequirementSatisfied, type PodTable } from "./podTable.js";
+import { mergedPodTable, pinLine, pinSource, podRequirementSatisfied, type PodTable } from "./podTable.js";
 import {
   attribute,
   dependencyDirs,
@@ -577,7 +577,7 @@ export function libraryFailures(projectRoot: string, opts: LibraryCheckOptions =
 }
 
 /**
- * A `⚠` line for each pod a library rn-xtool would scaffold depends on (unconditional podspec lines) whose pinned
+ * A `⚠` line (an `ℹ` line for a checked override) for each pod a library rn-xtool would scaffold depends on (unconditional podspec lines) whose pinned
  * version in `table` misses the podspec's requirement: the scaffold still pins it, and SwiftPM builds that version.
  * The libraries are those `libraryFailures` checks. Never throws.
  */
@@ -594,11 +594,10 @@ export function podPinWarnings(projectRoot: string, table: PodTable, opts: Libra
       const lib = libs.library(name, dir);
       if (lib === undefined || !libs.scaffolded(lib)) continue;
       for (const dep of libs.podDependencies(lib)) {
-        const exact = table.pods[dep.pod]?.exact;
+        const entry = table.pods[dep.pod];
+        const exact = entry?.exact;
         if (dep.kind !== "mapped" || exact === undefined || podRequirementSatisfied(exact, dep.requirements)) continue;
-        const source = table.source[dep.pod] === "config" ? (opts.podsFile ?? "rn-xtool.config.json") : "rn-xtool table";
-        const line =
-          `⚠ ${dep.pod} ${exact} (${source}) is outside ${name}'s requirement "${dep.requirements.join(", ")}"`;
+        const line = pinLine(dep.pod, entry!, pinSource(table, dep.pod, opts.podsFile), `${name}'s`, dep.requirements.join(", "));
         if (!lines.includes(line)) lines.push(line);
       }
     } catch {

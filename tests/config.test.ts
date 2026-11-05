@@ -72,6 +72,13 @@ describe("loadConfig", () => {
       AppAuth: APPAUTH,
       SwiftUIIntrospect: { url: "https://github.com/siteline/swiftui-introspect", exact: "1.5.0", product: "SwiftUIIntrospect" },
       GoogleUtilities: { url: "https://github.com/google/GoogleUtilities.git", exact: "8.1.0-beta.1", products: ["GULEnvironment"], subspecs: { Logger: ["GULLogger"] } },
+      GoogleToolboxForMac: {
+        url: "https://github.com/google/google-toolbox-for-mac",
+        exact: "6.0.1",
+        products: ["GTMLogger"],
+        outsideRequirement: "checked by hand",
+        emptyTargets: ["GTMDefines"],
+      },
     };
     await writeFile(join(dir, "rn-xtool.config.json"), JSON.stringify({ pods }));
     expect(await loadConfig(dir)).toEqual({ metroPort: 8081, pods });
@@ -90,6 +97,8 @@ describe("loadConfig", () => {
   const URL = "pods.AppAuth.url must be a git URL (https://…)";
   const EXACT = "pods.AppAuth.exact must be a version such as 3.0.0";
   const PRODUCTS = "pods.AppAuth.products must be a list of product names";
+  const OUTSIDE = "pods.AppAuth.outsideRequirement must be a sentence saying why the pin is outside the requirement";
+  const EMPTY_TARGETS = "pods.AppAuth.emptyTargets must be a list of target names";
   const FORWARD = (h: string) => `pods.AppAuth.forwardHeaders.${h} must be a list of module names, under a relative path ending in .h`;
   it.each<[string, unknown, string]>([
     ["a list", ["AppAuth"], OBJECT],
@@ -117,6 +126,11 @@ describe("loadConfig", () => {
     ["a header key that is not a header", entry({ forwardHeaders: { "AppAuth/AppAuth.m": ["AppAuth"] } }), FORWARD("AppAuth/AppAuth.m")],
     ["a header without modules", entry({ forwardHeaders: { "AppAuth/AppAuth.h": [] } }), FORWARD("AppAuth/AppAuth.h")],
     ["a module that is not a module name", entry({ forwardHeaders: { "AppAuth/AppAuth.h": ["App Auth"] } }), FORWARD("AppAuth/AppAuth.h")],
+    ["an outsideRequirement that is not a string", entry({ outsideRequirement: 4 }), OUTSIDE],
+    ["an empty outsideRequirement", entry({ outsideRequirement: " " }), OUTSIDE],
+    ["an emptyTargets string", entry({ emptyTargets: "GTMDefines" }), EMPTY_TARGETS],
+    ["an empty emptyTargets", entry({ emptyTargets: [] }), EMPTY_TARGETS],
+    ["an emptyTargets entry that is a path", entry({ emptyTargets: ["../GTMDefines"] }), EMPTY_TARGETS],
   ])("names a pods entry of the wrong shape: %s", async (_name, pods, message) => {
     await writeFile(join(dir, "rn-xtool.config.json"), JSON.stringify({ pods }));
     const error = await loadConfig(dir).catch((e: unknown) => e);

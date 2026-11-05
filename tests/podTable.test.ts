@@ -18,6 +18,31 @@ const APPAUTH = {
   forwardHeaders: { "AppAuth/AppAuth.h": ["AppAuthCore", "AppAuth"] },
 };
 const INTROSPECT = { url: "https://github.com/siteline/swiftui-introspect", exact: "1.5.0", products: ["SwiftUIIntrospect"] };
+/** ML Kit's source pods (spec goal 3.1; the product names G1 linked). */
+const ML_KIT_SOURCES = {
+  GTMSessionFetcher: {
+    url: "https://github.com/google/gtm-session-fetcher",
+    exact: "3.5.0",
+    products: ["GTMSessionFetcherCore"],
+    subspecs: { Core: ["GTMSessionFetcherCore"] },
+  },
+  GoogleUtilities: {
+    url: "https://github.com/google/GoogleUtilities",
+    exact: "8.1.5",
+    products: ["GULLogger", "GULUserDefaults"],
+    subspecs: { Logger: ["GULLogger"], UserDefaults: ["GULUserDefaults"] },
+  },
+  GoogleDataTransport: { url: "https://github.com/google/GoogleDataTransport", exact: "10.1.1", products: ["GoogleDataTransport"] },
+  GoogleToolboxForMac: {
+    url: "https://github.com/google/google-toolbox-for-mac",
+    exact: "6.0.1",
+    products: ["GTMLogger", "GTMNSData_zlib"],
+    subspecs: { Logger: ["GTMLogger"], "NSData+zlib": ["GTMNSData_zlib"] },
+    outsideRequirement: "4.x ships no Package.swift; 6.0.1 keeps the GTMLogger API ML Kit links against",
+    emptyTargets: ["GTMDefines"],
+  },
+};
+const SHIPPED_SOURCE = Object.fromEntries(["AppAuth", ...Object.keys(ML_KIT_SOURCES)].map((p) => [p, "rn-xtool"]));
 
 const tmp: string[] = [];
 afterAll(() => {
@@ -28,13 +53,13 @@ describe("the pod table", () => {
   it("the shipped table passes the config's shape check", () => {
     const shipped = JSON.parse(readFileSync(path.join(ROOT, "data", "pods.json"), "utf8")) as { pods: unknown };
     expect(() => checkPodEntries("data/pods.json", shipped.pods)).not.toThrow();
-    expect(shipped).toEqual({ pods: { AppAuth: APPAUTH } });
+    expect(shipped).toEqual({ pods: { AppAuth: APPAUTH, ...ML_KIT_SOURCES } });
   });
 
   it("merges the config over rn-xtool's table over the scaffolder's", () => {
     expect(mergedPodTable()).toEqual({
-      pods: { SwiftUIIntrospect: INTROSPECT, AppAuth: APPAUTH },
-      source: { SwiftUIIntrospect: "scaffolder", AppAuth: "rn-xtool" },
+      pods: { SwiftUIIntrospect: INTROSPECT, AppAuth: APPAUTH, ...ML_KIT_SOURCES },
+      source: { SwiftUIIntrospect: "scaffolder", ...SHIPPED_SOURCE },
     });
     const mine = { url: "https://github.com/example/AppAuth-iOS", exact: "2.1.0", product: "AppAuth" };
     const mmkv = { url: "https://github.com/Tencent/MMKV", exact: "2.2.4", products: ["MMKV"] };
@@ -44,9 +69,10 @@ describe("the pod table", () => {
       pods: {
         SwiftUIIntrospect: introspect,
         AppAuth: { url: mine.url, exact: "2.1.0", products: ["AppAuth"], forwardHeaders: APPAUTH.forwardHeaders },
+        ...ML_KIT_SOURCES,
         MMKV: mmkv,
       },
-      source: { SwiftUIIntrospect: "config", AppAuth: "config", MMKV: "config" },
+      source: { ...SHIPPED_SOURCE, SwiftUIIntrospect: "config", AppAuth: "config", MMKV: "config" },
     });
   });
 
@@ -64,6 +90,28 @@ describe("the pod table", () => {
     expect(mergedPodTable({ AppAuth: { ...pinned, subspecs } }).pods.AppAuth).toEqual({ ...APPAUTH, exact: "3.1.0", subspecs });
   });
 
+  it("does not carry the shipped outsideRequirement over a config pin of another version", () => {
+    const toolbox = ML_KIT_SOURCES.GoogleToolboxForMac;
+    const { outsideRequirement: _checked, ...rest } = toolbox;
+    // Another version, or another URL: the shipped reason was checked for 6.0.1 of Google's repository only.
+    expect(mergedPodTable({ GoogleToolboxForMac: { url: toolbox.url, exact: "7.0.0", products: ["GTMLogger"] } }).pods.GoogleToolboxForMac).toEqual({
+      ...rest,
+      exact: "7.0.0",
+      products: ["GTMLogger"],
+    });
+    expect(
+      mergedPodTable({ GoogleToolboxForMac: { url: "https://github.com/example/gtm", exact: "6.0.1", products: ["GTMLogger"] } }).pods
+        .GoogleToolboxForMac,
+    ).not.toHaveProperty("outsideRequirement");
+    // The same pin keeps it, and a config's own reason wins.
+    expect(mergedPodTable({ GoogleToolboxForMac: { url: toolbox.url, exact: "6.0.1", products: ["GTMLogger"] } }).pods.GoogleToolboxForMac)
+      .toHaveProperty("outsideRequirement", toolbox.outsideRequirement);
+    expect(
+      mergedPodTable({ GoogleToolboxForMac: { url: toolbox.url, exact: "7.0.0", products: ["GTMLogger"], outsideRequirement: "mine" } }).pods
+        .GoogleToolboxForMac,
+    ).toHaveProperty("outsideRequirement", "mine");
+  });
+
   it("writes the merged table under ios/build, where the scaffolder reads it", () => {
     const root = mkdtempSync(path.join(tmpdir(), "rn-xtool-pods-"));
     tmp.push(root);
@@ -74,9 +122,13 @@ describe("the pod table", () => {
     const saved = process.env[POD_TABLE_ENV];
     process.env[POD_TABLE_ENV] = file;
     try {
+      const scaffolderShape = Object.fromEntries(
+        Object.entries(ML_KIT_SOURCES).map(([pod, { outsideRequirement: _o, emptyTargets: _e, ...entry }]) => [pod, entry]),
+      );
       expect(loadPodTable()).toEqual({
         SwiftUIIntrospect: INTROSPECT,
         AppAuth: APPAUTH,
+        ...scaffolderShape,
         MMKV: { url: "https://github.com/Tencent/MMKV", exact: "2.2.4", products: ["MMKV"] },
       });
     } finally {
@@ -144,6 +196,13 @@ describe("pod pins and podspec requirements", () => {
     const pods = { AppAuth: { url: "https://github.com/openid/AppAuth-iOS", exact: "3.1.0", products: ["AppAuth"] } };
     expect(podPinWarnings(appAuthProject("'>= 1.7.6', '< 3.1'"), mergedPodTable(pods))).toEqual([
       '⚠ AppAuth 3.1.0 (rn-xtool.config.json) is outside react-native-app-auth\'s requirement ">= 1.7.6, < 3.1"',
+    ]);
+  });
+
+  it("prints an ℹ line for a pin the entry marks as checked", () => {
+    const pods = { AppAuth: { url: "https://github.com/openid/AppAuth-iOS", exact: "3.0.0", products: ["AppAuth"], outsideRequirement: "3.x keeps the API it uses" } };
+    expect(podPinWarnings(appAuthProject("'>= 4.0'"), mergedPodTable(pods))).toEqual([
+      'ℹ AppAuth 3.0.0 (rn-xtool.config.json) is outside react-native-app-auth\'s requirement ">= 4.0": 3.x keeps the API it uses',
     ]);
   });
 

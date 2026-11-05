@@ -35,12 +35,16 @@ function shippedPods(): Record<string, PodEntry> {
 
 /**
  * `over` on top of `base`, field by field: the fields `over` names replace those of `base`, and the others stay (an
- * empty `forwardHeaders` or `subspecs` removes them). `product` is read as `products: [product]`.
+ * empty `forwardHeaders` or `subspecs` removes them). `product` is read as `products: [product]`. A base
+ * `outsideRequirement` goes when `over` pins another `exact` or `url` without its own.
  */
 function mergePodEntry(base: PodEntry | undefined, over: PodEntry): PodEntry {
   const { product, ...rest } = over;
   const named: PodEntry = rest.products === undefined && product !== undefined ? { ...rest, products: [product] } : rest;
   const { product: _replaced, ...kept } = base ?? ({} as Partial<PodEntry>);
+  // A checked override holds for the version and repository it was checked with only.
+  const moved = base !== undefined && ((over.exact !== undefined && over.exact !== base.exact) || (over.url !== undefined && over.url !== base.url));
+  if (moved) delete kept.outsideRequirement;
   return { ...kept, ...named } as PodEntry;
 }
 
@@ -70,6 +74,20 @@ export function writePodTable(paths: ProjectPaths, table: PodTable): string {
   mkdirSync(paths.iosBuild, { recursive: true });
   writeFileSync(file, `${JSON.stringify(table, null, 2)}\n`);
   return file;
+}
+
+/** Where a pod's pin comes from, for the pin lines: the config file, or rn-xtool's table. */
+export function pinSource(table: PodTable, pod: string, podsFile?: string): string {
+  return table.source[pod] === "config" ? (podsFile ?? "rn-xtool.config.json") : "rn-xtool table";
+}
+
+/**
+ * Block 2's `⚠` line for a pin outside a requirement, or, for an entry whose `outsideRequirement` says why the pin is
+ * meant, an `ℹ` line with that reason. `dependents` is "lib's" or "MLKitCommon's and MLKitVision's".
+ */
+export function pinLine(pod: string, entry: PodEntry, source: string, dependents: string, requirement: string): string {
+  const what = `${pod} ${entry.exact} (${source}) is outside ${dependents} requirement "${requirement}"`;
+  return entry.outsideRequirement !== undefined ? `ℹ ${what}: ${entry.outsideRequirement}` : `⚠ ${what}`;
 }
 
 /** A version's numeric segments (`3.0.0` → [3, 0, 0]); undefined when one is not a number (`1.0.0-beta`, `#{v}`). */

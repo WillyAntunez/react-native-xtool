@@ -680,11 +680,11 @@ describe("unmapped pods", () => {
       lib: {
         "Lib.podspec":
           "Pod::Spec.new do |s|\n  s.dependency 'GoogleMLKit/TextRecognition', '8.0.0'\n" +
-          '  s.dependency "GoogleToolboxForMac/Logger", "~> 4.2"\n  s.dependency \'GoogleMLKit/Vision\'\nend\n',
+          '  s.dependency "SDWebImage/Core", "~> 5.0"\n  s.dependency \'GoogleMLKit/Vision\'\nend\n',
       },
     });
     expect(libraryFailures(two).map((f) => f.reason)).toEqual([
-      unmapped("lib 1.0.0", "GoogleMLKit and GoogleToolboxForMac", "GoogleMLKit", true),
+      unmapped("lib 1.0.0", "GoogleMLKit and SDWebImage", "GoogleMLKit", true),
     ]);
     const three = await project({
       lib: {
