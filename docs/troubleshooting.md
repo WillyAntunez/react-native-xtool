@@ -741,6 +741,10 @@ checks, so it also runs on a machine without Swift or xtool. Run it from the pro
   knownLimits.allow in rn-xtool.config.json.` on the next line, and `doctor --project` exits non-zero. A refusal that
   `knownLimits.allow` lets through is a ⚠ warning instead, ending with `(allowed by rn-xtool.config.json
   knownLimits.allow; the build may fail later)`.
+- **entitlements** (only with `CODE_SIGN_ENTITLEMENTS` set): one ⚠ line per key xtool drops or does not enable, the
+  `build` line without its `⚠` ([Entitlements](#entitlements)); `<file>: passed to xtool; every key is one xtool signs
+  on a free team` when there is none; ✖ when the file is missing or not a property list dictionary. On an Expo app
+  without `ios/` it reads `read after expo prebuild, at build`.
 
 The rn-scripts, rn-artifacts, expo-plugin and expo-modules lines are left out when the project has no react-native or
 no expo. On a version no line covers, the rn-scripts and rn-artifacts lines are information only, and they do not
@@ -804,6 +808,15 @@ and install it again, or restart the phone.
 **Not supported:** dark and tinted icons, Icon Composer `.icon` icons, and a custom splash colour or image. The launch
 screen is the system background colour. They need Xcode's asset catalog compiler (`actool`), which does not run on
 Linux.
+
+## Entitlements
+
+rn-xtool passes the file `CODE_SIGN_ENTITLEMENTS` names in the app target's Debug configuration (on Expo, in the
+Xcode project `expo prebuild` writes) to xtool, as `ios-xtool/App.entitlements`. rn-xtool builds Debug only, so a
+different Release file is not read. Before compiling, `build` prints a ⚠ line for each key xtool drops or does not
+enable when it signs, for example `⚠ aps-environment is not available on a free team; the build continues without it;
+push notifications fail at runtime.` A missing file, or one that is not a property list dictionary, stops the build:
+xtool cannot sign the app with it.
 
 ## Device and signing
 

@@ -384,7 +384,7 @@ function knownLimitsChecks(limits: NonNullable<Capabilities["limits"]>): DoctorC
 
 /**
  * `doctor --project`'s capability lines, in order: versions, rn-scripts, rn-artifacts, expo-plugin, expo-modules,
- * podspecs, exclude, pods, patches and known-limits. The four in between are left out when the project has no such field
+ * podspecs, exclude, pods, patches, known-limits and entitlements. The four in between are left out when the project has no such field
  * (no react-native, no expo), exclude without the config's `exclude` (one line per entry: info for the modules left
  * out, warn for a name it ignores), pods unless a pod pin misses a podspec's requirement, patches unless a patch's package is not
  * installed or a scaffold patch's pod pins are stale (one warning each, the build's line without its `⚠ `), and
@@ -415,7 +415,22 @@ export function capabilityChecks(c: Capabilities, projectError?: unknown): Docto
       detail: line.replace(/^⚠ /, ""),
     })),
     ...(c.limits === undefined ? [] : knownLimitsChecks(c.limits)),
+    ...entitlementsChecks(c.entitlements),
   ];
+}
+
+/**
+ * One warn line per entitlement line (the build's text without its `⚠ `); ok when every key is one xtool signs on a free
+ * team; info on an Expo app before expo prebuild; fail on a refusal; none without CODE_SIGN_ENTITLEMENTS.
+ */
+function entitlementsChecks(e: Capabilities["entitlements"]): DoctorCheck[] {
+  if (e === undefined) return [];
+  if ("pending" in e) return [{ name: "entitlements", status: "info", detail: "read after expo prebuild, at build" }];
+  if ("error" in e) return [{ name: "entitlements", status: "fail", detail: e.error }];
+  if (e.lines.length === 0) {
+    return [{ name: "entitlements", status: "ok", detail: `${e.rel}: passed to xtool; every key is one xtool signs on a free team` }];
+  }
+  return e.lines.map((line) => ({ name: "entitlements", status: "warn", detail: line.replace(/^⚠ /, "") }));
 }
 
 type Settled<T> = { value: T } | { error: unknown };

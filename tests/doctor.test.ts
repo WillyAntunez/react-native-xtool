@@ -664,6 +664,21 @@ describe("doctor --project", () => {
     expect(none.checks.map((c) => c.name)).not.toContain("exclude");
   });
 
+  it("--project prints the entitlements lines", async () => {
+    const run = async (entitlements: unknown) =>
+      (await doctorWithProbes({ ...good, capabilities: async () => ({ ...expo58Caps, entitlements }) as never }, "/proj", { projectOnly: true })).checks
+        .filter((c) => c.name === "entitlements");
+    const aps = "aps-environment is not available on a free team; the build continues without it; push notifications fail at runtime.";
+    expect(await run({ rel: "ios/App/App.entitlements", lines: [`⚠ ${aps}`] })).toEqual([{ name: "entitlements", status: "warn", detail: aps }]);
+    expect(await run({ rel: "ios/App/App.entitlements", lines: [] })).toEqual([
+      { name: "entitlements", status: "ok", detail: "ios/App/App.entitlements: passed to xtool; every key is one xtool signs on a free team" },
+    ]);
+    expect(await run({ pending: true })).toEqual([{ name: "entitlements", status: "info", detail: "read after expo prebuild, at build" }]);
+    const missing = "CODE_SIGN_ENTITLEMENTS names ios/App/App.entitlements, which does not exist; xtool cannot sign the app without it. Fix the setting or create the file.";
+    expect(await run({ error: missing })).toEqual([{ name: "entitlements", status: "fail", detail: missing }]);
+    expect(await run(undefined)).toEqual([]);
+  });
+
   it("plain doctor prints no capability lines", async () => {
     const called: string[] = [];
     const r = await doctorWithProbes(

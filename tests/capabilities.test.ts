@@ -14,6 +14,7 @@ import { fakeExpo57Modules } from "./support/expo57.js";
 import { fakeExpo58Modules } from "./support/expo58.js";
 import { makeFakeSlot088 } from "./support/fakeSlots.js";
 import { fakeRnScripts } from "./support/rnScripts.js";
+import { plistOf, withEntitlements } from "./support/entitlements.js";
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
 const tempDirs: string[] = [];
@@ -605,6 +606,31 @@ describe("detectCapabilities", () => {
       expect.stringMatching(/^ℹ exclude — left out of this iOS build: react-native-mmkv-lib \(rn-xtool\.config\.json\)\./),
       "⚠ exclude names nope, which is not a native iOS dependency of this project; ignored",
     ]);
+  });
+
+  it("reads the entitlements", async () => {
+    // Expo without ios/: read after expo prebuild.
+    expect((await detect(await expo58())).entitlements).toEqual({ pending: true });
+    const dir = await bare("0.88.1", "0.88");
+    expect((await detect(dir)).entitlements).toBeUndefined();
+    const pbxproj = path.join(dir, "ios", "HelloWorld.xcodeproj", "project.pbxproj");
+    await writeFile(pbxproj, withEntitlements(await readFile(pbxproj, "utf8"), "HelloWorld/HelloWorld.entitlements"));
+    expect((await detect(dir)).entitlements).toEqual({
+      error:
+        "CODE_SIGN_ENTITLEMENTS names ios/HelloWorld/HelloWorld.entitlements, which does not exist; xtool cannot sign the " +
+        "app without it. Fix the setting or create the file.",
+    });
+    await writeFile(
+      path.join(dir, "ios", "HelloWorld", "HelloWorld.entitlements"),
+      plistOf(
+        "<dict>\n<key>keychain-access-groups</key>\n<array>\n<string>$(AppIdentifierPrefix)$(PRODUCT_BUNDLE_IDENTIFIER)</string>\n" +
+          "</array>\n<key>aps-environment</key>\n<string>development</string>\n</dict>",
+      ),
+    );
+    expect((await detect(dir)).entitlements).toEqual({
+      rel: "ios/HelloWorld/HelloWorld.entitlements",
+      lines: ["⚠ aps-environment is not available on a free team; the build continues without it; push notifications fail at runtime."],
+    });
   });
 
   it("leaves the React Native fields out without react-native", async () => {

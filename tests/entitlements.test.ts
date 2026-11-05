@@ -2,7 +2,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { EntitlementsError, readEntitlements } from "../src/project/entitlements.js";
+import { entitlementLines, EntitlementsError, readEntitlements, type AppEntitlements } from "../src/project/entitlements.js";
+import { GENERIC_PHRASE } from "../src/project/entitlementTable.js";
 import type { ProjectInfo } from "../src/project/index.js";
 import { plistOf, withEntitlements } from "./support/entitlements.js";
 
@@ -120,5 +121,73 @@ describe("readEntitlements", () => {
         "ios/HelloWorld/HelloWorld.entitlements (CODE_SIGN_ENTITLEMENTS) is not a property list dictionary; xtool cannot sign the app with it.",
       ),
     );
+  });
+});
+
+describe("entitlementLines", () => {
+  const of = (dict: Record<string, unknown>): AppEntitlements => ({ file: "/proj/ios/App/App.entitlements", rel: "ios/App/App.entitlements", dict });
+  const ID = "com.example.app";
+
+  it.each([
+    [
+      "known to xtool and paid (row 35)",
+      { "aps-environment": "development" },
+      "⚠ aps-environment is not available on a free team; the build continues without it; push notifications fail at runtime.",
+    ],
+    [
+      "unknown to xtool, not free for Apple (rows 35, 36)",
+      { "com.apple.developer.networking.wifi-info": true },
+      "⚠ com.apple.developer.networking.wifi-info is not available on a free team, and xtool does not enable it on a paid " +
+        "one; the build continues without it; reading the Wi-Fi network name returns nothing at runtime.",
+    ],
+    [
+      "free for Apple, unknown to xtool",
+      { "com.apple.developer.default-data-protection": "NSFileProtectionComplete" },
+      "⚠ com.apple.developer.default-data-protection is not enabled by xtool; the build continues without it; files keep " +
+        "the default protection.",
+    ],
+    [
+      "shared keychain groups (row 38)",
+      { "keychain-access-groups": [`$(AppIdentifierPrefix)${ID}`, "$(AppIdentifierPrefix)com.example.shared"] },
+      `⚠ keychain-access-groups lists other groups; xtool signs the app with its own group only (<Team ID>.${ID}); the ` +
+        "build continues; sharing keychain items with other apps fails at runtime.",
+    ],
+    [
+      // xtool 1.24.0 marks App Groups paid and has no several-groups error (row 37, preflight P1): the paid line.
+      "App Groups (row 37, xtool 1.24.0)",
+      { "com.apple.security.application-groups": ["group.com.example.app", "group.com.example.other"] },
+      "⚠ com.apple.security.application-groups is not available on a free team; the build continues without it; sharing " +
+        "data with other apps and extensions through the group fails at runtime.",
+    ],
+  ])("%s", (_name, dict, line) => {
+    expect(entitlementLines(of(dict), ID)).toEqual([line]);
+  });
+
+  it("prints nothing for keys xtool signs on a free team", () => {
+    expect(
+      entitlementLines(
+        of({
+          "keychain-access-groups": [`$(AppIdentifierPrefix)${ID}`],
+          "com.apple.developer.healthkit": true,
+          "com.apple.developer.homekit": true,
+          "inter-app-audio": true,
+          "get-task-allow": true,
+          "application-identifier": `$(AppIdentifierPrefix)${ID}`,
+        }),
+        ID,
+      ),
+    ).toEqual([]);
+    expect(entitlementLines(of({}), ID)).toEqual([]);
+  });
+
+  it("uses the generic phrase for a key without one", () => {
+    expect(entitlementLines(of({ "com.apple.developer.some-new-capability": true }), ID)).toEqual([
+      `⚠ com.apple.developer.some-new-capability is not enabled by xtool; the build continues without it; ${GENERIC_PHRASE}.`,
+    ]);
+  });
+
+  it("keeps the file's key order", () => {
+    const lines = entitlementLines(of({ "com.apple.developer.networking.wifi-info": true, "aps-environment": "development" }), ID);
+    expect(lines.map((l) => l.split(" ")[1])).toEqual(["com.apple.developer.networking.wifi-info", "aps-environment"]);
   });
 });

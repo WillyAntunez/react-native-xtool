@@ -7,8 +7,9 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import * as plist from "plist";
+import { ENTITLEMENT_TABLE, GENERIC_PHRASE } from "./entitlementTable.js";
 import { buildSetting, openPbxproj, resolveBuildSettingValue, resolveSetting, type Pbxproj } from "./pbxproj.js";
-import type { ProjectInfo } from "./types.js";
+import type { ProjectInfo, ProjectKind } from "./types.js";
 
 /** A refusal: xtool cannot sign the app with the file `CODE_SIGN_ENTITLEMENTS` names. */
 export class EntitlementsError extends Error {
@@ -64,7 +65,7 @@ function isDict(value: unknown): value is Record<string, unknown> {
  * other build settings are resolved from the pbxproj; `$(AppIdentifierPrefix)` and `$(TeamIdentifierPrefix)` are kept,
  * since xtool rewrites them. Throws an EntitlementsError when the file is missing or not a property list dictionary.
  */
-export function readEntitlements(project: ProjectInfo, iosDir: string): AppEntitlements | undefined {
+export function readEntitlements(project: Pick<ProjectInfo, "root" | "bundleIdentifier">, iosDir: string): AppEntitlements | undefined {
   let projects: string[];
   try {
     projects = readdirSync(iosDir).filter((n) => n.endsWith(".xcodeproj"));
@@ -104,4 +105,75 @@ export function readEntitlements(project: ProjectInfo, iosDir: string): AppEntit
     }
   };
   return { file, rel, dict: resolveValue(parsed, resolve) as Record<string, unknown> };
+}
+
+const KEYCHAIN = "keychain-access-groups";
+
+/**
+ * The `⚠` lines for what xtool does with the app's entitlements when it signs, one per key in the file's order
+ * (ENTITLEMENT_TABLE, read from the xtool rn-xtool pins). rn-xtool does not know the team at build time, so the lines
+ * say what happens on a free team:
+ * - a key xtool knows and marks paid is dropped on a free team;
+ * - a key xtool does not know is dropped on a free team, and gets no capability on a paid one;
+ * - a key Apple gives free teams that xtool does not know, or a key not in the table, is never enabled by xtool;
+ * - `keychain-access-groups` listing a group other than the app's own is replaced by the app's own group;
+ * - a key xtool knows and signs on a free team gets no line.
+ */
+export function entitlementLines(e: AppEntitlements, bundleId: string): string[] {
+  return Object.entries(e.dict).flatMap(([key, value]): string[] => {
+    const info = ENTITLEMENT_TABLE[key];
+    const phrase = info?.phrase ?? GENERIC_PHRASE;
+    if (key === KEYCHAIN) {
+      const own = `$(AppIdentifierPrefix)${bundleId}`;
+      const groups = Array.isArray(value) ? value : [value];
+      if (groups.every((g) => g === own)) return [];
+      return [
+        `⚠ ${KEYCHAIN} lists other groups; xtool signs the app with its own group only (<Team ID>.${bundleId}); the build ` +
+          `continues; ${phrase}.`,
+      ];
+    }
+    if (info === undefined || (info.xtool === "unknown" && info.appleFree)) {
+      return [`⚠ ${key} is not enabled by xtool; the build continues without it; ${phrase}.`];
+    }
+    if (info.xtool === "paid") return [`⚠ ${key} is not available on a free team; the build continues without it; ${phrase}.`];
+    if (info.xtool === "unknown") {
+      return [
+        `⚠ ${key} is not available on a free team, and xtool does not enable it on a paid one; the build continues ` +
+          `without it; ${phrase}.`,
+      ];
+    }
+    return [];
+  });
+}
+
+/**
+ * What `doctor --project` reports on the entitlements: the file and its lines; `pending` for an Expo app whose ios/
+ * holds no Xcode project yet (read after expo prebuild, at build); `error` for a refusal or an unreadable pbxproj;
+ * undefined when CODE_SIGN_ENTITLEMENTS is unset (or ios/ is missing on bare). The bundle id is the pbxproj's
+ * PRODUCT_BUNDLE_IDENTIFIER, as the bare reader takes it.
+ */
+export type EntitlementsCapability = { rel: string; lines: string[] } | { pending: true } | { error: string };
+
+export function entitlementsCapability(root: string, kind: ProjectKind | undefined): EntitlementsCapability | undefined {
+  const iosDir = path.join(root, "ios");
+  let hasProject = false;
+  try {
+    hasProject = readdirSync(iosDir).some((n) => n.endsWith(".xcodeproj"));
+  } catch {
+    // no ios/
+  }
+  if (!hasProject) return kind === "expo" ? { pending: true } : undefined;
+  try {
+    const p = openPbxproj(iosDir);
+    let bundleId = "$(PRODUCT_BUNDLE_IDENTIFIER)";
+    try {
+      bundleId = resolveSetting(p, "PRODUCT_BUNDLE_IDENTIFIER") ?? bundleId;
+    } catch {
+      // the project line names an unresolvable bundle id
+    }
+    const e = readEntitlements({ root, bundleIdentifier: bundleId }, iosDir);
+    return e === undefined ? undefined : { rel: e.rel, lines: entitlementLines(e, bundleId) };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
 }

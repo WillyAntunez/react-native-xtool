@@ -26,6 +26,7 @@ import {
   type EarlyFailure,
   type LibraryCheckOptions,
 } from "../project/earlyChecks.js";
+import { entitlementLines, readEntitlements, type AppEntitlements } from "../project/entitlements.js";
 import { mergedPodTable, type PodTable } from "../project/podTable.js";
 import { readProject, RN_CLI_MISSING, type ProjectInfo, type ProjectKind, type ReadProjectOptions } from "../project/index.js";
 import { appIconRecord } from "../generate/appIcon.js";
@@ -166,6 +167,8 @@ export interface BuildDeps {
   depsFingerprint: (root: string) => Promise<string>;
   /** After rn-spm: the resources scaffolded libraries declare that do not reach the app. */
   unbundledResources: (root: string) => { pkg: string; items: string[] }[];
+  /** The app's CODE_SIGN_ENTITLEMENTS file (Debug); throws an EntitlementsError when xtool could not sign with it. */
+  readEntitlements: (project: ProjectInfo, iosDir: string) => AppEntitlements | undefined;
   log: (s: string) => void;
 }
 
@@ -201,6 +204,7 @@ const realDeps: BuildDeps = {
   readState,
   depsFingerprint: depsFingerprint,
   unbundledResources,
+  readEntitlements,
   log: (s) => console.log(s),
 };
 
@@ -263,6 +267,10 @@ export async function build(
 
   const prebuilds = planned("prebuild") || planned("prebuild --clean");
   if (prebuilds) await step(clean ? "prebuild --clean" : "prebuild", () => d.prebuild(paths.root, clean));
+  // Before anything else changes (on Expo, once prebuild wrote the pbxproj): what xtool drops when it signs, or why it
+  // cannot sign at all.
+  const entitlements = d.readEntitlements(project, paths.ios);
+  if (entitlements !== undefined) for (const line of entitlementLines(entitlements, project.bundleIdentifier)) d.log(line);
   // The app config icon this prebuild turned into the icon set; without a prebuild, the last one's record stays.
   // With no record (the user ran expo prebuild, or the state predates it), the current icon is recorded silently,
   // so a later change warns.

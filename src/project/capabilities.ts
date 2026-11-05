@@ -16,6 +16,7 @@ import { resolveRnDir, vendoredScriptsRoot } from "../pipeline/rnSpm.js";
 import { bareLines, compareVersions, expoPluginFor, releaseLine, rnLineStatus } from "../versions.js";
 import { DetectError, detectProjectKind } from "./detect.js";
 import { allowKnownLimits, earlyFailures, excludeLines, podPinWarnings, type EarlyFailure, type LibraryCheckOptions } from "./earlyChecks.js";
+import { entitlementsCapability, type EntitlementsCapability } from "./entitlements.js";
 import { mergedPodTable } from "./podTable.js";
 import { attribute, dependencyDirs, podspecFiles, readJson } from "./podspecs.js";
 import { andList, expoPackageDir, installedExpoMajor, installedExpoVersion } from "./expo.js";
@@ -237,6 +238,8 @@ export interface Capabilities {
    * detectCapabilities always sets it.
    */
   scaffoldPins?: string[];
+  /** The app's entitlements (`entitlementsCapability`); undefined when CODE_SIGN_ENTITLEMENTS is unset. */
+  entitlements?: EntitlementsCapability;
 }
 
 /** The SwiftPM settings reader the build's plugin discovery uses (vendor/rn-spm/spm/swiftpm-config.js). */
@@ -326,6 +329,8 @@ export async function detectCapabilities(projectRoot: string, opts: ProbeOptions
     scaffoldPins: scaffoldPinWarnings(root, podTable, config.exclude),
   };
   if (kind !== undefined) caps.kind = kind;
+  const entitlements = entitlementsCapability(root, kind);
+  if (entitlements !== undefined) caps.entitlements = entitlements;
   if (expoVersion !== undefined) {
     caps.expoVersion = expoVersion;
     const sdk = installedExpoMajor(root);

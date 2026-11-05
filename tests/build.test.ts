@@ -10,6 +10,7 @@ import { fixLibraryManifests } from "../src/pipeline/manifests.js";
 import { libraryFailures as realLibraryFailures, podPinWarnings, UnsupportedSetupError, type EarlyFailure } from "../src/project/earlyChecks.js";
 import { mergedPodTable } from "../src/project/podTable.js";
 import { readState, writeState } from "../src/state.js";
+import { withEntitlements } from "./support/entitlements.js";
 
 const expoFlags = { kind: "expo" as const, hasExpoModules: true, hasExpoConstants: true, rnArtifacts: false, expoPlugin: "installed" as const };
 const bareFlags = { kind: "bare" as const, hasExpoModules: false, hasExpoConstants: false, rnArtifacts: false, expoPlugin: "installed" as const };
@@ -641,6 +642,39 @@ describe("build", () => {
     const t = setup({ hasIos: true });
     await build(t.root, {}, t.deps);
     expect(t.logs.filter((l) => l.includes("exclude"))).toEqual([]);
+  });
+
+  it("prints the entitlement lines before compiling and stops on a missing file", async () => {
+    const aps = "⚠ aps-environment is not available on a free team; the build continues without it; push notifications fail at runtime.";
+    const ents = { file: "/x/ios/App/App.entitlements", rel: "ios/App/App.entitlements", dict: { "aps-environment": "development" } };
+    for (const kind of ["bare", "expo"] as const) {
+      const seen: unknown[] = [];
+      const t = setup({ hasIos: kind === "bare", project: { kind } });
+      await build(t.root, {}, {
+        ...t.deps,
+        readEntitlements: (project, ios) => {
+          seen.push([project.bundleIdentifier, ios, [...t.calls]]);
+          return ents;
+        },
+      });
+      // Expo: right after expo prebuild; bare: before anything changes.
+      expect(seen).toEqual([["com.example.app", join(t.root, "ios"), kind === "expo" ? ["prebuild"] : []]]);
+      const at = t.logs.indexOf(aps);
+      expect(at).toBeGreaterThanOrEqual(0);
+      expect(at).toBeLessThan(t.logs.indexOf("▸ patches"));
+    }
+
+    // The real reader on a bare app whose CODE_SIGN_ENTITLEMENTS names a missing file.
+    const real = setup({ hasIos: true, project: { kind: "bare" } });
+    mkdirSync(join(real.root, "ios", "HelloWorld.xcodeproj"), { recursive: true });
+    const src = readFileSync(new URL("./fixtures/pbxproj/with-objc.pbxproj", import.meta.url), "utf8");
+    writeFileSync(join(real.root, "ios", "HelloWorld.xcodeproj", "project.pbxproj"), withEntitlements(src, "HelloWorld/HelloWorld.entitlements"));
+    const readProject: BuildDeps["readProject"] = async (...args) => ({ ...(await real.deps.readProject(...args)), root: real.root });
+    await expect(build(real.root, {}, { ...real.deps, readProject })).rejects.toThrow(
+      "CODE_SIGN_ENTITLEMENTS names ios/HelloWorld/HelloWorld.entitlements, which does not exist; xtool cannot sign the app " +
+        "without it. Fix the setting or create the file.",
+    );
+    expect(real.calls).toEqual([]);
   });
 
   it("warns and builds on when rn-xtool.config.json allows every refusal", async () => {
