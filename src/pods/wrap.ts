@@ -24,7 +24,7 @@ const micromatch = createRequire(import.meta.url)("micromatch") as {
 };
 
 /** Bumped when the wrapped layout changes, so stamped trees are rebuilt. */
-export const WRAPPER_VERSION = 1;
+export const WRAPPER_VERSION = 2;
 export const WRAPPED_STAMP = ".rn-xtool-wrapped.json";
 
 export interface WrappedFramework {
@@ -222,7 +222,23 @@ class Wrapper {
     const map = await frameworkModuleMap(dir, name, rel, this.label);
     await this.archive(name, s, `${rel}/${name}`);
     const headers = path.join(dir, "Headers");
-    await writeHeadersXcframework(path.join(this.tmp, "xcframeworks"), name, { from: headers, files: filesBelow(headers) }, map);
+    const publicFiles = filesBelow(headers);
+    const xcf = await writeHeadersXcframework(path.join(this.tmp, "xcframeworks"), name, { from: headers, files: publicFiles }, map);
+    // A `private header` of the main map resolves in PrivateHeaders/ in a framework; after the move to Headers/<Name>/
+    // it resolves beside the map, so those headers go there too.
+    if (/\bprivate\s+header\b/.test(map)) {
+      const privateDir = path.join(dir, "PrivateHeaders");
+      const into = path.join(xcf, "ios-arm64", "Headers", name);
+      for (const f of filesBelow(privateDir)) {
+        if (publicFiles.includes(f)) {
+          throw new PodsError(
+            `${this.label}: ${rel} has Headers/${f} and PrivateHeaders/${f}, which rn-xtool would put in one folder. See ${PODS_LINK}`,
+          );
+        }
+        await mkdir(path.dirname(path.join(into, f)), { recursive: true });
+        await writeFile(path.join(into, f), await readFile(path.join(privateDir, f)));
+      }
+    }
     return { name, rel, privacy: this.privacy(dir, rel), ...(s.minos !== undefined ? { minos: s.minos } : {}) };
   }
 
@@ -299,6 +315,18 @@ class Wrapper {
     if (literal !== undefined) throw this.notInTree(literal);
     const headers = expand(patterns, this.tree).filter((h) => isFile(path.join(extracted, h)));
     if (headers.length === 0 && patterns.length > 0) throw this.notInTree(patterns.join(", "));
+    // The headers are copied flat: two of one name would overwrite each other.
+    const seen = new Map<string, string>();
+    for (const h of headers) {
+      const base = path.posix.basename(h);
+      const first = seen.get(base);
+      if (first !== undefined) {
+        throw new PodsError(
+          `${this.label}: its source_files hold two headers named ${base} (${first} and ${h}), which rn-xtool puts in one folder. See ${PODS_LINK}`,
+        );
+      }
+      seen.set(base, h);
+    }
     const dirs = new Set(headers.map((h) => path.posix.dirname(h)));
     const explicit = layers.map((l) => l.moduleMap).find((m) => m !== undefined);
     const kept = expand(layers.flatMap((l) => l.preservePaths), this.tree).find(

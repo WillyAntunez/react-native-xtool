@@ -316,6 +316,45 @@ describe("wrapPod", () => {
     );
   });
 
+  describe("private headers", () => {
+    const MAP = 'framework module MLKitFoo {\n  umbrella header "MLKitFoo.h"\n  private header "MLKFooInternal.h"\n  export *\n}\n';
+
+    it("copies PrivateHeaders/ beside the headers when the module map names a private header", async () => {
+      framework("Frameworks/MLKitFoo.framework", lib(), { moduleMap: MAP, extra: { "PrivateHeaders/MLKFooInternal.h": "// internal" } });
+      const w = await wrap("MLKitFoo", ["Frameworks/MLKitFoo.framework"]);
+      const headers = path.join(w.frameworks[0]!.xcframework, "ios-arm64", "Headers", "MLKitFoo");
+      expect(readdirSync(headers).sort()).toEqual(["MLKFooInternal.h", "MLKitFoo.h", "module.modulemap"]);
+      expect(readFileSync(path.join(headers, "MLKFooInternal.h"), "utf8")).toBe("// internal");
+      expect(readFileSync(path.join(headers, "module.modulemap"), "utf8")).toContain('private header "MLKFooInternal.h"');
+    });
+
+    it("stops when a private header has a public header's name", async () => {
+      framework("Frameworks/MLKitFoo.framework", lib(), { moduleMap: MAP, extra: { "PrivateHeaders/MLKitFoo.h": "// other" } });
+      await expect(wrap("MLKitFoo", ["Frameworks/MLKitFoo.framework"])).rejects.toThrow(
+        new PodsError(
+          `MLKitFoo 1.0.0 (needed by ${LIB}): Frameworks/MLKitFoo.framework has Headers/MLKitFoo.h and PrivateHeaders/MLKitFoo.h, which rn-xtool would put in one folder. See ${LINK}`,
+        ),
+      );
+    });
+  });
+
+  it("stops on two headers with one name in a headers-only pod", async () => {
+    write("Sources/A/X.h", "// a");
+    write("Sources/B/X.h", "// b");
+    const spec = podSpec("HeadersOnly", { source_files: "Sources/**/*.h" });
+    await expect(
+      wrapPod(
+        { pod: "HeadersOnly", version: "1.0.0", sha256: SHA, neededBy: LIB, extracted, spec, layers: selectedLayers(spec, []).layers, headersOnly: true },
+        cache,
+        noAr,
+      ),
+    ).rejects.toThrow(
+      new PodsError(
+        `HeadersOnly 1.0.0 (needed by ${LIB}): its source_files hold two headers named X.h (Sources/A/X.h and Sources/B/X.h), which rn-xtool puts in one folder. See ${LINK}`,
+      ),
+    );
+  });
+
   describe("a headers-only pod whose files are not in the tree (row 83)", () => {
     const headersOnly = (json: Record<string, unknown>) => {
       const spec = podSpec("HeadersOnly", json);
