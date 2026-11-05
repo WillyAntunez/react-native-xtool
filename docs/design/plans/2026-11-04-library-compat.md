@@ -191,7 +191,7 @@ The spec's failure-walk rulings are binding.
   - **PR 2** = C, D, E, F2–F3 and G2, from `feature/library-compat` after PR 1 is merged.
   - If F1 fails on a library, PR 1 waits, and the failure goes to the owner as a decision.
 
-### Failure-walk owners (spec rows 1–41)
+### Failure-walk owners (spec rows 1–46)
 
 | # | Ruling | Owner |
 |---|---|---|
@@ -211,7 +211,7 @@ The spec's failure-walk rulings are binding.
 | 14 | accept | Task A4 plan note: a search path to a missing folder is ignored |
 | 15 | accept | Task B2 plan note: existing behaviour (`refreshStaleScaffolds`, `scaffoldPatchWarnings`); existing patches tests |
 | 16 | accept | Task G1 troubleshooting text: delete the library's `Package.swift` and its patch to regenerate it |
-| 17 | handle | Task B3 `stops on a library the scaffolder could not scaffold, with its reason first` |
+| 17 | handle | Task B3 `stops on a library the scaffolder could not scaffold, with its reason first`; `counts a library whose scaffold threw as failed, even with a bannered Package.swift` |
 | 18 | handle | Task B3 `a library without a scaffolded Package.swift afterwards failed too` |
 | 19 | accept | Task A6 (existing warning, new numbers); Task G1 CHANGELOG "Upgrading" says to delete and rebuild |
 | 20 | accept | Task B3 test `persists nothing for a failed library and never runs React Native again` (the persist warning no longer follows a failed scaffold) |
@@ -236,6 +236,11 @@ The spec's failure-walk rulings are binding.
 | 39 | handle | Task E2 `the table was checked with the pinned xtool` |
 | 40 | handle | Task E1 (1.24.0 tag source read before Task E2) |
 | 41 | handle | Task H (owner's device pass); Task G1/G2 docs call the libraries build-verified until then |
+| 42 | handle | Task A4 (fix 23's forwarder guard) `no forwarder when a library's own header has the name, with a warning` |
+| 43 | handle | Task B4 `does not call a scoped patch in a subfolder an orphan, as patch-package reads the path under patches/` |
+| 44 | handle | Task B5 `leaves out a value over several lines whose closing line carries a modifier, and reads on after it` |
+| 45 | accept | Task G1 troubleshooting text: the dropped-subspec entry says the subspec stays left out until the library is re-scaffolded after the install |
+| 46 | handle | Task B5 `says privacy manifests are read only at App Store submission only when every resource is one` |
 
 ## Review Focus
 
@@ -709,13 +714,19 @@ export function unbundledResourcesLine(list: { pkg: string; items: string[] }[])
 
 No commit. In `<scratchpad>/libcompat-proof/app`, reset to `base` (Task 0), after `npm run build` in the worktree.
 
-- [ ] **Step 1.** `doctor --project` shows no refusal.
-- [ ] **Step 2 (rows 8, 9, 13).** `build` produces `ios-xtool/xtool/App.app`.
+**Run 2026-11-04, build-only: pass.**
+- F1, on a fresh React Native 0.88.1 app with the four libraries: every step passed. Step 3 re-scaffolded netinfo
+  instead of installing react-native-linear-gradient.
+- F1b, the Expo SDK 58 driver route (expo 58.0.23, React Native 0.88.1) with react-native-device-info 15.0.2: pass.
+  Only device-info was scaffolded, and `App.app` was built.
+
+- [x] **Step 1.** `doctor --project` shows no refusal.
+- [x] **Step 2 (rows 8, 9, 13).** `build` produces `ios-xtool/xtool/App.app`.
   - `llvm-nm` on the app binary finds `CameraView`, `RCTVideo`, `RNDeviceInfo` and `RNCNetInfo`.
   - vision-camera's warning names the `FrameProcessors` subspec.
   - The `ℹ Not copied into the app:` line appears and names device-info.
   - Record `.build`'s size, then delete it.
-- [ ] **Step 3 (fact 7's regression; row 15).**
+- [x] **Step 3 (fact 7's regression; row 15).**
   - Add a comment line to `node_modules/react-native-device-info/Package.swift`, and persist it with the project's
     patch-package (`npx patch-package react-native-device-info --patch-dir patches --exclude
     '(^|/)\.build/|^package\.json$'`).
@@ -723,9 +734,9 @@ No commit. In `<scratchpad>/libcompat-proof/app`, reset to `base` (Task 0), afte
   - Build. rn-xtool announces `generating Package.swift for: react-native-linear-gradient`, and the driver prints
     `Scaffolded Package.swift for 1 dep(s)`.
   - The comment is still in device-info's `Package.swift`. Delete `.build`.
-- [ ] **Step 4 (row 21).** `npm uninstall react-native-device-info`, then build. The orphan line appears, and the
+- [x] **Step 4 (row 21).** `npm uninstall react-native-device-info`, then build. The orphan line appears, and the
   build succeeds. Delete `.build` and reset the app.
-- [ ] **Step 5.** Record versions, timings and `.build` sizes for the PR 1 body. A failure goes to the owner as a
+- [x] **Step 5.** Record versions, timings and `.build` sizes for the PR 1 body. A failure goes to the owner as a
   decision, and PR 1 waits.
 
 ### Task G1: Docs and CHANGELOG for PR 1
