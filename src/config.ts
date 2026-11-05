@@ -17,7 +17,8 @@ export interface ExpoXtoolConfig {
   knownLimits?: { allow: string[] };
   /**
    * CocoaPods pods a library's podspec depends on, mapped to their SwiftPM packages: merged over rn-xtool's own table
-   * (`data/pods.json`) and handed to the scaffolder. Per pod, the config's entry wins.
+   * (`data/pods.json`) and handed to the scaffolder. Per pod, the config's entry overrides the fields it names and
+   * keeps the shipped entry's others (an empty `forwardHeaders` or `subspecs` removes them).
    */
   pods?: Record<string, PodEntry>;
 }

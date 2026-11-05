@@ -1,8 +1,9 @@
 /**
  * The table of CocoaPods pods with a SwiftPM package that the scaffolder maps a podspec's `s.dependency` with: the
  * vendored scaffolder's baseline (KNOWN_POD_SPM_PACKAGES), then rn-xtool's own entries (`data/pods.json`), then the
- * config's `pods`. rn-xtool writes the merged table to `ios/build/rn-xtool-pods.json` and names it to the scaffolder in
- * RN_SPM_POD_TABLE (read by `loadPodTable` in vendor/rn-spm/spm/scaffold-package-swift.js and in the 0.88 patches).
+ * config's `pods`, merged field by field per pod. rn-xtool writes the merged table to `ios/build/rn-xtool-pods.json`
+ * and names it to the scaffolder in RN_SPM_POD_TABLE (read by `loadPodTable` in
+ * vendor/rn-spm/spm/scaffold-package-swift.js and in the 0.88 patches).
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -32,7 +33,21 @@ function shippedPods(): Record<string, PodEntry> {
   return pods as Record<string, PodEntry>;
 }
 
-/** The scaffolder's baseline, then data/pods.json, then the config's pods; per pod, the later entry wins whole. */
+/**
+ * `over` on top of `base`, field by field: the fields `over` names replace those of `base`, and the others stay (an
+ * empty `forwardHeaders` or `subspecs` removes them). `product` is read as `products: [product]`.
+ */
+function mergePodEntry(base: PodEntry | undefined, over: PodEntry): PodEntry {
+  const { product, ...rest } = over;
+  const named: PodEntry = rest.products === undefined && product !== undefined ? { ...rest, products: [product] } : rest;
+  const { product: _replaced, ...kept } = base ?? ({} as Partial<PodEntry>);
+  return { ...kept, ...named } as PodEntry;
+}
+
+/**
+ * The scaffolder's baseline, then data/pods.json, then the config's pods. Per pod, a later entry overrides the fields it
+ * names and keeps the others: pinning AppAuth to another version keeps its forwardHeaders.
+ */
 export function mergedPodTable(configPods?: Record<string, PodEntry>): PodTable {
   const table: PodTable = { pods: {}, source: {} };
   const layers: [PodSource, Record<string, PodEntry>][] = [
@@ -42,7 +57,7 @@ export function mergedPodTable(configPods?: Record<string, PodEntry>): PodTable 
   ];
   for (const [source, pods] of layers) {
     for (const [pod, entry] of Object.entries(pods)) {
-      table.pods[pod] = entry;
+      table.pods[pod] = mergePodEntry(table.pods[pod], entry);
       table.source[pod] = source;
     }
   }

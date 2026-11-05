@@ -191,7 +191,7 @@ The spec's failure-walk rulings are binding.
   - **PR 2** = C, D, E, F2–F3 and G2, from `feature/library-compat` after PR 1 is merged.
   - If F1 fails on a library, PR 1 waits, and the failure goes to the owner as a decision.
 
-### Failure-walk owners (spec rows 1–46)
+### Failure-walk owners (spec rows 1–47)
 
 | # | Ruling | Owner |
 |---|---|---|
@@ -241,6 +241,7 @@ The spec's failure-walk rulings are binding.
 | 44 | handle | Task B5 `leaves out a value over several lines whose closing line carries a modifier, and reads on after it` |
 | 45 | accept | Task G1 troubleshooting text: the dropped-subspec entry says the subspec stays left out until the library is re-scaffolded after the install |
 | 46 | handle | Task B5 `says privacy manifests are read only at App Store submission only when every resource is one` |
+| 47 | handle | `fix: merge pod overrides field by field` (C1–C4 review M1), test `merges a config entry over the shipped one field by field` |
 
 ## Review Focus
 

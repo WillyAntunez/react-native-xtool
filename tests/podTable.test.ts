@@ -38,10 +38,29 @@ describe("the pod table", () => {
     const mine = { url: "https://github.com/example/AppAuth-iOS", exact: "2.1.0", product: "AppAuth" };
     const mmkv = { url: "https://github.com/Tencent/MMKV", exact: "2.2.4", products: ["MMKV"] };
     const introspect = { ...INTROSPECT, exact: "1.6.0" };
+    // Per pod, the config overrides only the fields it names: AppAuth keeps its forwarder.
     expect(mergedPodTable({ AppAuth: mine, MMKV: mmkv, SwiftUIIntrospect: introspect })).toEqual({
-      pods: { SwiftUIIntrospect: introspect, AppAuth: mine, MMKV: mmkv },
+      pods: {
+        SwiftUIIntrospect: introspect,
+        AppAuth: { url: mine.url, exact: "2.1.0", products: ["AppAuth"], forwardHeaders: APPAUTH.forwardHeaders },
+        MMKV: mmkv,
+      },
       source: { SwiftUIIntrospect: "config", AppAuth: "config", MMKV: "config" },
     });
+  });
+
+  it("merges a config entry over the shipped one field by field", () => {
+    const pinned = { url: APPAUTH.url, exact: "3.1.0", products: ["AppAuth"] };
+    expect(mergedPodTable({ AppAuth: pinned }).pods.AppAuth).toEqual({ ...APPAUTH, exact: "3.1.0" });
+    // An empty forwardHeaders (or subspecs) removes the shipped ones.
+    expect(mergedPodTable({ AppAuth: { ...pinned, forwardHeaders: {} } }).pods.AppAuth).toEqual({ ...pinned, forwardHeaders: {} });
+    // `product` replaces the shipped products.
+    expect(mergedPodTable({ AppAuth: { url: APPAUTH.url, exact: "3.0.0", product: "AppAuthCore" } }).pods.AppAuth).toEqual({
+      ...APPAUTH,
+      products: ["AppAuthCore"],
+    });
+    const subspecs = { Core: ["AppAuthCore"] };
+    expect(mergedPodTable({ AppAuth: { ...pinned, subspecs } }).pods.AppAuth).toEqual({ ...APPAUTH, exact: "3.1.0", subspecs });
   });
 
   it("writes the merged table under ios/build, where the scaffolder reads it", () => {
