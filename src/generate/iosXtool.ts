@@ -1,10 +1,12 @@
+import { readdirSync } from "node:fs";
 import { copyFile, cp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import * as plist from "plist";
 import type { RuntimeFramework } from "../frameworks.js";
 import { swiftHeadersDir, type ProjectPaths } from "../paths.js";
 import { transformInfoPlist } from "../plist.js";
 import { buildVars, type ProjectInfo } from "../project/index.js";
+import { openPbxproj, resolveSetting } from "../project/pbxproj.js";
 import { packageRoot } from "../tools/exec.js";
 import { IOS_MIN } from "../versions.js";
 import { APP_ICON_FILE, findAppIcon, type IconRecord } from "./appIcon.js";
@@ -115,7 +117,53 @@ async function writeAppSources(ctx: GenerateContext, headersDir: string, resourc
       );
     }
   }
-  return { app: { mixed: false, defines: [], headerSearchPaths: [], swiftHeadersDir: headersDir }, resources: [] };
+  const bridgingHeader = await expoBridgingHeader(paths.ios, paths.sources);
+  return {
+    app: {
+      mixed: false,
+      ...(bridgingHeader && { bridgingHeader }),
+      defines: [],
+      headerSearchPaths: [],
+      swiftHeadersDir: headersDir,
+    },
+    resources: [],
+  };
+}
+
+/** Whether a header holds anything besides comments and blank lines. */
+function hasDeclarations(text: string): boolean {
+  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "").trim() !== "";
+}
+
+/**
+ * The Expo prebuild's bridging header (`SWIFT_OBJC_BRIDGING_HEADER` of the app target, Debug, relative to ios/),
+ * copied into Sources/App for Swift when it holds more than comments: a config plugin adds imports to it
+ * (react-native-app-auth's `RNAppAuthAuthorizationFlowManager.h`). The prebuild's default holds only a comment and is
+ * not passed, so such an app's manifest stays as it was. Undefined without an Xcode project or the setting; a setting
+ * naming a missing file throws.
+ */
+async function expoBridgingHeader(iosDir: string, sourcesDir: string): Promise<string | undefined> {
+  let projects: string[];
+  try {
+    projects = readdirSync(iosDir).filter((n) => n.endsWith(".xcodeproj"));
+  } catch {
+    return undefined;
+  }
+  if (projects.length === 0) return undefined;
+  const p = openPbxproj(iosDir);
+  const rel = resolveSetting(p, "SWIFT_OBJC_BRIDGING_HEADER")?.trim();
+  if (!rel) return undefined;
+  const text = await readOptional(resolve(iosDir, rel));
+  if (text === undefined) {
+    throw new Error(
+      `SWIFT_OBJC_BRIDGING_HEADER in ios/${p.projectName}.xcodeproj names ${rel}, which does not exist. ` +
+        "Run rn-xtool build --clean to run expo prebuild again.",
+    );
+  }
+  if (!hasDeclarations(text)) return undefined;
+  const copy = join(sourcesDir, basename(rel));
+  await writeFile(copy, text);
+  return copy;
 }
 
 export async function writeIosXtool(ctx: GenerateContext): Promise<void> {

@@ -417,6 +417,60 @@ describe("writeIosXtool", () => {
     expect(sceneDelegateClassNames(await plistText("ios-target"))).toEqual(["$(PRODUCT_MODULE_NAME).SceneDelegate"]);
   });
 
+  describe("the Expo prebuild's bridging header", () => {
+    const DEFAULT_HEADER = "//\n// Use this file to import your target's public headers that you would like to expose to Swift.\n//\n";
+    /** An Expo app laid out as expo prebuild writes it: ios/LibApp.xcodeproj and the target folder ios/LibApp. */
+    async function libApp(header: string | undefined) {
+      const root = await mkdtemp(join(tmpdir(), "xt7-libapp-"));
+      tmps.push(root);
+      const ios = join(root, "ios");
+      const target = join(ios, "LibApp");
+      await mkdir(join(ios, "LibApp.xcodeproj"), { recursive: true });
+      await cp(new URL("./fixtures/ios-target", import.meta.url).pathname, target, { recursive: true });
+      await cp(new URL("./fixtures/pbxproj/expo-libapp.pbxproj", import.meta.url).pathname, join(ios, "LibApp.xcodeproj", "project.pbxproj"));
+      if (header !== undefined) await writeFile(join(target, "LibApp-Bridging-Header.h"), header);
+      const project: ProjectInfo = {
+        kind: "expo", root, name: "LibApp", slug: "lib-app", version: "1.0.0", buildNumber: "1",
+        bundleIdentifier: "com.example.app", moduleName: "main", sdkVersion: 58, rnVersion: "0.88.1",
+        rnScripts: "installed", expoPlugin: "installed",
+        iosTargetName: "LibApp", iosTargetDir: target, infoPlistPath: join(target, "Info.plist"),
+        hasExpoModules: true, hasExpoConstants: true, hasDevClient: false,
+      };
+      const paths = projectPaths(root);
+      return { paths, ctx: { project, paths, frameworks, metroPort: 8081, lanIp: "192.168.1.5", log: () => {} } };
+    }
+    const manifestOf = (paths: { iosXtool: string }) => readFile(join(paths.iosXtool, "Package.swift"), "utf8");
+
+    it("passes the Expo prebuild's bridging header to Swift", async () => {
+      const header = `${DEFAULT_HEADER}#import "RNAppAuthAuthorizationFlowManager.h"\n`;
+      const { paths, ctx } = await libApp(header);
+      await writeIosXtool(ctx);
+      const copy = join(paths.sources, "LibApp-Bridging-Header.h");
+      expect(await readFile(copy, "utf8")).toBe(header);
+      expect(await manifestOf(paths)).toContain(`.unsafeFlags(["-import-objc-header", "${copy}"]),`);
+    });
+
+    it("keeps the manifest byte-identical for a comment-only header", async () => {
+      const plain = await expoProject("ios-target");
+      await writeIosXtool(plain.ctx);
+      const expected = (await manifestOf(plain.paths)).split(plain.paths.root).join("<root>");
+      for (const header of [DEFAULT_HEADER, `/* nothing */\n\n   \n// still nothing\n`]) {
+        const { paths, ctx } = await libApp(header);
+        await writeIosXtool(ctx);
+        expect((await manifestOf(paths)).split(paths.root).join("<root>")).toBe(expected);
+        expect((await readdir(paths.sources)).sort()).toEqual(["AppDelegate.swift", "ExpoModulesProvider.swift", "SceneDelegate.swift"]);
+      }
+    });
+
+    it("names a missing bridging header", async () => {
+      const { ctx } = await libApp(undefined);
+      await expect(writeIosXtool(ctx)).rejects.toThrow(
+        "SWIFT_OBJC_BRIDGING_HEADER in ios/LibApp.xcodeproj names LibApp/LibApp-Bridging-Header.h, which does not exist. " +
+          "Run rn-xtool build --clean to run expo prebuild again.",
+      );
+    });
+  });
+
   /** A bare project laid out like the with-objc pbxproj fixture, with every listed file on disk. */
   async function bareProject(o: { pbxproj?: (src: string) => string } = {}) {
     const root = await mkdtemp(join(tmpdir(), "xt7-bare-"));
