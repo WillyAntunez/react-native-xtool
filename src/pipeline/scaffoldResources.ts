@@ -123,6 +123,35 @@ function podspecResources(text: string): PodspecResources {
   return { items, bundles };
 }
 
+const ANY_RESOURCE_BUNDLES = attribute("resource_bundles?");
+
+/**
+ * Whether rn-xtool builds every resource bundle a podspec declares, when its library is scaffolded: at least one, each
+ * on an unconditional `resource_bundles` line whose hash holds only literal keys and globs. Doctor's podspecs line
+ * names only the others.
+ */
+export function buildsEveryResourceBundle(text: string): boolean {
+  const lines = podspecLines(text);
+  const unconditional = new Set(unconditionalLineIndexes(text));
+  const podName = /\.name\s*=\s*(["'])([^"'#]+)\1/.exec(text)?.[2];
+  let found = false;
+  for (let at = 0; at < lines.length; at++) {
+    const code = rubyCode(lines[at]!);
+    if (!ANY_RESOURCE_BUNDLES.test(code)) continue;
+    if (!unconditional.has(at) || !RESOURCE_BUNDLES.test(code)) return false;
+    const value = assignedValue(lines, at);
+    if (value === undefined) return false;
+    for (const m of value.matchAll(BUNDLE_ENTRY)) {
+      const raw = podName === undefined ? m[2]! : m[2]!.replace(/#\{\w+\.name\}/g, podName);
+      if (literal(m[1]!, raw) === undefined || literalGlobs(m[3]!) === undefined) return false;
+      found = true;
+    }
+    // Anything besides the entries is Ruby code: a variable, a method call.
+    if (value.replace(BUNDLE_ENTRY, "").replace(/[{}(),\s]/g, "") !== "") return false;
+  }
+  return found;
+}
+
 /** Each dependency autolinking.json lists for iOS whose Package.swift rn-xtool's scaffolder wrote, sorted by name, with its podspecs. */
 function scaffoldedLibraries(projectRoot: string): { pkg: string; podspecs: string[] }[] {
   const json = readJson(path.join(projectPaths(projectRoot).autolinking, "autolinking.json"));

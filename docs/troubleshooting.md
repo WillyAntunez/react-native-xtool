@@ -886,7 +886,9 @@ checks, so it also runs on a machine without Swift or xtool. Run it from the pro
   `built from source (expo-modules-core <version> ships no prebuilds)`.
 - **podspecs** (information only): the podspec features the dependencies use that rn-xtool tracks (`subspecs`,
   `compiler_flags`, `header_dir`, `header_mappings_dir`, `vendored_frameworks`, `resource_bundles`), each with the
-  packages that use it, or `no tracked podspec features in the dependencies`.
+  packages that use it, or `no tracked podspec features in the dependencies`. `resource_bundles` names only the
+  packages with a bundle rn-xtool does not build: one under a Ruby condition, or whose name or files are Ruby code
+  rather than plain strings.
 - **exclude** (only with `exclude` in `rn-xtool.config.json`): an ℹ line naming the modules left out of the build, and
   a ⚠ line for each name it ignores ([Leaving a module out](#leaving-a-module-out)).
 - **pods** (only when a pin misses a requirement): one ⚠ line per pod whose version in the pod table is outside the

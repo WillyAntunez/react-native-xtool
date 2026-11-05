@@ -364,6 +364,25 @@ describe("podspecFeatures", () => {
     });
   });
 
+  it("leaves out the resource bundles rn-xtool builds, and keeps those it cannot read", async () => {
+    const root = await tempDir("rn-xtool-caps-podspecs-");
+    await writePackage(root, { name: "app", dependencies: { built: "1.0.0", interpolated: "1.0.0", conditional: "1.0.0", mixed: "1.0.0" } });
+    const nm = path.join(root, "node_modules");
+    await writePackage(path.join(nm, "built"), { name: "built", version: "1.0.0" }, {
+      "Built.podspec": "Pod::Spec.new do |s|\n  s.resource_bundles = { 'Built' => ['Res/*.png'] }\nend\n",
+    });
+    await writePackage(path.join(nm, "interpolated"), { name: "interpolated", version: "1.0.0" }, {
+      "Interpolated.podspec": 'Pod::Spec.new do |s|\n  s.resource_bundles = { "I" => ["#{dir}/*.png"] }\nend\n',
+    });
+    await writePackage(path.join(nm, "conditional"), { name: "conditional", version: "1.0.0" }, {
+      "Conditional.podspec": "Pod::Spec.new do |s|\n  if ENV['X']\n    s.resource_bundles = { 'C' => ['Res/*.png'] }\n  end\nend\n",
+    });
+    await writePackage(path.join(nm, "mixed"), { name: "mixed", version: "1.0.0" }, {
+      "Mixed.podspec": "Pod::Spec.new do |s|\n  s.resource_bundles = { 'M' => ['Res/*.png'] }\n  s.resource_bundles = { 'N' => files }\nend\n",
+    });
+    expect(podspecFeatures(root).resource_bundles).toEqual(["conditional", "interpolated", "mixed"]);
+  });
+
   it("skips dependencies that are not installed and reads a scoped package", async () => {
     const root = await tempDir("rn-xtool-caps-podspecs-");
     await writePackage(root, { name: "app", dependencies: { "@scope/lib": "1.0.0", gone: "1.0.0" } });

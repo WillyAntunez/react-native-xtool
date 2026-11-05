@@ -16,6 +16,7 @@ import { formatSize } from "../pods/format.js";
 import { PODS_LOCK, lockedVersions, readPodsLock, unusedLockEntries, type PodsLock } from "../pods/lock.js";
 import { SourcePodError, resolveBinaryPods } from "../pods/resolve.js";
 import { parseRequirements, satisfiesAll } from "../pods/versions.js";
+import { buildsEveryResourceBundle } from "../pipeline/scaffoldResources.js";
 import { rawSlotComplete, rnArtifactsCacheRoot, type Flavor } from "../pipeline/rnArtifactsStep.js";
 import { orphanPatchLine, orphanPatches, scaffoldPinWarnings } from "../pipeline/patches.js";
 import { resolveRnDir, vendoredScriptsRoot } from "../pipeline/rnSpm.js";
@@ -218,13 +219,19 @@ export { dependencyDirs, podspecFiles } from "./podspecs.js";
 
 /**
  * For each tracked feature, the package.json `dependencies` (sorted by name, react-native left out) that resolve from
- * `root` and whose package directory has a podspec using it. The podspecs are read as text, never evaluated.
+ * `root` and whose package directory has a podspec using it; for `resource_bundles`, only a podspec with a bundle
+ * rn-xtool does not build (`buildsEveryResourceBundle`). The podspecs are read as text, never evaluated.
  */
 export function podspecFeatures(root: string): Record<PodspecFeature, string[]> {
   const result = Object.fromEntries(PODSPEC_FEATURES.map(([f]) => [f, [] as string[]])) as Record<PodspecFeature, string[]>;
   for (const { name, dir } of dependencyDirs(root)) {
     const texts = podspecTexts(dir);
-    for (const [feature, re] of PODSPEC_FEATURES) if (texts.some((t) => re.test(t))) result[feature].push(name);
+    for (const [feature, re] of PODSPEC_FEATURES) {
+      const used = texts.filter((t) => re.test(t));
+      // The resource bundles rn-xtool builds into the app are not a limit any more; those it cannot read still are.
+      if (feature === "resource_bundles" && used.length > 0 && used.every(buildsEveryResourceBundle)) continue;
+      if (used.length > 0) result[feature].push(name);
+    }
   }
   return result;
 }
