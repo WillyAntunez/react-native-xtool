@@ -208,6 +208,9 @@ const SWIFT = /\.swift$/i;
 const C_SOURCE = /\.(m|mm|c|cc|cxx|cpp)$/i;
 const HEADER = /\.(h|hpp)$/i;
 const SKIPPED_RESOURCE = /\.(storyboard|xcassets|xib)$/i;
+/** Folders of ios/ that hold no app headers: CocoaPods' and build output. */
+const NOT_APP_DIRS = new Set(["Pods", "build", "DerivedData"]);
+const FRAMEWORK_DIR = /\.(xc)?framework$/i;
 const IGNORABLE_FLAGS = ["OTHER_CFLAGS", "OTHER_LDFLAGS", "OTHER_SWIFT_FLAGS"];
 /** Flags the template sets that the generated project already provides. */
 const BENIGN_FLAGS = new Set(["$(inherited)", "-ObjC", "-lc++"]);
@@ -386,19 +389,35 @@ export function readTargetContent(p: Pbxproj, iosDir: string): BareTargetContent
     (SKIPPED_RESOURCE.test(file.relPath) ? skippedResources : resources).push(file);
   }
 
-  // Headers are rarely in a build phase: take every header under the app target's folder group.
-  const infoPlist = resolveSetting(p, "INFOPLIST_FILE");
-  const folder = infoPlist ? path.posix.dirname(infoPlist) : undefined;
-  if (folder && folder !== ".") {
-    const group =
-      [...groupPaths.entries()].find(([uuid, g]) => uuid !== mainGroup && g.path === folder) ??
-      [...groupPaths.entries()].find(([uuid, g]) => uuid !== mainGroup && g.path === "" && g.name === folder);
-    for (const uuid of group?.[1].files ?? []) {
-      const file = fileOf(uuid);
-      if (!HEADER.test(file.relPath)) continue;
-      if (!headers.some((h) => h.relPath === file.relPath)) headers.push(file);
-    }
+  // Headers are rarely in a build phase. Xcode's header map makes every header the project references importable as
+  // "X.h" from any source of the target: take each one under ios/, outside Pods, build/, frameworks and the Products
+  // group. Headers under the app folder come first, so they win a basename shared with another header.
+  const firstProject = p.project.getFirstProject().firstProject;
+  const mainChildren = ((objs.PBXGroup?.[mainGroup]?.children ?? []) as ({ value: string } | string)[]).map(ref);
+  const skippedGroups = [
+    String(firstProject.productRefGroup ?? ""),
+    ...mainChildren.filter((uuid) => {
+      const g = groupPaths.get(uuid);
+      return g !== undefined && (g.path === "Pods" || g.name === "Pods");
+    }),
+  ];
+  const skippedRefs = new Set(skippedGroups.flatMap((uuid) => groupPaths.get(uuid)?.files ?? []));
+  const referenced: TargetFile[] = [];
+  const taken = new Set(headers.map((h) => h.relPath));
+  for (const [uuid, placed] of files) {
+    if (placed === undefined || skippedRefs.has(uuid) || !HEADER.test(placed)) continue;
+    const file = toFile(placed);
+    const parts = file.relPath.split("/");
+    if (path.posix.isAbsolute(file.relPath) || parts[0] === ".." || NOT_APP_DIRS.has(parts[0]!)) continue;
+    if (parts.some((part) => FRAMEWORK_DIR.test(part))) continue;
+    if (taken.has(file.relPath)) continue;
+    taken.add(file.relPath);
+    referenced.push(file);
   }
+  const infoPlist = resolveSetting(p, "INFOPLIST_FILE");
+  const folder = infoPlist ? path.posix.dirname(infoPlist) : ".";
+  const inFolder = (f: TargetFile): boolean => folder !== "." && f.relPath.startsWith(`${folder}/`);
+  headers.push(...referenced.filter(inFolder), ...referenced.filter((f) => !inFolder(f)));
 
   const seen = new Map<string, TargetFile>();
   for (const f of [...swiftSources, ...cSources]) {

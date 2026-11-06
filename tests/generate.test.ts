@@ -987,6 +987,35 @@ describe("writeIosXtool", () => {
     await expect(writeIosXtool(ctx)).rejects.toThrow(/HelloWorld\/include\/Api\.h/);
   });
 
+  /** The with-objc pbxproj with `file` (relative to ios/) a direct child of the main group, in no build phase. */
+  const withMainGroupFile = (src: string, file: string): string =>
+    src
+      .replace(
+        "/* End PBXFileReference section */",
+        `\t\tD10000000000000000000003 = {isa = PBXFileReference; path = "${file}"; sourceTree = "<group>"; };\n/* End PBXFileReference section */`,
+      )
+      .replace(/(83CBB9F61A601CBA00E9B192 = \{\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = \(\n)/, "$1\t\t\t\tD10000000000000000000003,\n");
+
+  it("copies a header of the main group with its forward, so the app's main.m finds it", async () => {
+    const { app, paths, ctx } = await bareProject({ pbxproj: (src) => withMainGroupFile(withAppSource(src, "main.m"), "AppDelegate.h") });
+    expect(ctx.project.bare!.headers.map((f) => f.relPath)).toContain("AppDelegate.h");
+    await writeFile(join(app, "main.m"), '#import "AppDelegate.h"\nint main(int argc, char *argv[]) { return 0; }\n');
+    await writeFile(join(app, "..", "AppDelegate.h"), "@interface AppDelegate : NSObject\n@end\n");
+    await writeIosXtool(ctx);
+    expect(await readFile(join(paths.sources, "AppDelegate.h"), "utf8")).toBe("@interface AppDelegate : NSObject\n@end\n");
+    expect(await readFile(join(paths.sources, "include", "AppDelegate.h"), "utf8")).toBe('#import "../AppDelegate.h"\n');
+    expect(await readFile(join(paths.sources, "AppMain.m"), "utf8")).toContain('#import "AppDelegate.h"');
+  });
+
+  it("skips a header the project references but that does not exist, saying so", async () => {
+    const { paths, ctx, logs } = await bareProject({ pbxproj: (src) => withMainGroupFile(src, "Gone.h") });
+    await writeIosXtool(ctx);
+    expect(logs).toContain("ℹ Skipped Gone.h: the Xcode project references this header, but the file does not exist");
+    await expect(readFile(join(paths.sources, "Gone.h"), "utf8")).rejects.toThrow();
+    await expect(readFile(join(paths.sources, "include", "Gone.h"), "utf8")).rejects.toThrow();
+    expect(await readFile(join(paths.sources, "include", "NativeModule.h"), "utf8")).toBe('#import "../Native/NativeModule.h"\n');
+  });
+
   it("keeps .bundle folders and files inside a .bundle together", async () => {
     const { app, paths, ctx } = await bareProject();
     await mkdir(join(app, "Assets", "Maps.bundle", "tiles"), { recursive: true });
