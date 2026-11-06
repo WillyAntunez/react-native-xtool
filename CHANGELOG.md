@@ -11,6 +11,10 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   as `AppMain.m` in its folder (any C-family `main.<ext>` as `AppMain.<ext>`), and the build says so in an `ℹ` line. A
   `main.swift` is refused early, by `build` and `doctor --project`, with the remedy: mark the app delegate class
   `@main` and remove `main.swift` from the app target.
+- Bare app targets whose headers sit outside the app folder group (an Objective-C `AppDelegate.h` next to the project)
+  compile: every header the project references under `ios/`, outside `Pods/`, is copied with its forward in
+  `Sources/App/include`. A referenced header that does not exist is skipped with an `ℹ` line instead of stopping the
+  build.
 
 ## [0.1.0-alpha.6] - 2026-11-05
 
