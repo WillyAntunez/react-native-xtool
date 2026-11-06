@@ -542,6 +542,9 @@ export type ScaffoldResult =
       // What became of `swiftpmConfig.name` in the library's package.json.
       // Absent when the name was not podspec-derived, so nothing was attempted.
       swiftpmName?: SwiftpmNameOutcome,
+      // Every file the scaffold wrote under the library, relative to its root
+      // (posix separators), sorted.
+      files: Array<string>,
     }
   | {
       depName: string,

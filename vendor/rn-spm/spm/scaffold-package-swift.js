@@ -2044,10 +2044,12 @@ function reactIncludeRoots(appRoot /*: string */) /*: Array<string> */ {
  * the Swift umbrella (unless the podspec brings its own bridging header) and
  * the `<Module>-Swift.h` spellings CocoaPods sources use. The shims import the
  * real header with angle brackets so the lookup skips their own directory.
+ * Each file goes through `write`, which records it.
  */
 function writeMixedLanguageSupport(
   depRoot /*: string */,
   mixed /*: {swiftHeader: string, podModule: string, bridgingHeader: string, umbrellaHeaders: ?Array<string>} */,
+  write /*: (file: string, text: string) => void */,
 ) /*: void */ {
   const dir = path.join(depRoot, MIXED_SUPPORT_DIR);
   fs.rmSync(dir, {recursive: true, force: true});
@@ -2055,7 +2057,7 @@ function writeMixedLanguageSupport(
   const banner =
     '// AUTO-SCAFFOLDED by react-native spm scaffold (mixed Swift + Objective-C target).\n';
   if (mixed.umbrellaHeaders != null) {
-    fs.writeFileSync(
+    write(
       path.join(dir, MIXED_UMBRELLA_HEADER),
       banner +
         '// Swift bridging header: what the CocoaPods umbrella gives Swift — Foundation,\n' +
@@ -2063,21 +2065,15 @@ function writeMixedLanguageSupport(
         '#import <Foundation/Foundation.h>\n' +
         '#if __has_include(<UIKit/UIKit.h>)\n#import <UIKit/UIKit.h>\n#endif\n' +
         mixed.umbrellaHeaders.map(h => `#import "../${h}"\n`).join(''),
-      'utf8',
     );
   }
   const forward = `#import <${mixed.swiftHeader}>\n`;
-  fs.writeFileSync(
+  write(
     path.join(dir, mixed.podModule, `${mixed.podModule}-Swift.h`),
     banner + forward,
-    'utf8',
   );
   if (`${mixed.podModule}-Swift.h` !== mixed.swiftHeader) {
-    fs.writeFileSync(
-      path.join(dir, `${mixed.podModule}-Swift.h`),
-      banner + forward,
-      'utf8',
-    );
+    write(path.join(dir, `${mixed.podModule}-Swift.h`), banner + forward);
   }
 }
 
@@ -2340,14 +2336,23 @@ function scaffoldPackageSwiftForDep(
   // regens are silent because we're maintaining a file we already own.
   const previouslyExisted = fs.existsSync(pkgSwiftPath);
 
+  // Every file this scaffold writes under the library, relative to its root
+  // (posix), for the result: a patch that persists the scaffold can then hold
+  // these files and no other. What it removes is its own earlier output, which
+  // a clean copy of the library does not hold.
+  const written /*: Set<string> */ = new Set();
+  const write = (file /*: string */, text /*: string */) => {
+    fs.writeFileSync(file, text, 'utf8');
+    written.add(path.relative(dep.root, file).split(path.sep).join('/'));
+  };
+
   if (!ctx.dryRun) {
-    fs.writeFileSync(pkgSwiftPath, content, 'utf8');
+    write(pkgSwiftPath, content);
     const manifest65Path = path.join(dep.root, MIXED_MANIFEST_6_5);
     if (spec.mixedLanguage != null) {
-      fs.writeFileSync(
+      write(
         manifest65Path,
         content.replace(MIXED_TOOLS_VERSION_LINE, MIXED_TOOLS_VERSION_LINE_6_5),
-        'utf8',
       );
     } else if (
       fs.existsSync(manifest65Path) &&
@@ -2358,10 +2363,9 @@ function scaffoldPackageSwiftForDep(
     // Emit the ambient-import prefix header next to the manifest when the
     // target has ObjC(++) sources (the manifest `-include`s it by bare name).
     if (spec.needsObjCPrefix) {
-      fs.writeFileSync(
+      write(
         path.join(dep.root, SCAFFOLD_PREFIX_HEADER),
         SCAFFOLD_PREFIX_HEADER_CONTENTS,
-        'utf8',
       );
     }
     // Mirror root-level headers into the generated include/<SwiftName>/ shim
@@ -2374,13 +2378,12 @@ function scaffoldPackageSwiftForDep(
         // Entries may be nested relative paths (e.g. apple/Handlers/X.h): the
         // stub is named by basename and #imports the real header by path.
         const name = path.posix.basename(header);
-        fs.writeFileSync(
+        write(
           path.join(shimDir, name),
           `// AUTO-SCAFFOLDED by react-native spm scaffold — the namespaced\n` +
             `// spelling (<${spec.swiftName}/${name}>) of the header,\n` +
             `// matching how CocoaPods header maps expose it.\n` +
             `#import "../../${header}"\n`,
-          'utf8',
         );
       }
     }
@@ -2391,19 +2394,18 @@ function scaffoldPackageSwiftForDep(
         const name = names?.[i] ?? path.posix.basename(header);
         const stub = path.join(nsDir, name);
         fs.mkdirSync(path.dirname(stub), {recursive: true});
-        fs.writeFileSync(
+        write(
           stub,
           `// AUTO-SCAFFOLDED by react-native spm scaffold — the <${dir}/${name}>\n` +
             `// spelling CocoaPods' header_dir gives the header.\n` +
             `#import "${'../'.repeat(dir.split('/').length + name.split('/').length)}${header}"\n`,
-          'utf8',
         );
       });
     }
   }
 
   if (!ctx.dryRun && spec.mixedLanguage != null) {
-    writeMixedLanguageSupport(dep.root, spec.mixedLanguage);
+    writeMixedLanguageSupport(dep.root, spec.mixedLanguage, write);
   }
   if (!ctx.dryRun && spec.publicHeadersPath != null) {
     const mapPath = path.join(
@@ -2413,7 +2415,7 @@ function scaffoldPackageSwiftForDep(
     );
     const map = spec.clangModuleMap;
     if (map != null) {
-      fs.writeFileSync(
+      write(
         mapPath,
         `${SCAFFOLDER_MARKER}\n` +
           '// The module SwiftPM would make of publicHeadersPath, minus the headers the podspec leaves\n' +
@@ -2423,7 +2425,6 @@ function scaffoldPackageSwiftForDep(
           map.excludes.map(h => `    exclude header "${h}"\n`).join('') +
           '    export *\n' +
           '}\n',
-        'utf8',
       );
     } else if (
       fs.existsSync(mapPath) &&
@@ -2438,12 +2439,11 @@ function scaffoldPackageSwiftForDep(
     if (spec.reactBareHeaders.length > 0) {
       fs.mkdirSync(bareDir, {recursive: true});
       for (const name of spec.reactBareHeaders) {
-        fs.writeFileSync(
+        write(
           path.join(bareDir, name),
           `// AUTO-SCAFFOLDED by react-native spm scaffold — the bare "${name}"\n` +
             `// spelling CocoaPods' header map resolves to React's public header.\n` +
             `#import <React/${name}>\n`,
-          'utf8',
         );
       }
     }
@@ -2457,11 +2457,10 @@ function scaffoldPackageSwiftForDep(
     for (const {pod, header, headers} of spec.podForwarders ?? []) {
       const file = path.join(podHeadersDir, ...header.split('/'));
       fs.mkdirSync(path.dirname(file), {recursive: true});
-      fs.writeFileSync(
+      write(
         file,
         `// ${SCAFFOLDER_BANNER} — forwards <${header}> to the public headers of the pod ${pod}.\n` +
           headers.map(h => `#import <${h}>\n`).join(''),
-        'utf8',
       );
     }
   }
@@ -2475,6 +2474,12 @@ function scaffoldPackageSwiftForDep(
     dep.swiftNameSource === 'podspec'
       ? writeSwiftpmName(dep.root, spec.swiftName, {dryRun: ctx.dryRun})
       : undefined;
+  if (
+    !ctx.dryRun &&
+    (swiftpmName === 'created' || swiftpmName === 'inserted')
+  ) {
+    written.add('package.json');
+  }
 
   return {
     depName,
@@ -2483,6 +2488,7 @@ function scaffoldPackageSwiftForDep(
     warnings: spec.warnings,
     previouslyExisted,
     swiftpmName,
+    files: [...written].sort(),
   };
 }
 

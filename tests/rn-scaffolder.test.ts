@@ -43,6 +43,23 @@ type Dep = { name: string; root: string; swiftName: string; platforms: object };
 type ReadPodspec = { readPodspecCached(file: string): Model };
 type Scaffold = { translatePodspecToSpmTarget(model: Model, dep: Dep): Spec };
 
+/**
+ * For each written library of a {@link scaffoldLibraries} run: the files its result lists, and the files the run created
+ * or changed in it, both relative to the library and sorted.
+ */
+function listedAndChanged(run: ReturnType<typeof scaffoldLibraries>): { lib: string; listed: string[]; changed: string[] }[] {
+  return run.results
+    .filter((r) => r.status === "written")
+    .map((r) => ({
+      lib: r.depName,
+      listed: [...((r as { files?: unknown }).files as string[] | undefined ?? [])].sort(),
+      changed: Object.keys(run.files)
+        .filter((k) => k.startsWith(`${r.depName}/`))
+        .map((k) => k.slice(r.depName.length + 1))
+        .sort(),
+    }));
+}
+
 const tmp: string[] = [];
 function tempDir(): string {
   const d = mkdtempSync(path.join(tmpdir(), "xtool-rnspm-"));
@@ -78,6 +95,14 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
     writeFileSync(file, `Pod::Spec.new do |s|\n  s.name = "Foo"\n  ${body}\nend\n`);
     return file;
   }
+
+  it("each written result lists the files its scaffold wrote", () => {
+    const run = scaffoldLibraries(SPM, { "react-native-screens": path.join(PODSPEC_FIXTURES, "RNScreens-4.30.1") });
+    const listed = listedAndChanged(run);
+    expect(listed).toHaveLength(1);
+    expect(listed[0]!.listed).toContain("Package.swift");
+    expect(listed[0]!.listed).toEqual(listed[0]!.changed);
+  });
 
   describe("the patched RN files carry the patch", () => {
     // Guards against testing an unpatched RN: each hunk must be present in what the tests load.
@@ -1516,6 +1541,16 @@ describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
     expect(readdirSync(real).sort()).toEqual(before);
   });
 
+  it("each written result lists the files its scaffold wrote, relative to the library", () => {
+    const listed = listedAndChanged(run());
+    expect(listed.map((l) => l.lib).sort()).toEqual(Object.keys(run().roots).sort());
+    for (const l of listed) expect(l.listed, l.lib).toEqual(l.changed);
+    // The mixed target's support files and the include stubs are among them.
+    const all = listed.flatMap((l) => l.listed.map((f) => `${l.lib}/${f}`));
+    expect(all).toContain("react-native-screens/rn-spm-swift/umbrella.h");
+    expect(all.some((f) => f.includes("/include/"))).toBe(true);
+  });
+
   it("gesture-handler 2.32.0 scaffolds", () => {
     expect(run().statuses["react-native-gesture-handler"]).toBe("written");
     expect(run().results.filter((r) => r.status === "error")).toEqual([]);
@@ -2169,6 +2204,17 @@ describe("scaffolder fix 13: the pod table (vendor/rn-spm)", () => {
       expect(settings(pkg, "cSettings")).toContain('.headerSearchPath("rn-spm-pod-headers")');
       expect(settings(pkg, "cxxSettings")).toContain('.headerSearchPath("rn-spm-pod-headers")');
       expect(Object.keys(run.files).filter((k) => k.includes("rn-spm-pod-headers"))).toEqual(["foo/rn-spm-pod-headers/AppAuth/AppAuth.h"]);
+    });
+
+    it("13: the result lists the forwarder with the other files the scaffold wrote", () => {
+      const run = scaffold(APPAUTH_DEP, forwarding(FORWARD));
+      const [foo] = listedAndChanged(run);
+      expect(foo!.listed).toEqual(foo!.changed);
+      expect(foo!.listed).toContain("rn-spm-pod-headers/AppAuth/AppAuth.h");
+      expect(foo!.listed).toContain("Package.swift");
+      // A scaffold again lists what it writes again, unchanged files included; package.json already has the name.
+      const again = withTable(forwarding(FORWARD), () => run.rerun({}));
+      expect((again[0] as { files?: string[] }).files).toEqual(foo!.listed.filter((f) => f !== "package.json"));
     });
 
     it("13: the forwarder includes the pod's headers textually, without @import (Objective-C++ compiles without modules)", () => {
