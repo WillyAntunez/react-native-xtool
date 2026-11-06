@@ -133,6 +133,28 @@ describe("setup", () => {
       "Run: rn-xtool auth login",
     ]);
   });
+
+  it("gives no install advice when the reduced reader is forced", async () => {
+    const log = vi.fn();
+    const forced = () => ({ reader: "reduced", why: "RN_XTOOL_PODSPEC_READER=reduced is set", forced: true, warning: null }) as const;
+    await setup({}, { checkSwiftPackages: noPending, probe: async () => all, podspecReader: forced, log });
+    expect(log.mock.calls.map((c) => c[0] as string)).toEqual([
+      "⚠ RN_XTOOL_PODSPEC_READER=reduced is set: rn-xtool reads podspecs with its reduced reader",
+      "✔ Nothing to do: toolchain already set up",
+    ]);
+  });
+
+  it("names an unknown RN_XTOOL_PODSPEC_READER value under the Ruby line", async () => {
+    const log = vi.fn();
+    const warning = "RN_XTOOL_PODSPEC_READER=REDUCED is not a reader rn-xtool knows (only reduced); reading podspecs with Ruby";
+    const warned = () => ({ reader: "ruby", ruby: "3.3.8", forced: false, warning }) as const;
+    await setup({}, { checkSwiftPackages: noPending, probe: async () => all, podspecReader: warned, log });
+    expect(log.mock.calls.map((c) => c[0] as string)).toEqual([
+      "✔ ruby 3.3.8",
+      `⚠ ${warning}`,
+      "✔ Nothing to do: toolchain already set up",
+    ]);
+  });
 });
 
 describe("preflightSdk", () => {

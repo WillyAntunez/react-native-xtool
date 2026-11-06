@@ -33,11 +33,11 @@ export interface SetupDeps {
   podspecReader: () => PodspecReaderChoice;
 }
 
-/** setup's Ruby line: Ruby is never installed, only named. */
-function rubySetupLine(c: PodspecReaderChoice): string {
-  return c.reader === "ruby"
-    ? `✔ ruby ${c.ruby}`
-    : `⚠ ${c.why}: rn-xtool reads podspecs with its reduced reader; install Ruby with: sudo apt install ruby`;
+/** setup's Ruby lines: Ruby is never installed, only named, and a forced reduced reader gets no install advice. */
+function rubySetupLines(c: PodspecReaderChoice): string[] {
+  if (c.reader === "ruby") return c.warning ? [`✔ ruby ${c.ruby}`, `⚠ ${c.warning}`] : [`✔ ruby ${c.ruby}`];
+  const reduced = `⚠ ${c.why}: rn-xtool reads podspecs with its reduced reader`;
+  return [c.forced ? reduced : `${reduced}; install Ruby with: sudo apt install ruby`];
 }
 
 export const GB = 1024 ** 3;
@@ -340,7 +340,7 @@ export async function setup(
     log(`ℹ Removing ${tilde(staging)}, left by an interrupted Darwin SDK install.`);
     await rm(staging, { recursive: true, force: true });
   };
-  const logRuby = (): void => log(rubySetupLine((deps.podspecReader ?? podspecReaderHere)()));
+  const logRuby = (): void => rubySetupLines((deps.podspecReader ?? podspecReaderHere)()).forEach((line) => log(line));
   if (actions.length === 0) {
     await removeSdkStaging();
     logRuby();
