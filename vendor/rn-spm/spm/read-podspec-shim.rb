@@ -266,7 +266,8 @@ class Object
   def add_dependency(spec, pod_name, subspec: nil, additional_framework_paths: [], framework_name: nil, version: nil,
                      base_dir: 'PODS_CONFIGURATION_BUILD_DIR')
     RnXtoolShim.used(:helpers, 'add_dependency')
-    spec.dependency(subspec ? "#{pod_name}/#{subspec}" : pod_name, *[version].compact)
+    # React Native's takes `subspec:` and does not pass it on.
+    spec.dependency(pod_name, *[version].compact)
   end
 
   # A fresh hash per call: podspecs append to its flags.
@@ -287,8 +288,9 @@ class Object
   end
 end
 
-# `require`: a name on Ruby's own load path loads, `colored2` loads its stub, any other name fails. `require_relative`
-# of the library's own files is Ruby's.
+# `require`: a name on Ruby's own load path loads, `colored2` loads its stub, a file given by its path (Ruby's own, the
+# library's) loads, any other name fails. `require_relative` of the library's own files is Ruby's. What Ruby's own files
+# read of `ENV` (RubyGems' `GEM_*`) is not the podspec's, so it is not recorded.
 module RnXtoolShim
   # colored2 (a gem CocoaPods brings): its String colours and effects.
   COLORED2 = %w[
@@ -298,9 +300,31 @@ module RnXtoolShim
   # A `require` of a name that is neither on Ruby's own load path nor stubbed.
   class Unstubbed < LoadError; end
 
-  def self.on_load_path?(feature)
+  # A feature Ruby reads as a file's path rather than a name to look up on the load path.
+  def self.path?(feature)
+    feature.start_with?('/', './', '../', '~')
+  end
+
+  # One of Ruby's own files: a name found on its load path, or a path inside it.
+  def self.ruby_own?(feature)
+    if path?(feature)
+      full = File.expand_path(feature)
+      return RN_XTOOL_LOAD_PATH.any? { |dir| full.start_with?("#{File.expand_path(dir)}/") }
+    end
     files = File.extname(feature).empty? ? ["#{feature}.rb", "#{feature}.#{RbConfig::CONFIG['DLEXT']}"] : [feature]
     RN_XTOOL_LOAD_PATH.any? { |dir| files.any? { |file| File.file?(File.join(dir, file)) } }
+  end
+
+  # Runs the block with `ENV` reads unrecorded.
+  def self.unrecorded
+    @unrecorded = (@unrecorded || 0) + 1
+    yield
+  ensure
+    @unrecorded -= 1
+  end
+
+  def self.unrecorded?
+    (@unrecorded || 0).positive?
   end
 
   # The stub: colours and effects return the string uncoloured. False once loaded, as `require` answers.
@@ -318,7 +342,8 @@ class Object
   def require(name)
     feature = name.to_s
     return RnXtoolShim.load_colored2 if feature == 'colored2'
-    raise RnXtoolShim::Unstubbed, "cannot load such file -- #{feature}" unless RnXtoolShim.on_load_path?(feature)
+    return RnXtoolShim.unrecorded { super } if RnXtoolShim.ruby_own?(feature)
+    raise RnXtoolShim::Unstubbed, "cannot load such file -- #{feature}" unless RnXtoolShim.path?(feature)
 
     super
   end
@@ -329,13 +354,13 @@ module RnXtoolShim
   module EnvReads
     %i[[] fetch key? has_key? include? member?].each do |method|
       define_method(method) do |name, *rest, &block|
-        RnXtoolShim.used(:env, name.to_s)
+        RnXtoolShim.used(:env, name.to_s) unless RnXtoolShim.unrecorded?
         super(name, *rest, &block)
       end
     end
 
     def values_at(*names)
-      names.each { |name| RnXtoolShim.used(:env, name.to_s) }
+      names.each { |name| RnXtoolShim.used(:env, name.to_s) } unless RnXtoolShim.unrecorded?
       super
     end
   end

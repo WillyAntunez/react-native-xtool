@@ -182,7 +182,8 @@ describe.skipIf(needsRuby !== "")(`the podspec shim${needsRuby}`, () => {
         ' spm_dependency(s, url: "u", requirement: {kind: "exact"}, products: ["P"])',
       ));
       expect(r.status).toBe(0);
-      expect(r.json.dependencies).toEqual({ "React-Codegen/x": [] });
+      // React Native's add_dependency takes subspec: and drops it.
+      expect(r.json.dependencies).toEqual({ "React-Codegen": [] });
       expect(r.json.compiler_flags).toBe(FOLLY_FLAGS);
       expect(r.json.platforms).toEqual({ ios: "15.1" });
       expect(r.json.__rn_xtool__.helpers).toEqual(
@@ -221,6 +222,22 @@ describe.skipIf(needsRuby !== "")(`the podspec shim${needsRuby}`, () => {
       const g = runShim(`require 'json'\nrequire 'xcodeproj'\n${spec()}`);
       expect([g.status, g.json.error.kind]).toEqual([1, "require"]);
       expect(g.json.error.message).toBe(`${g.podspec}: cannot load such file -- xcodeproj; rn-xtool's podspec reader stubs only colored2`);
+    });
+
+    it("records no ENV name Ruby's own require reads", () => {
+      const r = runShim(`require 'fileutils'\nrequire 'set'\nrequire 'yaml'\n${spec()}`);
+      expect(r.status).toBe(0);
+      expect(r.json.__rn_xtool__.env).toEqual([]);
+    });
+
+    it("loads Ruby's own files and the library's own by path", () => {
+      const r = runShim(`require File.join(__dir__, 'scripts/helper')\n${spec(
+        " s.summary = Gem::SourceList.new.class.name",
+        " s.description = $helper_value",
+      )}`, { files: { "scripts/helper.rb": "$helper_value = \"loaded #{ENV['HELPER_X'].inspect}\"\n" } });
+      expect(r.status).toBe(0);
+      expect(r.json).toMatchObject({ summary: "Gem::SourceList", description: "loaded nil" });
+      expect(r.json.__rn_xtool__.env).toEqual(["HELPER_X"]);
     });
 
     it("records the ENV names a podspec reads", () => {
