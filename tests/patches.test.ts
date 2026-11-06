@@ -936,6 +936,21 @@ describe("scaffold patches from another React Native version", () => {
     ]);
   });
 
+  it("asks to unset the variable when the reduced reader is forced", async () => {
+    const root = await svgApp(scaffoldPatch("0.88.1", SCAFFOLD_REVISION, "ruby"));
+    const forced: PodspecReaderChoice = {
+      reader: "reduced",
+      why: "RN_XTOOL_PODSPEC_READER=reduced is set",
+      forced: true,
+      warning: null,
+    };
+    expect(scaffoldPatchWarnings(root, undefined, [], undefined, forced)).toEqual([
+      `⚠ patches/${SVG} was written by the Ruby podspec reader, and this machine reads podspecs with the reduced one ` +
+        "(RN_XTOOL_PODSPEC_READER=reduced is set): keep the patch, and unset RN_XTOOL_PODSPEC_READER before you " +
+        "regenerate it",
+    ]);
+  });
+
   it("says nothing when the readers agree or the patch is older", async () => {
     const ruby = await svgApp(scaffoldPatch("0.88.1", SCAFFOLD_REVISION, "ruby"));
     expect(scaffoldPatchWarnings(ruby, undefined, [], undefined, RUBY_HERE)).toEqual([]);

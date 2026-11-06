@@ -504,11 +504,13 @@ function scaffoldPatchFindings(
       }
       // Advice to keep the patch, so its pins are still compared below.
       if (written === "ruby" && reader.reader === "reduced") {
+        // A forced reader was chosen on purpose, and Ruby may be installed: no apt advice (as rubyCheck).
+        const before = reader.forced ? "unset RN_XTOOL_PODSPEC_READER" : "install Ruby (sudo apt install ruby)";
         findings.push({
           kind: "reader",
           line:
             `⚠ patches/${name} was written by the Ruby podspec reader, and this machine reads podspecs with the reduced one ` +
-            `(${reader.why}): keep the patch, and install Ruby (sudo apt install ruby) before you regenerate it`,
+            `(${reader.why}): keep the patch, and ${before} before you regenerate it`,
         });
       }
     }
