@@ -39,6 +39,11 @@ with one error naming these floors. Expo SDK 57 and 58 work the same way: newer 
 with a warning, older ones stop, and react-native stays exact (0.86.3 on SDK 57, 0.88.1 on SDK 58)
 ([details](docs/troubleshooting.md#newer-than-the-verified-versions)).
 
+Apps that grew from older React Native templates build too: a production bare React Native 0.85.0 app with an
+Objective-C app target (`main.m`, `AppDelegate.h` and `AppDelegate.mm` next to the project, a bridging header and a
+Swift file) and 20 native libraries builds, installs over USB and launches on a physical iPhone (checked on
+2026-11-06; its features are not checked yet, [details](docs/bare-react-native.md#react-native-085)).
+
 `rn-xtool doctor --project` shows which line your project is on and what rn-xtool finds in it (the SwiftPM scripts
 and prebuilt artifacts it would use, Expo's plugin and modules, podspec features), without the toolchain, login and
 device checks ([details](docs/troubleshooting.md#doctor---project)).

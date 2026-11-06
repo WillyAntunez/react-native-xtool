@@ -51,6 +51,10 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 - `build` and `install` stop, and remove the packed app, when a class React Native's codegen providers name is not in
   the app, naming the class, its component or module and its library, instead of installing an app that would crash
   at start in `+[RCTThirdPartyComponentsProvider thirdPartyFabricComponents]`.
+- With these fixes, a production bare React Native 0.85.0 app with an Objective-C app target (`main.m`,
+  `AppDelegate.h` and `AppDelegate.mm` next to the project, a bridging header and a Swift file) and 20 native
+  libraries builds, installs over USB and launches on a physical iPhone (checked on 2026-11-06: the JS bundle loaded
+  from Metro and the app's own UI appeared; its features are not checked yet).
 
 ## [0.1.0-alpha.6] - 2026-11-05
 

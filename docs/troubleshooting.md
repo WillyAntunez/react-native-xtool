@@ -1071,10 +1071,19 @@ module is unavailable.`
   `Package.swift` of its own.
 - **"! <library>: Left out of s.pod_target_xcconfig OTHER_CFLAGS: `#{feature_flags}`, which the podspec reader cannot
   evaluate; CocoaPods passes its value."** (also `GCC_PREPROCESSOR_DEFINITIONS`, `HEADER_SEARCH_PATHS`,
-  `SWIFT_ACTIVE_COMPILATION_CONDITIONS`): the scaffold left that part of the value out. CocoaPods computes it from the
-  app or the Podfile: react-native-worklets' and react-native-reanimated's static feature flags (their defaults
-  apply), react-native-vision-camera's frame processor and location switches (both off). To set such a value, edit
-  the library's `Package.swift` and persist it in `patches/`.
+  `SWIFT_ACTIVE_COMPILATION_CONDITIONS`): the scaffold left that part of the value out, and the library compiles as if
+  it were empty. CocoaPods computes it from the app or the Podfile, so these libraries differ from a CocoaPods build:
+  - react-native-worklets and react-native-reanimated: every static feature flag reads as off, also the ones their
+    `src/featureFlags/staticFlags.json` turns on, such as worklets 0.8's `IOS_DYNAMIC_FRAMERATE_ENABLED` (the
+    worklets display link asks for 120 fps throughout, instead of lowering its frame rate on a ProMotion iPhone when
+    frames take longer) and reanimated 4.3's `USE_SYNCHRONIZABLE_FOR_MUTABLES`,
+    `USE_COMMIT_HOOK_ONLY_FOR_REACT_COMMITS` and `FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS`. A `staticFeatureFlags`
+    block in the app's `package.json` is not read.
+  - react-native-vision-camera: frame processors and location tagging are compiled out
+    (`VISION_CAMERA_ENABLE_FRAME_PROCESSORS` and `VISION_CAMERA_ENABLE_LOCATION` are not set). CocoaPods turns location
+    tagging on by default, and frame processors when react-native-worklets-core is installed.
+
+  To set such a value, edit the library's `Package.swift` and persist it in `patches/`.
 - **A hand-edited `Package.swift`** that leaves out the files defining a class: put them back.
 - **"ℹ The packed app's binaries list no Objective-C class symbols, so rn-xtool could not check the <n> classes React
   Native's codegen providers name.":** the binaries have no symbol table, so nothing is checked and the build goes on.

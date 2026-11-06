@@ -593,6 +593,9 @@ identity, not from the team itself; on every device run so far it matched the Te
 On a warm cache: patches 3.6 s, RN SwiftPM 11.1 s, ExpoModulesJSI 12.7 s, xtool build 24.5 s. The resulting `App.app`
 is about 99 MB with 8 embedded frameworks.
 
+A bare React Native 0.85.0 app with 20 native libraries, its scaffolds made again (2026-11-06): `rn-spm` 578 s,
+`frameworks` 35 s, `xtool-build` 273 s.
+
 ## Further reading
 
 - [recipe.md](recipe.md): the full technical recipe, with file locations.
