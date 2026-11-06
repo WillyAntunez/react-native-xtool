@@ -1,5 +1,5 @@
 diff --git a/node_modules/react-native/scripts/spm/read-podspec.js b/node_modules/react-native/scripts/spm/read-podspec.js
-index 8fcf04b..b3e3a53 100644
+index 8fcf04b..6ed3f14 100644
 --- a/node_modules/react-native/scripts/spm/read-podspec.js
 +++ b/node_modules/react-native/scripts/spm/read-podspec.js
 @@ -102,13 +102,12 @@ function runPodIpcSpec(podspecPath /*: string */) /*: RawSpec | null */ {
@@ -22,106 +22,836 @@ index 8fcf04b..b3e3a53 100644
      });
    } catch {
      cleanupPatchedPodspec(patchedPath);
-@@ -170,58 +169,337 @@ function cleanupPatchedPodspec(patchedPath /*: ?string */) /*: void */ {
+@@ -170,58 +169,1072 @@ function cleanupPatchedPodspec(patchedPath /*: ?string */) /*: void */ {
  // Regex fallback
  // ---------------------------------------------------------------------------
  
-+// Ruby constants. Podspecs commonly hoist a glob or extension list into a local
-+// and reuse it (react-native-screens: `source_files_exts = '{h,m,mm,cpp}'`,
-+// `source_files = ["ios/**/*.#{source_files_exts}"]`, `s.source_files =
-+// source_files`). The field regexes below only understand literals, so such a
-+// field read as missing and the library scaffolded with no sources.
++// Ruby locals and conditions. Podspecs hoist globs, extension lists and flags
++// into locals and set them under conditions; react-native-screens 4.24.0:
 +//
-+// This pre-pass resolves the simple cases textually, so the regexes stay
-+// untouched: single-line `ident = 'str' | "str" | ["a", "b"]` assignments are
-+// collected (first assignment wins; `if`/`ENV[...]` conditions are NOT
-+// evaluated, except the one kind below), then `#{ident}` inside the text is replaced by a known string
-+// constant, and a field assigned a bare known identifier (`s.x = ident`) is
-+// rewritten to the literal value (`s.x = ident`, `s.ios.x = ident`, and a
-+// subspec's `ss.x = ident`). `#{}` is only interpolated inside double-quoted
-+// strings, as in Ruby. Unknown interpolations/identifiers are left as they are.
++//   new_arch_enabled = ENV['RCT_NEW_ARCH_ENABLED'] == '1'
++//   source_files_exts =
++//     new_arch_enabled ? '{h,m,mm,cpp,swift}' : '{h,m,mm,swift}'
++//   source_files = ["ios/**/*.#{source_files_exts}"]
++//   if !new_arch_enabled
++//     source_files.push("cpp/RNScreensTurboModule.cpp", ...)
++//   end
++//   ...
++//   s.source_files = source_files
++//   if !gamma_project_enabled
++//     s.exclude_files = "ios/gamma/**/*.#{source_files_exts}"
++//   else ...
 +//
-+// One kind of condition is evaluated: a string ternary on an environment
-+// variable React Native's CocoaPods setup itself sets for every pod
-+// (`ident = ENV['VAR'] == 'v' ? 'a' : 'b'`, also `!=`), with the value that
-+// setup gives it: `1` for both. The environment is not read. React Native
-+// 0.87+ sets both to `1` outright, and the prebuilt artifacts are V1 Hermes,
-+// so a `0` left in the shell could only break the build (and a persisted
-+// scaffold). react-native-worklets puts
-+// `hermes_v1_flag = ENV['RCT_HERMES_V1_ENABLED'] == '1' ? '-DHERMES_V1_ENABLED'
-+// : ''` in OTHER_CFLAGS; without the define it includes the legacy Hermes
-+// inspector headers, which the prebuilt artifacts do not ship.
++// The field regexes below only understand literals, so this pre-pass runs the
++// podspec's statements in order over a small, side-effect-free subset of Ruby
++// and leaves the regexes a flat text:
++//
++// - values: string literals (single quotes verbatim, double quotes with
++//   `#{expr}` interpolation), `%w[...]`, array literals, numbers, `true`,
++//   `false`, `nil`, and locals (`name = expr`, also `+=` and `||=`; the last
++//   assignment that runs wins, as in Ruby);
++// - `ENV['X']` and `ENV.fetch('X', default)`: `RCT_NEW_ARCH_ENABLED` and
++//   `RCT_HERMES_V1_ENABLED` are `1` (below), every other variable is unset.
++//   The environment is never read, so a scaffold does not depend on the shell;
++// - `==`, `!=`, `!`/`not`, `&&`/`and`, `||`/`or`, `+` on strings and arrays,
++//   `a ? b : c`, `array.join(sep)`, `.to_s`, `.freeze`;
++// - `if`/`elsif`/`else`/`unless`/`end` blocks and `stmt if cond` / `stmt
++//   unless cond` modifiers, at the top level and inside the spec and subspec
++//   blocks: a branch that does not run is blanked, the control lines of a
++//   condition that was evaluated are dropped;
++// - `local.push(...)`, `local.append(...)`, `local.concat(...)`, `local << x`;
++// - `recv.<field> = expr` on the spec or a subspec (`s.`, `s.ios.`, `ss.`):
++//   a value that is not already a literal is rewritten to the literal it
++//   evaluates to. Inside a hash (`pod_target_xcconfig`, `resource_bundles`),
++//   `=> local` is replaced by the local's value.
++//
++// Anything else (method calls, hashes, symbols, `$config[...]`, blocks other
++// than the spec's, conditions on any of these) is not evaluated: the text
++// stays as written, and a local assigned from it, or under such a condition, is
++// unknown from there on. Both branches of such a condition stay visible, as
++// before (react-native-vision-camera's `if enableFrameProcessors` subspec). A
++// `source_files` or `exclude_files` value that uses something unknown is
++// returned in `unresolved`, and the scaffolder refuses the library
++// (unresolvedSourcesReason): a glob read in part gives a target that builds
++// and lacks the library's classes, so the app crashes at start
++// (react-native-screens 4.24.0 lost all of ios/).
++//
++// `RCT_NEW_ARCH_ENABLED` and `RCT_HERMES_V1_ENABLED` get the value React
++// Native's CocoaPods setup gives every pod, `1` for both. React Native 0.87+
++// sets both to `1` outright, and the prebuilt artifacts are V1 Hermes, so a
++// `0` left in the shell could only break the build (and a persisted scaffold).
++// react-native-worklets puts `hermes_v1_flag = ENV['RCT_HERMES_V1_ENABLED'] ==
++// '1' ? '-DHERMES_V1_ENABLED' : ''` in OTHER_CFLAGS; without the define it
++// includes the legacy Hermes inspector headers, which the prebuilt artifacts
++// do not ship.
 +const RN_POD_ENV /*: {[string]: string} */ = {
 +  RCT_NEW_ARCH_ENABLED: '1',
 +  RCT_HERMES_V1_ENABLED: '1',
 +};
-+function rnPodEnvTernary(rhs /*: string */) /*: ?string */ {
-+  const m = rhs.match(
-+    /^ENV\[\s*(["'])([A-Z0-9_]+)\1\s*\]\s*(==|!=)\s*(["'])([^"']*)\4\s*\?\s*(?:"([^"]*)"|'([^']*)')\s*:\s*(?:"([^"]*)"|'([^']*)')$/,
-+  );
-+  if (m == null || !Object.hasOwn(RN_POD_ENV, m[2])) return null;
-+  const value = RN_POD_ENV[m[2]];
-+  const holds = m[3] === '==' ? value === m[5] : value !== m[5];
-+  return holds ? m[6] ?? m[7] : m[8] ?? m[9];
++
++// A value the evaluator could not compute, and why.
++class RubyUnresolved {
++  /*:: why: string; */
++  constructor(why /*: string */) {
++    this.why = why;
++  }
 +}
-+function resolveRubyConstants(content /*: string */) /*: string */ {
-+  const strings /*: Map<string, string> */ = new Map();
-+  const arrays /*: Map<string, Array<{value: string, dq: boolean}>> */ =
-+    new Map();
-+  const assignRe = /^[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*(.+?)[ \t]*$/gm;
-+  for (const m of content.matchAll(assignRe)) {
-+    const name = m[1];
-+    if (strings.has(name) || arrays.has(name)) continue;
-+    const rhs = m[2];
-+    const str = rhs.match(/^(?:"([^"]*)"|'([^']*)')$/);
-+    if (str != null) {
-+      strings.set(name, str[1] ?? str[2]);
-+      continue;
++const isUnresolved = (v /*: mixed */) /*: boolean */ =>
++  v instanceof RubyUnresolved;
++
++// The source-glob fields an unevaluated expression must not reach silently.
++const STRICT_FIELDS /*: Set<string> */ = new Set([
++  'source_files',
++  'exclude_files',
++]);
++const PLATFORM_SCOPES /*: Set<string> */ = new Set([
++  'ios',
++  'osx',
++  'macos',
++  'tvos',
++  'visionos',
++  'watchos',
++]);
++
++// Tokens of one Ruby expression. A double-quoted string keeps its parts:
++// literal text and the source of each `#{...}`.
++function tokenizeRubyExpr(src /*: string */) /*: Array<any> */ {
++  const tokens = [];
++  let i = 0;
++  // The end of a `#{...}` starting at `from` (just past `#{`), or -1.
++  const interpEnd = (from /*: number */) => {
++    let depth = 1;
++    let quote = '';
++    for (let j = from; j < src.length; j++) {
++      const c = src[j];
++      if (quote !== '') {
++        if (c === '\\') j++;
++        else if (c === quote) quote = '';
++      } else if (c === '"' || c === "'") quote = c;
++      else if (c === '{') depth++;
++      else if (c === '}' && --depth === 0) return j;
 +    }
-+    const fromEnv = rnPodEnvTernary(rhs);
-+    if (fromEnv != null) {
-+      strings.set(name, fromEnv);
-+      continue;
-+    }
-+    const arr = rhs.match(/^\[([^\]]*)\]$/);
-+    if (arr != null) {
-+      const items = [];
-+      for (const it of arr[1].matchAll(/"([^"]*)"|'([^']*)'/g)) {
-+        items.push({value: it[1] ?? it[2], dq: it[1] != null});
++    return -1;
++  };
++  const CLOSE = {'[': ']', '(': ')', '{': '}', '<': '>'};
++  while (i < src.length) {
++    const c = src[i];
++    if (/\s/.test(c)) {
++      i++;
++    } else if (c === "'") {
++      let v = '';
++      let j = i + 1;
++      for (; j < src.length && src[j] !== "'"; j++) {
++        if (src[j] === '\\' && (src[j + 1] === "'" || src[j + 1] === '\\')) {
++          v += src[++j];
++        } else v += src[j];
 +      }
-+      arrays.set(name, items);
++      if (j >= src.length) return [{t: 'bad', v: src.slice(i)}];
++      tokens.push({t: 'str', parts: [v]});
++      i = j + 1;
++    } else if (c === '"') {
++      const parts = [];
++      let v = '';
++      let j = i + 1;
++      for (; j < src.length && src[j] !== '"'; j++) {
++        if (src[j] === '\\') {
++          const e = src[++j];
++          v += e === 'n' ? '\n' : e === 't' ? '\t' : e;
++        } else if (src[j] === '#' && src[j + 1] === '{') {
++          const end = interpEnd(j + 2);
++          if (end < 0) return [{t: 'bad', v: src.slice(i)}];
++          parts.push(v, {expr: src.slice(j + 2, end)});
++          v = '';
++          j = end;
++        } else v += src[j];
++      }
++      if (j >= src.length) return [{t: 'bad', v: src.slice(i)}];
++      parts.push(v);
++      tokens.push({t: 'str', parts});
++      i = j + 1;
++    } else if (c === '%' && /^%w[[({<]/.test(src.slice(i, i + 3))) {
++      const close = CLOSE[src[i + 2]];
++      const end = src.indexOf(close, i + 3);
++      if (end < 0) return [{t: 'bad', v: src.slice(i)}];
++      tokens.push({
++        t: 'words',
++        v: src
++          .slice(i + 3, end)
++          .split(/\s+/)
++          .filter(Boolean),
++      });
++      i = end + 1;
++    } else if (/[0-9]/.test(c)) {
++      const m = src.slice(i).match(/^[0-9][0-9_.]*/);
++      const text = m != null ? m[0] : c;
++      tokens.push({t: 'num', v: Number(text.replace(/_/g, ''))});
++      i += text.length;
++    } else if (/[A-Za-z_]/.test(c)) {
++      const m = src.slice(i).match(/^[A-Za-z_]\w*(?:[?!](?=\())?/);
++      const text = m != null ? m[0] : c;
++      tokens.push({t: 'id', v: text});
++      i += text.length;
++    } else if (c === ':' && /[A-Za-z_"']/.test(src[i + 1] ?? '')) {
++      tokens.push({t: 'bad', v: src.slice(i)}); // a symbol
++      i = src.length;
++    } else {
++      const two = src.slice(i, i + 2);
++      if (['==', '!=', '&&', '||', '=>', '::', '<<', '=~'].includes(two)) {
++        tokens.push({t: 'op', v: two});
++        i += 2;
++      } else {
++        tokens.push({t: 'op', v: c});
++        i++;
++      }
 +    }
 +  }
-+  if (strings.size === 0 && arrays.size === 0) return content;
-+  const interpolate = (text /*: string */) =>
-+    text.replace(/#\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}/g, (whole, id) =>
-+      strings.has(id) ? (strings.get(id) /*: any */) : whole,
-+    );
-+  // Constants may be built from earlier ones: resolve the arrays' items too
-+  // (double-quoted items only).
-+  const arrayValues /*: Map<string, Array<string>> */ = new Map();
-+  for (const [k, v] of arrays) {
-+    arrayValues.set(k, v.map(i => (i.dq ? interpolate(i.value) : i.value)));
++  return tokens;
++}
++
++const rubyTruthy = (v /*: mixed */) /*: boolean */ => v !== false && v != null;
++
++function rubyEqual(a /*: mixed */, b /*: mixed */) /*: boolean */ {
++  if (Array.isArray(a) && Array.isArray(b)) {
++    return a.length === b.length && a.every((x, k) => rubyEqual(x, b[k]));
 +  }
-+  // Only double-quoted string literals interpolate; scan literal by literal
-+  // (a line never spans a string here) so `'ios/*.#{x}'` stays as written.
-+  const interpolated = content.replace(
-+    /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g,
-+    lit => (lit[0] === '"' ? interpolate(lit) : lit),
++  return a === b;
++}
++
++// `#{v}`: Ruby's to_s for the values the evaluator knows.
++function rubyToS(v /*: mixed */) /*: string | RubyUnresolved */ {
++  if (typeof v === 'string') return v;
++  if (v == null) return '';
++  if (typeof v === 'boolean' || typeof v === 'number') return String(v);
++  return new RubyUnresolved('an array or hash inside `#{...}`');
++}
++
++/**
++ * Evaluates one Ruby expression with the locals in `env`. Returns the value,
++ * or a RubyUnresolved saying why it cannot. `list` reads a bare comma list
++ * (`s.x = "a", "b"`) as an array. Never runs anything.
++ */
++function evalRubyExpr(
++  src /*: string */,
++  env /*: Map<string, mixed> */,
++  list /*:: ?: boolean */,
++) /*: mixed */ {
++  const tokens = tokenizeRubyExpr(src);
++  let pos = 0;
++  const peek = (v /*: string */) =>
++    tokens[pos] != null &&
++    (tokens[pos].t === 'op' || tokens[pos].t === 'id') &&
++    tokens[pos].v === v;
++  const take = (v /*: string */) => {
++    if (!peek(v)) return false;
++    pos++;
++    return true;
++  };
++  const fail = (why /*: string */) => new RubyUnresolved(why);
++  // Skips a balanced (...) / [...] / {...} group starting at `pos`.
++  const skipGroup = () => {
++    let depth = 0;
++    do {
++      const tk = tokens[pos++];
++      if (tk == null) return;
++      if (tk.t === 'op' && '([{'.includes(tk.v)) depth++;
++      if (tk.t === 'op' && ')]}'.includes(tk.v)) depth--;
++    } while (depth > 0);
++  };
++  // Comma-separated expressions up to `close` (already past the opener).
++  const parseItems = (close /*: string */) => {
++    const items = [];
++    while (!peek(close)) {
++      if (tokens[pos] == null) return fail(`a missing \`${close}\``);
++      items.push(parseTernary());
++      if (!take(',')) break;
++    }
++    if (!take(close)) return fail(`a missing \`${close}\``);
++    return items.find(isUnresolved) ?? items;
++  };
++  function parsePrimary() /*: mixed */ {
++    const tk = tokens[pos++];
++    if (tk == null) return fail('an incomplete expression');
++    if (tk.t === 'str') {
++      let out = '';
++      for (const part of tk.parts) {
++        if (typeof part === 'string') {
++          out += part;
++          continue;
++        }
++        const inner = evalRubyExpr(part.expr, env);
++        if (isUnresolved(inner)) return inner;
++        const s = rubyToS(inner);
++        if (isUnresolved(s)) return s;
++        out += (s /*: any */);
++      }
++      return out;
++    }
++    if (tk.t === 'words') return tk.v;
++    if (tk.t === 'num') return tk.v;
++    if (tk.t === 'bad') return fail(`\`${tk.v}\``);
++    if (tk.t === 'op') {
++      if (tk.v === '(') {
++        const v = parseTernary();
++        return take(')') ? v : fail('a missing `)`');
++      }
++      if (tk.v === '[') return parseItems(']');
++      if (tk.v === '{') return fail('a hash');
++      return fail(`\`${tk.v}\``);
++    }
++    // An identifier.
++    const name = tk.v;
++    if (name === 'true') return true;
++    if (name === 'false') return false;
++    if (name === 'nil') return null;
++    if (name === 'ENV') {
++      if (take('[')) {
++        const key = parseTernary();
++        if (!take(']')) return fail('a missing `]`');
++        if (isUnresolved(key)) return key;
++        return typeof key === 'string' && Object.hasOwn(RN_POD_ENV, key)
++          ? RN_POD_ENV[key]
++          : null;
++      }
++      if (take('.') && take('fetch') && take('(')) {
++        const args = parseItems(')');
++        if (isUnresolved(args)) return args;
++        const [key, fallback] = (args /*: any */);
++        if (typeof key !== 'string') return fail('`ENV.fetch` of a non-string');
++        return Object.hasOwn(RN_POD_ENV, key) ? RN_POD_ENV[key] : fallback;
++      }
++      return fail('`ENV` used other than `ENV[...]` or `ENV.fetch(...)`');
++    }
++    if (peek('(')) {
++      skipGroup();
++      return fail(`the method call \`${name}(...)\``);
++    }
++    if (!env.has(name)) return fail(`the unknown identifier \`${name}\``);
++    const v = env.get(name);
++    if (isUnresolved(v)) {
++      return fail(`\`${name}\`, which ${(v /*: any */).why}`);
++    }
++    return v;
++  }
++  function parsePostfix() /*: mixed */ {
++    let v = parsePrimary();
++    while (peek('.') || peek('[')) {
++      if (take('[')) {
++        pos--;
++        skipGroup();
++        v = isUnresolved(v) ? v : fail('an index `[...]`');
++        continue;
++      }
++      take('.');
++      const m = tokens[pos++];
++      const method = m != null && m.t === 'id' ? m.v : '?';
++      let args = [];
++      if (peek('(')) {
++        pos++;
++        const got = parseItems(')');
++        if (isUnresolved(got)) {
++          v = isUnresolved(v) ? v : got;
++          continue;
++        }
++        args = (got /*: any */);
++      }
++      if (isUnresolved(v)) continue;
++      if ((method === 'freeze' || method === 'to_s') && typeof v === 'string') {
++        continue;
++      }
++      if (method === 'join' && Array.isArray(v)) {
++        const sep = args.length > 0 ? args[0] : '';
++        const parts = v.flat(Infinity).map(rubyToS);
++        const bad = parts.find(isUnresolved);
++        v =
++          bad ?? (typeof sep === 'string' ? parts.join(sep) : fail('`join`'));
++        continue;
++      }
++      v = fail(`the method call \`.${method}\``);
++    }
++    return v;
++  }
++  function parseUnary() /*: mixed */ {
++    if (take('!')) {
++      const v = parseUnary();
++      return isUnresolved(v) ? v : !rubyTruthy(v);
++    }
++    return parsePostfix();
++  }
++  function parseAdd() /*: mixed */ {
++    let l = parseUnary();
++    while (take('+')) {
++      const r = parseUnary();
++      if (isUnresolved(l)) continue;
++      if (isUnresolved(r)) l = r;
++      else if (typeof l === 'string' && typeof r === 'string') l = l + r;
++      else if (Array.isArray(l) && Array.isArray(r)) l = [...l, ...r];
++      else l = fail('`+` on values other than two strings or two arrays');
++    }
++    return l;
++  }
++  function parseEq() /*: mixed */ {
++    const l = parseAdd();
++    if (peek('==') || peek('!=')) {
++      const op = tokens[pos++].v;
++      const r = parseAdd();
++      if (isUnresolved(l)) return l;
++      if (isUnresolved(r)) return r;
++      return op === '==' ? rubyEqual(l, r) : !rubyEqual(l, r);
++    }
++    if (peek('=~') || peek('<') || peek('>')) {
++      return fail(`the operator \`${tokens[pos].v}\``);
++    }
++    return l;
++  }
++  function parseNot() /*: mixed */ {
++    if (take('not')) {
++      const v = parseNot();
++      return isUnresolved(v) ? v : !rubyTruthy(v);
++    }
++    return parseEq();
++  }
++  function parseAnd() /*: mixed */ {
++    let l = parseNot();
++    while (take('&&') || take('and')) {
++      const r = parseNot();
++      if (!isUnresolved(l) && rubyTruthy(l)) l = r;
++    }
++    return l;
++  }
++  function parseOr() /*: mixed */ {
++    let l = parseAnd();
++    while (take('||') || take('or')) {
++      const r = parseAnd();
++      if (!isUnresolved(l) && !rubyTruthy(l)) l = r;
++    }
++    return l;
++  }
++  function parseTernary() /*: mixed */ {
++    const c = parseOr();
++    if (!take('?')) return c;
++    const a = parseTernary();
++    if (!take(':')) return fail('a ternary without `:`');
++    const b = parseTernary();
++    if (isUnresolved(c)) return c;
++    return rubyTruthy(c) ? a : b;
++  }
++  let value = parseTernary();
++  if (list === true && peek(',')) {
++    const items = [value];
++    while (take(',')) items.push(parseTernary());
++    value = items.find(isUnresolved) ?? items;
++  }
++  if (pos < tokens.length && !isUnresolved(value)) {
++    const rest = tokens[pos];
++    return fail(
++      rest.t === 'op' || rest.t === 'id'
++        ? `\`${rest.v}\` where it ends`
++        : 'more than one expression',
++    );
++  }
++  return value;
++}
++
++// A literal the field regexes read as written: quoted strings without
++// `#{...}`, as one value, an array or a bare list.
++function isPlainLiteral(rhs /*: string */) /*: boolean */ {
++  const str = `(?:"[^"\\\\#]*"|'[^'\\\\]*')`;
++  const list = `${str}(?:\\s*,\\s*${str})*`;
++  return new RegExp(
++    `^(?:${list}|\\[\\s*(?:${list}\\s*,?)?\\s*\\]|true|false)$`,
++  ).test(rhs.trim());
++}
++
++// The literal a field is rewritten to, or null when the value has none.
++function rubyLiteral(v /*: mixed */) /*: ?string */ {
++  if (typeof v === 'string') return JSON.stringify(v);
++  if (typeof v === 'boolean') return String(v);
++  if (Array.isArray(v)) {
++    const flat = v.flat(Infinity);
++    if (!flat.every(x => typeof x === 'string')) return null;
++    return '[' + flat.map(x => JSON.stringify(x)).join(', ') + ']';
++  }
++  return null;
++}
++
++// The podspec's logical statements: lines joined while a bracket or string is
++// open or the line ends in `,`, `\`, an operator or `=`. A heredoc's body
++// belongs to the statement that opens it. `code` is the statement without
++// trailing comments.
++function rubyStatements(
++  lines /*: Array<string> */,
++) /*: Array<{start: number, end: number, code: string}> */ {
++  const out = [];
++  const scan = (
++    line /*: string */,
++    state /*: {depth: number, quote: string} */,
++  ) => {
++    let code = '';
++    for (let i = 0; i < line.length; i++) {
++      const c = line[i];
++      if (state.quote !== '') {
++        code += c;
++        if (c === '\\') code += line[++i] ?? '';
++        else if (c === state.quote) state.quote = '';
++        continue;
++      }
++      if (c === '#') break;
++      code += c;
++      if (c === '"' || c === "'") state.quote = c;
++      else if ('([{'.includes(c)) state.depth++;
++      else if (')]}'.includes(c)) state.depth--;
++    }
++    return code;
++  };
++  let i = 0;
++  while (i < lines.length) {
++    const start = i;
++    const state = {depth: 0, quote: ''};
++    const codes = [];
++    let heredoc = null;
++    while (i < lines.length) {
++      const code = scan(lines[i], state);
++      codes.push(code);
++      i++;
++      const h = code.match(/<<([-~]?)(["']?)([A-Za-z_]\w*)\2\s*$/);
++      if (h != null && state.quote === '') {
++        heredoc = {indented: h[1] !== '', id: h[3]};
++        break;
++      }
++      const open =
++        state.depth > 0 ||
++        state.quote !== '' ||
++        /(?:,|\\|&&|\|\||[^=!<>]=|\+|\s\?|\s:)\s*$/.test(code);
++      if (!open) break;
++    }
++    if (i >= lines.length && (state.depth > 0 || state.quote !== '')) {
++      // Never closed: read the first line alone and go on from the next.
++      const code = scan(lines[start], {depth: 0, quote: ''});
++      out.push({start, end: start, code});
++      i = start + 1;
++      continue;
++    }
++    if (heredoc != null) {
++      const {indented, id} = heredoc;
++      while (i < lines.length) {
++        const l = lines[i++];
++        if ((indented ? l.trim() : l) === id) break;
++      }
++    }
++    out.push({start, end: i - 1, code: codes.join('\n')});
++  }
++  return out;
++}
++
++// The index of a trailing `if`/`unless` modifier outside strings and brackets.
++function modifierIndex(code /*: string */) /*: ?{at: number, kw: string} */ {
++  let quote = '';
++  let depth = 0;
++  for (let i = 1; i < code.length; i++) {
++    const c = code[i];
++    if (quote !== '') {
++      if (c === '\\') i++;
++      else if (c === quote) quote = '';
++      continue;
++    }
++    if (c === '"' || c === "'") quote = c;
++    else if ('([{'.includes(c)) depth++;
++    else if (')]}'.includes(c)) depth--;
++    else if (depth === 0 && /\s/.test(code[i - 1])) {
++      const m = code.slice(i).match(/^(if|unless)\s/);
++      if (m != null) return {at: i, kw: m[1]};
++    }
++  }
++  return null;
++}
++
++/*::
++type Unresolved = {field: string, expr: string, why: string};
++type Activity = {state: 'yes' | 'no' | 'maybe' | 'opaque', why: string};
++*/
++
++// Why a local set under `act` is unknown from there on.
++function unknownUnder(act /*: Activity */) /*: RubyUnresolved */ {
++  return new RubyUnresolved(
++    act.state === 'maybe'
++      ? `is set under \`${act.why}\`, a condition the reader cannot evaluate`
++      : `is set inside \`${act.why}\`, a block the reader does not run`,
 +  );
-+  const quote = (v /*: string */) => JSON.stringify(v);
-+  return interpolated.replace(
-+    /^(\s*[A-Za-z_]\w*(?:\.(?:ios|osx|tvos|visionos|watchos))?\.[A-Za-z_]+\s*=\s*)([A-Za-z_][A-Za-z0-9_]*)[ \t]*$/gm,
-+    (whole, lhs, id) => {
-+      if (strings.has(id)) return lhs + quote((strings.get(id) /*: any */));
-+      if (arrayValues.has(id)) {
-+        return (
-+          lhs + '[' + (arrayValues.get(id) /*: any */).map(quote).join(', ') + ']'
++}
++
++// The branch an `elsif` opens, and what is known of the branches before it.
++function elsifBranch(
++  prior /*: string */,
++  cond /*: string */,
++) /*: {branch: string, prior: string} */ {
++  if (prior === 'yes') return {branch: 'no', prior: 'yes'};
++  if (prior === 'no') return {branch: cond, prior: cond};
++  // An earlier branch may have run.
++  return {
++    branch: cond === 'no' ? 'no' : 'maybe',
++    prior: cond === 'yes' ? 'yes' : 'maybe',
++  };
++}
++
++/**
++ * Runs the podspec's statements over the subset above. Returns the rewritten
++ * text (same line count) and each `source_files`/`exclude_files` assignment
++ * whose value could not be evaluated.
++ */
++function evaluateRubyLocals(
++  content /*: string */,
++) /*: {text: string, unresolved: Array<Unresolved>} */ {
++  const lines = content.split('\n');
++  const out = lines.slice();
++  const env /*: Map<string, mixed> */ = new Map();
++  const recvs /*: Set<string> */ = new Set();
++  const unresolved /*: Array<Unresolved> */ = [];
++  // `if` blocks (which branch is being read) and other blocks.
++  const frames /*: Array<any> */ = [];
++  const blank = (st /*: {start: number, end: number} */) => {
++    for (let k = st.start; k <= st.end; k++) out[k] = '';
++  };
++  // Whether the statement being read runs: 'yes', 'no', 'maybe' (under a
++  // condition it cannot evaluate) or 'opaque' (in a block it does not run),
++  // with the condition or block that decides.
++  const activity = () /*: Activity */ => {
++    let act /*: Activity */ = {state: 'yes', why: ''};
++    for (const f of frames) {
++      const s = f.kind === 'if' ? f.branch : f.opaque ? 'opaque' : 'yes';
++      if (s === 'no') return {state: 'no', why: ''};
++      if (s !== 'yes' && act.state === 'yes') {
++        act = {state: s, why: f.kind === 'if' ? f.cond : f.code};
++      }
++    }
++    return act;
++  };
++  const condOf = (src /*: string */, negate /*: boolean */) => {
++    const v = evalRubyExpr(src, env);
++    if (isUnresolved(v)) return 'maybe';
++    return rubyTruthy(v) !== negate ? 'yes' : 'no';
++  };
++  // Lines that stay as written: `#{local}` (a known string) in their
++  // double-quoted literals, and `=> local` inside a hash, get the value.
++  const interpolate = (
++    st /*: {start: number, end: number} */,
++    hash /*: boolean */,
++  ) => {
++    const known = (id /*: string */) => {
++      const v = env.get(id);
++      return typeof v === 'string' ? v : null;
++    };
++    for (let k = st.start; k <= st.end; k++) {
++      out[k] = out[k].replace(
++        /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g,
++        lit =>
++          lit[0] === '"'
++            ? lit.replace(
++                /#\{\s*([A-Za-z_]\w*)\s*\}/g,
++                (whole, id) => known(id) ?? whole,
++              )
++            : lit,
++      );
++      if (hash) {
++        out[k] = out[k].replace(
++          /(=>\s*)([A-Za-z_]\w*)(?=\s*(?:,|\}|$))/g,
++          (whole, arrow, id) => {
++            const lit = env.has(id) ? rubyLiteral(env.get(id)) : null;
++            return lit != null ? arrow + lit : whole;
++          },
 +        );
 +      }
-+      return whole;
-+    },
-+  );
++    }
++  };
++  const setLocal = (
++    name /*: string */,
++    value /*: mixed */,
++    act /*: Activity */,
++  ) => {
++    env.set(name, act.state === 'yes' ? value : unknownUnder(act));
++  };
++
++  for (const st of rubyStatements(lines)) {
++    const code = st.code.trim();
++    if (code === '') continue;
++    const act = activity();
++    const oneLine = /[\s;]end\s*;?$/.test(code);
++    const top = frames[frames.length - 1];
++    let m;
++    m = oneLine ? null : code.match(/^(if|unless)\s+([\s\S]+?)(?:\s+then)?$/);
++    if (m != null) {
++      // Under a branch that does not run, every branch is dead.
++      const branch =
++        act.state === 'no' || act.state === 'opaque'
++          ? act.state
++          : condOf(m[2], m[1] === 'unless');
++      frames.push({
++        kind: 'if',
++        branch,
++        prior: act.state === 'no' ? 'yes' : branch,
++        cond: m[2],
++        evaluated: branch !== 'maybe' && branch !== 'opaque',
++        ctrl: [st],
++      });
++      continue;
++    }
++    if (top?.kind === 'if') {
++      if ((m = code.match(/^elsif\s+([\s\S]+?)(?:\s+then)?$/))) {
++        top.ctrl.push(st);
++        if (top.branch === 'opaque') continue;
++        const cond = top.prior === 'yes' ? 'no' : condOf(m[1], false);
++        if (cond === 'maybe') top.evaluated = false;
++        Object.assign(top, elsifBranch(top.prior, cond), {cond: m[1]});
++        continue;
++      }
++      if (code === 'else') {
++        top.ctrl.push(st);
++        if (top.branch !== 'opaque') {
++          top.branch = {yes: 'no', no: 'yes', maybe: 'maybe'}[top.prior];
++        }
++        continue;
++      }
++    }
++    if (/^end\b/.test(code) && top != null) {
++      frames.pop();
++      // An evaluated condition leaves no control lines behind.
++      if (activity().state === 'no' || (top.kind === 'if' && top.evaluated)) {
++        for (const c of top.kind === 'if' ? top.ctrl : []) blank(c);
++        blank(st);
++      }
++      continue;
++    }
++    const opensBlock =
++      !oneLine &&
++      (/^(?:case|begin|while|until|for|def|class|module)\b/.test(code) ||
++        /\bdo(?:\s*\|[^|]*\|)?\s*$/.test(code) ||
++        /=\s*(?:if|unless|case|begin)\b/.test(code));
++    if (opensBlock) {
++      // The spec's and its subspecs' blocks run; any other is opaque.
++      const spec = code.match(/Pod::Spec\.new\s+do\s*\|\s*(\w+)\s*\|\s*$/);
++      const sub = code.match(
++        /^(\w+)\.subspec\s[\s\S]*\bdo\s*\|\s*(\w+)\s*\|\s*$/,
++      );
++      const recv =
++        spec?.[1] ?? (sub != null && recvs.has(sub[1]) ? sub[2] : null);
++      if (recv != null) recvs.add(recv);
++      const assigned = code.match(/^([A-Za-z_]\w*)\s*=/);
++      if (assigned != null) {
++        setLocal(assigned[1], null, {state: 'opaque', why: code});
++      }
++      frames.push({kind: 'block', opaque: recv == null, code});
++      if (act.state === 'no') blank(st);
++      continue;
++    }
++    if (act.state === 'no') {
++      blank(st);
++      continue;
++    }
++    // A trailing `if`/`unless` modifier.
++    let core = code;
++    let stAct = act;
++    const mod = modifierIndex(code);
++    if (mod != null) {
++      core = code.slice(0, mod.at).trim();
++      const cond = code.slice(mod.at + mod.kw.length).trim();
++      const c =
++        act.state === 'yes' ? condOf(cond, mod.kw === 'unless') : act.state;
++      if (c === 'no') {
++        blank(st);
++        continue;
++      }
++      if (c === 'maybe' && act.state === 'yes') {
++        stAct = {state: 'maybe', why: cond};
++      }
++    }
++    // `recv.field = expr` on the spec or a subspec. Under a condition it
++    // cannot evaluate, or in a block it does not run, it is read as if it ran,
++    // as the field regexes always did: a literal stays as written, an
++    // expression is evaluated or, in a source glob, refused.
++    const field = core.match(
++      /^([A-Za-z_]\w*)(?:\.([a-z]+))?\.([a-z_]+)\s*=(?![=~>])\s*([\s\S]+)$/,
++    );
++    if (
++      field != null &&
++      recvs.has(field[1]) &&
++      (field[2] == null || PLATFORM_SCOPES.has(field[2]))
++    ) {
++      const [, recv, scope, name, rhs] = field;
++      // Only the spec's own and its `ios` scope count.
++      if ((scope != null && scope !== 'ios') || isPlainLiteral(rhs)) continue;
++      const lhs = `${recv}${scope != null ? '.' + scope : ''}.${name}`;
++      const v = evalRubyExpr(rhs, env, true);
++      const lit = isUnresolved(v) ? null : rubyLiteral(v);
++      if (lit != null) {
++        blank(st);
++        const indent = (lines[st.start].match(/^\s*/) ?? [''])[0];
++        out[st.start] = `${indent}${lhs} = ${lit}`;
++      } else if (STRICT_FIELDS.has(name)) {
++        unresolved.push({
++          field: lhs,
++          expr: rhs.trim(),
++          why: isUnresolved(v)
++            ? `it uses ${(v /*: any */).why}`
++            : 'its value is not a string or an array of strings',
++        });
++      } else {
++        interpolate(st, /^\{/.test(rhs.trim()));
++      }
++      continue;
++    }
++    // `name = expr`, `name += expr`, `name ||= expr`.
++    const assign = core.match(
++      /^([A-Za-z_]\w*)\s*(\+=|\|\|=|=)(?![=~>])\s*([\s\S]+)$/,
++    );
++    if (assign != null && !recvs.has(assign[1])) {
++      const [, name, op, rhs] = assign;
++      let v = evalRubyExpr(rhs, env);
++      if (op !== '=' && !isUnresolved(v)) {
++        const vars = new Map([
++          ['old', env.has(name) ? env.get(name) : null],
++          ['new', v],
++        ]);
++        v = evalRubyExpr(op === '+=' ? 'old + new' : 'old || new', vars);
++      }
++      if (isUnresolved(v)) {
++        v = new RubyUnresolved(
++          `is assigned \`${rhs.trim()}\`, which the reader cannot evaluate ` +
++            `(${(v /*: any */).why})`,
++        );
++      }
++      setLocal(name, v, stAct);
++      interpolate(st, false);
++      continue;
++    }
++    // `name.push(...)`, `name << x`; any other change to a local makes it
++    // unknown.
++    const change = core.match(/^([A-Za-z_]\w*)\s*(?:\.|\[|<<)/);
++    if (change != null && env.has(change[1]) && !recvs.has(change[1])) {
++      const name = change[1];
++      const old = env.get(name);
++      const add =
++        core.match(/^\w+\s*\.(push|append|concat)\s*\(([\s\S]*)\)$/) ??
++        core.match(/^\w+\s*\.(push|append|concat)\s+([\s\S]+)$/) ??
++        core.match(/^\w+\s*(<<)\s*([\s\S]+)$/);
++      let v /*: mixed */ = new RubyUnresolved(
++        `is changed by \`${core}\`, which the reader cannot evaluate`,
++      );
++      if (add != null && Array.isArray(old)) {
++        // `<<` adds one value; push/append/concat take a list.
++        const args = evalRubyExpr(
++          add[1] === '<<' ? `[(${add[2]})]` : `[${add[2]}]`,
++          env,
++        );
++        if (Array.isArray(args)) {
++          if (add[1] !== 'concat') v = [...old, ...args];
++          else if (args.every(Array.isArray)) v = [...old, ...args.flat()];
++        }
++      }
++      setLocal(name, v, stAct);
++      continue;
++    }
++    interpolate(st, false);
++  }
++  return {text: out.join('\n'), unresolved};
 +}
 +
 +// The library's own version. Podspecs load the package.json next to them
@@ -164,13 +894,10 @@ index 8fcf04b..b3e3a53 100644
  // Comment-only lines are dropped so a commented-out `# s.header_dir` cannot win
  // over the live one. A trailing `#` and a `#` inside a string survive: only the
  // first non-whitespace character counts.
- function readPodspecSource(podspecPath /*: string */) /*: string */ {
--  return fs
--    .readFileSync(podspecPath, 'utf8')
--    .split('\n')
--    .filter(line => !/^\s*#/.test(line))
--    .join('\n');
-+  return resolveRubyConstants(
++function readPodspecEvaluated(
++  podspecPath /*: string */,
++) /*: {text: string, unresolved: Array<Unresolved>} */ {
++  return evaluateRubyLocals(
 +    resolvePackageVersion(
 +      fs
 +        .readFileSync(podspecPath, 'utf8')
@@ -180,6 +907,14 @@ index 8fcf04b..b3e3a53 100644
 +      path.dirname(podspecPath),
 +    ),
 +  );
++}
+ function readPodspecSource(podspecPath /*: string */) /*: string */ {
+-  return fs
+-    .readFileSync(podspecPath, 'utf8')
+-    .split('\n')
+-    .filter(line => !/^\s*#/.test(line))
+-    .join('\n');
++  return readPodspecEvaluated(podspecPath).text;
 +}
 +
 +// The main spec's block variable: `Pod::Spec.new do |podspec|` -> `podspec`.
@@ -313,11 +1048,12 @@ index 8fcf04b..b3e3a53 100644
 + * `opts.dropSubspecs` are left out, as if the podspec did not declare them.
   */
 -function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+-  const content = readPodspecSource(podspecPath);
 +function regexPodspec(
 +  podspecPath /*: string */,
 +  opts /*:: ?: {dropSubspecs?: ReadonlyArray<string>} */,
 +) /*: RawSpec */ {
-   const content = readPodspecSource(podspecPath);
++  const {text: content, unresolved} = readPodspecEvaluated(podspecPath);
 +  const dropped = new Set(opts?.dropSubspecs ?? []);
 +  const mainName = mainReceiverName(content);
 +  const MAIN_RECV = mainRecvPattern(mainName);
@@ -386,7 +1122,7 @@ index 8fcf04b..b3e3a53 100644
    }
  
    // The fields that identify the spec, and only when the receiver spelling
-@@ -235,9 +513,27 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -235,9 +1248,27 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    // Matches:
    //   s.<field> = ["a", "b"]            (array)
    //   s.<field> = "single"              (single value treated as 1-element array)
@@ -417,7 +1153,7 @@ index 8fcf04b..b3e3a53 100644
      if (mArr != null) {
        const inner = mArr[1];
        const out /*: Array<string> */ = [];
-@@ -249,16 +545,37 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -249,16 +1280,37 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
        }
        return out;
      }
@@ -460,7 +1196,7 @@ index 8fcf04b..b3e3a53 100644
        if (m == null) break;
        out.push(m[1]);
      }
-@@ -269,21 +586,25 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -269,21 +1321,25 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    //   s.framework "X"          → ["X"]
    //   s.framework = "X"        → ["X"]
    //   s.frameworks = ["X","Y"] → ["X","Y"]
@@ -491,7 +1227,7 @@ index 8fcf04b..b3e3a53 100644
        if (m == null) break;
        const itemRe = /["']([^"']+)["']/g;
        while (true) {
-@@ -298,12 +619,14 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -298,12 +1354,14 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    // Matches:  'HEADER_SEARCH_PATHS' => '...'   or  => ["...","..."]
    // Returns the raw token strings (still containing $(PODS_TARGET_SRCROOT)
    // etc.); substitution happens at translation time.
@@ -508,7 +1244,7 @@ index 8fcf04b..b3e3a53 100644
        if (m == null) break;
        const itemRe = /["']((?:[^"'\\]|\\.)+)["']/g;
        while (true) {
-@@ -321,7 +644,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -321,7 +1379,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      const strRe =
        /["']HEADER_SEARCH_PATHS["']\s*=>\s*["']((?:[^"'\\]|\\.)+)["']/g;
      while (true) {
@@ -517,7 +1253,7 @@ index 8fcf04b..b3e3a53 100644
        if (m == null) break;
        for (const token of m[1].split(/\s+/)) {
          if (token.length > 0) {
-@@ -332,15 +655,53 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -332,15 +1390,53 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      return Array.from(new Set(out));
    }
  
@@ -573,7 +1309,7 @@ index 8fcf04b..b3e3a53 100644
      );
    }
    if (/install_modules_dependencies/.test(content)) {
-@@ -354,24 +715,100 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -354,26 +1450,103 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      );
    }
  
@@ -686,8 +1422,11 @@ index 8fcf04b..b3e3a53 100644
 +    ),
      __regex_partial__: true,
      __warnings__: warnings,
++    __unresolved__: unresolved,
    };
-@@ -423,6 +860,58 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
+ }
+ 
+@@ -423,6 +1596,58 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
    return tokens;
  }
  
@@ -746,7 +1485,7 @@ index 8fcf04b..b3e3a53 100644
  // ---------------------------------------------------------------------------
  // Subspec flattening
  // ---------------------------------------------------------------------------
-@@ -438,8 +927,16 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
+@@ -438,8 +1663,16 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
   *   - String fields → top-level wins; if absent, take the first subspec's value
   *   - pod_target_xcconfig HEADER_SEARCH_PATHS → array-union across all selected subspecs
   *   - dependencies  → array-union of name strings (version constraints dropped)
@@ -764,7 +1503,7 @@ index 8fcf04b..b3e3a53 100644
    const warnings /*: Array<string> */ = [];
    // $FlowFixMe[prop-missing] dynamic shape
    const partial /*: boolean */ = rawSpec.__regex_partial__ === true;
-@@ -456,7 +953,12 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -456,7 +1689,12 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
    //   - `default_subspecs`: array of names (or undefined → use all subspecs)
    const subspecs = Array.isArray(rawSpec.subspecs) ? rawSpec.subspecs : [];
    let selected = subspecs;
@@ -778,7 +1517,7 @@ index 8fcf04b..b3e3a53 100644
      const wanted = new Set(rawSpec.default_subspecs);
      selected = subspecs.filter(s => {
        // $FlowFixMe[prop-missing] dynamic shape
-@@ -464,6 +966,10 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -464,6 +1702,10 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        return name != null && wanted.has(name);
      });
    }
@@ -789,7 +1528,7 @@ index 8fcf04b..b3e3a53 100644
    const layers = [rawSpec, ...selected];
  
    function mergeArrayField(key /*: string */) /*: Array<string> */ {
-@@ -482,6 +988,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -482,6 +1724,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return Array.from(new Set(out));
    }
  
@@ -807,7 +1546,7 @@ index 8fcf04b..b3e3a53 100644
    // Only the spec's own value: a subspec's `header_dir` names that subspec's
    // headers, and several subspecs can disagree.
    function specStringField(key /*: string */) /*: string | null */ {
-@@ -544,6 +1061,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -544,6 +1797,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
    // `-D`s are safe to forward; arbitrary flags may be machine- or
    // example-app-specific. $(inherited), unresolved $(...) tokens, and invalid
    // C identifiers are skipped.
@@ -828,7 +1567,7 @@ index 8fcf04b..b3e3a53 100644
    function mergePreprocessorDefines() /*: Array<PreprocessorDefine> */ {
      const out /*: Array<PreprocessorDefine> */ = [];
      const seen /*: Set<string> */ = new Set();
-@@ -554,7 +1085,23 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -554,7 +1821,23 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        config /*: ?('debug' | 'release') */,
      ) => {
        if (!validName.test(name)) return;
@@ -853,7 +1592,7 @@ index 8fcf04b..b3e3a53 100644
          return; // unresolved Xcode/Ruby token — don't emit a broken define
        }
        const key = `${name}|${config ?? ''}`;
-@@ -571,6 +1118,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -571,6 +1854,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        'xcconfig',
        'user_target_xcconfig',
      ];
@@ -874,7 +1613,7 @@ index 8fcf04b..b3e3a53 100644
      for (const layer of layers) {
        if (layer == null || typeof layer !== 'object') continue;
        for (const xcKey of XCCONFIG_KEYS) {
-@@ -627,44 +1188,119 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -627,44 +1924,119 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return out;
    }
  
@@ -1019,7 +1758,7 @@ index 8fcf04b..b3e3a53 100644
        }
      }
      return out;
-@@ -677,6 +1313,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -677,6 +2049,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        ? false
        : true; // RN ecosystem default
  
@@ -1040,7 +1779,7 @@ index 8fcf04b..b3e3a53 100644
    return {
      name: specStringField('name') ?? '',
      version: specStringField('version') ?? '',
-@@ -693,15 +1343,42 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -693,23 +2079,81 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      // header_mappings_dir copy step, which SPM has no equivalent for.
      headerMappingsDirs: mergeArrayField('header_mappings_dir'),
      headerDir: specStringField('header_dir'),
@@ -1085,7 +1824,46 @@ index 8fcf04b..b3e3a53 100644
      requiresArc,
      warnings,
      partial,
-@@ -722,15 +1399,18 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+     // Default: overridden in readPodspec, which can see the podspec source.
+     usesInstallModulesDependencies: false,
++    // $FlowFixMe[incompatible-type] runtime-validated dynamic shape
++    unresolvedSources: Array.isArray(rawSpec.__unresolved__)
++      ? rawSpec.__unresolved__
++      : [],
+   };
+ }
+ 
++/**
++ * Why the podspec's source globs cannot be scaffolded, or null: each
++ * `source_files`/`exclude_files` value the regex path could not evaluate. A
++ * glob read in part gives a target that builds without some of the library's
++ * files (react-native-screens 4.24.0 lost all of ios/, and the app crashed at
++ * start), so the scaffolder refuses the library instead. Other callers (name
++ * resolution, header search paths) keep reading the model as before.
++ */
++function unresolvedSourcesReason(
++  podspecPath /*: string */,
++  model /*: PodspecModel */,
++) /*: ?string */ {
++  const list /*: Array<Unresolved> */ = model.unresolvedSources ?? [];
++  if (list.length === 0) return null;
++  return (
++    `${podspecPath}: ` +
++    list
++      .map(u => `\`${u.field} = ${u.expr}\` cannot be evaluated: ${u.why}`)
++      .join('; ') +
++    '. The podspec reader evaluates locals, string interpolation, arrays, ' +
++    "ENV['...'], comparisons, ternaries and if/unless blocks; building from " +
++    'the globs it could read would leave some of the library\'s files out of ' +
++    'its target. Install CocoaPods (`gem install cocoapods`) so `pod ipc spec` ' +
++    'reads the podspec, or give the library a Package.swift of its own.'
++  );
++}
++
+ // ---------------------------------------------------------------------------
+ // Top-level entry
+ // ---------------------------------------------------------------------------
+@@ -722,15 +2166,18 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
   * Throws when the file doesn't exist. Otherwise always returns a
   * PodspecModel — warnings on the model surface partial parses to the
   * caller, who can decide whether to proceed or abort scaffolding for that
@@ -1108,7 +1886,7 @@ index 8fcf04b..b3e3a53 100644
    // Record whether the podspec calls `install_modules_dependencies(s)`. We
    // strip that helper before `pod ipc` and the regex parser can't expand it,
    // so the React-Core family it injects never lands in `model.dependencies`.
-@@ -746,21 +1426,46 @@ function readPodspec(podspecPath /*: string */) /*: PodspecModel */ {
+@@ -746,21 +2193,46 @@ function readPodspec(podspecPath /*: string */) /*: PodspecModel */ {
    return model;
  }
  
@@ -1159,7 +1937,7 @@ index 8fcf04b..b3e3a53 100644
    podspecModels.set(key, model);
    return model;
  }
-@@ -794,12 +1499,13 @@ function readPodspecNames(
+@@ -794,12 +2266,13 @@ function readPodspecNames(
    if (hasShadowingSubspec(source)) {
      return null;
    }
@@ -1174,11 +1952,30 @@ index 8fcf04b..b3e3a53 100644
  
    const name = field('name');
    const moduleName = field('module_name');
+@@ -840,4 +2313,5 @@ module.exports = {
+   runPodIpcSpec,
+   regexPodspec,
+   flattenSubspecs,
++  unresolvedSourcesReason,
+ };
 diff --git a/node_modules/react-native/scripts/spm/scaffold-package-swift.js b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
-index cf7e587..a8076ae 100644
+index cf7e587..341c374 100644
 --- a/node_modules/react-native/scripts/spm/scaffold-package-swift.js
 +++ b/node_modules/react-native/scripts/spm/scaffold-package-swift.js
-@@ -54,6 +54,7 @@ const {
+@@ -45,7 +45,11 @@ const {
+ } = require('./expand-spm-dependencies');
+ const {expandSpmSourceGlobs} = require('./generate-spm-autolinking');
+ const {MIN_IOS_VERSION_SUPPORTED} = require('./ios-deployment-target');
+-const {findPodspecs, readPodspecCached} = require('./read-podspec');
++const {
++  findPodspecs,
++  readPodspecCached,
++  unresolvedSourcesReason,
++} = require('./read-podspec');
+ const {
+   REACT_CODEGEN_PACKAGE_NAME,
+   REACT_CODEGEN_PRODUCTS,
+@@ -54,6 +58,7 @@ const {
    SCAFFOLDER_MARKER,
    makeLogger,
    remotePackageConfig,
@@ -1186,7 +1983,7 @@ index cf7e587..a8076ae 100644
  } = require('./spm-utils');
  const {readSwiftpmConfig, writeSwiftpmName} = require('./swiftpm-config');
  const fs = require('node:fs');
-@@ -113,6 +114,276 @@ const {log, warn} = makeLogger('scaffold-package-swift');
+@@ -113,6 +118,276 @@ const {log, warn} = makeLogger('scaffold-package-swift');
  const SCAFFOLDER_VERSION = 20;
  const SCAFFOLDER_VERSION_LINE_RE = /^\/\/ AUTO-SCAFFOLDED-VERSION: (\d+)$/m;
  
@@ -1463,7 +2260,7 @@ index cf7e587..a8076ae 100644
  const AUTOGEN_MARKER =
    '// AUTO-GENERATED by scripts/generate-spm-autolinking.js';
  
-@@ -145,6 +416,373 @@ const SCAFFOLD_PREFIX_HEADER_CONTENTS = `// AUTO-SCAFFOLDED by react-native spm
+@@ -145,6 +420,373 @@ const SCAFFOLD_PREFIX_HEADER_CONTENTS = `// AUTO-SCAFFOLDED by react-native spm
  #endif
  `;
  
@@ -1837,7 +2634,7 @@ index cf7e587..a8076ae 100644
  // Names of deps the scaffolder always refuses to touch — `react-native`
  // itself is handled by the xcframework subpackage, never as an autolinked
  // target.
-@@ -167,10 +805,27 @@ const REACT_CORE_DEP_PREFIXES = [
+@@ -167,10 +809,27 @@ const REACT_CORE_DEP_PREFIXES = [
    'DoubleConversion',
    'Yoga',
    'hermes-engine',
@@ -1866,7 +2663,7 @@ index cf7e587..a8076ae 100644
  }
  
  // True when the dep ships a `codegenConfig` in package.json — RN's standard
-@@ -248,6 +903,12 @@ function translatePodspecToSpmTarget(
+@@ -248,6 +907,12 @@ function translatePodspecToSpmTarget(
    // npm name → resolved Swift name for every autolinked dep, so a sibling
    // reference honors that sibling's `spm.name` instead of re-deriving it.
    swiftNameByNpm /*: Map<string, string> */ = new Map(),
@@ -1879,7 +2676,7 @@ index cf7e587..a8076ae 100644
  ) /*: SpmScaffoldSpec */ {
    const warnings = [...model.warnings];
  
-@@ -322,46 +983,92 @@ function translatePodspecToSpmTarget(
+@@ -322,46 +987,92 @@ function translatePodspecToSpmTarget(
      }
    }
  
@@ -2000,7 +2797,7 @@ index cf7e587..a8076ae 100644
      }
    }
  
-@@ -427,15 +1134,55 @@ function translatePodspecToSpmTarget(
+@@ -427,15 +1138,55 @@ function translatePodspecToSpmTarget(
      f =>
        f !== SCAFFOLD_PREFIX_HEADER &&
        f !== 'Package.swift' &&
@@ -2058,7 +2855,7 @@ index cf7e587..a8076ae 100644
    try {
      for (const f of expandSpmSourceGlobs(dep.root, model.publicHeaderFiles)) {
        if (/\.(h|hh|hpp)$/i.test(f)) headerFiles.push(f);
-@@ -497,6 +1244,51 @@ function translatePodspecToSpmTarget(
+@@ -497,6 +1248,51 @@ function translatePodspecToSpmTarget(
      }
    }
    let namespacedShimHeaders /*: Array<string> */ = [];
@@ -2110,7 +2907,7 @@ index cf7e587..a8076ae 100644
    if (publicHeadersPath == null) {
      // Root-level podspecs (`s.source_files = "*.{h,m,mm}"`) keep their
      // headers in the package root. CocoaPods exposes them to dependents as
-@@ -518,6 +1310,101 @@ function translatePodspecToSpmTarget(
+@@ -518,6 +1314,101 @@ function translatePodspecToSpmTarget(
      );
    }
  
@@ -2212,7 +3009,7 @@ index cf7e587..a8076ae 100644
    const siblingSwiftNames /*: {[npmName: string]: string} */ = {};
    for (const npmName of siblingNames) {
      const resolved = swiftNameByNpm.get(npmName);
-@@ -526,21 +1413,201 @@ function translatePodspecToSpmTarget(
+@@ -526,21 +1417,201 @@ function translatePodspecToSpmTarget(
      }
    }
  
@@ -2416,7 +3213,7 @@ index cf7e587..a8076ae 100644
      warnings,
    };
  }
-@@ -565,6 +1632,9 @@ type EmitContext = {
+@@ -565,6 +1636,9 @@ type EmitContext = {
    // Relative path to the app's local xcframeworks package
    // (<appRoot>/build/xcframeworks). Only referenced when remote == null.
    localXcfwPackageDir?: ?string,
@@ -2426,7 +3223,7 @@ index cf7e587..a8076ae 100644
    iosDeploymentTarget?: ?string,
  };
  */
-@@ -629,10 +1699,25 @@ function emitScaffoldedPackageSwift(
+@@ -629,10 +1703,25 @@ function emitScaffoldedPackageSwift(
    const prefixFlag = spec.needsObjCPrefix
      ? `.unsafeFlags(["-include", "${SCAFFOLD_PREFIX_HEADER}"])`
      : '';
@@ -2453,7 +3250,7 @@ index cf7e587..a8076ae 100644
        ...(customFlagsCxx.length > 0
          ? [`.unsafeFlags([${customFlagsCxx.join(', ')}])`]
          : []),
-@@ -723,6 +1808,32 @@ function emitScaffoldedPackageSwift(
+@@ -723,6 +1812,32 @@ function emitScaffoldedPackageSwift(
        `.product(name: "${swiftSibling}", package: "${swiftSibling}")`,
      );
    }
@@ -2486,7 +3283,7 @@ index cf7e587..a8076ae 100644
  
    // sources: emit only when the podspec declared them. If empty (regex-fallback
    // podspec), no `sources:`/`exclude:` is emitted and SPM auto-scans the target
-@@ -740,6 +1851,11 @@ function emitScaffoldedPackageSwift(
+@@ -740,6 +1855,11 @@ function emitScaffoldedPackageSwift(
        ? `\n            publicHeadersPath: "${spec.publicHeadersPath}",`
        : '';
  
@@ -2498,7 +3295,7 @@ index cf7e587..a8076ae 100644
    const resourcesLine =
      spec.resources.length > 0
        ? `\n            resources: [${spec.resources.map(r => `.copy("${r}")`).join(', ')}],`
-@@ -755,9 +1871,71 @@ function emitScaffoldedPackageSwift(
+@@ -755,9 +1875,71 @@ function emitScaffoldedPackageSwift(
        ? `\n            dependencies: [${targetDeps.join(', ')}],`
        : '';
  
@@ -2572,7 +3369,7 @@ index cf7e587..a8076ae 100644
  // Edit the contents below if needed and re-run \`npx patch-package <dep-name>\`
  // to persist across \`npm install\`. To regenerate from the podspec, remove
  // this file (or just this marker) and re-run \`npx react-native spm scaffold\`.
-@@ -768,7 +1946,7 @@ ${SCAFFOLDER_MARKER}
+@@ -768,7 +1950,7 @@ ${SCAFFOLDER_MARKER}
  // (dropping the file) anyway.
  
  import PackageDescription
@@ -2581,7 +3378,7 @@ index cf7e587..a8076ae 100644
  let package = Package(
      name: "${spec.swiftName}",
      platforms: [.iOS("${iosDeploymentTarget}")],
-@@ -778,13 +1956,13 @@ let package = Package(
+@@ -778,13 +1960,13 @@ let package = Package(
  ${packageDepsBlock}    targets: [
          .target(
              name: "${spec.swiftName}",${targetDepsLine}
@@ -2598,7 +3395,7 @@ index cf7e587..a8076ae 100644
  )
  `;
  }
-@@ -844,6 +2022,61 @@ function reportSwiftName(
+@@ -844,6 +2026,61 @@ function reportSwiftName(
    }
  }
  
@@ -2660,7 +3457,7 @@ index cf7e587..a8076ae 100644
  // ---------------------------------------------------------------------------
  // Per-dep orchestrator
  // ---------------------------------------------------------------------------
-@@ -953,7 +2186,11 @@ function scaffoldPackageSwiftForDep(
+@@ -953,7 +2190,11 @@ function scaffoldPackageSwiftForDep(
        // regenerating existing files; --force is not needed here.
        const vMatch = existing.match(SCAFFOLDER_VERSION_LINE_RE);
        const existingVersion = vMatch != null ? parseInt(vMatch[1], 10) : 1;
@@ -2673,7 +3470,7 @@ index cf7e587..a8076ae 100644
        if (!ctx.force && !versionStale) {
          // Slot label change is the other auto-regen trigger — bumps SPM's
          // manifest hash so the cache-slot path gets re-resolved.
-@@ -970,7 +2207,7 @@ function scaffoldPackageSwiftForDep(
+@@ -970,7 +2211,7 @@ function scaffoldPackageSwiftForDep(
        }
        if (versionStale) {
          log(
@@ -2682,7 +3479,7 @@ index cf7e587..a8076ae 100644
          );
        }
        // Fall through: regenerate (force, slot changed, or version bumped).
-@@ -998,9 +2235,44 @@ function scaffoldPackageSwiftForDep(
+@@ -998,9 +2239,44 @@ function scaffoldPackageSwiftForDep(
      };
    }
  
@@ -2727,7 +3524,17 @@ index cf7e587..a8076ae 100644
    } catch (e) {
      return {
        depName,
-@@ -1012,35 +2284,17 @@ function scaffoldPackageSwiftForDep(
+@@ -1008,39 +2284,27 @@ function scaffoldPackageSwiftForDep(
+       reason: `Podspec read failed: ${e.message}`,
+     };
+   }
++  // A source glob the podspec reader could not evaluate: a target built from
++  // the rest would lack some of the library's files.
++  const unresolved = unresolvedSourcesReason(podspecPath, model);
++  if (unresolved != null) {
++    return {depName, status: 'error', reason: unresolved};
++  }
+ 
    const spec = translatePodspecToSpmTarget(
      model,
      dep,
@@ -2772,7 +3579,7 @@ index cf7e587..a8076ae 100644
  
    // Relative paths into the app, embedded in the scaffolded Package.swift.
    //
-@@ -1072,6 +2326,7 @@ function scaffoldPackageSwiftForDep(
+@@ -1072,6 +2336,7 @@ function scaffoldPackageSwiftForDep(
      iosDeploymentTarget: ctx.iosDeploymentTarget,
      codegenPackageDir: relFromManifest('build', 'generated', 'ios'),
      localXcfwPackageDir: relFromManifest('build', 'xcframeworks'),
@@ -2780,7 +3587,7 @@ index cf7e587..a8076ae 100644
    });
  
    // Distinguish "first-time scaffold" (no file at all) from "regenerate"
-@@ -1081,15 +2336,36 @@ function scaffoldPackageSwiftForDep(
+@@ -1081,15 +2346,36 @@ function scaffoldPackageSwiftForDep(
    // regens are silent because we're maintaining a file we already own.
    const previouslyExisted = fs.existsSync(pkgSwiftPath);
  
@@ -2820,7 +3627,7 @@ index cf7e587..a8076ae 100644
        );
      }
      // Mirror root-level headers into the generated include/<SwiftName>/ shim
-@@ -1099,18 +2375,96 @@ function scaffoldPackageSwiftForDep(
+@@ -1099,18 +2385,96 @@ function scaffoldPackageSwiftForDep(
        const shimDir = path.join(dep.root, 'include', spec.swiftName);
        fs.mkdirSync(shimDir, {recursive: true});
        for (const header of spec.namespacedShimHeaders) {
@@ -2921,7 +3728,7 @@ index cf7e587..a8076ae 100644
    reportSwiftName(dep, spec.swiftName, model);
  
    // Migration: record a name we derived from the podspec, so the library can
-@@ -1120,6 +2474,12 @@ function scaffoldPackageSwiftForDep(
+@@ -1120,6 +2484,12 @@ function scaffoldPackageSwiftForDep(
      dep.swiftNameSource === 'podspec'
        ? writeSwiftpmName(dep.root, spec.swiftName, {dryRun: ctx.dryRun})
        : undefined;
@@ -2934,7 +3741,7 @@ index cf7e587..a8076ae 100644
  
    return {
      depName,
-@@ -1128,6 +2488,7 @@ function scaffoldPackageSwiftForDep(
+@@ -1128,6 +2498,7 @@ function scaffoldPackageSwiftForDep(
      warnings: spec.warnings,
      previouslyExisted,
      swiftpmName,
@@ -2942,7 +3749,7 @@ index cf7e587..a8076ae 100644
    };
  }
  
-@@ -1141,7 +2502,7 @@ function collectAutolinkedDeps(
+@@ -1141,7 +2512,7 @@ function collectAutolinkedDeps(
    opts /*: {
      autolinkingJsonPath: string,
      remote: ?{url: string, version: string, identity: string},
@@ -2951,7 +3758,7 @@ index cf7e587..a8076ae 100644
    } */,
  ) /*: ?Array<AutolinkedDep> */ {
    const {autolinkingJsonPath, remote, onSkipped} = opts;
-@@ -1162,7 +2523,7 @@ function collectAutolinkedDeps(
+@@ -1162,7 +2533,7 @@ function collectAutolinkedDeps(
      const root = raw.root;
      const ios = raw.platforms?.ios;
      if (typeof root !== 'string' || ios == null) {
@@ -2960,7 +3767,7 @@ index cf7e587..a8076ae 100644
        continue;
      }
      // $FlowFixMe[incompatible-type] `ios` shape is runtime-validated above
-@@ -1294,6 +2655,11 @@ type ScaffoldAllOptions = {
+@@ -1294,6 +2665,11 @@ type ScaffoldAllOptions = {
    // confirmation prompt for first-time scaffolds. Skipped deps still
    // appear in the returned results array with status='skipped-opt-out'.
    skipDeps?: ReadonlyArray<string>,
@@ -2972,7 +3779,7 @@ index cf7e587..a8076ae 100644
  };
  */
  
-@@ -1323,6 +2689,17 @@ function scaffoldAll(
+@@ -1323,6 +2699,17 @@ function scaffoldAll(
    // scaffolded here — leaving `react-native spm scaffold` unable to clear the
    // autolinker's missing-manifest error.
    const results /*: Array<ScaffoldResult> */ = [];
@@ -2990,7 +3797,7 @@ index cf7e587..a8076ae 100644
    // Outside collectAutolinkedDeps' own try: a malformed remote config
    // (RemoteVersionError) is a misconfiguration to surface, not an expansion
    // failure to degrade past.
-@@ -1330,24 +2707,23 @@ function scaffoldAll(
+@@ -1330,24 +2717,23 @@ function scaffoldAll(
    const allDeps = collectAutolinkedDeps({
      autolinkingJsonPath,
      remote,
@@ -3026,7 +3833,7 @@ index cf7e587..a8076ae 100644
    for (const dep of allDeps) {
      const podspecPath = dep.platforms?.ios?.podspecPath;
      if (typeof podspecPath === 'string' && podspecPath.length > 0) {
-@@ -1386,6 +2762,9 @@ function scaffoldAll(
+@@ -1386,6 +2772,9 @@ function scaffoldAll(
    const skipSet /*: Set<string> */ = new Set(opts.skipDeps ?? []);
  
    for (const dep of allDeps) {
@@ -3036,7 +3843,7 @@ index cf7e587..a8076ae 100644
      if (skipSet.has(dep.name)) {
        results.push({
          depName: dep.name,
-@@ -1404,6 +2783,9 @@ function scaffoldAll(
+@@ -1404,6 +2793,9 @@ function scaffoldAll(
  }
  
  module.exports = {
@@ -3047,10 +3854,21 @@ index cf7e587..a8076ae 100644
    scaffoldAll,
    scaffoldPackageSwiftForDep,
 diff --git a/node_modules/react-native/scripts/spm/spm-types.js b/node_modules/react-native/scripts/spm/spm-types.js
-index a89142f..73dc6c8 100644
+index a89142f..6ce647d 100644
 --- a/node_modules/react-native/scripts/spm/spm-types.js
 +++ b/node_modules/react-native/scripts/spm/spm-types.js
-@@ -502,6 +502,9 @@ export type SpmScaffoldSpec = {
+@@ -471,6 +471,10 @@ export type PodspecModel = {
+   // flag as an implicit React-core dependency (a plain ObjC module using the
+   // helper has no `codegenConfig` to key off).
+   usesInstallModulesDependencies: boolean,
++  // The `source_files`/`exclude_files` values the regex fallback could not
++  // evaluate (a method call, an unknown local): the scaffolder refuses the
++  // library rather than build it from a partial source list.
++  unresolvedSources?: Array<{field: string, expr: string, why: string}>,
+ };
+ 
+ // Intermediate translation result — concrete data the Swift emitter consumes.
+@@ -502,6 +506,9 @@ export type SpmScaffoldSpec = {
    coreReactNative: boolean,
    siblingNames: Array<string>,
    siblingSwiftNames?: {[npmName: string]: string},
@@ -3060,7 +3878,7 @@ index a89142f..73dc6c8 100644
    // Extra frameworks beyond the autolinker's default UIKit/Foundation/CoreGraphics
    // set. Merged with the defaults at emit time.
    extraFrameworks: Array<string>,
-@@ -539,6 +542,9 @@ export type ScaffoldResult =
+@@ -539,6 +546,9 @@ export type ScaffoldResult =
        // What became of `swiftpmConfig.name` in the library's package.json.
        // Absent when the name was not podspec-derived, so nothing was attempted.
        swiftpmName?: SwiftpmNameOutcome,

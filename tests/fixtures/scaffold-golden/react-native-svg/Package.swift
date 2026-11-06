@@ -142,6 +142,7 @@ let package = Package(
                 "apple/Utils/RNSVGCGFCRule.h",
                 "apple/Utils/RNSVGConvert.h",
                 "apple/Utils/RNSVGConvert.mm",
+                "apple/Utils/RNSVGFabricConversions.h",
                 "apple/Utils/RNSVGLength.h",
                 "apple/Utils/RNSVGLength.mm",
                 "apple/Utils/RNSVGMarkerPosition.h",

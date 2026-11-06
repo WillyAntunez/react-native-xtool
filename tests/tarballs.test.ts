@@ -143,9 +143,9 @@ describe("tests/support/tarballs", () => {
     expect(patchedSpm(rn)).toBe(spm);
     expect(packageFromTarball(rn)).toBe(pristine);
     expect(path.dirname(path.dirname(spm))).not.toBe(pristine);
-    expect(readFileSync(path.join(spm, "read-podspec.js"), "utf8")).toContain("function resolveRubyConstants");
+    expect(readFileSync(path.join(spm, "read-podspec.js"), "utf8")).toContain("function evaluateRubyLocals");
     expect(readFileSync(path.join(pristine, "scripts", "spm", "read-podspec.js"), "utf8")).not.toContain(
-      "function resolveRubyConstants",
+      "function evaluateRubyLocals",
     );
     // Its scripts load yargs and micromatch, which an app would have installed; here they come from rn-xtool.
     expect(existsSync(path.join(spm, "..", "..", "node_modules", "yargs"))).toBe(true);

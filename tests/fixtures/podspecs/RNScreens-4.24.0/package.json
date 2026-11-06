@@ -1,0 +1,78 @@
+{
+  "name": "react-native-screens",
+  "version": "4.24.0",
+  "description": "Native navigation primitives for your React Native app.",
+  "license": "MIT",
+  "codegenConfig": {
+    "name": "rnscreens",
+    "type": "all",
+    "jsSrcsDir": "./src/fabric",
+    "android": {
+      "javaPackageName": "com.swmansion.rnscreens"
+    },
+    "ios": {
+      "components": {
+        "RNSFullWindowOverlay": {
+          "className": "RNSFullWindowOverlay"
+        },
+        "RNSModalScreen": {
+          "className": "RNSModalScreen"
+        },
+        "RNSScreenContainer": {
+          "className": "RNSScreenContainerView"
+        },
+        "RNSScreenContentWrapper": {
+          "className": "RNSScreenContentWrapper"
+        },
+        "RNSScreenFooter": {
+          "className": "RNSScreenFooter"
+        },
+        "RNSScreen": {
+          "className": "RNSScreenView"
+        },
+        "RNSScreenNavigationContainer": {
+          "className": "RNSScreenNavigationContainerView"
+        },
+        "RNSScreenStackHeaderConfig": {
+          "className": "RNSScreenStackHeaderConfig"
+        },
+        "RNSScreenStackHeaderSubview": {
+          "className": "RNSScreenStackHeaderSubview"
+        },
+        "RNSScreenStack": {
+          "className": "RNSScreenStackView"
+        },
+        "RNSSearchBar": {
+          "className": "RNSSearchBar"
+        },
+        "RNSStackScreen": {
+          "className": "RNSStackScreenComponentView"
+        },
+        "RNSStackHost": {
+          "className": "RNSStackHostComponentView"
+        },
+        "RNSTabsScreen": {
+          "className": "RNSTabsScreenComponentView"
+        },
+        "RNSTabsHost": {
+          "className": "RNSTabsHostComponentView"
+        },
+        "RNSTabsBottomAccessory": {
+          "className": "RNSTabsBottomAccessoryComponentView"
+        },
+        "RNSTabsBottomAccessoryContent": {
+          "className": "RNSTabsBottomAccessoryContentComponentView"
+        },
+        "RNSSplitViewHost": {
+          "className": "RNSSplitViewHostComponentView"
+        },
+        "RNSSplitViewScreen": {
+          "className": "RNSSplitViewScreenComponentView"
+        },
+        "RNSSafeAreaView": {
+          "className": "RNSSafeAreaViewComponentView"
+        }
+      }
+    }
+  }
+}

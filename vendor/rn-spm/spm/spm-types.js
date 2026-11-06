@@ -471,6 +471,10 @@ export type PodspecModel = {
   // flag as an implicit React-core dependency (a plain ObjC module using the
   // helper has no `codegenConfig` to key off).
   usesInstallModulesDependencies: boolean,
+  // The `source_files`/`exclude_files` values the regex fallback could not
+  // evaluate (a method call, an unknown local): the scaffolder refuses the
+  // library rather than build it from a partial source list.
+  unresolvedSources?: Array<{field: string, expr: string, why: string}>,
 };
 
 // Intermediate translation result — concrete data the Swift emitter consumes.

@@ -111,7 +111,8 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
       expect(src("read-podspec.js")).toContain("Ruby bare list without brackets");
     });
     it("read-podspec.js has the Ruby constants hunk", () => {
-      expect(src("read-podspec.js")).toContain("function resolveRubyConstants");
+      // Fix 3's constants pass, which fix 28 grew into an evaluator.
+      expect(src("read-podspec.js")).toContain("function evaluateRubyLocals");
     });
     it("read-podspec.js has the subspec merge hunk", () => {
       const f = src("read-podspec.js");
@@ -152,7 +153,8 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
     });
     it("the scaffolder has the fixes 14–19 hunks", () => {
       expect(src("read-podspec.js")).toContain("function resolvePackageVersion");
-      expect(src("read-podspec.js")).toContain("function rnPodEnvTernary");
+      // Fix 19's RN_POD_ENV ternary, which fix 28 grew into ENV lookups in the evaluator.
+      expect(src("read-podspec.js")).toContain("const RN_POD_ENV");
       expect(src("read-podspec.js")).toContain("env: {...process.env, ...RN_POD_ENV}");
       const f = src("scaffold-package-swift.js");
       expect(f).toContain("RN_XTOOL_SCAFFOLD_REVISION = 5");
@@ -208,6 +210,12 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
       const f = src("scaffold-package-swift.js");
       expect(f).toContain("function loadPodTable");
       expect(f).toContain("// rn-xtool-pods: ");
+    });
+    it("the scaffolder has the fix 28 hunks", () => {
+      const reader = src("read-podspec.js");
+      expect(reader).toContain("function evalRubyExpr");
+      expect(reader).toContain("function unresolvedSourcesReason");
+      expect(src("scaffold-package-swift.js")).toContain("unresolvedSourcesReason(podspecPath, model)");
     });
   });
 
@@ -1482,7 +1490,8 @@ describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
     ["0", "0"],
     ["empty", ""],
     ["true", "true"],
-  ])("19: evaluates both ternaries with React Native's value 1 (environment %s), and no other ENV condition", (_, value) => {
+  ])("19: evaluates both ternaries with React Native's value 1 (environment %s), and any other variable as unset", (_, value) => {
+    // Fix 28: every other `ENV[...]` reads as unset whatever the shell says, so a scaffold never depends on it.
     const body =
       "  hermes = ENV['RCT_HERMES_V1_ENABLED'] == '1' ? '-DHERMES_V1_ON' : '-DHERMES_V1_OFF'\n" +
       '  arch = ENV["RCT_NEW_ARCH_ENABLED"] != "0" ? "-DARCH_ON" : "-DARCH_OFF"\n' +
@@ -1497,7 +1506,8 @@ describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
       const got = defines(scaffoldOne(lib({ "ios/Foo.h": "", "ios/Foo.m": "" }, body)).pkg);
       expect(got).toContain("HERMES_V1_ON");
       expect(got).toContain("ARCH_ON");
-      for (const d of ["HERMES_V1_OFF", "ARCH_OFF", "FOO_ON", "FOO_OFF"]) expect(got).not.toContain(d);
+      expect(got).toContain("FOO_OFF");
+      for (const d of ["HERMES_V1_OFF", "ARCH_OFF", "FOO_ON"]) expect(got).not.toContain(d);
     } finally {
       vi.unstubAllEnvs();
     }
@@ -2384,6 +2394,140 @@ describe("scaffolder fix 27: binary pods (vendor/rn-spm)", () => {
     expect(pkg).not.toContain("pod-binaries");
     expect(pkg).not.toContain("rn-xtool-pods");
     expect(run.results[0]!.warnings.some((w) => w.startsWith('Dependency "GoogleMLKit" is a CocoaPods pod with no known SwiftPM equivalent'))).toBe(true);
+  });
+});
+
+// Fix 28 (React Native 0.88.0 patch), on the vendored copy. react-native-screens 4.24.0 builds its globs from locals
+// assigned under conditions (`exts = new_arch_enabled ? '…' : '…'`, `source_files = ["ios/**/*.#{exts}"]`, a
+// conditional `.push`, `if !gamma … else … end` around `exclude_files`): the reader left `#{exts}` unresolved, the
+// target got only the `common` subspec's C++ and no Objective-C class, and the app crashed at start.
+describe("scaffolder fix 28: podspec locals and conditions (vendor/rn-spm)", () => {
+  const fixture = (dir: string) => path.join(PODSPEC_FIXTURES, dir);
+  /** The `sources:` entries of a manifest's first target. */
+  const sourcesOf = (pkg: string) => [...pkg.match(/sources: \[([^\]]*)\]/)![1]!.matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
+  /** A library with the given files and podspec text (the whole file), as a temp dir. */
+  function podLib(files: Record<string, string>, podspec: string, name = "Foo"): string {
+    const root = tempDir();
+    for (const [f, text] of Object.entries({ "package.json": JSON.stringify({ name: "foo", version: "1.0.0" }), ...files })) {
+      mkdirSync(path.dirname(path.join(root, f)), { recursive: true });
+      writeFileSync(path.join(root, f), text);
+    }
+    writeFileSync(path.join(root, `${name}.podspec`), podspec);
+    return root;
+  }
+  const scaffoldPod = (root: string) => scaffoldLibraries(VENDORED_RN_SPM, { "react-native-foo": root });
+  const FILES = { "ios/A.h": "", "ios/A.mm": "", "ios/B.m": "", "ios/off/C.mm": "", "cpp/D.cpp": "", "cpp/D.h": "" };
+
+  it("28: scaffolds screens 4.24.0 with its ios/ sources, gamma excluded, stubs and the common subspec kept", () => {
+    const run = scaffoldLibraries(VENDORED_RN_SPM, { "react-native-screens": fixture("RNScreens-4.24.0") });
+    expect(run.results[0]?.status, run.results[0]?.reason).toBe("written");
+    const pkg = run.files["react-native-screens/Package.swift"]!;
+    const sources = sourcesOf(pkg);
+    for (const f of [
+      "ios/RNSScreen.mm",
+      "ios/RNSScreenStack.mm",
+      "ios/bridging/RNSReactBaseView.mm",
+      "ios/stubs/RNSGammaStubs.mm",
+      "cpp/RNScreensTurboModule.cpp",
+      "common/cpp/react/renderer/components/rnscreens/RNSScreenShadowNode.cpp",
+    ]) {
+      expect(sources, f).toContain(f);
+    }
+    expect(sources.filter((f) => f.startsWith("ios/gamma/"))).toEqual([]);
+    // With RNS_GAMMA_ENABLED unset every Swift file is under ios/gamma, so CocoaPods builds one Objective-C++ target:
+    // clang-only here too, and the module map leaves out the gamma headers and Swift-Bridging.h (it imports the
+    // module's own -Swift.h, which a clang-only target never has).
+    expect(pkg.split("\n")[0]).toBe("// swift-tools-version: 6.0");
+    expect(run.files["react-native-screens/Package@swift-6.5.swift"]).toBeUndefined();
+    expect(pkg).toContain('publicHeadersPath: "ios",');
+    const map = run.files["react-native-screens/ios/module.modulemap"]!;
+    expect(map).toContain('    exclude header "gamma/stack/host/RNSStackHostComponentView.h"\n');
+    expect(map).toContain('    exclude header "bridging/Swift-Bridging.h"\n');
+    expect(map).not.toContain("stubs/");
+  });
+
+  it("28: evaluates locals, interpolation, ternaries, ENV, if/elsif/else/unless and push/<< in order", () => {
+    const podspec =
+      "new_arch = ENV['RCT_NEW_ARCH_ENABLED'] == '1'\n" +
+      "legacy = !new_arch\n" +
+      "gamma = ENV['FOO_GAMMA'] == '1'\n" +
+      "exts = new_arch ? '{h,m,mm,cpp}' : '{h,m}'\n" +
+      'srcs = ["ios/*.#{exts}"]\n' +
+      'srcs.push("never/*.m") if legacy\n' +
+      "unless gamma\n" +
+      '  srcs << "cpp/*.{cpp,h}"\n' +
+      "end\n" +
+      "if gamma\n" +
+      '  off = "ios/never/**"\n' +
+      "elsif ENV['RCT_HERMES_V1_ENABLED'] != '1'\n" +
+      '  off = "ios/also-never/**"\n' +
+      "else\n" +
+      "  off = 'ios/off/**'\n" +
+      "end\n" +
+      "Pod::Spec.new do |s|\n" +
+      '  s.name = "Foo"\n' +
+      "  s.source_files = srcs\n" +
+      "  if !gamma\n" +
+      "    s.exclude_files = off\n" +
+      "  else\n" +
+      '    s.exclude_files = "ios/A.h"\n' +
+      "  end\n" +
+      "end\n";
+    const run = scaffoldPod(podLib(FILES, podspec));
+    expect(run.results[0]?.status, run.results[0]?.reason).toBe("written");
+    expect(sourcesOf(run.files["react-native-foo/Package.swift"]!).sort()).toEqual(["cpp/D.cpp", "cpp/D.h", "ios/A.h", "ios/A.mm", "ios/B.m"]);
+  });
+
+  it("28: single-quoted strings do not interpolate, and a later assignment wins", () => {
+    const root = podLib(
+      FILES,
+      "exts = '{h}'\n" +
+        "exts = '{h,mm}'\n" +
+        "Pod::Spec.new do |s|\n" +
+        '  s.name = "Foo"\n' +
+        '  s.source_files = "ios/*.#{exts}", \'ios/#{exts}.m\'\n' +
+        "end\n",
+    );
+    const { readPodspec } = createRequire(import.meta.url)(path.join(VENDORED_RN_SPM, "read-podspec.js")) as {
+      readPodspec(f: string): { sourceFiles: string[] };
+    };
+    expect(withRnRoot("0.86.3", () => readPodspec(path.join(root, "Foo.podspec"))).sourceFiles).toEqual(["ios/*.{h,mm}", "ios/#{exts}.m"]);
+  });
+
+  it.each([
+    ["an unknown identifier", "  s.source_files = mystery", "source_files", "mystery"],
+    ["a method call", '  s.source_files = Dir.glob("ios/*.m")', "source_files", 'Dir.glob("ios/*.m")'],
+    ["an interpolated call", '  s.exclude_files = "ios/#{helper(1)}/**"', "exclude_files", '"ios/#{helper(1)}/**"'],
+    ["a local built from a call", '  srcs = ["ios/*.m"] + extra_sources\n  s.source_files = srcs', "source_files", "srcs"],
+    ["a local set under a condition it cannot evaluate", "  if respond_to?(:foo)\n    exts = '{h,m}'\n  end\n  s.source_files = \"ios/*.#{exts}\"", "source_files", "respond_to?(:foo)"],
+  ])("28: refuses %s in a source glob, naming the podspec, the field and the expression", (_, body, field, expr) => {
+    const run = scaffoldPod(podLib(FILES, `Pod::Spec.new do |s|\n  s.name = "Foo"\n${body}\nend\n`));
+    const res = run.results[0]!;
+    expect(res.status).toBe("error");
+    expect(res.reason).toContain("Foo.podspec");
+    expect(res.reason).toContain(field);
+    expect(res.reason).toContain(expr);
+    expect(run.files["react-native-foo/Package.swift"]).toBeUndefined();
+  });
+
+  it("28: reads both branches of a condition it cannot evaluate, as before", () => {
+    // The `respond_to?(:install_modules_dependencies, true)` idiom, and a literal glob under such a condition
+    // (react-native-vision-camera's `if enableFrameProcessors` subspec, fix 20): both branches stay visible.
+    const podspec =
+      "Pod::Spec.new do |s|\n" +
+      '  s.name = "Foo"\n' +
+      "  if respond_to?(:foo)\n" +
+      '    s.source_files = "ios/*.{h,mm}"\n' +
+      "  end\n" +
+      "  if respond_to?(:install_modules_dependencies, true)\n" +
+      "    install_modules_dependencies(s)\n" +
+      "  else\n" +
+      '    s.dependency "React-Core"\n' +
+      "  end\n" +
+      "end\n";
+    const run = scaffoldPod(podLib(FILES, podspec));
+    expect(run.results[0]?.status, run.results[0]?.reason).toBe("written");
+    expect(sourcesOf(run.files["react-native-foo/Package.swift"]!).sort()).toEqual(["ios/A.h", "ios/A.mm"]);
   });
 });
 

@@ -45,7 +45,11 @@ const {
 } = require('./expand-spm-dependencies');
 const {expandSpmSourceGlobs} = require('./generate-spm-autolinking');
 const {MIN_IOS_VERSION_SUPPORTED} = require('./ios-deployment-target');
-const {findPodspecs, readPodspecCached} = require('./read-podspec');
+const {
+  findPodspecs,
+  readPodspecCached,
+  unresolvedSourcesReason,
+} = require('./read-podspec');
 const {
   REACT_CODEGEN_PACKAGE_NAME,
   REACT_CODEGEN_PRODUCTS,
@@ -2279,6 +2283,12 @@ function scaffoldPackageSwiftForDep(
       status: 'error',
       reason: `Podspec read failed: ${e.message}`,
     };
+  }
+  // A source glob the podspec reader could not evaluate: a target built from
+  // the rest would lack some of the library's files.
+  const unresolved = unresolvedSourcesReason(podspecPath, model);
+  if (unresolved != null) {
+    return {depName, status: 'error', reason: unresolved};
   }
 
   const spec = translatePodspecToSpmTarget(
