@@ -11,6 +11,7 @@ import { AmbiguousProjectError, openPbxproj, resolveSetting, type Pbxproj } from
 import { packageRoot } from "../tools/exec.js";
 import { IOS_MIN } from "../versions.js";
 import { APP_ICON_FILE, findAppIcon, type IconRecord } from "./appIcon.js";
+import { podHeaderForwardDirs, reactNativeBareIncludeDirs } from "./bareIncludes.js";
 import { copyBareTarget } from "./bareSources.js";
 import { expoClangImporterInputs } from "./expoImporter.js";
 import { DEV_SUPPORT_TARGET, renderPackageSwift, type AppTargetInputs } from "./packageSwift.js";
@@ -105,11 +106,20 @@ async function writeAppSources(ctx: GenerateContext, headersDir: string, resourc
     const copied = await copyBareTarget(
       project.bare, paths.ios, project.iosTargetDir, paths.sources, resourcesDir, ctx.log ?? console.log,
     );
+    // As CocoaPods' per-pod header search paths do: React Native's headers and the pods' forwards by bare name, after
+    // the app's own paths so an app header of the same name wins.
+    const headerSearchPaths = [
+      ...new Set([
+        ...copied.headerSearchPaths,
+        ...reactNativeBareIncludeDirs(paths.xcframeworks),
+        ...(await podHeaderForwardDirs(paths.autolinking)),
+      ]),
+    ];
     const app: AppTargetInputs = {
       mixed: project.bare.mixed,
       bridgingHeader: copied.bridgingHeader,
       defines: project.bare.defines,
-      headerSearchPaths: copied.headerSearchPaths,
+      headerSearchPaths,
       cxxStandard: project.bare.cxxStandard,
       swiftHeadersDir: headersDir,
     };

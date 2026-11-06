@@ -21,7 +21,7 @@ export interface AppTargetInputs {
   bridgingHeader?: string;
   /** `KEY` or `KEY=VALUE`, as in GCC_PREPROCESSOR_DEFINITIONS. */
   defines: string[];
-  /** Absolute. */
+  /** Absolute. Bare: the app's own, then React Native's bare-name dirs and the pods' forwards (`bareIncludes.ts`). */
   headerSearchPaths: string[];
   /** CLANG_CXX_LANGUAGE_STANDARD, e.g. `gnu++20`. */
   cxxStandard?: string;

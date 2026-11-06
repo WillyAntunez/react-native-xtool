@@ -11,6 +11,7 @@ import { IMPORTER_MARKER, scaffoldedImporterPaths } from "../src/generate/scaffo
 import { PODSPEC_FIXTURES, VENDORED_RN_SPM, scaffoldLibraries } from "./support/rnScaffold.js";
 import { projectPaths, swiftHeadersDir } from "../src/paths.js";
 import { openPbxproj, readTargetContent } from "../src/project/pbxproj.js";
+import { headersXcframeworkInfoPlist } from "../src/pipeline/rnArtifacts.js";
 import type { ProjectInfo } from "../src/project/index.js";
 import type { RuntimeFramework } from "../src/frameworks.js";
 import { parse as parseYaml } from "yaml";
@@ -1223,6 +1224,95 @@ describe("writeIosXtool", () => {
     await autolinkedLib(paths, root, "RNSVG", "// swift-tools-version: 6.0\nimport PackageDescription\n");
     await writeIosXtool(ctx);
     expect(await readFile(join(paths.iosXtool, "Package.swift"), "utf8")).toBe(before);
+  });
+
+  /**
+   * React Native's headers in `xcframeworks` as the vendored scripts stage them: ReactHeadersTarget's flat React/ dir
+   * and ReactNativeHeaders.xcframework, whose module map names per-module headers (simulator slice listed first).
+   */
+  async function reactHeadersFarm(xcframeworks: string) {
+    const react = join(xcframeworks, "ReactHeadersTarget", "include", "React");
+    await mkdir(react, { recursive: true });
+    await writeFile(join(react, "RCTBundleURLProvider.h"), "@interface RCTBundleURLProvider : NSObject\n@end\n");
+    const xc = join(xcframeworks, "ReactNativeHeaders.xcframework");
+    const slices = [
+      { LibraryIdentifier: "ios-arm64_x86_64-simulator", SupportedPlatform: "ios", SupportedPlatformVariant: "simulator", SupportedArchitectures: ["arm64", "x86_64"] },
+      { LibraryIdentifier: "ios-arm64", SupportedPlatform: "ios", SupportedArchitectures: ["arm64"] },
+    ];
+    await mkdir(xc, { recursive: true });
+    await writeFile(join(xc, "Info.plist"), headersXcframeworkInfoPlist("ReactNativeHeaders", slices));
+    const map =
+      'module React_RCTAppDelegate {\n  header "React_RCTAppDelegate/RCTAppDelegate.h"\n  export *\n}\n\n' +
+      'module ReactNativeHeaders_react {\n  header "react/debug/flags.h"\n  export *\n}\n\n' +
+      'module yoga {\n  header "yoga/Yoga.h"\n  export *\n}\n';
+    for (const { LibraryIdentifier } of slices) {
+      const headers = join(xc, LibraryIdentifier, "Headers");
+      for (const h of ["React_RCTAppDelegate/RCTAppDelegate.h", "react/debug/flags.h", "yoga/Yoga.h", "jsi/jsi.h"]) {
+        await mkdir(join(headers, h, ".."), { recursive: true });
+        await writeFile(join(headers, h), "// header\n");
+      }
+      await writeFile(join(headers, "module.modulemap"), map);
+    }
+    const device = join(xc, "ios-arm64", "Headers");
+    return { react, appDelegate: join(device, "React_RCTAppDelegate"), yoga: join(device, "yoga"), device };
+  }
+  /** The `-I` list of a rendered manifest's App cSettings, and the `-Xcc -I` list of its bridging-header flags. */
+  const appIncludes = (pkg: string) => {
+    const c = pkg.slice(pkg.indexOf("cSettings: ["), pkg.indexOf("cxxSettings: ["));
+    const swift = pkg.slice(pkg.indexOf("-import-objc-header"), pkg.indexOf("linkerSettings: ["));
+    return {
+      clang: [...c.matchAll(/"-I", "([^"]+)"/g)].map((m) => m[1]!),
+      cxx: [...pkg.slice(pkg.indexOf("cxxSettings: ["), pkg.indexOf("swiftSettings: [")).matchAll(/"-I", "([^"]+)"/g)].map((m) => m[1]!),
+      bridging: [...swift.slice(0, swift.indexOf("]),")).matchAll(/"-Xcc", "-I([^"]+)"/g)].map((m) => m[1]!),
+    };
+  };
+
+  it("gives a bare app's Objective-C and bridging header React Native's headers by bare name, after the app's own", async () => {
+    const { paths, ctx } = await bareProject();
+    const farm = await reactHeadersFarm(paths.xcframeworks);
+    await writeIosXtool(ctx);
+    const { clang, cxx, bridging } = appIncludes(await readFile(join(paths.iosXtool, "Package.swift"), "utf8"));
+    const own = [join(paths.sources, "include"), join(paths.ios, "Vendor", "include")];
+    // React/ for <RCTBundleURLProvider.h>; the module map's per-module dirs (device slice) for <RCTAppDelegate.h>.
+    const react = [farm.react, farm.appDelegate, farm.yoga];
+    expect(clang).toEqual([...own, ...react, swiftHeadersDir(paths.iosXtool)]);
+    expect(cxx).toEqual(clang);
+    expect(bridging).toEqual([...own, ...react]);
+    // Nested C++ headers keep their path spelling (<react/debug/flags.h>); dirs the module map does not name stay out.
+    expect(clang).not.toContain(join(farm.device, "react", "debug"));
+    expect(clang).not.toContain(join(farm.device, "jsi"));
+  });
+
+  it("gives a bare app's Objective-C and bridging header the libraries' <Pod/Header.h> forwards, after React Native's", async () => {
+    const { root, paths, ctx } = await bareProject();
+    const farm = await reactHeadersFarm(paths.xcframeworks);
+    const appAuth = await autolinkedLib(paths, root, "ReactNativeAppAuth");
+    await mkdir(join(appAuth, "rn-spm-pod-headers", "AppAuth"), { recursive: true });
+    await writeFile(join(appAuth, "rn-spm-pod-headers", "AppAuth", "AppAuth.h"), "@import AppAuthCore;\n@import AppAuth;\n");
+    await autolinkedLib(paths, root, "RNSVG");
+    await writeIosXtool(ctx);
+    const { clang, bridging } = appIncludes(await readFile(join(paths.iosXtool, "Package.swift"), "utf8"));
+    const pods = join(appAuth, "rn-spm-pod-headers");
+    expect(clang.slice(-2)).toEqual([pods, swiftHeadersDir(paths.iosXtool)]);
+    expect(bridging.at(-1)).toBe(pods);
+    expect(clang.indexOf(farm.yoga)).toBeLessThan(clang.indexOf(pods));
+    expect(clang.filter((p) => p.includes("RNSVG"))).toEqual([]);
+  });
+
+  it("leaves an Expo app's flags without React Native's bare-name dirs and the pod forwards", async () => {
+    const { paths, ctx } = await expoProject("ios-target");
+    const before = await (async () => {
+      await writeIosXtool(ctx);
+      return readFile(join(paths.iosXtool, "Package.swift"), "utf8");
+    })();
+    const farm = await reactHeadersFarm(paths.xcframeworks);
+    const lib = await autolinkedLib(paths, ctx.project.root, "ReactNativeAppAuth");
+    await mkdir(join(lib, "rn-spm-pod-headers", "AppAuth"), { recursive: true });
+    await writeFile(join(lib, "rn-spm-pod-headers", "AppAuth", "AppAuth.h"), "@import AppAuth;\n");
+    await writeIosXtool(ctx);
+    const pkg = await readFile(join(paths.iosXtool, "Package.swift"), "utf8");
+    expect(pkg).toBe(before);
+    expect(pkg).not.toContain(farm.react);
   });
 
   it("names a file the app target lists but the disk lacks", async () => {
