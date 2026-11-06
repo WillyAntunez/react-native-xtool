@@ -7,11 +7,12 @@ SwiftPM pipeline.
 [![npm](https://img.shields.io/npm/v/react-native-xtool/alpha?label=npm%20%40alpha)](https://www.npmjs.com/package/react-native-xtool)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-**Status:** alpha, [`react-native-xtool@0.1.0-alpha.6` on npm](https://www.npmjs.com/package/react-native-xtool) under the
+**Status:** alpha, [`react-native-xtool@0.1.0-alpha.7` on npm](https://www.npmjs.com/package/react-native-xtool) under the
 `alpha` tag. Verified end to end on a physical iPhone on 2026-11-04 and 2026-11-05: the first launch without Reload,
 the dev client and the app icon; bare React Native 0.85; react-native-vision-camera, react-native-video,
 react-native-device-info and @react-native-community/netinfo, with react-native-app-auth linked and an entitlements
-file; and ML Kit text recognition with react-native-svg's Metal filters.
+file; and ML Kit text recognition with react-native-svg's Metal filters. On 2026-11-06 a production bare React Native
+0.85.0 app with an Objective-C app target and 20 native libraries built, installed and launched on a physical iPhone.
 
 <!-- demo GIF: rn-xtool run → app opens on the iPhone → Fast Refresh -->
 Demo video coming soon.
@@ -38,6 +39,11 @@ these lines builds with a warning naming the verified versions. An older version
 with one error naming these floors. Expo SDK 57 and 58 work the same way: newer patches of the SDK's packages build
 with a warning, older ones stop, and react-native stays exact (0.86.3 on SDK 57, 0.88.1 on SDK 58)
 ([details](docs/troubleshooting.md#newer-than-the-verified-versions)).
+
+Apps that grew from older React Native templates build too: a production bare React Native 0.85.0 app with an
+Objective-C app target (`main.m`, `AppDelegate.h` and `AppDelegate.mm` next to the project, a bridging header and a
+Swift file) and 20 native libraries builds, installs over USB and launches on a physical iPhone (checked on
+2026-11-06; its features are not checked yet, [details](docs/bare-react-native.md#react-native-085)).
 
 `rn-xtool doctor --project` shows which line your project is on and what rn-xtool finds in it (the SwiftPM scripts
 and prebuilt artifacts it would use, Expo's plugin and modules, podspec features), without the toolchain, login and

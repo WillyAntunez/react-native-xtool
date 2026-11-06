@@ -35,6 +35,12 @@ answered for the whole run (without it iOS drops every service connection over W
 daemons, no root. A 139 MB app takes about a minute. Debugging and `launch` over the network are not supported: open the
 app by hand.
 
+**What the lookup checks.** After the install, rn-xtool asks the iPhone for the app's bundle id, version and build
+number, and prints them: `Installed <bundle id> <version> <build> on iPhone <UDID> over Wi‑Fi (<IP>)`. It compares
+nothing else, so a reinstall of the same version and build number cannot be told from an unchanged app: the line
+reads the same whether the iPhone replaced the app or kept the one it had. Development builds usually keep both
+numbers from build to build (on a bare app, the Xcode project's `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION`).
+
 The iPhone is authenticated: its TLS certificate must be the `DeviceCertificate` of the pair record, and its UDID is
 read only inside that session, so nothing is uploaded to another host on the address.
 

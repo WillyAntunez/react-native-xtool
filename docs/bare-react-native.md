@@ -31,7 +31,8 @@ artifacts, passed the precompiled framework check (G4) and produced `App.app`; t
 [React Native 0.85](#react-native-085)). The same day, on a physical iPhone (iOS 26), that 0.85.0 app
 (`@react-native-community/cli` 20.0.0, reanimated 4.3.4 and worklets 0.8.3) passed `build`, install over Wi‑Fi, the
 first launch (tap Allow, and the app reloaded by itself), Hermes, reanimated animating and Fast Refresh. 0.85.3 has
-not been run on a device.
+not been run on a device. On 2026-11-06 a production 0.85.0 app with an Objective-C app target and 20 native libraries
+built, installed over USB and launched on a physical iPhone (see [React Native 0.85](#react-native-085)).
 
 On 0.86.3 the first build downloads about 1.3 GB of artifacts (about 3 minutes in our test; it depends on the
 connection) and adapts them (about 2 s); later builds reuse the adapted slots (`rn-artifacts` 0.0 s). The library
@@ -166,8 +167,16 @@ build-verified only.
   "Not among" warning; both name 0.85.3 as the version to move to, which is build-verified only.
 - **Expo modules:** 0.85 with expo-modules-core is refused ("React Native 0.85.0 with Expo modules is not supported.
   Expo SDK 58 needs React Native 0.88.1."), like 0.86 and 0.87.
-- **What is proved:** the template app and the reanimated/worklets pair, on a device with 4.3.4 + 0.8.3 on 0.85.0.
-  Other libraries are untested on 0.85 (⏳ in [libraries.md](libraries.md)).
+- **A production app:** on 2026-11-06 a bare React Native 0.85.0 app with an Objective-C app target (`main.m`,
+  `AppDelegate.h` and `AppDelegate.mm` next to the `.xcodeproj`, a bridging header and a Swift file) and 20 native
+  libraries, from react-native-screens 4.24.0, react-native-reanimated 4.3.0 with react-native-worklets 0.8.1 and
+  react-native-vision-camera 4.7 to @react-native-ml-kit/text-recognition and react-native-app-auth (the full list is in
+  [libraries.md](libraries.md)), was built (`rn-spm` about 10 minutes, `xtool-build` about 4.5 minutes), installed
+  over USB and launched on a physical iPhone (iOS 26): the JS bundle loaded from Metro and the app's own UI appeared.
+  Its feature checks (the camera, text recognition, the AppAuth login, Fast Refresh) are not done yet.
+- **What is proved:** the template app and the reanimated/worklets pair, on a device with 4.3.4 + 0.8.3 on 0.85.0,
+  and the production app above, up to its launch. Other libraries are untested on 0.85 (⏳ in
+  [libraries.md](libraries.md)).
 
 ## Detection
 
@@ -238,7 +247,9 @@ the app's entry point from the App library, so a C-family `main` file is copied 
 Xcode. An app file already named `AppMain.<ext>` is an error, as two files with the same name are. A `main.swift` is
 refused, by `build` and `doctor --project`, because Swift allows top-level code only in a file named `main.swift`: mark
 the app delegate class `@main`, as the template's `AppDelegate.swift` does, move any other top-level code into it, and
-remove `main.swift` from the app target.
+remove `main.swift` from the app target. Verified on a physical iPhone on 2026-11-06 with a React Native 0.85.0 app
+whose `main.m`, `AppDelegate.h` and `AppDelegate.mm` sit next to the `.xcodeproj`
+([React Native 0.85](#react-native-085)).
 
 ## Mixed Swift + Objective-C/C++ app target
 
@@ -248,7 +259,8 @@ mechanism as the scaffolded mixed libraries (the two manifests described in
 and your header search paths and defines are applied. The target's `.mm` and `.cpp` files compile with the project's
 `CLANG_CXX_LANGUAGE_STANDARD` (C++20 when unset), passed to them as `-std=` because Swift Build does not apply the
 package's `cxxLanguageStandard` to a mixed target. Verified on a device with an Objective-C module next to a Swift
-module.
+module, and on 2026-11-06 with the Objective-C app target of a production React Native 0.85.0 app, whose
+`AppDelegate.mm` imports `<RCTAppDelegate.h>` and `<AppAuth/AppAuth.h>` ([React Native 0.85](#react-native-085)).
 
 Swift Build names the generated Swift header `App-Swift.h` (the SwiftPM target is `App`), so `build` also writes
 `Sources/App/include/<Module>-Swift.h`, which imports it: Objective-C keeps `#import "<Module>-Swift.h"` as in Xcode,
