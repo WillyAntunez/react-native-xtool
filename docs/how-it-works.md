@@ -352,6 +352,25 @@ patch above is what makes that scaffolder work for real-world podspecs.
   `Scaffolding <library> failed: <reason>`, followed by that library's own warnings, one block per failed library.
   Nothing is persisted for a failed library, and React Native does not run a second time
   ([troubleshooting.md](troubleshooting.md#scaffolded-libraries)).
+- The scaffolder reads a podspec with `pod ipc spec` when CocoaPods is installed, and otherwise with its own reader,
+  which runs the podspec's statements over the subset of Ruby podspecs use for their fields: locals (`name = …`, `+=`,
+  `||=`; the last assignment that runs wins), single- and double-quoted strings with `#{…}` interpolation, arrays and
+  `%w[…]`, `ENV['…']` and `ENV.fetch` (`RCT_NEW_ARCH_ENABLED` and `RCT_HERMES_V1_ENABLED` are `1`, as React Native's
+  CocoaPods setup sets them, and every other variable is unset, whatever the shell says), `==`, `!=`, `!`, `&&`,
+  `||`, ternaries, `+` on strings and arrays, `join`, `if`/`elsif`/`else`/`unless` blocks and `if`/`unless`
+  modifiers, and `push`, `<<` and `concat` on a local array. A branch its condition rules out is left out, as
+  CocoaPods leaves it out; both branches of a condition it cannot evaluate (a method call such as
+  `respond_to?(:install_modules_dependencies, true)`) are read. A `source_files` or `exclude_files` value that uses
+  anything else (a method call, a local it could not evaluate) fails that library's scaffold, with a reason that
+  names the podspec, the field and the expression, since a target built from the globs it could read would lack some
+  of the library's files
+  ([fix 28](upstream/react-native-scaffolder.md#28-scriptsspmread-podspecjs-source-globs-built-from-ruby-locals-and-conditions-are-read-in-part)).
+- After `xtool-build`, `build` checks that every class React Native's codegen providers name
+  (`ios/build/generated/ios/ReactCodegen/RCTThirdPartyComponentsProvider.mm` and `RCTModuleProviders.mm`) is defined
+  in the App binary or an embedded framework; `install` checks the app xtool builds again before it installs it. A
+  missing component class would crash the app at start in `+[RCTThirdPartyComponentsProvider
+  thirdPartyFabricComponents]`, so rn-xtool removes the packed app and stops, naming the class, the component or
+  module and the library ([troubleshooting.md](troubleshooting.md#rctthirdpartycomponentsprovider-thirdpartyfabriccomponents)).
 - The scaffolded `Package.swift` holds no resources. rn-xtool builds the library's unconditional `resource_bundles`
   whose names and globs are plain strings as `<name>.bundle` at the root of `App.app` (react-native-svg's
   `RNSVGFilters.bundle`, react-native-device-info's privacy bundle; [CocoaPods binaries](#cocoapods-binaries)). After

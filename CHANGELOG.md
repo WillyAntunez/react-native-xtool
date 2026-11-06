@@ -6,8 +6,8 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 ## [Unreleased]
 
 ### Upgrading from 0.1.0-alpha.6
-- The scaffolder is now revision 5, so every scaffold patch rn-xtool persisted in your `patches/` before this release
-  gets a warning at each `build`: "⚠ patches/<name> was written by an older rn-xtool scaffolder (revision 4, now 5);
+- The scaffolder is now revision 6, so every scaffold patch rn-xtool persisted in your `patches/` before this release
+  gets a warning at each `build`: "⚠ patches/<name> was written by an older rn-xtool scaffolder (revision 4, now 6);
   delete it so rn-xtool regenerates it (also remove node_modules/<package> and reinstall: that copy still has the old
   Package.swift)". Do what it says. A scaffolded library without a persisted patch is scaffolded again by itself.
 - A `pods.<pod>.forwardHeaders` entry in `rn-xtool.config.json` that lists modules is refused: list the pod's public
@@ -41,6 +41,13 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 - A library that was also built for Android gets its scaffold persisted, instead of "⚠ Did not persist <library>'s
   scaffold: the patch would contain a binary file (node_modules/<library>/android/build/…/BuildConfig.dex)" and a new
   scaffold at every build: the patch holds the files the scaffold wrote and those its existing patch held.
+- react-native-screens 4.24.0 scaffolds with its `ios/` sources, instead of a target with only its C++ and an app that
+  crashed at start: the podspec reader evaluates Ruby locals, interpolation, `ENV` lookups, ternaries, `if`/`unless`
+  blocks and `push` on a local array, and leaves out the branches a condition rules out; a source glob it cannot
+  evaluate stops that library's scaffold with the podspec, the field and the expression.
+- `build` and `install` stop, and remove the packed app, when a class React Native's codegen providers name is not in
+  the app, naming the class, its component or module and its library, instead of installing an app that would crash
+  at start in `+[RCTThirdPartyComponentsProvider thirdPartyFabricComponents]`.
 
 ## [0.1.0-alpha.6] - 2026-11-05
 

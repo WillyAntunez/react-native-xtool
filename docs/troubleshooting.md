@@ -830,20 +830,24 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   `npm install`, and the next build applies the patch again. A nested package's patch
   (`<parent>++<child>+<version>.patch`) is named `<parent> => <child>`. A package installed at another version than
   its patch's is not skipped: patch-package applies the patch with its own version warning.
-- **"⚠ patches/<name> was written by an older rn-xtool scaffolder (revision <n>, now 5); delete it so rn-xtool
+- **"⚠ patches/<name> was written by an older rn-xtool scaffolder (revision <n>, now 6); delete it so rn-xtool
   regenerates it (also remove node_modules/<package> and reinstall: that copy still has the old Package.swift)":** the
   `patches` step found a persisted scaffold patch from an older scaffolder. Revision 1 patches lack the Swift importer
   paths of mixed libraries, revision 2 patches lack those of clang-only libraries and their module map, revision 3
-  patches lack fixes 20–22 and 24 (fixes 17 to 24 in [the scaffolder fixes](upstream/react-native-scaffolder.md)), and
-  revision 4 patches hold pod header forwarders that `@import` modules (fix 13). Without those fixes, Swift code that
+  patches lack fixes 20–22 and 24 (fixes 17 to 24 in [the scaffolder fixes](upstream/react-native-scaffolder.md)),
+  revision 4 patches hold pod header forwarders that `@import` modules (fix 13), and revision 5 patches may lack the
+  sources of a podspec that builds its globs from Ruby locals and conditions (fix 28: react-native-screens 4.24.0 got no
+  `ios/` sources). Without those fixes, Swift code that
   imports a scaffolded library (the app, or expo-router importing react-native-screens) can fail with
   `'RNSReactBaseView.h' file not found` (a mixed library, such as react-native-screens 4.26) or `'RNSDefines.h' file
   not found` (a clang-only one, such as react-native-screens 4.30), and an Objective-C++ file that imports
-  `<AppAuth/AppAuth.h>` stops with `use of '@import' when modules are disabled`. Do what the warning says: delete the
+  `<AppAuth/AppAuth.h>` stops with `use of '@import' when modules are disabled`, and an app with react-native-screens
+  4.24.0 stops at `build` with [the codegen classes
+  check](#rctthirdpartycomponentsprovider-thirdpartyfabriccomponents). Do what the warning says: delete the
   patch, remove the library from `node_modules` and reinstall it, then build; rn-xtool scaffolds it again and persists
-  the new patch. This release's scaffolder is revision 5, so each scaffold patch persisted before it gets the line at
+  the new patch. This release's scaffolder is revision 6, so each scaffold patch persisted before it gets the line at
   every build until it is regenerated, for example `⚠ patches/react-native-screens+4.30.0.patch was written by an
-  older rn-xtool scaffolder (revision 4, now 5); delete it so rn-xtool regenerates it (also remove
+  older rn-xtool scaffolder (revision 4, now 6); delete it so rn-xtool regenerates it (also remove
   node_modules/react-native-screens and reinstall: that copy still has the old Package.swift)`. Until then the build
   goes on with the older manifest.
 - **"⚠ patches/<name> was scaffolded for React Native <version>; delete it so rn-xtool regenerates it for <installed>
@@ -852,21 +856,21 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   Do the same as for the revision warning above. Both warnings also read patches with the marker's name before the
   rename, `expo-xtool-scaffold-revision` (apps scaffolded before 0.1.0-alpha.1).
 - **"ℹ node_modules/<package>/Package.swift was scaffolded with revision <n> for React Native <version>, older than
-  patches/<name> (revision 5, React Native <installed>): rn-xtool replaced it with the persisted one":** a teammate
+  patches/<name> (revision 6, React Native <installed>): rn-xtool replaced it with the persisted one":** a teammate
   committed a regenerated scaffold patch, and your `node_modules` still had the copy an older patch wrote
   (patch-package does not replace a file that exists). rn-xtool owns these generated files, so the `patches` step
   removes the files the current patch creates and patch-package writes them again; the line is printed once
   patch-package has done so. Nothing to do; files the older scaffold wrote and the current one does not stay in place.
   This happens only when the patch holds nothing but scaffolded new files.
 - **"⚠ node_modules/<package>/Package.swift was scaffolded with revision <n> for React Native <version>, older than
-  patches/<name> (revision 5, React Native <installed>), and that patch also changes the library's own files, so
+  patches/<name> (revision 6, React Native <installed>), and that patch also changes the library's own files, so
   rn-xtool does not replace it: run rm -rf node_modules/<package> && npm install, then build again":** the same case,
   but the persisted patch also holds your own fix to the library. rn-xtool persists a scaffold with
   `patch-package <package>`, which writes everything that differs from the published package into one patch.
   Removing only the scaffold files would leave a patch that patch-package can apply neither forward nor backward, so
   rn-xtool changes nothing and the build goes on with the older manifest. Run the command: the reinstall gives the
   published package, and the next build applies the whole patch.
-- **"ℹ node_modules/<package>/Package.swift was scaffolded by an older rn-xtool scaffolder (revision <n>, now 5)" (or
+- **"ℹ node_modules/<package>/Package.swift was scaffolded by an older rn-xtool scaffolder (revision <n>, now 6)" (or
   "was scaffolded for React Native <version>, not <installed>"), followed by "rn-xtool removed it so the rn-spm step
   scaffolds it again":** a library has no persisted patch, and the manifest rn-xtool generated for it is out of date,
   for example after you deleted a stale patch but kept the package installed. The `rn-spm` step scaffolds it again
@@ -914,9 +918,10 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   rn-xtool 0.1.0-alpha.6 (scaffolder revision 4) wrote the pod table's `forwardHeaders` as `@import` lines.
   Objective-C++ compiles with `-fmodules -fno-cxx-modules`, Xcode's default, so `@import` is an error there;
   react-native-app-auth's own `RNAppAuth.m` is Objective-C and compiled. Later releases write the forwarder as one
-  `#import` per public header of the pod, which compiles in `.m` and `.mm` files alike, and their scaffolder revision 5
-  replaces an older scaffold: a copy in `node_modules` without a persisted patch is scaffolded again by itself, and a
-  persisted patch gets the `⚠ patches/<name> was written by an older rn-xtool scaffolder (revision 4, now 5)` line
+  `#import` per public header of the pod, which compiles in `.m` and `.mm` files alike, and their scaffolder revision
+  (5 and later) replaces an older scaffold: a copy in `node_modules` without a persisted patch is scaffolded again by
+  itself, and a persisted patch gets the `⚠ patches/<name> was written by an older rn-xtool scaffolder (revision 4,
+  now 6)` line
   above, whose steps regenerate it. A `forwardHeaders` entry of your config that still lists modules is refused with
   `… lists the module <name>; list the pod's public headers instead`: list the headers, as in [Libraries that depend
   on CocoaPods pods](#libraries-that-depend-on-cocoapods-pods).
