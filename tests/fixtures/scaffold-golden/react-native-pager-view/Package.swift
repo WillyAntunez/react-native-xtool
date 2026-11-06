@@ -1,7 +1,7 @@
 // swift-tools-version: 6.4;(experimentalMultiLang)
 // AUTO-SCAFFOLDED by react-native spm scaffold — safe to edit & commit via patch-package.
 // AUTO-SCAFFOLDED-VERSION: 20
-// rn-xtool-scaffold-revision: 6
+// rn-xtool-scaffold-revision: 7
 // rn-xtool-swift-importer-paths: ["ios",".","rn-spm-swift"]
 // rn-xtool-pods: SwiftUIIntrospect=1.5.0
 // Cache slot: 0.86.3/dual-flavor

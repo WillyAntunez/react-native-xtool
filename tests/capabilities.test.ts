@@ -605,7 +605,7 @@ describe("detectCapabilities", () => {
     });
     const lines = [
       "// AUTO-SCAFFOLDED by react-native spm scaffold — safe to edit & commit via patch-package.",
-      "// rn-xtool-scaffold-revision: 6",
+      "// rn-xtool-scaffold-revision: 7",
       "// rn-xtool-pods: AppAuth=3.0.0",
       "// Cache slot: 0.88.1/dual-flavor",
     ];

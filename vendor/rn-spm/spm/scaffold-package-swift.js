@@ -133,8 +133,10 @@ const SCAFFOLDER_VERSION_LINE_RE = /^\/\/ AUTO-SCAFFOLDED-VERSION: (\d+)$/m;
 // its modules, which stopped every Objective-C++ file that included them.
 // Revision 6 (fix 28): source globs built from Ruby locals and conditions
 // (react-native-screens 4.24.0 had no ios/ sources), and the branches a
-// condition rules out left out of the target.
-const RN_XTOOL_SCAFFOLD_REVISION = 6;
+// condition rules out left out of the target. Revision 7: the defines a
+// podspec builds from its package.json and partly evaluated strings
+// (react-native-worklets 0.8.3's WORKLETS_VERSION), which revision 6 lost.
+const RN_XTOOL_SCAFFOLD_REVISION = 7;
 const RN_XTOOL_SCAFFOLD_REVISION_RE = /^\/\/ rn-xtool-scaffold-revision: (\d+)$/m;
 
 // An importer (Swift, or a Clang module) builds the target's module from its

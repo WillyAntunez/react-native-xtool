@@ -870,7 +870,8 @@ apps and of the Expo SDK 57 and 58 apps read the same sources as before; their d
 what only a dead `else` branch declared (`React-Core`, `React-jsc`, datetimepicker's `ios/fabric`). Libraries that
 set `compiler_flags` from `folly_compiler_flags` (react-native-webview, @react-native-async-storage/async-storage 1.x,
 react-native-keychain, react-native-video, @aws-amplify/react-native) now get its `-Wno-comma -Wno-shorten-64-to-32`;
-its `FOLLY_*` defines stay dropped, as for every library. The scaffold revision moves to 6.
+its `FOLLY_*` defines stay dropped, as for every library. The scaffold revision moves to 6, then to 7 for the
+package.json defines revision 6 lost.
 
 ## Known limitation (deferred): pure-Swift packages importing a mixed Expo module
 

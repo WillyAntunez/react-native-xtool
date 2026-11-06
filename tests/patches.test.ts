@@ -916,7 +916,7 @@ describe("scaffold patches from another React Native version", () => {
     await writeFile(path.join(root, "patches", "@scope+lib+1.0.0.patch"), scaffoldPatch(null, 1));
     // Revision 2 wrote no importer paths for a clang-only target.
     await writeFile(path.join(root, "patches", "react-native-screens+4.30.1.patch"), scaffoldPatch("0.87.1", 2));
-    await writeFile(path.join(root, "patches", "react-native-svg+15.16.0.patch"), scaffoldPatch("0.87.1", 6));
+    await writeFile(path.join(root, "patches", "react-native-svg+15.16.0.patch"), scaffoldPatch("0.87.1", 7));
     // Both stale: the slot warning wins, one line per patch.
     await writeFile(path.join(root, "patches", "react-native-safe-area-context+5.6.0.patch"), scaffoldPatch("0.86.3", 1));
     await installPkg(root, "react-native-screens");
@@ -924,15 +924,15 @@ describe("scaffold patches from another React Native version", () => {
     await installPkg(root, "react-native-svg");
     await installPkg(root, "react-native-safe-area-context");
     expect(scaffoldPatchWarnings(root)).toEqual([
-      "⚠ patches/@scope+lib+1.0.0.patch was written by an older rn-xtool scaffolder (revision 1, now 6); delete it so rn-xtool " +
+      "⚠ patches/@scope+lib+1.0.0.patch was written by an older rn-xtool scaffolder (revision 1, now 7); delete it so rn-xtool " +
         "regenerates it (also remove node_modules/@scope/lib and reinstall: that copy still has the old Package.swift)",
       "⚠ patches/react-native-safe-area-context+5.6.0.patch was scaffolded for React Native 0.86.3; delete it so rn-xtool " +
         "regenerates it for 0.87.1 (also remove node_modules/react-native-safe-area-context and reinstall: that copy still has " +
         "the old Package.swift)",
-      "⚠ patches/react-native-screens+4.30.0.patch was written by an older rn-xtool scaffolder (revision 1, now 6); delete it so " +
+      "⚠ patches/react-native-screens+4.30.0.patch was written by an older rn-xtool scaffolder (revision 1, now 7); delete it so " +
         "rn-xtool regenerates it (also remove node_modules/react-native-screens and reinstall: that copy still has the old " +
         "Package.swift)",
-      "⚠ patches/react-native-screens+4.30.1.patch was written by an older rn-xtool scaffolder (revision 2, now 6); delete it so " +
+      "⚠ patches/react-native-screens+4.30.1.patch was written by an older rn-xtool scaffolder (revision 2, now 7); delete it so " +
         "rn-xtool regenerates it (also remove node_modules/react-native-screens and reinstall: that copy still has the old " +
         "Package.swift)",
     ]);
@@ -945,7 +945,7 @@ describe("scaffold patches from another React Native version", () => {
     await writeFile(path.join(root, "patches", "react-native-svg+15.16.0.patch"), scaffoldPatch("0.88.1", 3));
     await installPkg(root, "react-native-svg");
     expect(scaffoldPatchWarnings(root)).toEqual([
-      "⚠ patches/react-native-svg+15.16.0.patch was written by an older rn-xtool scaffolder (revision 3, now 6); delete it " +
+      "⚠ patches/react-native-svg+15.16.0.patch was written by an older rn-xtool scaffolder (revision 3, now 7); delete it " +
         "so rn-xtool regenerates it (also remove node_modules/react-native-svg and reinstall: that copy still has the old " +
         "Package.swift)",
     ]);
@@ -963,7 +963,7 @@ describe("scaffold patches from another React Native version", () => {
     expect(scaffoldPatchWarnings(root)).toEqual([
       "⚠ patches/react-native-screens+4.30.0.patch was scaffolded for React Native 0.88.0; delete it so rn-xtool regenerates " +
         "it for 0.88.1 (also remove node_modules/react-native-screens and reinstall: that copy still has the old Package.swift)",
-      "⚠ patches/react-native-svg+15.16.0.patch was written by an older rn-xtool scaffolder (revision 1, now 6); delete it " +
+      "⚠ patches/react-native-svg+15.16.0.patch was written by an older rn-xtool scaffolder (revision 1, now 7); delete it " +
         "so rn-xtool regenerates it (also remove node_modules/react-native-svg and reinstall: that copy still has the old " +
         "Package.swift)",
     ]);
@@ -1038,7 +1038,7 @@ describe("scaffolded manifests in node_modules older than the scaffolder or the 
   it("replaces an older node_modules copy of a current persisted patch (a teammate's pull)", async () => {
     const root = await project();
     await installPkg(root, "react-native-screens", "4.30.0");
-    const current = { "Package.swift": manifest(6, "0.87.1"), "include/rnscreens/RNSDefines.h": stub("RNSDefines.h") };
+    const current = { "Package.swift": manifest(7, "0.87.1"), "include/rnscreens/RNSDefines.h": stub("RNSDefines.h") };
     await put(root, "patches/react-native-screens+4.30.0.patch", newFilesPatch("react-native-screens", current));
     // What the old patch left in node_modules: revision 1, slot 0.86.3, a stub the new scaffold no longer writes.
     await put(root, "node_modules/react-native-screens/Package.swift", manifest(1, "0.86.3"));
@@ -1051,7 +1051,7 @@ describe("scaffolded manifests in node_modules older than the scaffolder or the 
     expect(existsSync(path.join(root, "node_modules/react-native-screens/include/rnscreens/Gone.h"))).toBe(true);
     expect(lines).toEqual([
       "ℹ node_modules/react-native-screens/Package.swift was scaffolded with revision 1 for React Native 0.86.3, " +
-        "older than patches/react-native-screens+4.30.0.patch (revision 6, React Native 0.87.1): rn-xtool replaced it " +
+        "older than patches/react-native-screens+4.30.0.patch (revision 7, React Native 0.87.1): rn-xtool replaced it " +
         "with the persisted one",
     ]);
     // Idempotent: the next build changes nothing.
@@ -1067,7 +1067,7 @@ describe("scaffolded manifests in node_modules older than the scaffolder or the 
     const forwarder =
       "// AUTO-SCAFFOLDED by react-native spm scaffold — forwards <AppAuth/AppAuth.h> to the public headers of the pod AppAuth.\n" +
       "#import <OIDAuthState.h>\n#import <iOS/OIDAuthState+IOS.h>\n";
-    const current = { "Package.swift": manifest(6, "0.87.1"), "rn-spm-pod-headers/AppAuth/AppAuth.h": forwarder };
+    const current = { "Package.swift": manifest(7, "0.87.1"), "rn-spm-pod-headers/AppAuth/AppAuth.h": forwarder };
     await put(root, "patches/react-native-app-auth+8.5.1.patch", newFilesPatch("react-native-app-auth", current));
     await put(root, "node_modules/react-native-app-auth/Package.swift", manifest(3, "0.87.1"));
     await put(root, "node_modules/react-native-app-auth/rn-spm-pod-headers/AppAuth/AppAuth.h", forwarder);
@@ -1077,7 +1077,7 @@ describe("scaffolded manifests in node_modules older than the scaffolder or the 
     expect(read(root, "node_modules/react-native-app-auth/rn-spm-pod-headers/AppAuth/AppAuth.h")).toBe(forwarder);
     expect(lines).toEqual([
       "ℹ node_modules/react-native-app-auth/Package.swift was scaffolded with revision 3 for React Native 0.87.1, " +
-        "older than patches/react-native-app-auth+8.5.1.patch (revision 6, React Native 0.87.1): rn-xtool replaced it " +
+        "older than patches/react-native-app-auth+8.5.1.patch (revision 7, React Native 0.87.1): rn-xtool replaced it " +
         "with the persisted one",
     ]);
   }, 30_000);
@@ -1100,7 +1100,7 @@ describe("scaffolded manifests in node_modules older than the scaffolder or the 
       " line 3",
       "",
     ].join("\n");
-    await put(root, "patches/lib+1.0.0.patch", newFilesPatch("lib", { "Package.swift": manifest(6, "0.87.1") }) + fix);
+    await put(root, "patches/lib+1.0.0.patch", newFilesPatch("lib", { "Package.swift": manifest(7, "0.87.1") }) + fix);
     await put(root, "node_modules/lib/Package.swift", manifest(1, "0.86.3"));
     await put(root, "node_modules/lib/ios/Foo.m", "line 1\nnew\nline 3\n");
     for (const run of [1, 2]) {
@@ -1109,7 +1109,7 @@ describe("scaffolded manifests in node_modules older than the scaffolder or the 
       expect(read(root, "node_modules/lib/Package.swift"), `run ${run}`).toBe(manifest(1, "0.86.3"));
       expect(lines, `run ${run}`).toEqual([
         "⚠ node_modules/lib/Package.swift was scaffolded with revision 1 for React Native 0.86.3, older than " +
-          "patches/lib+1.0.0.patch (revision 6, React Native 0.87.1), and that patch also changes the library's own " +
+          "patches/lib+1.0.0.patch (revision 7, React Native 0.87.1), and that patch also changes the library's own " +
           "files, so rn-xtool does not replace it: run rm -rf node_modules/lib && npm install, then build again",
       ]);
     }
@@ -1118,14 +1118,14 @@ describe("scaffolded manifests in node_modules older than the scaffolder or the 
   it("treats the pre-rename marker in node_modules as an older revision", async () => {
     const root = await project();
     await installPkg(root, "react-native-svg", "15.16.0");
-    await put(root, "patches/react-native-svg+15.16.0.patch", newFilesPatch("react-native-svg", { "Package.swift": manifest(6, "0.87.1") }));
+    await put(root, "patches/react-native-svg+15.16.0.patch", newFilesPatch("react-native-svg", { "Package.swift": manifest(7, "0.87.1") }));
     await put(root, "node_modules/react-native-svg/Package.swift", manifest(1, "0.87.1", "expo-xtool-scaffold-revision"));
     const lines: string[] = [];
     await applyPatches(root, undefined, { ...noBundled, log: (l) => lines.push(l) });
-    expect(read(root, "node_modules/react-native-svg/Package.swift")).toBe(manifest(6, "0.87.1"));
+    expect(read(root, "node_modules/react-native-svg/Package.swift")).toBe(manifest(7, "0.87.1"));
     expect(lines).toEqual([
       "ℹ node_modules/react-native-svg/Package.swift was scaffolded with revision 1 for React Native 0.87.1, older than " +
-        "patches/react-native-svg+15.16.0.patch (revision 6, React Native 0.87.1): rn-xtool replaced it with the " +
+        "patches/react-native-svg+15.16.0.patch (revision 7, React Native 0.87.1): rn-xtool replaced it with the " +
         "persisted one",
     ]);
   }, 30_000);
@@ -1133,36 +1133,40 @@ describe("scaffolded manifests in node_modules older than the scaffolder or the 
   it("removes a stale scaffold with no persisted patch, so the rn-spm step scaffolds it again", async () => {
     const root = await project();
     await put(root, "node_modules/react-native-webview/Package.swift", manifest(2, "0.87.1"));
-    await put(root, "node_modules/@react-native-community/datetimepicker/Package.swift", manifest(6, "0.86.3"));
+    await put(root, "node_modules/@react-native-community/datetimepicker/Package.swift", manifest(7, "0.86.3"));
     await put(root, "node_modules/legacy-lib/Package.swift", manifest(1, null, "expo-xtool-scaffold-revision"));
     // Revision 4 (0.1.0-alpha.6) wrote pod header forwarders with @import, which Objective-C++ cannot compile.
     await put(root, "node_modules/react-native-app-auth/Package.swift", manifest(4, "0.87.1"));
     // Revision 5 read the source globs react-native-screens 4.24.0 builds from Ruby locals as empty.
     await put(root, "node_modules/react-native-screens/Package.swift", manifest(5, "0.87.1"));
+    // Revision 6 lost the defines react-native-worklets 0.8.3 builds from its package.json.
+    await put(root, "node_modules/react-native-worklets/Package.swift", manifest(6, "0.87.1"));
     const lines: string[] = [];
     await applyPatches(root, async () => ({ exitCode: 0 }), { ...noBundled, log: (l) => lines.push(l) });
-    for (const pkg of ["react-native-webview", "@react-native-community/datetimepicker", "legacy-lib", "react-native-app-auth", "react-native-screens"]) {
+    for (const pkg of ["react-native-webview", "@react-native-community/datetimepicker", "legacy-lib", "react-native-app-auth", "react-native-screens", "react-native-worklets"]) {
       expect(existsSync(path.join(root, "node_modules", pkg, "Package.swift")), pkg).toBe(false);
     }
     expect(lines).toEqual([
       "ℹ node_modules/@react-native-community/datetimepicker/Package.swift was scaffolded for React Native 0.86.3, not " +
         "0.87.1: rn-xtool removed it so the rn-spm step scaffolds it again",
-      "ℹ node_modules/legacy-lib/Package.swift was scaffolded by an older rn-xtool scaffolder (revision 1, now 6): " +
+      "ℹ node_modules/legacy-lib/Package.swift was scaffolded by an older rn-xtool scaffolder (revision 1, now 7): " +
         "rn-xtool removed it so the rn-spm step scaffolds it again",
       "ℹ node_modules/react-native-app-auth/Package.swift was scaffolded by an older rn-xtool scaffolder (revision 4, now " +
-        "6): rn-xtool removed it so the rn-spm step scaffolds it again",
+        "7): rn-xtool removed it so the rn-spm step scaffolds it again",
       "ℹ node_modules/react-native-screens/Package.swift was scaffolded by an older rn-xtool scaffolder (revision 5, now " +
-        "6): rn-xtool removed it so the rn-spm step scaffolds it again",
+        "7): rn-xtool removed it so the rn-spm step scaffolds it again",
       "ℹ node_modules/react-native-webview/Package.swift was scaffolded by an older rn-xtool scaffolder (revision 2, now " +
-        "6): rn-xtool removed it so the rn-spm step scaffolds it again",
+        "7): rn-xtool removed it so the rn-spm step scaffolds it again",
+      "ℹ node_modules/react-native-worklets/Package.swift was scaffolded by an older rn-xtool scaffolder (revision 6, now " +
+        "7): rn-xtool removed it so the rn-spm step scaffolds it again",
     ]);
   });
 
   it("leaves current, foreign and stale-patch manifests alone", async () => {
     const root = await project();
     const files: Record<string, string> = {
-      // Current: revision 6 on the installed React Native.
-      "node_modules/current-lib/Package.swift": manifest(6, "0.87.1"),
+      // Current: revision 7 on the installed React Native.
+      "node_modules/current-lib/Package.swift": manifest(7, "0.87.1"),
       // Not rn-xtool's: the upstream scaffolder without rn-xtool's marker (a library may ship it), or hand-written.
       "node_modules/upstream-lib/Package.swift": manifest(0, null, null),
       "node_modules/own-lib/Package.swift": "// swift-tools-version: 6.0\nimport PackageDescription\n",
@@ -1170,8 +1174,8 @@ describe("scaffolded manifests in node_modules older than the scaffolder or the 
       "node_modules/react-native-screens/Package.swift": manifest(1, "0.86.3"),
       "patches/react-native-screens+4.30.0.patch": newFilesPatch("react-native-screens", { "Package.swift": manifest(1, "0.86.3") }),
       // A current patch over a current copy.
-      "node_modules/react-native-svg/Package.swift": manifest(6, "0.87.1"),
-      "patches/react-native-svg+15.16.0.patch": newFilesPatch("react-native-svg", { "Package.swift": manifest(6, "0.87.1") }),
+      "node_modules/react-native-svg/Package.swift": manifest(7, "0.87.1"),
+      "patches/react-native-svg+15.16.0.patch": newFilesPatch("react-native-svg", { "Package.swift": manifest(7, "0.87.1") }),
     };
     for (const [rel, text] of Object.entries(files)) await put(root, rel, text);
     for (const pkg of ["react-native-screens", "react-native-svg"]) await installPkg(root, pkg);

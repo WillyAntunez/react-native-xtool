@@ -6,8 +6,8 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 ## [Unreleased]
 
 ### Upgrading from 0.1.0-alpha.6
-- The scaffolder is now revision 6, so every scaffold patch rn-xtool persisted in your `patches/` before this release
-  gets a warning at each `build`: "⚠ patches/<name> was written by an older rn-xtool scaffolder (revision 4, now 6);
+- The scaffolder is now revision 7, so every scaffold patch rn-xtool persisted in your `patches/` before this release
+  gets a warning at each `build`: "⚠ patches/<name> was written by an older rn-xtool scaffolder (revision 4, now 7);
   delete it so rn-xtool regenerates it (also remove node_modules/<package> and reinstall: that copy still has the old
   Package.swift)". Do what it says. A scaffolded library without a persisted patch is scaffolded again by itself.
 - A `pods.<pod>.forwardHeaders` entry in `rn-xtool.config.json` that lists modules is refused: list the pod's public
