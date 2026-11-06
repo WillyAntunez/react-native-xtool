@@ -58,6 +58,10 @@ describe("renderPackageSwift", () => {
   it("sets language modes, platform and dependencies", () => {
     expect(out).toContain("swiftLanguageModes: [.v5]");
     expect(out).toContain("cxxLanguageStandard: .cxx20");
+    // An Expo app target is Swift-only: no C-family settings, no explicit -std.
+    expect(out).not.toContain("cSettings");
+    expect(out).not.toContain("cxxSettings");
+    expect(out).not.toContain("-std=");
     expect(out).toContain('platforms: [.iOS("16.4")]');
     expect(out).toContain('.package(name: "ReactNative", path: "/p/ios/build/xcframeworks")');
   });
@@ -230,6 +234,8 @@ describe("renderPackageSwift", () => {
     expect(o.manifest).not.toContain("compile-interfaces");
     expect(o.manifest).not.toContain("/p/ci");
     expect(o.manifest).not.toContain("cSettings");
+    expect(o.manifest).not.toContain("cxxSettings");
+    expect(o.manifest).not.toContain("-std=");
     expect(o.manifest).not.toContain("resources:");
     expect(o.manifest).toContain('.package(name: "Autolinked", path: "/p/ios/build/generated/autolinking")');
     expect(o.manifest).toContain('.define("DEBUG", .when(configuration: .debug))');
@@ -274,15 +280,38 @@ describe("renderPackageSwift", () => {
       expect(rest65.join("\n")).toBe(manifest.split("\n").slice(1).join("\n"));
     });
 
+    const section = (manifest: string, name: string) => {
+      const start = manifest.indexOf(`${name}: [`);
+      expect(start).toBeGreaterThan(-1);
+      return manifest.slice(start + name.length, manifest.indexOf("            ],", start));
+    };
+
     it("gives C and C++ the same defines and include paths", () => {
-      const section = (name: string) => {
-        const start = mixed.manifest.indexOf(`${name}: [`);
-        expect(start).toBeGreaterThan(-1);
-        return mixed.manifest.slice(start + name.length, mixed.manifest.indexOf("            ],", start));
+      const stdLine = '                .unsafeFlags(["-std=gnu++20"]),\n';
+      expect(section(mixed.manifest, "cxxSettings")).toBe(section(mixed.manifest, "cSettings") + stdLine);
+      expect(section(mixed.manifest, "cSettings")).toContain('.define("DEBUG", to: "1")');
+      expect(section(mixed.manifest, "cSettings")).toContain('"-I", "/x/Sources/App/include"');
+    });
+
+    // Swift Build does not apply the package's cxxLanguageStandard to a mixed target's ObjC++/C++ files.
+    it("passes the project's C++ standard to Objective-C++/C++ only", () => {
+      expect(section(mixed.manifest, "cxxSettings")).toContain('.unsafeFlags(["-std=gnu++20"]),');
+      expect(section(mixed.manifest, "cSettings")).not.toContain("-std=");
+      expect(mixed.manifest.match(/-std=/g)).toHaveLength(1);
+    });
+
+    it("maps the C++ standard flag like cxxLanguageStandard, C++20 when absent or unknown", () => {
+      const flag = (cxxStandard?: string) => {
+        const { manifest } = renderPackageSwift({ iosDir: "/p/ios", frameworks: [], iosMin: "16.4", app: { ...noApp, mixed: true, cxxStandard } });
+        return section(manifest, "cxxSettings").match(/"-std=([^"]+)"/)![1];
       };
-      expect(section("cSettings")).toBe(section("cxxSettings"));
-      expect(section("cSettings")).toContain('.define("DEBUG", to: "1")');
-      expect(section("cSettings")).toContain('"-I", "/x/Sources/App/include"');
+      expect(flag(undefined)).toBe("c++20");
+      expect(flag("c++2a")).toBe("c++20");
+      expect(flag("c++20")).toBe("c++20");
+      expect(flag("gnu++20")).toBe("gnu++20");
+      expect(flag("gnu++14")).toBe("gnu++14");
+      expect(flag("c++0x")).toBe("c++11");
+      expect(flag("compiler-default")).toBe("c++20");
     });
 
     it("lets the bridging header see the target's include paths and defines", () => {

@@ -87,11 +87,22 @@ const CXX_VERSIONS: Record<string, string> = {
   "1z": "1z", "17": "17", "2a": "20", "20": "20", "2b": "2b", "23": "2b",
 };
 
-function cxxLanguageStandard(value: string | undefined): string {
+/** The app's C++ standard, C++20 when absent or unknown. */
+function cxxStandard(value: string | undefined): { gnu: boolean; version: string } {
   const m = value?.match(/^(gnu|c)\+\+(\w+)$/);
   const version = m ? CXX_VERSIONS[m[2]!] : undefined;
-  if (!m || !version) return ".cxx20";
-  return `.${m[1] === "gnu" ? "gnucxx" : "cxx"}${version}`;
+  return m && version ? { gnu: m[1] === "gnu", version } : { gnu: false, version: "20" };
+}
+
+function cxxLanguageStandard(value: string | undefined): string {
+  const { gnu, version } = cxxStandard(value);
+  return `.${gnu ? "gnucxx" : "cxx"}${version}`;
+}
+
+/** The same standard as a clang flag, e.g. `-std=gnu++20`. */
+function cxxStandardFlag(value: string | undefined): string {
+  const { gnu, version } = cxxStandard(value);
+  return `-std=${gnu ? "gnu" : "c"}++${version}`;
 }
 
 function cDefine(entry: string): string {
@@ -132,6 +143,9 @@ function importerSwiftSettings(app: AppTargetInputs): string {
  * Objective-C/C++ settings; `-I swiftHeadersDir` lets them `#import "App-Swift.h"`. In a hybrid project that header
  * does `@import Expo;`, so they also get what Swift's clang importer gets (as clang flags, without `-Xcc`): the
  * compile-interfaces frameworks (`<ExpoModulesCore/Platform.h>`) and the importer's include dirs and module maps.
+ * Swift Build does not apply the package's `cxxLanguageStandard` to a mixed target, so its ObjC++/C++ files get the
+ * standard as `-std=` (C++ only: on a C/Objective-C file the flag is rejected) or compile with clang's default and
+ * fail on React Native's C++20 headers.
  */
 function appClangSettings(app: AppTargetInputs, expo: ExpoPackageInputs | undefined): string {
   if (!app.mixed) return "";
@@ -141,8 +155,9 @@ function appClangSettings(app: AppTargetInputs, expo: ExpoPackageInputs | undefi
     ...(importer?.moduleMaps ?? []).map((m) => `-fmodule-map-file=${m}`),
     ...(expo ? ["-F", expo.compileInterfacesDir] : []),
   ];
-  const body = settingLines([...app.defines.map(cDefine), flags(includes)]);
-  return ["cSettings", "cxxSettings"].map((name) => `            ${name}: [\n${body}            ],\n`).join("");
+  const shared = [...app.defines.map(cDefine), flags(includes)];
+  const section = (name: string, lines: string[]) => `            ${name}: [\n${settingLines(lines)}            ],\n`;
+  return section("cSettings", shared) + section("cxxSettings", [...shared, flags([cxxStandardFlag(app.cxxStandard)])]);
 }
 
 export function renderPackageSwift(i: PackageSwiftInput): RenderedPackageSwift {
