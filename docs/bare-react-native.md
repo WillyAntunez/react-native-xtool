@@ -222,6 +222,16 @@ The target's Sources phase is copied to `ios-xtool/Sources/App` keeping its layo
 type (`.xcdatamodeld`, `.intentdefinition`, `.s`, ...) stops the build with `unsupported source type in the app target`.
 Sources outside `ios/` and two compiled files with the same name are errors.
 
+SwiftPM takes a target with a compiled file named `main.<ext>` (in any case) for an executable target, and xtool links
+the app's entry point from the App library, so a C-family `main` file is copied under another name in its folder:
+`main.m`, the entry point of the React Native templates before 0.77, is compiled as `AppMain.m` (`main.mm` as
+`AppMain.mm`, and so on), and the build prints `ℹ <Target>/main.m is compiled as AppMain.m: …`. The file still defines
+`main` and keeps its imports, so `UIApplicationMain(…, NSStringFromClass([AppDelegate class]))` starts the app as in
+Xcode. An app file already named `AppMain.<ext>` is an error, as two files with the same name are. A `main.swift` is
+refused, by `build` and `doctor --project`, because Swift allows top-level code only in a file named `main.swift`: mark
+the app delegate class `@main`, as the template's `AppDelegate.swift` does, move any other top-level code into it, and
+remove `main.swift` from the app target.
+
 ## Mixed Swift + Objective-C/C++ app target
 
 If the target compiles any `.m`, `.mm`, `.c` or `.cpp` file, it is built as one mixed-language target, the same

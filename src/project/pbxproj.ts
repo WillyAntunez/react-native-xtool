@@ -212,6 +212,20 @@ const IGNORABLE_FLAGS = ["OTHER_CFLAGS", "OTHER_LDFLAGS", "OTHER_SWIFT_FLAGS"];
 /** Flags the template sets that the generated project already provides. */
 const BENIGN_FLAGS = new Set(["$(inherited)", "-ObjC", "-lc++"]);
 
+/**
+ * SwiftPM's rule (PackageBuilder.swift, `Sources.computeModuleKind`): a target with a compiled source whose lowercased
+ * name is `main.<ext>`, one dot, is an executable target. The App target must stay a library: xtool links the app's
+ * entry point from the App library product.
+ */
+const SWIFTPM_MAIN = /^main\.[^.]+$/i;
+const MAIN_COPY = "AppMain";
+
+/** The name a compiled C-family source of the app target is copied and compiled under: `main.m` → `AppMain.m`. */
+export function compiledName(relPath: string): string {
+  const base = path.posix.basename(relPath);
+  return SWIFTPM_MAIN.test(base) ? `${MAIN_COPY}${path.posix.extname(base)}` : base;
+}
+
 /** Splits a build setting like Xcode: whitespace separates words, `"…"` groups, `\\x` is a literal x. */
 function shellWords(value: string): string[] {
   const out: string[] = [];
@@ -355,6 +369,17 @@ export function readTargetContent(p: Pbxproj, iosDir: string): BareTargetContent
   if (unsupported.length > 0) {
     throw new DetectError(`unsupported source type in the app target: ${unsupported.join(", ")}`);
   }
+  // A renamed main.swift would lose its top-level code: Swift allows that only in a file named main.swift.
+  const swiftMain = swiftSources.find((f) => SWIFTPM_MAIN.test(path.posix.basename(f.relPath)));
+  if (swiftMain) {
+    const base = path.posix.basename(swiftMain.relPath);
+    throw new DetectError(
+      `The app target compiles ${swiftMain.relPath}: SwiftPM takes a target with a file named main for an executable, ` +
+        "and xtool links the app's entry point from the App library. Mark the app delegate class @main " +
+        `(as the React Native template's AppDelegate.swift does), move any other top-level code of ${base} into it, ` +
+        `and remove ${base} from the app target`,
+    );
+  }
   for (const uuid of phaseFiles(objs, target, "PBXResourcesBuildPhase", variants)) {
     if (!objs.PBXFileReference[uuid]) continue;
     const file = fileOf(uuid);
@@ -375,14 +400,17 @@ export function readTargetContent(p: Pbxproj, iosDir: string): BareTargetContent
     }
   }
 
-  const seen = new Map<string, string>();
+  const seen = new Map<string, TargetFile>();
   for (const f of [...swiftSources, ...cSources]) {
-    const base = path.posix.basename(f.relPath);
+    const base = compiledName(f.relPath);
     const first = seen.get(base);
     if (first !== undefined) {
-      throw new DetectError(`Two compiled sources share the name ${base} (${first} and ${f.relPath}); the generated target needs unique file names`);
+      const renamed = (x: TargetFile): boolean => path.posix.basename(x.relPath) !== base;
+      const [a, b] = renamed(f) ? [f, first] : [first, f];
+      const lead = renamed(a) ? `${a.relPath}, which is compiled as ${base},` : a.relPath;
+      throw new DetectError(`Two compiled sources share the name ${base} (${lead} and ${b.relPath}); the generated target needs unique file names`);
     }
-    seen.set(base, f.relPath);
+    seen.set(base, f);
   }
 
   const bridging = resolveSetting(p, "SWIFT_OBJC_BRIDGING_HEADER")?.trim();
