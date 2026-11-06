@@ -9,6 +9,8 @@ import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { DEFAULT_CONFIG, loadConfig, type ExpoXtoolConfig } from "../config.js";
+import { projectPaths } from "../paths.js";
+import { podspecReportLines, readPodspecReads } from "../pipeline/podspecReads.js";
 import { MissingBundleIdentifierError } from "../project/index.js";
 import { packageRoot } from "../tools/exec.js";
 import { doctorWithProbes, realProbes, renderReport, type DoctorProbes, type DoctorReport } from "./doctor.js";
@@ -253,14 +255,17 @@ function projectLine(r: DoctorReport, inProject: boolean): string {
   return parts.length > 0 ? parts.join(", ") : "unknown (see the project line)";
 }
 
-/** The block, fenced as text, before redaction. */
+/**
+ * The block, fenced as text, before redaction. `podspecLines` are the last `rn-spm`'s reader and `ENV` names
+ * (`podspecReportLines`): the report is the only place outside the reads file that names them (R2, R4).
+ */
 export function renderIssueReport(
   r: DoctorReport,
   env: ReportEnv,
-  opts: { projectOnly: boolean; nodeVersion: string; inProject: boolean },
+  opts: { projectOnly: boolean; nodeVersion: string; inProject: boolean; podspecLines: string[] },
 ): string {
-  const tool = (name: string): string =>
-    opts.projectOnly ? "not checked (--project)" : (r.checks.find((c) => c.name === name)?.detail ?? "not checked");
+  const detail = (name: string): string => r.checks.find((c) => c.name === name)?.detail ?? "not checked";
+  const tool = (name: string): string => (opts.projectOnly ? "not checked (--project)" : detail(name));
   return [
     "```text",
     "rn-xtool doctor --report",
@@ -268,6 +273,9 @@ export function renderIssueReport(
     `node: ${opts.nodeVersion}`,
     `swift: ${tool("swift")}`,
     `xtool: ${tool("xtool")}`,
+    // doctor --project checks Ruby too.
+    `ruby: ${detail("ruby")}`,
+    ...opts.podspecLines,
     `os: ${env.os}, ${env.arch}`,
     `project: ${projectLine(r, opts.inProject)}`,
     renderReport(r.checks),
@@ -329,10 +337,15 @@ export async function doctorReport(
         withCapabilities: true,
         noLiveProbes: true,
       });
+      const inProject = root !== undefined || projectOnly;
+      // Without a project there is no reads file.
+      const project = inProject ? projectPaths(root ?? process.cwd()) : undefined;
+      const reads = project !== undefined ? readPodspecReads(project.podspecReads) : [];
       const text = renderIssueReport(r, env, {
         projectOnly,
         nodeVersion: probes.nodeVersion(),
-        inProject: root !== undefined || projectOnly,
+        inProject,
+        podspecLines: podspecReportLines(reads, project?.root ?? ""),
       });
       return `${redact(text, { home, seen })}\n${REVIEW_LINE}`;
     });

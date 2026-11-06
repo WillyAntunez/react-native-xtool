@@ -9,6 +9,7 @@ import type { ExpoPlugin, RnScripts } from "../versions.js";
 import { packageRoot, runArgv, toolEnv } from "../tools/exec.js";
 import type { PodEntry } from "../config.js";
 import { POD_TABLE_ENV, mergedPodTable, writePodTable, type PodBinary, type PodTable } from "../project/podTable.js";
+import { readerLines, readPodspecReads } from "./podspecReads.js";
 
 export const AUTOLINKING_CONFIG_COMMAND = [
   "npx",
@@ -226,13 +227,16 @@ function scaffoldFailureMessage(failed: ScaffoldOutcome["failed"]): string {
  * Env of every React Native run. RN's scaffolder warns about mixed-language libraries when the
  * Swift headers dir is unset, and any manifest it evaluates must see the same value the xtool build
  * uses. The vendored Expo plugin takes its precompiled modules from `ios/build/expo-precompiled`. The scaffolder
- * maps CocoaPods pods with the pod table file, when given.
+ * maps CocoaPods pods with the pod table file, when given. It records each podspec read in the reads file, and reads
+ * every podspec with the app's `ios/` as CocoaPods' installation root.
  */
 export function rnSpmEnv(paths: ProjectPaths, expoPlugin: ExpoPlugin, podTableFile?: string): Record<string, string> {
   return {
     ...swiftHeadersEnv(paths.iosXtool),
     ...(expoPlugin === "vendored" ? { EXPO_PRECOMPILED_MODULES_PATH: paths.expoPrecompiled } : {}),
     ...(podTableFile !== undefined ? { [POD_TABLE_ENV]: podTableFile } : {}),
+    RN_SPM_PODSPEC_READS: paths.podspecReads,
+    RN_SPM_APP_IOS_DIR: paths.ios,
   };
 }
 
@@ -521,79 +525,85 @@ export async function runRnSpm(
   // Every run gets the table: the scaffold step reads it, whichever project kind runs it.
   const podTableFile = (deps.writePodTable ?? writePodTable)(paths, mergedPodTable(opts.pods, opts.binary));
   const env = rnSpmEnv(paths, opts.expoPlugin, podTableFile);
+  // A file a previous run left must never stand for this run's reads.
+  rmSync(paths.podspecReads, { force: true });
+  try {
+    const first = await runner("node", rnArgs, { cwd: paths.ios, env });
+    if (first.exitCode === 0) return;
 
-  const first = await runner("node", rnArgs, { cwd: paths.ios, env });
-  if (first.exitCode === 0) return;
-
-  const names = parseMissingPackageSwift(first.output);
-  if (names.length === 0)
-    throw new Error(
-      `React Native SwiftPM setup failed (exit ${first.exitCode}):\n${tail(first.output)}`,
-    );
-
-  log(`▸ scaffold — generating Package.swift for: ${names.join(", ")}`);
-  // A file a previous run left must never stand for this run's.
-  rmSync(paths.scaffoldResults, { force: true });
-  const sc = await runner("node", rnSpmScaffoldArgs(paths, opts, names, rnDir), { cwd: paths.ios, env });
-  const scaffoldFailed = () => new Error(`React Native spm scaffold failed (exit ${sc.exitCode}):\n${tail(sc.output)}`);
-  const outcome = scaffoldOutcome(paths, names);
-  if (outcome === undefined && sc.exitCode !== 0) throw scaffoldFailed();
-
-  // Only what was scaffolded is persisted; a failed library stops the build before React Native runs again.
-  for (const name of outcome?.scaffolded ?? names) {
-    // The library's patch as it was: put back when the new one would carry a binary file.
-    const before = libraryPatches(paths.root, name);
-    // The scaffold's files and the existing patch's, never the rest of the package (build outputs).
-    const scope = persistScope(name, outcome?.files.get(name), before);
-    if (scope.note !== undefined) log(scope.note);
-    const [cmd, args] = persistScaffoldArgv(name, scope.include);
-    let failure: string | undefined;
-    let persisted = "";
-    try {
-      const r = await runner(cmd, args, { cwd: paths.root });
-      persisted = r.output;
-      if (r.exitCode !== 0) failure = patchPackageReason(r.output, r.exitCode);
-    } catch (e) {
-      failure = firstLine(e instanceof Error ? e.message : String(e)) || "spawn error";
-    }
-    if (failure !== undefined) {
-      log(
-        `⚠ Could not persist ${name}'s Package.swift to patches/ (${failure}). The build continues; it will be re-scaffolded on the next fresh install.`,
+    const names = parseMissingPackageSwift(first.output);
+    if (names.length === 0)
+      throw new Error(
+        `React Native SwiftPM setup failed (exit ${first.exitCode}):\n${tail(first.output)}`,
       );
-      continue;
-    }
-    const patchFile = createdPatchFile(persisted) ?? computedPatchFile(paths.root, name);
-    // Every patch file of the library that is new or changed, and the one it names: the guard fails closed (row 40).
-    const after = libraryPatches(paths.root, name);
-    const changed = [...after].filter(([f, bytes]) => !before.get(f)?.equals(bytes)).map(([, bytes]) => bytes);
-    let named: Buffer | undefined;
-    try {
-      named = readFileSync(path.join(paths.root, patchFile));
-    } catch {
-      // Not under the name it printed.
-    }
-    if (named === undefined && changed.length === 0) {
-      restorePatches(paths.root, name, before);
-      log(`⚠ Did not persist ${name}'s scaffold: rn-xtool could not read ${patchFile} to check it for binary files`);
-      continue;
-    }
-    const binary = [...changed, ...(named !== undefined ? [named] : [])]
-      .map((bytes) => binaryInPatch(bytes.toString("latin1")))
-      .find((b) => b !== undefined);
-    if (binary !== undefined) {
-      restorePatches(paths.root, name, before);
-      log(`⚠ Did not persist ${name}'s scaffold: the patch would contain a binary file (${binary})`);
-      continue;
-    }
-    log(`✔ scaffold — persisted ${patchFile}`);
-  }
-  if (outcome !== undefined && outcome.failed.length > 0) throw new Error(scaffoldFailureMessage(outcome.failed));
-  if (sc.exitCode !== 0) throw scaffoldFailed();
 
-  const second = await runner("node", rnArgs, { cwd: paths.ios, env });
-  if (second.exitCode !== 0) {
-    throw new Error(
-      `React Native SwiftPM setup still failed after scaffolding ${names.join(", ")} (exit ${second.exitCode}):\n${tail(second.output)}`,
-    );
+    log(`▸ scaffold — generating Package.swift for: ${names.join(", ")}`);
+    // A file a previous run left must never stand for this run's.
+    rmSync(paths.scaffoldResults, { force: true });
+    const sc = await runner("node", rnSpmScaffoldArgs(paths, opts, names, rnDir), { cwd: paths.ios, env });
+    const scaffoldFailed = () => new Error(`React Native spm scaffold failed (exit ${sc.exitCode}):\n${tail(sc.output)}`);
+    const outcome = scaffoldOutcome(paths, names);
+    if (outcome === undefined && sc.exitCode !== 0) throw scaffoldFailed();
+
+    // Only what was scaffolded is persisted; a failed library stops the build before React Native runs again.
+    for (const name of outcome?.scaffolded ?? names) {
+      // The library's patch as it was: put back when the new one would carry a binary file.
+      const before = libraryPatches(paths.root, name);
+      // The scaffold's files and the existing patch's, never the rest of the package (build outputs).
+      const scope = persistScope(name, outcome?.files.get(name), before);
+      if (scope.note !== undefined) log(scope.note);
+      const [cmd, args] = persistScaffoldArgv(name, scope.include);
+      let failure: string | undefined;
+      let persisted = "";
+      try {
+        const r = await runner(cmd, args, { cwd: paths.root });
+        persisted = r.output;
+        if (r.exitCode !== 0) failure = patchPackageReason(r.output, r.exitCode);
+      } catch (e) {
+        failure = firstLine(e instanceof Error ? e.message : String(e)) || "spawn error";
+      }
+      if (failure !== undefined) {
+        log(
+          `⚠ Could not persist ${name}'s Package.swift to patches/ (${failure}). The build continues; it will be re-scaffolded on the next fresh install.`,
+        );
+        continue;
+      }
+      const patchFile = createdPatchFile(persisted) ?? computedPatchFile(paths.root, name);
+      // Every patch file of the library that is new or changed, and the one it names: the guard fails closed (row 40).
+      const after = libraryPatches(paths.root, name);
+      const changed = [...after].filter(([f, bytes]) => !before.get(f)?.equals(bytes)).map(([, bytes]) => bytes);
+      let named: Buffer | undefined;
+      try {
+        named = readFileSync(path.join(paths.root, patchFile));
+      } catch {
+        // Not under the name it printed.
+      }
+      if (named === undefined && changed.length === 0) {
+        restorePatches(paths.root, name, before);
+        log(`⚠ Did not persist ${name}'s scaffold: rn-xtool could not read ${patchFile} to check it for binary files`);
+        continue;
+      }
+      const binary = [...changed, ...(named !== undefined ? [named] : [])]
+        .map((bytes) => binaryInPatch(bytes.toString("latin1")))
+        .find((b) => b !== undefined);
+      if (binary !== undefined) {
+        restorePatches(paths.root, name, before);
+        log(`⚠ Did not persist ${name}'s scaffold: the patch would contain a binary file (${binary})`);
+        continue;
+      }
+      log(`✔ scaffold — persisted ${patchFile}`);
+    }
+    if (outcome !== undefined && outcome.failed.length > 0) throw new Error(scaffoldFailureMessage(outcome.failed));
+    if (sc.exitCode !== 0) throw scaffoldFailed();
+
+    const second = await runner("node", rnArgs, { cwd: paths.ios, env });
+    if (second.exitCode !== 0) {
+      throw new Error(
+        `React Native SwiftPM setup still failed after scaffolding ${names.join(", ")} (exit ${second.exitCode}):\n${tail(second.output)}`,
+      );
+    }
+  } finally {
+    // Once per run, every React Native run's reads together; also when one failed, before its error.
+    for (const line of readerLines(readPodspecReads(paths.podspecReads))) log(line);
   }
 }

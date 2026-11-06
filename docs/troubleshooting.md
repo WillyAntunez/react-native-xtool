@@ -971,6 +971,55 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   read-only, often after `sudo npm install`. Make it writable (reinstall without `sudo`), or apply the portable
   manifest yourself.
 
+### Podspec reader
+
+The `rn-spm` step reads each library's podspec with the system `ruby`, through a shim of CocoaPods' DSL and React
+Native's podspec helpers, so a podspec gives the same fields it gives under CocoaPods. Without a usable Ruby, it reads
+them with its reduced reader, written in JavaScript, which evaluates the subset of Ruby podspecs use for their fields.
+`rn-xtool doctor` names the reader this machine uses (`✔ ruby — 3.3.8`, or `⚠ ruby — not found — podspecs are read
+with the reduced reader; sudo apt install ruby`).
+
+- **"⚠ Ruby was not found, so rn-xtool read the podspecs with its reduced reader, which evaluates a subset of Ruby;
+  install Ruby (sudo apt install ruby) to read them as CocoaPods does.":** `rn-spm` prints this once, after its runs,
+  when the reduced reader read a podspec. The first words say why: `Ruby was not found`, `ruby 2.6.10 is older than
+  2.7.0`, `ruby cannot load json`, or `ruby could not run the podspec reader (<detail>)`. The build goes on with the
+  reduced reader. Install Ruby 2.7 or newer (`sudo apt install ruby`), check it with `rn-xtool doctor`, and build again.
+  A scaffold the reduced reader persisted in `patches/` stays until you delete it: the `patches` step names each one
+  (`⚠ patches/<file> was written by the reduced podspec reader; Ruby is available here: delete it so rn-xtool
+  regenerates it …`), and the next build after you delete it scaffolds that library with Ruby.
+- **"⚠ RN_XTOOL_PODSPEC_READER=reduced is set, so rn-xtool read the podspecs with its reduced reader, which evaluates
+  a subset of Ruby; unset it to read them as CocoaPods does.":** the variable is set in the environment of the build,
+  so the reduced reader read every podspec, Ruby or not. Unset it (`unset RN_XTOOL_PODSPEC_READER`) once the podspec
+  that needed it reads with Ruby again.
+- **"⚠ RN_XTOOL_PODSPEC_READER=<value> is not a reader rn-xtool knows (only reduced); reading podspecs with Ruby":**
+  the variable is set to another value (`REDUCED`, `1`, `ruby`), which picks nothing. Set it to `reduced` exactly, or
+  unset it.
+- **The environment a podspec sees:** rn-xtool reads every podspec with only `RCT_NEW_ARCH_ENABLED` and
+  `RCT_HERMES_V1_ENABLED` set, both to `1`; every other variable a podspec reads (`USE_FRAMEWORKS`, `USE_HERMES`, a
+  library's own) is unset, whatever your shell has. The podspec runs in its own folder, with `ios/` as CocoaPods'
+  installation root and nothing on its standard input. The names each podspec read are in `rn-xtool doctor --report`,
+  under `podspec ENV:`, one `<podspec>: NAME, NAME` line per podspec; the build does not print them.
+- **"<podspec>:<line>: the podspec calls <name>(…), which rn-xtool's podspec reader does not model. Set
+  RN_XTOOL_PODSPEC_READER=reduced to read it with the reduced reader for one run, and report it with rn-xtool doctor
+  --report.":** the podspec calls a method of CocoaPods or React Native the shim does not provide, and `rn-spm` stops
+  there. The same stop, with the same last sentence, has these other forms:
+  - `<podspec>:<line>: the podspec uses <Name>, which rn-xtool's podspec reader does not model` (a constant);
+  - `<podspec>:<line>: the podspec sets <spec>.<name>, which CocoaPods does not define` (an attribute CocoaPods does
+    not have, often a typo);
+  - `<podspec>: cannot load such file -- <name>; rn-xtool's podspec reader stubs only colored2` (a `require` of a gem);
+  - `<podspec>: the podspec does not evaluate to a Pod::Spec`;
+  - `<podspec> did not finish in 30 s.`
+
+  When the failing line is in another of the library's files, `<podspec>:<line>` reads `<podspec> (<file>:<line>)`. A
+  podspec that raises an error of its own (`raise`, `abort`) stops with its message after `<podspec>:<line>: `.
+  To build for one run, set the escape on the command: `RN_XTOOL_PODSPEC_READER=reduced rn-xtool build`. `rn-spm` then
+  prints the `⚠ RN_XTOOL_PODSPEC_READER=reduced is set` line, and `doctor --report` records the reduced reader.
+- **To report a podspec the reader cannot read:** run `rn-xtool doctor --report` in the project folder after the
+  failed build and paste its block into a GitHub issue, with the stop's text and the library's name and version. Its
+  `podspec reader:` line names the reader of the last `rn-spm` and how many podspecs it read (`podspec reader: reduced:
+  RN_XTOOL_PODSPEC_READER=reduced is set (last rn-spm, 12 podspecs)`), and `podspec ENV:` lists the names each podspec
+  read.
+
 ### Scaffolded libraries
 
 The `rn-spm` step scaffolds only the libraries React Native reports without a `Package.swift`, and it forces nothing:
