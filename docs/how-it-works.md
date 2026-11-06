@@ -352,13 +352,40 @@ patch above is what makes that scaffolder work for real-world podspecs.
   `Scaffolding <library> failed: <reason>`, followed by that library's own warnings, one block per failed library.
   Nothing is persisted for a failed library, and React Native does not run a second time
   ([troubleshooting.md](troubleshooting.md#scaffolded-libraries)).
+- The scaffolder reads a podspec with `pod ipc spec` when CocoaPods is installed, and otherwise with its own reader,
+  which runs the podspec's statements over the subset of Ruby podspecs use for their fields: locals (`name = …`, `+=`,
+  `||=`; the last assignment that runs wins), single- and double-quoted strings with `#{…}` interpolation, arrays and
+  `%w[…]`, `ENV['…']` and `ENV.fetch` (`RCT_NEW_ARCH_ENABLED` and `RCT_HERMES_V1_ENABLED` are `1`, as React Native's
+  CocoaPods setup sets them, and every other variable is unset, whatever the shell says), `==`, `!=`, `!`, `&&`,
+  `||`, ternaries, `+` on strings and arrays, `join`, `if`/`elsif`/`else`/`unless` blocks and `if`/`unless`
+  modifiers, and `push`, `<<` and `concat` on a local array. A branch its condition rules out is left out, as
+  CocoaPods leaves it out; both branches of a condition it cannot evaluate (a method call such as
+  `respond_to?(:install_modules_dependencies, true)`) are read. It also reads the library's own `package.json`
+  (`JSON.parse(File.read(File.join(__dir__, "package.json")))`) and hashes. A `source_files`, `exclude_files`,
+  `compiler_flags`, `header_dir`, `header_mappings_dir`, `frameworks` or `libraries` value that uses anything else (a
+  method call, a local it could not evaluate) fails that library's scaffold, with a reason that names the podspec,
+  the field and the expression, since a target built from the part it could read would lack some of the library's
+  files or settings; an xcconfig value it cannot evaluate in part is left out with a `Left out of …` warning that
+  names it
+  ([fix 28](upstream/react-native-scaffolder.md#28-scriptsspmread-podspecjs-source-globs-built-from-ruby-locals-and-conditions-are-read-in-part)).
+- After `xtool-build`, `build` checks that every class React Native's codegen providers name
+  (`ios/build/generated/ios/ReactCodegen/RCTThirdPartyComponentsProvider.mm` and `RCTModuleProviders.mm`) is defined
+  in the App binary or an embedded framework; `install` checks the app xtool builds again before it installs it. A
+  missing component class would crash the app at start in `+[RCTThirdPartyComponentsProvider
+  thirdPartyFabricComponents]`, so rn-xtool removes the packed app and stops, naming the class, the component or
+  module and the library ([troubleshooting.md](troubleshooting.md#rctthirdpartycomponentsprovider-thirdpartyfabriccomponents)).
 - The scaffolded `Package.swift` holds no resources. rn-xtool builds the library's unconditional `resource_bundles`
   whose names and globs are plain strings as `<name>.bundle` at the root of `App.app` (react-native-svg's
   `RNSVGFilters.bundle`, react-native-device-info's privacy bundle; [CocoaPods binaries](#cocoapods-binaries)). After
   `rn-spm`, `build` prints one `ℹ Not copied into the app: …` line naming what still does not arrive: plain
   `resources`, and bundles whose name or files are Ruby code.
 
-- rn-xtool persists the generated file in your project's `patches/` with patch-package: commit those files.
+- rn-xtool persists the generated file in your project's `patches/` with patch-package: commit those files. A
+  persisted patch holds the files the scaffold wrote (the scaffold step lists them) and the files the library's
+  existing patch already held, so a fix of your own in that patch stays, and build outputs under the package (Gradle's
+  `android/build` and `.cxx`) never enter it. When rn-xtool cannot read which files the existing patch holds (or the
+  list would not fit in one argument), it diffs the whole package, as patch-package does by itself, and says so in an
+  `ℹ` line.
 - On every build the `patches` step applies rn-xtool's own patches and then your project's `patches/` (when present),
   so a fresh `node_modules` gets those Package.swift files back. A patch whose package is not installed is left out
   with a `⚠` line, and the others apply
@@ -407,11 +434,13 @@ The scaffolder classifies each `s.dependency` on an unconditional line of a pods
 **The pod table** is merged per pod, field by field, in this order, the later winning: the scaffolder's own baseline
 (SwiftUIIntrospect), rn-xtool's `data/pods.json` (AppAuth, and the source pods ML Kit reaches), then the `pods` of
 `rn-xtool.config.json`. rn-xtool writes the merged table to `ios/build/rn-xtool-pods.json`, with the binary pods the
-`pods` step resolved, and names it in `RN_SPM_POD_TABLE` for every React Native run of the `rn-spm` step; without it
-the scaffolder falls back to its baseline. A mapped pod's `forwardHeaders` become
-`rn-spm-pod-headers/<Dir/Header.h>` files in the library, each holding `@import <module>;` lines, on the library's
+`pods` step resolved, and names it in `RN_SPM_POD_TABLE` for every React Native run of the `rn-spm` step; without it the
+scaffolder falls back to its baseline. A mapped pod's `forwardHeaders` become `rn-spm-pod-headers/<Dir/Header.h>` files
+in the library, each holding one `#import <header>` per public header the pod's umbrella includes, on the library's
 header search path: AppAuth's umbrella header is outside its SwiftPM targets, and react-native-app-auth imports it as
-`<AppAuth/AppAuth.h>`. Each manifest records the pods it pins on a marker line, `// rn-xtool-pods: AppAuth=3.0.0`.
+`<AppAuth/AppAuth.h>`. The forwarder is textual because Objective-C++ compiles without C++ modules
+(`-fmodules -fno-cxx-modules`, Xcode's default), where `@import` is an error. Each manifest records the pods it pins
+on a marker line, `// rn-xtool-pods: AppAuth=3.0.0`.
 
 **Before the build.** `doctor --project` and `build` run the same classifier, loaded from rn-xtool's vendored copy of
 the scaffolder, never the project's. They read podspecs as text, with no `pod ipc` and no network. The linked

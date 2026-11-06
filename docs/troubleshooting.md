@@ -254,7 +254,8 @@ any build after `ios-xtool/.build` is deleted, needs the network for it; an offl
 SwiftPM's resolve error naming the URL.
 
 **Adding a pod.** When the pod has a SwiftPM package (a git repository with a `Package.swift`), add it under `pods` in
-`rn-xtool.config.json`. rn-xtool's own AppAuth entry is the example to copy:
+`rn-xtool.config.json`. rn-xtool's own AppAuth entry is the example to copy (its `forwardHeaders` list is shortened
+here; the shipped one, in `data/pods.json`, has all 31 headers):
 
 ```json
 {
@@ -263,7 +264,9 @@ SwiftPM's resolve error naming the URL.
       "url": "https://github.com/openid/AppAuth-iOS",
       "exact": "3.0.0",
       "products": ["AppAuth"],
-      "forwardHeaders": { "AppAuth/AppAuth.h": ["AppAuthCore", "AppAuth"] }
+      "forwardHeaders": {
+        "AppAuth/AppAuth.h": ["OIDAuthState.h", "OIDAuthorizationService.h", "iOS/OIDExternalUserAgentIOS.h"]
+      }
     }
   }
 }
@@ -274,10 +277,19 @@ SwiftPM's resolve error naming the URL.
 - `products`: the package's products the library links (`"product": "AppAuth"` works for one).
 - `subspecs` (optional): `{ "<subspec>": ["<product>", …] }`, the products for a dependency on `<pod>/<subspec>`; any
   other subspec gets `products`.
-- `forwardHeaders` (optional): `{ "<Dir/Header.h>": ["<module>", …] }`, for a pod whose umbrella header is not part
-  of its SwiftPM targets. The scaffolder writes `rn-spm-pod-headers/<Dir/Header.h>` into the library, holding one
-  `@import <module>;` per module, and adds `rn-spm-pod-headers` to the library's header search paths, so
-  `#import <AppAuth/AppAuth.h>` resolves as it does under CocoaPods.
+- `forwardHeaders` (optional): `{ "<Dir/Header.h>": ["<header>", …] }`, for a pod whose umbrella header is not part of
+  its SwiftPM targets. List the headers the umbrella includes, as paths under the public header directories of the
+  package's targets, which every importer has on its include path: AppAuth-iOS 3.0.0's `Sources/AppAuth.h` gives
+  `OIDAuthState.h` and 25 more headers from `Sources/AppAuthCore`, then, from its iOS branch, the 5 headers of
+  `Sources/AppAuth/iOS`, as `iOS/OIDAuthState+IOS.h` and so on. The scaffolder writes
+  `rn-spm-pod-headers/<Dir/Header.h>` into the library, holding one `#import <header>` per entry, and adds
+  `rn-spm-pod-headers` to the library's header search paths, so `#import <AppAuth/AppAuth.h>` resolves as it does under
+  CocoaPods. The forwarder includes the headers textually because Objective-C++ (`.mm`) files compile without C++
+  modules, as in Xcode, so an `@import` there is an error; in Objective-C (`.m`) the `#import` of a module's header
+  still imports the module. A module name in the list, the form of 0.1.0-alpha.6 (`["AppAuthCore", "AppAuth"]`), is
+  refused with `pods.<pod>.forwardHeaders.<header> lists the module <name>; list the pod's public headers instead
+  (relative paths ending in .h), which the forwarder includes textually: Objective-C++ compiles without modules, so it
+  cannot @import`.
 - `outsideRequirement` (optional): a sentence saying why `exact` is outside a requirement on purpose, checked by you.
   The pin check then prints one `ℹ` line with it instead of the `⚠` (rn-xtool's GoogleToolboxForMac entry,
   [CocoaPods binaries](#warnings-and-information-lines)). It holds for the entry's own `url` and `exact`: a config
@@ -295,8 +307,10 @@ be a version such as 3.0.0`, `pods.<pod>.subspecs must be an object of subspec n
 `pods.<pod>.subspecs.<name> must be a list of product names`, `pods.<pod>.outsideRequirement must be a sentence saying
 why the pin is outside the requirement`, `pods.<pod>.emptyTargets must be a list of target names`,
 `pods.<pod>.forwardHeaders must be an object of header paths` and `pods.<pod>.forwardHeaders.<header> must be a list
-of module names, under a relative path ending in .h`. A URL or product that is well formed but wrong is named by
-SwiftPM at `xtool-build`, in its resolve error.
+of the pod's public headers (relative paths ending in .h), under a relative path ending in .h`. A URL or product that
+is well formed but wrong is named by SwiftPM at `xtool-build`, in its resolve error. A header that is well formed but
+not in the package is named by clang, when a file that imports the forwarded header compiles: `'<header>' file not
+found`.
 
 **Changing a shipped pod.** An entry for a pod rn-xtool's table maps overrides only the fields it names, and the
 others stay. It still needs `url`, `exact` and `products`. To pin AppAuth 2.1.0:
@@ -309,7 +323,9 @@ others stay. It still needs `url`, `exact` and `products`. To pin AppAuth 2.1.0:
 }
 ```
 
-The shipped `forwardHeaders` stay; `"forwardHeaders": {}` removes them, and `"subspecs": {}` removes subspecs.
+The shipped `forwardHeaders` stay; `"forwardHeaders": {}` removes them, and `"subspecs": {}` removes subspecs. They
+list AppAuth-iOS 3.0.0's headers: if the version you pin moves or renames one, give your own `forwardHeaders` with
+that version's umbrella header list.
 
 **A pin outside the podspec's requirement.** `doctor --project` (its `pods` line) and the start of `build` print, for
 example, `⚠ AppAuth 1.0.0 (rn-xtool.config.json) is outside react-native-app-auth's requirement ">= 1.7.6"`
@@ -688,7 +704,14 @@ shapes below end `Leave the library out with "exclude" in rn-xtool.config.json.`
 - **The persist guard.** The `pods` and `pod-binaries` steps write nothing under `node_modules`, so a persisted scaffold never holds the
   vendor's files. As a guard, rn-xtool does not persist a scaffold patch that would hold a binary file:
   `⚠ Did not persist <library>'s scaffold: the patch would contain a binary file (<path>)`, or `⚠ Did not persist
-  <library>'s scaffold: rn-xtool could not read <patch> to check it for binary files`. The build goes on.
+  <library>'s scaffold: rn-xtool could not read <patch> to check it for binary files`. The build goes on. A
+  persisted patch holds only the files the scaffold wrote and those the library's existing patch held, so the Android
+  build outputs under the package (`android/build/…/*.dex`) stay out of it. The binary line can still appear when the library's existing patch holds a binary file, or when rn-xtool
+  diffs the whole package and a build left binaries under it: an `ℹ … persisting <library>'s whole package, …` line
+  before it says why (most often `ℹ Could not tell which files patches/<file> changes`, a patch whose
+  `diff --git a/node_modules/<library>/…` headers it cannot read). For the first, remove the binary file's section from
+  the patch; for the second, fix or delete the patch the `ℹ` line names, or remove the library's build outputs
+  (`android/build`, `android/.cxx`), then build.
 
 ### knownLimits.allow and binary pods
 
@@ -807,18 +830,26 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   `npm install`, and the next build applies the patch again. A nested package's patch
   (`<parent>++<child>+<version>.patch`) is named `<parent> => <child>`. A package installed at another version than
   its patch's is not skipped: patch-package applies the patch with its own version warning.
-- **"⚠ patches/<name> was written by an older rn-xtool scaffolder (revision <n>, now 4); delete it so rn-xtool
+- **"⚠ patches/<name> was written by an older rn-xtool scaffolder (revision <n>, now 7); delete it so rn-xtool
   regenerates it (also remove node_modules/<package> and reinstall: that copy still has the old Package.swift)":** the
   `patches` step found a persisted scaffold patch from an older scaffolder. Revision 1 patches lack the Swift importer
-  paths of mixed libraries, revision 2 patches lack those of clang-only libraries and their module map, and revision 3
-  patches lack fixes 20–22 and 24 (fixes 17 to 24 in [the scaffolder fixes](upstream/react-native-scaffolder.md)).
-  Without them, Swift code that imports a scaffolded library (the app, or expo-router importing react-native-screens)
-  can fail with `'RNSReactBaseView.h' file not found` (a mixed library, such as react-native-screens 4.26) or
-  `'RNSDefines.h' file not found` (a clang-only one, such as react-native-screens 4.30). Do what the warning says:
-  delete the patch, remove the library from `node_modules` and reinstall it, then build; rn-xtool scaffolds it again and
-  persists the new patch. This release's scaffolder is revision 4, so each scaffold patch persisted before it gets the
-  line at every build until it is regenerated, for example `⚠ patches/react-native-screens+4.30.0.patch was written by
-  an older rn-xtool scaffolder (revision 3, now 4); delete it so rn-xtool regenerates it (also remove
+  paths of mixed libraries, revision 2 patches lack those of clang-only libraries and their module map, revision 3
+  patches lack fixes 20–22 and 24 (fixes 17 to 24 in [the scaffolder fixes](upstream/react-native-scaffolder.md)),
+  revision 4 patches hold pod header forwarders that `@import` modules (fix 13), and revision 5 patches may lack the
+  sources of a podspec that builds its globs from Ruby locals and conditions (fix 28: react-native-screens 4.24.0 got no
+  `ios/` sources), and revision 6 patches may lack defines a podspec builds from its package.json (react-native-worklets
+  0.8.3's `WORKLETS_VERSION`, whose `WorkletsVersion.cpp` then stops with `use of undeclared identifier
+  'WORKLETS_VERSION_STRING'`). Without those fixes, Swift code that
+  imports a scaffolded library (the app, or expo-router importing react-native-screens) can fail with
+  `'RNSReactBaseView.h' file not found` (a mixed library, such as react-native-screens 4.26) or `'RNSDefines.h' file
+  not found` (a clang-only one, such as react-native-screens 4.30), and an Objective-C++ file that imports
+  `<AppAuth/AppAuth.h>` stops with `use of '@import' when modules are disabled`, and an app with react-native-screens
+  4.24.0 stops at `build` with [the codegen classes
+  check](#rctthirdpartycomponentsprovider-thirdpartyfabriccomponents). Do what the warning says: delete the
+  patch, remove the library from `node_modules` and reinstall it, then build; rn-xtool scaffolds it again and persists
+  the new patch. This release's scaffolder is revision 7, so each scaffold patch persisted before it gets the line at
+  every build until it is regenerated, for example `⚠ patches/react-native-screens+4.30.0.patch was written by an
+  older rn-xtool scaffolder (revision 4, now 7); delete it so rn-xtool regenerates it (also remove
   node_modules/react-native-screens and reinstall: that copy still has the old Package.swift)`. Until then the build
   goes on with the older manifest.
 - **"⚠ patches/<name> was scaffolded for React Native <version>; delete it so rn-xtool regenerates it for <installed>
@@ -827,21 +858,21 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   Do the same as for the revision warning above. Both warnings also read patches with the marker's name before the
   rename, `expo-xtool-scaffold-revision` (apps scaffolded before 0.1.0-alpha.1).
 - **"ℹ node_modules/<package>/Package.swift was scaffolded with revision <n> for React Native <version>, older than
-  patches/<name> (revision 4, React Native <installed>): rn-xtool replaced it with the persisted one":** a teammate
+  patches/<name> (revision 7, React Native <installed>): rn-xtool replaced it with the persisted one":** a teammate
   committed a regenerated scaffold patch, and your `node_modules` still had the copy an older patch wrote
   (patch-package does not replace a file that exists). rn-xtool owns these generated files, so the `patches` step
   removes the files the current patch creates and patch-package writes them again; the line is printed once
   patch-package has done so. Nothing to do; files the older scaffold wrote and the current one does not stay in place.
   This happens only when the patch holds nothing but scaffolded new files.
 - **"⚠ node_modules/<package>/Package.swift was scaffolded with revision <n> for React Native <version>, older than
-  patches/<name> (revision 4, React Native <installed>), and that patch also changes the library's own files, so
+  patches/<name> (revision 7, React Native <installed>), and that patch also changes the library's own files, so
   rn-xtool does not replace it: run rm -rf node_modules/<package> && npm install, then build again":** the same case,
   but the persisted patch also holds your own fix to the library. rn-xtool persists a scaffold with
   `patch-package <package>`, which writes everything that differs from the published package into one patch.
   Removing only the scaffold files would leave a patch that patch-package can apply neither forward nor backward, so
   rn-xtool changes nothing and the build goes on with the older manifest. Run the command: the reinstall gives the
   published package, and the next build applies the whole patch.
-- **"ℹ node_modules/<package>/Package.swift was scaffolded by an older rn-xtool scaffolder (revision <n>, now 4)" (or
+- **"ℹ node_modules/<package>/Package.swift was scaffolded by an older rn-xtool scaffolder (revision <n>, now 7)" (or
   "was scaffolded for React Native <version>, not <installed>"), followed by "rn-xtool removed it so the rn-spm step
   scaffolds it again":** a library has no persisted patch, and the manifest rn-xtool generated for it is out of date,
   for example after you deleted a stale patch but kept the package installed. The `rn-spm` step scaffolds it again
@@ -875,6 +906,34 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   forward in `Sources/App/include`, so `#import "AppDelegate.h"` resolves as with Xcode's header map. A header outside
   `ios/` is still not copied: move it into `ios/` and add it to the project. See
   [Sources](bare-react-native.md#sources).
+- **"'RCTAppDelegate.h' file not found"** (bare React Native, compiling the app's `AppDelegate.h` or another
+  Objective-C source of the app target): the app imports a React Native header by its bare name
+  (`#import <RCTAppDelegate.h>`, the spelling of the React Native 0.7x templates), which CocoaPods resolves through its
+  per-pod header search paths. rn-xtool 0.1.0-alpha.6 and earlier give the App target only the `<React/…>` spelling.
+  Later releases also search React Native's header directories by bare name, after the app's own paths. A sibling
+  symptom is "'AppAuth/AppAuth.h' file not found" (react-native-app-auth's README has the app import it): later
+  releases also search each autolinked library's `rn-spm-pod-headers`, where the scaffold writes the pod table's
+  `forwardHeaders`. See
+  [Mixed Swift + Objective-C/C++ app target](bare-react-native.md#mixed-swift--objective-cc-app-target).
+- **"use of '@import' when modules are disabled"** (in `rn-spm-pod-headers/AppAuth/AppAuth.h`, compiling an
+  Objective-C++ file that imports `<AppAuth/AppAuth.h>`, such as a bare app's `AppDelegate.mm`): the scaffold of
+  rn-xtool 0.1.0-alpha.6 (scaffolder revision 4) wrote the pod table's `forwardHeaders` as `@import` lines.
+  Objective-C++ compiles with `-fmodules -fno-cxx-modules`, Xcode's default, so `@import` is an error there;
+  react-native-app-auth's own `RNAppAuth.m` is Objective-C and compiled. Later releases write the forwarder as one
+  `#import` per public header of the pod, which compiles in `.m` and `.mm` files alike, and their scaffolder revision
+  (5 and later) replaces an older scaffold: a copy in `node_modules` without a persisted patch is scaffolded again by
+  itself, and a persisted patch gets the `⚠ patches/<name> was written by an older rn-xtool scaffolder (revision 4,
+  now 7)` line
+  above, whose steps regenerate it. A `forwardHeaders` entry of your config that still lists modules is refused with
+  `… lists the module <name>; list the pod's public headers instead`: list the headers, as in [Libraries that depend
+  on CocoaPods pods](#libraries-that-depend-on-cocoapods-pods).
+- **"react/utils/hash_combine.h: … unknown type name 'Hashable'"** (bare React Native, compiling the app's
+  `AppDelegate.mm` or another Objective-C++ source of the app target, often with fold-expression errors from the same
+  header): `#import <RCTAppDelegate.h>` pulls in React Native's C++20 headers, and the file compiles with clang's
+  default standard (gnu++17). Swift Build does not apply the package's `cxxLanguageStandard` to a mixed-language target,
+  and rn-xtool 0.1.0-alpha.6 and earlier pass no `-std=` to the App target. Later releases pass the project's
+  `CLANG_CXX_LANGUAGE_STANDARD` (C++20 when unset) to the app's `.mm` and `.cpp` files. See
+  [Mixed Swift + Objective-C/C++ app target](bare-react-native.md#mixed-swift--objective-cc-app-target).
 - **"rn-xtool could not patch <package>":** your project has a different version of a package than the one this release
   of rn-xtool patches, and the patch does not apply to it (on SDK 57 or 58, a newer patch of the SDK that changed a
   patched file; on bare React Native, a newer patch of its line). The message names the versions. On SDK 58 (Expo
@@ -969,6 +1028,57 @@ the `Package.swift` of every other library, persisted in `patches/` or edited by
   those for other platforms than iOS, are not read. A feature that loads one of these resources at run time is
   unavailable. When every resource named is a privacy manifest, the line ends "Development builds run without them;
   privacy manifests are read only at App Store submission." instead; there is nothing to do for a development build.
+
+### `RCTThirdPartyComponentsProvider thirdPartyFabricComponents`
+
+An app that crashes at start with `NSInvalidArgumentException` in `+[RCTThirdPartyComponentsProvider
+thirdPartyFabricComponents]` (`-[__NSPlaceholderDictionary initWithObjects:forKeys:count:]: attempt to insert nil
+object`) lacks the class of a third-party Fabric component. React Native's codegen writes a dictionary of
+`NSClassFromString(@"<Class>")` for every component the autolinked libraries declare, and one class missing from the
+app is a nil value that stops it. The build itself succeeded: the library's target compiled without the files that
+define its classes.
+
+`build` checks for it after `xtool-build`, and `install` (with `run`) checks the app xtool builds again before it
+installs it: every class named in `ios/build/generated/ios/ReactCodegen/RCTThirdPartyComponentsProvider.mm` and
+`RCTModuleProviders.mm` must be defined in the App binary or in a framework under `App.app/Frameworks`. When one is
+not, rn-xtool removes the packed app and its `.ipa`, installs nothing and stops:
+
+```
+React Native's codegen names classes the packed app does not define, so rn-xtool removed it and does not install it:
+  - RNSFullWindowOverlay (component RNSFullWindowOverlay, react-native-screens)
+  - RNSModalScreen (component RNSModalScreen, react-native-screens)
+  …
+  - and 12 more
+With a component class missing, the app would crash at start: +[RCTThirdPartyComponentsProvider thirdPartyFabricComponents] throws NSInvalidArgumentException (-[__NSPlaceholderDictionary initWithObjects:forKeys:count:]: attempt to insert nil object).
+Check the sources of node_modules/react-native-screens/Package.swift: its target was built without the files that define them. A scaffold persisted in patches/ by an older rn-xtool can be the cause: delete that patch, reinstall the library and build again.
+```
+
+Each line names the class, the component (or module) and the library that declares it, from the provider file or the
+library's `codegenConfig`, else "a library". A missing module provider class does not crash the app: the message says
+`With a module class missing, React Native logs "Module provider <class> cannot be found in the runtime" and the
+module is unavailable.`
+
+- **react-native-screens 4.24.0 scaffolded by an older rn-xtool:** its podspec builds `source_files` from Ruby locals
+  and conditions, which the podspec reader did not evaluate before scaffolder revision 6, so the scaffolded `RNScreens`
+  target held only the C++ of its `common` subspec ([fix 28](upstream/react-native-scaffolder.md)). The revision
+  warning above names its persisted patch; re-scaffold it as in [Scaffolded libraries](#scaffolded-libraries).
+- **A podspec the reader cannot evaluate** stops the scaffold instead of building such a target: ``✖ Scaffolding
+  <library> failed: <podspec>: `s.source_files = <expression>` cannot be evaluated: it uses <what>. …``. The reader
+  evaluates locals, string interpolation, arrays, `ENV['…']`, comparisons, ternaries and `if`/`unless` blocks
+  ([how it works](how-it-works.md#cocoapods-only-libraries)); a method call or a value it does not know in a source
+  glob, `compiler_flags`, `header_dir`, `header_mappings_dir`, `frameworks` or `libraries` is refused. Installing
+  CocoaPods (`gem install cocoapods`) lets `pod ipc spec` read the podspec instead, or give the library a
+  `Package.swift` of its own.
+- **"! <library>: Left out of s.pod_target_xcconfig OTHER_CFLAGS: `#{feature_flags}`, which the podspec reader cannot
+  evaluate; CocoaPods passes its value."** (also `GCC_PREPROCESSOR_DEFINITIONS`, `HEADER_SEARCH_PATHS`,
+  `SWIFT_ACTIVE_COMPILATION_CONDITIONS`): the scaffold left that part of the value out. CocoaPods computes it from the
+  app or the Podfile: react-native-worklets' and react-native-reanimated's static feature flags (their defaults
+  apply), react-native-vision-camera's frame processor and location switches (both off). To set such a value, edit
+  the library's `Package.swift` and persist it in `patches/`.
+- **A hand-edited `Package.swift`** that leaves out the files defining a class: put them back.
+- **"ℹ The packed app's binaries list no Objective-C class symbols, so rn-xtool could not check the <n> classes React
+  Native's codegen providers name.":** the binaries have no symbol table, so nothing is checked and the build goes on.
+  xtool's debug builds keep their symbols; if you see this line, [report it](#reporting-a-problem).
 
 ## Newer than the verified versions
 

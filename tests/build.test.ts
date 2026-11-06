@@ -177,6 +177,7 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
     postPack: async () => {
       calls.push("post-pack");
     },
+    codegenClasses: async () => [],
     emptyTargets: over.emptyTargets ?? (() => []),
     log: (s) => logs.push(s),
   };
@@ -203,6 +204,31 @@ describe("build", () => {
     const quiet = setup();
     await build(quiet.root, {}, quiet.deps);
     expect(quiet.logs.some((l) => l.startsWith("ℹ Not copied into the app"))).toBe(false);
+  });
+
+  it("checks the codegen classes in the packed app after xtool-build, before it records the build as done", async () => {
+    const t = setup();
+    const seen: string[][] = [];
+    await build(t.root, {}, {
+      ...t.deps,
+      codegenClasses: async (root, app) => {
+        t.calls.push("codegen-classes");
+        seen.push([root, app]);
+        return ["ℹ codegen line"];
+      },
+    });
+    expect(t.calls.slice(-2)).toEqual(["xtool-build", "codegen-classes"]);
+    expect(seen).toEqual([[t.root, join(t.root, "ios-xtool", "xtool", "App.app")]]);
+    expect(t.logs).toContain("ℹ codegen line");
+    expect((await readState(join(t.root, "ios-xtool")))?.depsFingerprint).toBe("fp-test");
+
+    const failing = setup();
+    const refused = "React Native's codegen names classes the packed app does not define";
+    const codegenClasses = async (): Promise<string[]> => {
+      throw new Error(refused);
+    };
+    await expect(build(failing.root, {}, { ...failing.deps, codegenClasses })).rejects.toThrow(refused);
+    expect((await readState(join(failing.root, "ios-xtool")))?.depsFingerprint).toBeUndefined();
   });
 
   it("hands the scaffolded libraries' resource bundles to generate, read after rn-spm", async () => {

@@ -149,6 +149,8 @@ const SCAFFOLDER_BANNER = "AUTO-SCAFFOLDED by react-native spm scaffold";
 export interface ScaffoldOutcome {
   scaffolded: string[];
   failed: { name: string; reason: string; warnings: string[] }[];
+  /** The files each scaffolded library's result lists as written (relative to the library); absent: no usable list. */
+  files: Map<string, string[]>;
 }
 
 interface ScaffoldResultEntry {
@@ -157,6 +159,16 @@ interface ScaffoldResultEntry {
   reason?: unknown;
   warnings?: unknown;
   root?: unknown;
+  files?: unknown;
+}
+
+/** A result's `files`, when it is a list of relative paths inside the library; undefined otherwise. */
+function writtenFiles(files: unknown): string[] | undefined {
+  if (!Array.isArray(files)) return undefined;
+  const ok = files.every(
+    (f): f is string => typeof f === "string" && f !== "" && !f.startsWith("/") && !f.split("/").includes(".."),
+  );
+  return ok ? (files as string[]) : undefined;
 }
 
 /**
@@ -175,7 +187,7 @@ export function scaffoldOutcome(paths: ProjectPaths, names: readonly string[]): 
   } catch {
     return undefined;
   }
-  const outcome: ScaffoldOutcome = { scaffolded: [], failed: [] };
+  const outcome: ScaffoldOutcome = { scaffolded: [], failed: [], files: new Map() };
   for (const name of names) {
     const entry = entries.find((e) => e.depName === name);
     const root = typeof entry?.root === "string" ? entry.root : path.join(paths.root, "node_modules", name);
@@ -187,6 +199,8 @@ export function scaffoldOutcome(paths: ProjectPaths, names: readonly string[]): 
     }
     if (entry?.status !== "error" && manifest.includes(SCAFFOLDER_BANNER)) {
       outcome.scaffolded.push(name);
+      const files = writtenFiles(entry?.files);
+      if (files !== undefined) outcome.files.set(name, files);
       continue;
     }
     const reason =
@@ -295,11 +309,100 @@ export function parseMissingPackageSwift(output: string): string[] {
  * `swiftpmConfig.name` falls back to the podspec name, so the scaffolded manifest does not need it.
  */
 export const PERSIST_EXCLUDE = "(^|/)\\.build/|^package\\.json$";
-export function persistScaffoldArgv(name: string): [string, string[]] {
+/** `include`: patch-package's `--include`, the paths the patch may hold (persistInclude); absent: the whole package. */
+export function persistScaffoldArgv(name: string, include?: string): [string, string[]] {
   return [
     process.execPath,
-    [patchPackageScript(), name, "--patch-dir", "patches", "--exclude", PERSIST_EXCLUDE],
+    [
+      patchPackageScript(),
+      name,
+      "--patch-dir",
+      "patches",
+      "--exclude",
+      PERSIST_EXCLUDE,
+      ...(include !== undefined ? ["--include", include] : []),
+    ],
   ];
+}
+
+/** Directories the scaffolder writes and removes as a whole: past PERSIST_PATHS_MAX paths, one entry each. */
+const SCAFFOLDER_DIRS = ["rn-spm-pod-headers/", "rn-spm-react-headers/", "rn-spm-swift/"];
+const PERSIST_PATHS_MAX = 200;
+/** Under Linux's 128 KiB limit on one argument; a longer `--include` would not spawn. */
+const PERSIST_INCLUDE_MAX = 100_000;
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * patch-package's `--include` for a scaffold: each path the scaffold wrote and each path the library's existing patch
+ * holds (a hand fix in it stays), relative to the library, anchored and escaped, in that order, once each. Past
+ * PERSIST_PATHS_MAX paths, those under a directory the scaffolder owns whole become that directory's prefix, so the
+ * argument stays short whatever the number of forwarders. Build outputs under the library (Gradle's `android/build`)
+ * match none of them.
+ */
+export function persistInclude(written: readonly string[], existing: readonly string[]): string {
+  const paths = [...new Set([...written, ...existing])];
+  const collapse = paths.length > PERSIST_PATHS_MAX;
+  const entries = paths.map((p) => {
+    const dir = collapse ? SCAFFOLDER_DIRS.find((d) => p.startsWith(d)) : undefined;
+    return dir !== undefined ? `^${escapeRegExp(dir)}` : `^${escapeRegExp(p)}$`;
+  });
+  return [...new Set(entries)].join("|");
+}
+
+/**
+ * The files `name`'s patch (patch-package's format, `diff --git a/node_modules/<name>/<path> b/…`) touches, relative
+ * to the library, both sides of a rename included. Undefined when it has no such header, or a header it cannot read
+ * (a quoted path, a path outside the library).
+ */
+export function patchedPaths(text: string, name: string): string[] | undefined {
+  const headers = text.split("\n").filter((l) => l.startsWith("diff --git "));
+  if (headers.length === 0) return undefined;
+  const prefix = `node_modules/${name}/`;
+  const paths: string[] = [];
+  for (const header of headers) {
+    const rest = header.slice("diff --git ".length);
+    if (!rest.startsWith(`a/${prefix}`)) return undefined;
+    // `a/<p> b/<q>`: paths may hold spaces, so take the split whose sides are equal, else the only one.
+    const splits = [...rest.matchAll(/ b\//g)].map((m) => [rest.slice(2, m.index), rest.slice(m.index + 3)] as const);
+    const split = splits.find(([a, b]) => a === b) ?? (splits.length === 1 ? splits[0] : undefined);
+    if (split === undefined || !split.every((p) => p.startsWith(prefix) && p.length > prefix.length)) return undefined;
+    for (const p of split) {
+      const rel = p.slice(prefix.length);
+      if (!paths.includes(rel)) paths.push(rel);
+    }
+  }
+  return paths;
+}
+
+/**
+ * What a persisted scaffold holds: `--include` for the scaffold's files and those of the library's patches in `patches`
+ * (`before`), or, when either list is missing, undefined with the `ℹ` line saying why (patch-package then diffs the
+ * whole package).
+ */
+function persistScope(name: string, files: string[] | undefined, before: Map<string, Buffer>): { include?: string; note?: string } {
+  const whole = "so its patch holds every file that differs from a clean copy";
+  if (files === undefined) {
+    return { note: `ℹ The scaffold did not list the files it wrote in ${name}: persisting its whole package, ${whole}` };
+  }
+  const existing: string[] = [];
+  const prefix = `${name.replace("/", "+")}+`;
+  for (const [file, bytes] of before) {
+    // `<name>+<version>….patch`; not a nested package's `<name>++<other>+<version>.patch`.
+    if (!/^\d/.test(file.slice(prefix.length))) continue;
+    const paths = patchedPaths(bytes.toString("utf8"), name);
+    if (paths === undefined) {
+      return { note: `ℹ Could not tell which files patches/${file} changes: persisting ${name}'s whole package, ${whole}` };
+    }
+    existing.push(...paths);
+  }
+  const include = persistInclude(files, existing);
+  if (include.length > PERSIST_INCLUDE_MAX) {
+    return { note: `ℹ ${name}'s scaffold wrote too many files to list for patch-package: persisting its whole package, ${whole}` };
+  }
+  return { include };
 }
 
 /** patch-package prints `✔ Created file patches/<x>.patch`; prefer that over guessing the name. */
@@ -438,9 +541,12 @@ export async function runRnSpm(
 
   // Only what was scaffolded is persisted; a failed library stops the build before React Native runs again.
   for (const name of outcome?.scaffolded ?? names) {
-    const [cmd, args] = persistScaffoldArgv(name);
     // The library's patch as it was: put back when the new one would carry a binary file.
     const before = libraryPatches(paths.root, name);
+    // The scaffold's files and the existing patch's, never the rest of the package (build outputs).
+    const scope = persistScope(name, outcome?.files.get(name), before);
+    if (scope.note !== undefined) log(scope.note);
+    const [cmd, args] = persistScaffoldArgv(name, scope.include);
     let failure: string | undefined;
     let persisted = "";
     try {

@@ -1,7 +1,7 @@
 // swift-tools-version: 6.0
 // AUTO-SCAFFOLDED by react-native spm scaffold — safe to edit & commit via patch-package.
 // AUTO-SCAFFOLDED-VERSION: 20
-// rn-xtool-scaffold-revision: 4
+// rn-xtool-scaffold-revision: 7
 // rn-xtool-swift-importer-paths: ["common/cpp","apple/Brushes","apple/Elements","apple/Filters/MetalCI","apple/Filters","apple","apple/Shapes","apple/Text","apple/Utils","apple/ViewManagers","common/cpp/react/renderer/components/rnsvg",".","include"]
 // Cache slot: 0.86.3/dual-flavor
 // Edit the contents below if needed and re-run `npx patch-package <dep-name>`
@@ -142,6 +142,7 @@ let package = Package(
                 "apple/Utils/RNSVGCGFCRule.h",
                 "apple/Utils/RNSVGConvert.h",
                 "apple/Utils/RNSVGConvert.mm",
+                "apple/Utils/RNSVGFabricConversions.h",
                 "apple/Utils/RNSVGLength.h",
                 "apple/Utils/RNSVGLength.mm",
                 "apple/Utils/RNSVGMarkerPosition.h",

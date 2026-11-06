@@ -48,7 +48,7 @@ async function definedClasses(nm: NmRunner, file: string): Promise<string[]> {
 }
 
 /** The App binary: `CFBundleExecutable` of App.app/Info.plist, else `App`. */
-function appBinary(appBundle: string): string {
+export function appBinary(appBundle: string): string {
   try {
     const info = plist.parse(readFileSync(path.join(appBundle, "Info.plist"), "utf8")) as Record<string, unknown>;
     if (typeof info.CFBundleExecutable === "string" && info.CFBundleExecutable !== "") return path.join(appBundle, info.CFBundleExecutable);
@@ -56,6 +56,12 @@ function appBinary(appBundle: string): string {
     // xtool's own name for it.
   }
   return path.join(appBundle, "App");
+}
+
+/** Row 88: a refused app is not left where `run` would take it as built, nor its .ipa beside it. */
+export async function removePackedApp(appBundle: string): Promise<void> {
+  await rm(appBundle, { recursive: true, force: true });
+  await rm(path.join(path.dirname(appBundle), `${path.basename(appBundle, ".app")}.ipa`), { force: true });
 }
 
 export async function postPackChecks(appBundle: string, pods: PostPackPods, nm: NmRunner): Promise<void> {
@@ -81,9 +87,7 @@ export async function postPackChecks(appBundle: string, pods: PostPackPods, nm: 
     items.push(...missing.slice(0, SHOWN), ...(missing.length > SHOWN ? [`  - and ${missing.length - SHOWN} more`] : []));
   }
   if (items.length > 0) {
-    // Row 88: a refused app is not left where `run` would take it as built, nor its .ipa beside it.
-    await rm(appBundle, { recursive: true, force: true });
-    await rm(path.join(path.dirname(appBundle), `${path.basename(appBundle, ".app")}.ipa`), { force: true });
+    await removePackedApp(appBundle);
     throw new PodsError(`The packed app is not what the CocoaPods binaries need, so rn-xtool removed it and does not install it:\n${items.join("\n")}\nSee ${PODS_LINK}`);
   }
 }

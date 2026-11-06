@@ -245,13 +245,25 @@ remove `main.swift` from the app target.
 If the target compiles any `.m`, `.mm`, `.c` or `.cpp` file, it is built as one mixed-language target, the same
 mechanism as the scaffolded mixed libraries (the two manifests described in
 [How it works](how-it-works.md#mixed-language-manifests)). The bridging header is passed with `-import-objc-header`
-and your header search paths and defines are applied. Verified on a device with an Objective-C module next to a Swift
+and your header search paths and defines are applied. The target's `.mm` and `.cpp` files compile with the project's
+`CLANG_CXX_LANGUAGE_STANDARD` (C++20 when unset), passed to them as `-std=` because Swift Build does not apply the
+package's `cxxLanguageStandard` to a mixed target. Verified on a device with an Objective-C module next to a Swift
 module.
 
 Swift Build names the generated Swift header `App-Swift.h` (the SwiftPM target is `App`), so `build` also writes
 `Sources/App/include/<Module>-Swift.h`, which imports it: Objective-C keeps `#import "<Module>-Swift.h"` as in Xcode,
 where `<Module>` is `PRODUCT_MODULE_NAME`, or `PRODUCT_NAME` with characters other than letters, digits and `_` turned
 into `_`.
+
+React Native's public Objective-C headers are importable by their bare name (`#import <RCTAppDelegate.h>`) as well as by
+module (`#import <React/RCTAppDelegate.h>`), as CocoaPods' per-pod header search paths allow, and so are the
+`<Pod/Header.h>` spellings of the pod table's `forwardHeaders` (`#import <AppAuth/AppAuth.h>`, in `.m` and `.mm` files
+alike: the forwarder `#import`s the pod's public headers, since Objective-C++ compiles without modules). The app's
+Objective-C sources and its bridging header search the app's own headers and `HEADER_SEARCH_PATHS` first, then
+`ios/build/xcframeworks/ReactHeadersTarget/include/React`, then each per-module directory of
+`ReactNativeHeaders.xcframework` that its module map names (`React_RCTAppDelegate`, `RCTImage`, `yoga`, …), then each
+autolinked library's `rn-spm-pod-headers`, so an app header with the same name wins. React Native's C++ headers keep
+their path spelling (`<react/debug/flags.h>`, `<jsi/jsi.h>`).
 
 ## Resources
 

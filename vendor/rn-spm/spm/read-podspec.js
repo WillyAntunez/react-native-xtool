@@ -169,102 +169,1167 @@ function cleanupPatchedPodspec(patchedPath /*: ?string */) /*: void */ {
 // Regex fallback
 // ---------------------------------------------------------------------------
 
-// Ruby constants. Podspecs commonly hoist a glob or extension list into a local
-// and reuse it (react-native-screens: `source_files_exts = '{h,m,mm,cpp}'`,
-// `source_files = ["ios/**/*.#{source_files_exts}"]`, `s.source_files =
-// source_files`). The field regexes below only understand literals, so such a
-// field read as missing and the library scaffolded with no sources.
+// Ruby locals and conditions. Podspecs hoist globs, extension lists and flags
+// into locals and set them under conditions; react-native-screens 4.24.0:
 //
-// This pre-pass resolves the simple cases textually, so the regexes stay
-// untouched: single-line `ident = 'str' | "str" | ["a", "b"]` assignments are
-// collected (first assignment wins; `if`/`ENV[...]` conditions are NOT
-// evaluated, except the one kind below), then `#{ident}` inside the text is replaced by a known string
-// constant, and a field assigned a bare known identifier (`s.x = ident`) is
-// rewritten to the literal value (`s.x = ident`, `s.ios.x = ident`, and a
-// subspec's `ss.x = ident`). `#{}` is only interpolated inside double-quoted
-// strings, as in Ruby. Unknown interpolations/identifiers are left as they are.
+//   new_arch_enabled = ENV['RCT_NEW_ARCH_ENABLED'] == '1'
+//   source_files_exts =
+//     new_arch_enabled ? '{h,m,mm,cpp,swift}' : '{h,m,mm,swift}'
+//   source_files = ["ios/**/*.#{source_files_exts}"]
+//   if !new_arch_enabled
+//     source_files.push("cpp/RNScreensTurboModule.cpp", ...)
+//   end
+//   ...
+//   s.source_files = source_files
+//   if !gamma_project_enabled
+//     s.exclude_files = "ios/gamma/**/*.#{source_files_exts}"
+//   else ...
 //
-// One kind of condition is evaluated: a string ternary on an environment
-// variable React Native's CocoaPods setup itself sets for every pod
-// (`ident = ENV['VAR'] == 'v' ? 'a' : 'b'`, also `!=`), with the value that
-// setup gives it: `1` for both. The environment is not read. React Native
-// 0.87+ sets both to `1` outright, and the prebuilt artifacts are V1 Hermes,
-// so a `0` left in the shell could only break the build (and a persisted
-// scaffold). react-native-worklets puts
-// `hermes_v1_flag = ENV['RCT_HERMES_V1_ENABLED'] == '1' ? '-DHERMES_V1_ENABLED'
-// : ''` in OTHER_CFLAGS; without the define it includes the legacy Hermes
-// inspector headers, which the prebuilt artifacts do not ship.
+// The field regexes below only understand literals, so this pre-pass runs the
+// podspec's statements in order over a small, side-effect-free subset of Ruby
+// and leaves the regexes a flat text:
+//
+// - values: string literals (single quotes verbatim, double quotes with
+//   `#{expr}` interpolation), `%w[...]`, array literals, numbers, `true`,
+//   `false`, `nil`, and locals (`name = expr`, also `+=` and `||=`; the last
+//   assignment that runs wins, as in Ruby);
+// - `ENV['X']` and `ENV.fetch('X', default)`: `RCT_NEW_ARCH_ENABLED` and
+//   `RCT_HERMES_V1_ENABLED` are `1` (below), every other variable is unset.
+//   The environment is never read, so a scaffold does not depend on the shell;
+// - `==`, `!=`, `!`/`not`, `&&`/`and`, `||`/`or`, `+` on strings and arrays,
+//   `a ? b : c`, `array.join(sep)`, `.to_s`, `.freeze`;
+// - `if`/`elsif`/`else`/`unless`/`end` blocks and `stmt if cond` / `stmt
+//   unless cond` modifiers, at the top level and inside the spec and subspec
+//   blocks: a branch that does not run is blanked, the control lines of a
+//   condition that was evaluated are dropped;
+// - `local.push(...)`, `local.append(...)`, `local.concat(...)`, `local << x`;
+// - `recv.<field> = expr` on the spec or a subspec (`s.`, `s.ios.`, `ss.`):
+//   a value that is not already a literal is rewritten to the literal it
+//   evaluates to. Inside a hash (`pod_target_xcconfig`, `resource_bundles`),
+//   `=> local` is replaced by the local's value.
+//
+// Anything else (method calls, hashes, symbols, `$config[...]`, blocks other
+// than the spec's, conditions on any of these) is not evaluated: the text
+// stays as written, and a local assigned from it, or under such a condition, is
+// unknown from there on. Both branches of such a condition stay visible, as
+// before (react-native-vision-camera's `if enableFrameProcessors` subspec). A
+// `source_files` or `exclude_files` value that uses something unknown is
+// returned in `unresolved`, and the scaffolder refuses the library
+// (unresolvedSourcesReason): a glob read in part gives a target that builds
+// and lacks the library's classes, so the app crashes at start
+// (react-native-screens 4.24.0 lost all of ios/).
+//
+// `RCT_NEW_ARCH_ENABLED` and `RCT_HERMES_V1_ENABLED` get the value React
+// Native's CocoaPods setup gives every pod, `1` for both. React Native 0.87+
+// sets both to `1` outright, and the prebuilt artifacts are V1 Hermes, so a
+// `0` left in the shell could only break the build (and a persisted scaffold).
+// react-native-worklets puts `hermes_v1_flag = ENV['RCT_HERMES_V1_ENABLED'] ==
+// '1' ? '-DHERMES_V1_ENABLED' : ''` in OTHER_CFLAGS; without the define it
+// includes the legacy Hermes inspector headers, which the prebuilt artifacts
+// do not ship.
 const RN_POD_ENV /*: {[string]: string} */ = {
   RCT_NEW_ARCH_ENABLED: '1',
   RCT_HERMES_V1_ENABLED: '1',
 };
-function rnPodEnvTernary(rhs /*: string */) /*: ?string */ {
-  const m = rhs.match(
-    /^ENV\[\s*(["'])([A-Z0-9_]+)\1\s*\]\s*(==|!=)\s*(["'])([^"']*)\4\s*\?\s*(?:"([^"]*)"|'([^']*)')\s*:\s*(?:"([^"]*)"|'([^']*)')$/,
-  );
-  if (m == null || !Object.hasOwn(RN_POD_ENV, m[2])) return null;
-  const value = RN_POD_ENV[m[2]];
-  const holds = m[3] === '==' ? value === m[5] : value !== m[5];
-  return holds ? m[6] ?? m[7] : m[8] ?? m[9];
+
+// A value the evaluator could not compute, and why. A string with an
+// interpolation it could not compute keeps that `#{...}` as written in
+// `partial`, as fix 3's pass did: fix 8 still reads
+// `REACT_NATIVE_MINOR_VERSION=#{...}` from it, and what is left is reported.
+class RubyUnresolved {
+  /*:: why: string; partial: ?string; */
+  constructor(why /*: string */, partial /*:: ?: ?string */) {
+    this.why = why;
+    this.partial = partial ?? null;
+  }
 }
-function resolveRubyConstants(content /*: string */) /*: string */ {
-  const strings /*: Map<string, string> */ = new Map();
-  const arrays /*: Map<string, Array<{value: string, dq: boolean}>> */ =
-    new Map();
-  const assignRe = /^[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*=[ \t]*(.+?)[ \t]*$/gm;
-  for (const m of content.matchAll(assignRe)) {
-    const name = m[1];
-    if (strings.has(name) || arrays.has(name)) continue;
-    const rhs = m[2];
-    const str = rhs.match(/^(?:"([^"]*)"|'([^']*)')$/);
-    if (str != null) {
-      strings.set(name, str[1] ?? str[2]);
-      continue;
-    }
-    const fromEnv = rnPodEnvTernary(rhs);
-    if (fromEnv != null) {
-      strings.set(name, fromEnv);
-      continue;
-    }
-    const arr = rhs.match(/^\[([^\]]*)\]$/);
-    if (arr != null) {
-      const items = [];
-      for (const it of arr[1].matchAll(/"([^"]*)"|'([^']*)'/g)) {
-        items.push({value: it[1] ?? it[2], dq: it[1] != null});
+const isUnresolved = (v /*: mixed */) /*: boolean */ =>
+  v instanceof RubyUnresolved;
+// A string value's text, also a partial one's; null for anything else.
+function rubyText(v /*: mixed */) /*: ?string */ {
+  if (typeof v === 'string') return v;
+  return v instanceof RubyUnresolved ? v.partial : null;
+}
+// A Ruby symbol (`:name`).
+class RubySymbol {
+  /*:: name: string; */
+  constructor(name /*: string */) {
+    this.name = name;
+  }
+}
+// A Ruby hash: insertion-ordered, keyed by string or symbol.
+class RubyHash {
+  /*:: entries: Map<string, {key: mixed, value: mixed}>; */
+  constructor() {
+    this.entries = new Map();
+  }
+  static keyOf(k /*: mixed */) /*: ?string */ {
+    if (typeof k === 'string') return `s:${k}`;
+    if (k instanceof RubySymbol) return `y:${k.name}`;
+    return null;
+  }
+  get(k /*: mixed */) /*: mixed */ {
+    const key = RubyHash.keyOf(k);
+    return key != null ? (this.entries.get(key)?.value ?? null) : null;
+  }
+  set(k /*: mixed */, value /*: mixed */) /*: boolean */ {
+    const key = RubyHash.keyOf(k);
+    if (key == null) return false;
+    this.entries.set(key, {key: k, value});
+    return true;
+  }
+}
+// JSON (a package.json) as Ruby values: objects become hashes with string keys.
+function fromJson(v /*: mixed */) /*: mixed */ {
+  if (Array.isArray(v)) return v.map(fromJson);
+  if (v != null && typeof v === 'object') {
+    const h = new RubyHash();
+    for (const [k, x] of Object.entries(v)) h.set(k, fromJson(x));
+    return h;
+  }
+  return v;
+}
+
+// The source-glob fields an unevaluated expression must not reach silently.
+const STRICT_FIELDS /*: Set<string> */ = new Set([
+  'source_files',
+  'exclude_files',
+]);
+// Fields that name the library: read as literals only, as before.
+const IDENTITY_FIELDS /*: Set<string> */ = new Set([
+  'name',
+  'module_name',
+  'version',
+]);
+// Fields whose whole value an unevaluated part changes: refused too.
+const WHOLE_FIELDS /*: Set<string> */ = new Set([
+  'compiler_flags',
+  'header_dir',
+  'header_mappings_dir',
+  'frameworks',
+  'framework',
+  'weak_frameworks',
+  'weak_framework',
+  'libraries',
+  'library',
+]);
+// The xcconfig hashes, and the keys of them the scaffolder reads. A part of
+// those values it cannot evaluate is left out with a warning that names it:
+// podspecs put optional, configuration-driven flags there (worklets' static
+// feature flags, vision-camera's frame processor switch), which CocoaPods
+// computes from the app and the Podfile.
+const XCCONFIG_FIELDS /*: Set<string> */ = new Set([
+  'pod_target_xcconfig',
+  'user_target_xcconfig',
+  'xcconfig',
+]);
+const XCCONFIG_READ_KEY_RE =
+  /(["'])(OTHER_CFLAGS|GCC_PREPROCESSOR_DEFINITIONS|HEADER_SEARCH_PATHS|SWIFT_ACTIVE_COMPILATION_CONDITIONS)(\[[^\]]*\])?\1\s*=>/g;
+const XCCONFIG_ANY_KEY_RE = /(["'])[A-Z_]+(\[[^\]]*\])?\1\s*=>/g;
+
+// Each `#{...}` left in `text` that the scaffolder does not handle itself.
+// Fix 8 gives `REACT_NATIVE_{MAJOR,MINOR,PATCH}_VERSION=#{...}` the installed
+// React Native's number, and a token with an Xcode `$(...)` (`$(PODS_ROOT)/
+// #{...}`) is dropped for that already.
+function unresolvedInterpolations(text /*: string */) /*: Array<string> */ {
+  const out = [];
+  for (let i = text.indexOf('#{'); i >= 0; i = text.indexOf('#{', i + 2)) {
+    let depth = 0;
+    let end = -1;
+    for (let j = i + 1; j < text.length; j++) {
+      if (text[j] === '{') depth++;
+      else if (text[j] === '}' && --depth === 0) {
+        end = j;
+        break;
       }
-      arrays.set(name, items);
+    }
+    if (end < 0) break;
+    const before = text.slice(0, i).split(/[\s"']/).pop() ?? '';
+    const after = text.slice(end + 1).split(/[\s"']/)[0] ?? '';
+    const token = before + text.slice(i, end + 1) + after;
+    const rnVersion = /REACT_NATIVE_(?:MAJOR|MINOR|PATCH)_VERSION=$/.test(before);
+    if (!rnVersion && !/\$[({]/.test(token)) out.push(text.slice(i, end + 1));
+  }
+  return out;
+}
+// The first value in `v` it could not evaluate (also inside arrays and hashes).
+function unresolvedIn(v /*: mixed */) /*: ?RubyUnresolved */ {
+  if (v instanceof RubyUnresolved) return v;
+  if (Array.isArray(v)) {
+    for (const x of v) {
+      const u = unresolvedIn(x);
+      if (u != null) return u;
     }
   }
-  if (strings.size === 0 && arrays.size === 0) return content;
-  const interpolate = (text /*: string */) =>
-    text.replace(/#\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}/g, (whole, id) =>
-      strings.has(id) ? (strings.get(id) /*: any */) : whole,
-    );
-  // Constants may be built from earlier ones: resolve the arrays' items too
-  // (double-quoted items only).
-  const arrayValues /*: Map<string, Array<string>> */ = new Map();
-  for (const [k, v] of arrays) {
-    arrayValues.set(k, v.map(i => (i.dq ? interpolate(i.value) : i.value)));
+  if (v instanceof RubyHash) {
+    for (const {value} of v.entries.values()) {
+      const u = unresolvedIn(value);
+      if (u != null) return u;
+    }
   }
-  // Only double-quoted string literals interpolate; scan literal by literal
-  // (a line never spans a string here) so `'ios/*.#{x}'` stays as written.
-  const interpolated = content.replace(
-    /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g,
-    lit => (lit[0] === '"' ? interpolate(lit) : lit),
+  return null;
+}
+const PLATFORM_SCOPES /*: Set<string> */ = new Set([
+  'ios',
+  'osx',
+  'macos',
+  'tvos',
+  'visionos',
+  'watchos',
+]);
+
+// Tokens of one Ruby expression. A double-quoted string keeps its parts:
+// literal text and the source of each `#{...}`.
+function tokenizeRubyExpr(src /*: string */) /*: Array<any> */ {
+  const tokens = [];
+  let i = 0;
+  // The end of a `#{...}` starting at `from` (just past `#{`), or -1.
+  const interpEnd = (from /*: number */) => {
+    let depth = 1;
+    let quote = '';
+    for (let j = from; j < src.length; j++) {
+      const c = src[j];
+      if (quote !== '') {
+        if (c === '\\') j++;
+        else if (c === quote) quote = '';
+      } else if (c === '"' || c === "'") quote = c;
+      else if (c === '{') depth++;
+      else if (c === '}' && --depth === 0) return j;
+    }
+    return -1;
+  };
+  const CLOSE = {'[': ']', '(': ')', '{': '}', '<': '>'};
+  while (i < src.length) {
+    const c = src[i];
+    if (/\s/.test(c)) {
+      i++;
+    } else if (c === "'") {
+      let v = '';
+      let j = i + 1;
+      for (; j < src.length && src[j] !== "'"; j++) {
+        if (src[j] === '\\' && (src[j + 1] === "'" || src[j + 1] === '\\')) {
+          v += src[++j];
+        } else v += src[j];
+      }
+      if (j >= src.length) return [{t: 'bad', v: src.slice(i)}];
+      tokens.push({t: 'str', parts: [v]});
+      i = j + 1;
+    } else if (c === '"') {
+      const parts = [];
+      let v = '';
+      let j = i + 1;
+      for (; j < src.length && src[j] !== '"'; j++) {
+        if (src[j] === '\\') {
+          const e = src[++j];
+          v += e === 'n' ? '\n' : e === 't' ? '\t' : e;
+        } else if (src[j] === '#' && src[j + 1] === '{') {
+          const end = interpEnd(j + 2);
+          if (end < 0) return [{t: 'bad', v: src.slice(i)}];
+          parts.push(v, {expr: src.slice(j + 2, end)});
+          v = '';
+          j = end;
+        } else v += src[j];
+      }
+      if (j >= src.length) return [{t: 'bad', v: src.slice(i)}];
+      parts.push(v);
+      tokens.push({t: 'str', parts});
+      i = j + 1;
+    } else if (c === '%' && /^%w[[({<]/.test(src.slice(i, i + 3))) {
+      const close = CLOSE[src[i + 2]];
+      const end = src.indexOf(close, i + 3);
+      if (end < 0) return [{t: 'bad', v: src.slice(i)}];
+      tokens.push({
+        t: 'words',
+        v: src
+          .slice(i + 3, end)
+          .split(/\s+/)
+          .filter(Boolean),
+      });
+      i = end + 1;
+    } else if (/[0-9]/.test(c)) {
+      const m = src.slice(i).match(/^[0-9][0-9_.]*/);
+      const text = m != null ? m[0] : c;
+      tokens.push({t: 'num', v: Number(text.replace(/_/g, ''))});
+      i += text.length;
+    } else if (/[A-Za-z_]/.test(c) || (c === '$' && /[A-Za-z_]/.test(src[i + 1] ?? ''))) {
+      // `$name` is a global.
+      const m = src.slice(i).match(/^\$?[A-Za-z_]\w*(?:[?!](?=\())?/);
+      const text = m != null ? m[0] : c;
+      tokens.push({t: 'id', v: text});
+      i += text.length;
+    } else if (c === ':' && /[A-Za-z_]/.test(src[i + 1] ?? '') && src[i - 1] !== ':') {
+      const m = src.slice(i + 1).match(/^[A-Za-z_]\w*[?!]?/);
+      const text = m != null ? m[0] : '';
+      tokens.push({t: 'sym', v: text});
+      i += 1 + text.length;
+    } else if (c === ':' && /["']/.test(src[i + 1] ?? '')) {
+      tokens.push({t: 'bad', v: src.slice(i)}); // a quoted symbol
+      i = src.length;
+    } else {
+      const two = src.slice(i, i + 2);
+      if (['==', '!=', '&&', '||', '=>', '::', '<<', '=~'].includes(two)) {
+        tokens.push({t: 'op', v: two});
+        i += 2;
+      } else {
+        tokens.push({t: 'op', v: c});
+        i++;
+      }
+    }
+  }
+  return tokens;
+}
+
+const rubyTruthy = (v /*: mixed */) /*: boolean */ => v !== false && v != null;
+
+function rubyEqual(a /*: mixed */, b /*: mixed */) /*: boolean */ {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((x, k) => rubyEqual(x, b[k]));
+  }
+  if (a instanceof RubySymbol && b instanceof RubySymbol) {
+    return a.name === b.name;
+  }
+  return a === b;
+}
+
+// `#{v}`: Ruby's to_s for the values the evaluator knows.
+function rubyToS(v /*: mixed */) /*: string | RubyUnresolved */ {
+  if (typeof v === 'string') return v;
+  if (v == null) return '';
+  if (typeof v === 'boolean' || typeof v === 'number') return String(v);
+  if (v instanceof RubySymbol) return v.name;
+  return new RubyUnresolved('an array or hash inside `#{...}`');
+}
+
+// `File.read` reads only inside the podspec's own directory.
+function readInside(dir /*: mixed */, file /*: mixed */) /*: mixed */ {
+  if (typeof dir !== 'string' || typeof file !== 'string') {
+    return new RubyUnresolved('`File.read` of a path it cannot evaluate');
+  }
+  const full = path.resolve(dir, file);
+  if (full !== dir && !full.startsWith(dir + path.sep)) {
+    return new RubyUnresolved(`\`File.read\` outside the podspec's directory (${file})`);
+  }
+  try {
+    return fs.readFileSync(full, 'utf8');
+  } catch {
+    return new RubyUnresolved(`\`File.read\` of a file that cannot be read (${path.relative(dir, full)})`);
+  }
+}
+
+/**
+ * Evaluates one Ruby expression with the locals in `env`. Returns the value,
+ * or a RubyUnresolved saying why it cannot. `list` reads a bare comma list
+ * (`s.x = "a", "b"`) as an array. Never runs anything.
+ */
+function evalRubyExpr(
+  src /*: string */,
+  env /*: Map<string, mixed> */,
+  list /*:: ?: boolean */,
+) /*: mixed */ {
+  const tokens = tokenizeRubyExpr(src);
+  let pos = 0;
+  const peek = (v /*: string */) =>
+    tokens[pos] != null &&
+    (tokens[pos].t === 'op' || tokens[pos].t === 'id') &&
+    tokens[pos].v === v;
+  const take = (v /*: string */) => {
+    if (!peek(v)) return false;
+    pos++;
+    return true;
+  };
+  const fail = (why /*: string */) => new RubyUnresolved(why);
+  // Skips a balanced (...) / [...] / {...} group starting at `pos`.
+  const skipGroup = () => {
+    let depth = 0;
+    do {
+      const tk = tokens[pos++];
+      if (tk == null) return;
+      if (tk.t === 'op' && '([{'.includes(tk.v)) depth++;
+      if (tk.t === 'op' && ')]}'.includes(tk.v)) depth--;
+    } while (depth > 0);
+  };
+  // `{k => v, k: v}` (already past `{`). A value it cannot evaluate stays in
+  // the hash as unresolved, so the other entries can still be read.
+  const parseHash = () => {
+    const h = new RubyHash();
+    while (!peek('}')) {
+      if (tokens[pos] == null) return fail('a missing `}`');
+      let key;
+      if (tokens[pos].t === 'id' && tokens[pos + 1]?.t === 'op' && tokens[pos + 1].v === ':') {
+        key = new RubySymbol(tokens[pos].v);
+        pos += 2;
+      } else {
+        key = parseTernary();
+        if (!take('=>')) return fail('a hash entry without `=>`');
+      }
+      const value = parseTernary();
+      if (isUnresolved(key) || !h.set(key, value)) return fail('a hash key it cannot evaluate');
+      if (!take(',')) break;
+    }
+    if (!take('}')) return fail('a missing `}`');
+    return h;
+  };
+  // Comma-separated expressions up to `close` (already past the opener).
+  const parseItems = (close /*: string */) => {
+    const items = [];
+    while (!peek(close)) {
+      if (tokens[pos] == null) return fail(`a missing \`${close}\``);
+      items.push(parseTernary());
+      if (!take(',')) break;
+    }
+    if (!take(close)) return fail(`a missing \`${close}\``);
+    // A partial string stays an element; anything else unknown fails it.
+    return items.find(x => isUnresolved(x) && rubyText(x) == null) ?? items;
+  };
+  function parsePrimary() /*: mixed */ {
+    const tk = tokens[pos++];
+    if (tk == null) return fail('an incomplete expression');
+    if (tk.t === 'str') {
+      let out = '';
+      let why = null;
+      for (const part of tk.parts) {
+        if (typeof part === 'string') {
+          out += part;
+          continue;
+        }
+        const inner = evalRubyExpr(part.expr, env);
+        const s = isUnresolved(inner) ? inner : rubyToS(inner);
+        if (typeof s === 'string') {
+          out += s;
+          continue;
+        }
+        // Kept as written, or as the partial text of a partial string.
+        const u /*: RubyUnresolved */ = (s /*: any */);
+        why ??= u.why;
+        out += u.partial ?? `#{${part.expr}}`;
+      }
+      return why != null ? new RubyUnresolved(why, out) : out;
+    }
+    if (tk.t === 'sym') return new RubySymbol(tk.v);
+    if (tk.t === 'words') return tk.v;
+    if (tk.t === 'num') return tk.v;
+    if (tk.t === 'bad') return fail(`\`${tk.v}\``);
+    if (tk.t === 'op') {
+      if (tk.v === '(') {
+        const v = parseTernary();
+        return take(')') ? v : fail('a missing `)`');
+      }
+      if (tk.v === '[') return parseItems(']');
+      if (tk.v === '{') return parseHash();
+      return fail(`\`${tk.v}\``);
+    }
+    // An identifier.
+    const name = tk.v;
+    if (name === 'true') return true;
+    if (name === 'false') return false;
+    if (name === 'nil') return null;
+    if (name === 'ENV') {
+      if (take('[')) {
+        const key = parseTernary();
+        if (!take(']')) return fail('a missing `]`');
+        if (isUnresolved(key)) return key;
+        return typeof key === 'string' && Object.hasOwn(RN_POD_ENV, key)
+          ? RN_POD_ENV[key]
+          : null;
+      }
+      if (take('.') && take('fetch') && take('(')) {
+        const args = parseItems(')');
+        if (isUnresolved(args)) return args;
+        const [key, fallback] = (args /*: any */);
+        if (typeof key !== 'string') return fail('`ENV.fetch` of a non-string');
+        return Object.hasOwn(RN_POD_ENV, key) ? RN_POD_ENV[key] : fallback;
+      }
+      return fail('`ENV` used other than `ENV[...]` or `ENV.fetch(...)`');
+    }
+    // The package.json load podspecs share: `JSON.parse(File.read(File.join(
+    // __dir__, "package.json")))`, also with `File.dirname(__FILE__)`.
+    if ((name === 'File' || name === 'JSON') && peek('.')) {
+      pos++;
+      const m = tokens[pos++];
+      const method = m != null && m.t === 'id' ? m.v : '?';
+      const call = `${name}.${method}`;
+      if (!take('(')) return fail(`the method \`${call}\``);
+      const args = parseItems(')');
+      if (isUnresolved(args)) return args;
+      const a = (args /*: any */);
+      if (call === 'File.join' && a.every(x => typeof x === 'string')) {
+        return path.join(...a);
+      }
+      if (call === 'File.dirname' && typeof a[0] === 'string') {
+        return path.dirname(a[0]);
+      }
+      if (call === 'File.read' && a.length === 1) {
+        return readInside(env.get('__dir__'), a[0]);
+      }
+      if (call === 'JSON.parse' && typeof a[0] === 'string') {
+        try {
+          return fromJson(JSON.parse(a[0]));
+        } catch {
+          return fail('`JSON.parse` of text that is not JSON');
+        }
+      }
+      return fail(`the method call \`${call}(...)\``);
+    }
+    if (peek('(')) {
+      skipGroup();
+      return fail(`the method call \`${name}(...)\``);
+    }
+    if (!env.has(name)) {
+      return fail(
+        name.startsWith('$')
+          ? `the global \`${name}\`, which the podspec does not set`
+          : `the unknown identifier \`${name}\``,
+      );
+    }
+    const v = env.get(name);
+    if (isUnresolved(v)) {
+      const u /*: RubyUnresolved */ = (v /*: any */);
+      return new RubyUnresolved(`\`${name}\`, which ${u.why}`, u.partial);
+    }
+    return v;
+  }
+  function parsePostfix() /*: mixed */ {
+    let v = parsePrimary();
+    while (peek('.') || peek('[')) {
+      if (take('[')) {
+        const key = parseTernary();
+        if (!take(']')) return fail('a missing `]`');
+        if (isUnresolved(v)) continue;
+        if (isUnresolved(key)) v = key;
+        else if (v instanceof RubyHash) v = v.get(key);
+        else if (Array.isArray(v) && typeof key === 'number') v = v[key] ?? null;
+        else v = fail('an index `[...]` on a value it cannot index');
+        continue;
+      }
+      take('.');
+      const m = tokens[pos++];
+      const method = m != null && m.t === 'id' ? m.v : '?';
+      let args = [];
+      if (peek('(')) {
+        pos++;
+        const got = parseItems(')');
+        if (isUnresolved(got)) {
+          v = isUnresolved(v) ? v : got;
+          continue;
+        }
+        args = (got /*: any */);
+      }
+      if (isUnresolved(v)) continue;
+      if ((method === 'freeze' || method === 'to_s') && typeof v === 'string') {
+        continue;
+      }
+      if (method === 'join' && Array.isArray(v)) {
+        const sep = args.length > 0 ? args[0] : '';
+        const parts = v
+          .flat(Infinity)
+          .map(x => (isUnresolved(x) ? x : rubyToS(x)));
+        const texts = parts.map(rubyText);
+        const partial = parts.find(isUnresolved);
+        if (typeof sep !== 'string') v = fail('`join`');
+        else if (texts.every(x => x != null)) {
+          const joined = texts.join(sep);
+          v =
+            partial != null
+              ? new RubyUnresolved((partial /*: any */).why, joined)
+              : joined;
+        } else v = partial;
+        continue;
+      }
+      v = fail(`the method call \`.${method}\``);
+    }
+    return v;
+  }
+  function parseUnary() /*: mixed */ {
+    if (take('!')) {
+      const v = parseUnary();
+      return isUnresolved(v) ? v : !rubyTruthy(v);
+    }
+    return parsePostfix();
+  }
+  function parseAdd() /*: mixed */ {
+    let l = parseUnary();
+    while (take('+')) {
+      const r = parseUnary();
+      const lt = rubyText(l);
+      const rt = rubyText(r);
+      if (lt != null && rt != null && (isUnresolved(l) || isUnresolved(r))) {
+        const u /*: RubyUnresolved */ = (isUnresolved(l) ? l : r /*: any */);
+        l = new RubyUnresolved(u.why, lt + rt);
+        continue;
+      }
+      if (isUnresolved(l)) continue;
+      if (isUnresolved(r)) l = r;
+      else if (typeof l === 'string' && typeof r === 'string') l = l + r;
+      else if (Array.isArray(l) && Array.isArray(r)) l = [...l, ...r];
+      else l = fail('`+` on values other than two strings or two arrays');
+    }
+    return l;
+  }
+  function parseEq() /*: mixed */ {
+    const l = parseAdd();
+    if (peek('==') || peek('!=')) {
+      const op = tokens[pos++].v;
+      const r = parseAdd();
+      if (isUnresolved(l)) return l;
+      if (isUnresolved(r)) return r;
+      return op === '==' ? rubyEqual(l, r) : !rubyEqual(l, r);
+    }
+    if (peek('=~') || peek('<') || peek('>')) {
+      return fail(`the operator \`${tokens[pos].v}\``);
+    }
+    return l;
+  }
+  function parseNot() /*: mixed */ {
+    if (take('not')) {
+      const v = parseNot();
+      return isUnresolved(v) ? v : !rubyTruthy(v);
+    }
+    return parseEq();
+  }
+  function parseAnd() /*: mixed */ {
+    let l = parseNot();
+    while (take('&&') || take('and')) {
+      const r = parseNot();
+      if (!isUnresolved(l) && rubyTruthy(l)) l = r;
+    }
+    return l;
+  }
+  function parseOr() /*: mixed */ {
+    let l = parseAnd();
+    while (take('||') || take('or')) {
+      const r = parseAnd();
+      if (!isUnresolved(l) && !rubyTruthy(l)) l = r;
+    }
+    return l;
+  }
+  function parseTernary() /*: mixed */ {
+    const c = parseOr();
+    if (!take('?')) return c;
+    const a = parseTernary();
+    if (!take(':')) return fail('a ternary without `:`');
+    const b = parseTernary();
+    if (isUnresolved(c)) return c;
+    return rubyTruthy(c) ? a : b;
+  }
+  let value = parseTernary();
+  if (list === true && peek(',')) {
+    const items = [value];
+    while (take(',')) items.push(parseTernary());
+    value = items.find(x => isUnresolved(x) && rubyText(x) == null) ?? items;
+  }
+  if (pos < tokens.length && !isUnresolved(value)) {
+    const rest = tokens[pos];
+    return fail(
+      rest.t === 'op' || rest.t === 'id'
+        ? `\`${rest.v}\` where it ends`
+        : 'more than one expression',
+    );
+  }
+  return value;
+}
+
+// A literal the field regexes read as written: quoted strings without
+// `#{...}`, as one value, an array or a bare list.
+function isPlainLiteral(rhs /*: string */) /*: boolean */ {
+  const str = `(?:"[^"\\\\#]*"|'[^'\\\\]*')`;
+  const list = `${str}(?:\\s*,\\s*${str})*`;
+  return new RegExp(
+    `^(?:${list}|\\[\\s*(?:${list}\\s*,?)?\\s*\\]|true|false)$`,
+  ).test(rhs.trim());
+}
+
+// The literal a field is rewritten to, or null when the value has none. A
+// partial string is written with its `#{...}` as written; a hash entry whose
+// value has no literal is left out (the field regexes never read it).
+function rubyLiteral(v /*: mixed */) /*: ?string */ {
+  const text = rubyText(v);
+  if (text != null) return JSON.stringify(text);
+  if (typeof v === 'boolean') return String(v);
+  if (Array.isArray(v)) {
+    const flat = v.flat(Infinity).map(rubyText);
+    if (!flat.every(x => x != null)) return null;
+    return '[' + flat.map(x => JSON.stringify(x)).join(', ') + ']';
+  }
+  if (v instanceof RubyHash) {
+    const items = [];
+    for (const {key, value} of v.entries.values()) {
+      const lit = rubyLiteral(value);
+      if (lit == null) continue;
+      const k =
+        key instanceof RubySymbol ? `:${key.name}` : JSON.stringify(key);
+      items.push(`${k} => ${lit}`);
+    }
+    return `{ ${items.join(', ')} }`;
+  }
+  return null;
+}
+
+// The podspec's logical statements: lines joined while a bracket or string is
+// open or the line ends in `,`, `\`, an operator or `=`. A heredoc's body
+// belongs to the statement that opens it. `code` is the statement without
+// trailing comments.
+function rubyStatements(
+  lines /*: Array<string> */,
+) /*: Array<{start: number, end: number, code: string}> */ {
+  const out = [];
+  const scan = (
+    line /*: string */,
+    state /*: {depth: number, quote: string} */,
+  ) => {
+    let code = '';
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (state.quote !== '') {
+        code += c;
+        if (c === '\\') code += line[++i] ?? '';
+        else if (c === state.quote) state.quote = '';
+        continue;
+      }
+      if (c === '#') break;
+      code += c;
+      if (c === '"' || c === "'") state.quote = c;
+      else if ('([{'.includes(c)) state.depth++;
+      else if (')]}'.includes(c)) state.depth--;
+    }
+    return code;
+  };
+  let i = 0;
+  while (i < lines.length) {
+    const start = i;
+    const state = {depth: 0, quote: ''};
+    const codes = [];
+    let heredoc = null;
+    while (i < lines.length) {
+      const code = scan(lines[i], state);
+      codes.push(code);
+      i++;
+      const h = code.match(/<<([-~]?)(["']?)([A-Za-z_]\w*)\2\s*$/);
+      if (h != null && state.quote === '') {
+        heredoc = {indented: h[1] !== '', id: h[3]};
+        break;
+      }
+      const open =
+        state.depth > 0 ||
+        state.quote !== '' ||
+        /(?:,|\\|&&|\|\||[^=!<>]=|\+|\s\?|\s:)\s*$/.test(code);
+      if (!open) break;
+    }
+    if (i >= lines.length && (state.depth > 0 || state.quote !== '')) {
+      // Never closed: read the first line alone and go on from the next.
+      const code = scan(lines[start], {depth: 0, quote: ''});
+      out.push({start, end: start, code});
+      i = start + 1;
+      continue;
+    }
+    if (heredoc != null) {
+      const {indented, id} = heredoc;
+      while (i < lines.length) {
+        const l = lines[i++];
+        if ((indented ? l.trim() : l) === id) break;
+      }
+    }
+    out.push({start, end: i - 1, code: codes.join('\n')});
+  }
+  return out;
+}
+
+// The index of a trailing `if`/`unless` modifier outside strings and brackets.
+function modifierIndex(code /*: string */) /*: ?{at: number, kw: string} */ {
+  let quote = '';
+  let depth = 0;
+  for (let i = 1; i < code.length; i++) {
+    const c = code[i];
+    if (quote !== '') {
+      if (c === '\\') i++;
+      else if (c === quote) quote = '';
+      continue;
+    }
+    if (c === '"' || c === "'") quote = c;
+    else if ('([{'.includes(c)) depth++;
+    else if (')]}'.includes(c)) depth--;
+    else if (depth === 0 && /\s/.test(code[i - 1])) {
+      const m = code.slice(i).match(/^(if|unless)\s/);
+      if (m != null) return {at: i, kw: m[1]};
+    }
+  }
+  return null;
+}
+
+/*::
+type Unresolved = {field: string, expr: string, why: string};
+type Activity = {
+  state: 'yes' | 'no' | 'maybe' | 'opaque',
+  why: string,
+  modifier?: boolean,
+};
+*/
+
+// Why a local set under `act` is unknown from there on.
+function unknownUnder(act /*: Activity */) /*: RubyUnresolved */ {
+  return new RubyUnresolved(
+    act.state === 'maybe'
+      ? `is set under \`${act.why}\`, a condition the reader cannot evaluate`
+      : `is set inside \`${act.why}\`, a block the reader does not run`,
   );
-  const quote = (v /*: string */) => JSON.stringify(v);
-  return interpolated.replace(
-    /^(\s*[A-Za-z_]\w*(?:\.(?:ios|osx|tvos|visionos|watchos))?\.[A-Za-z_]+\s*=\s*)([A-Za-z_][A-Za-z0-9_]*)[ \t]*$/gm,
-    (whole, lhs, id) => {
-      if (strings.has(id)) return lhs + quote((strings.get(id) /*: any */));
-      if (arrayValues.has(id)) {
-        return (
-          lhs + '[' + (arrayValues.get(id) /*: any */).map(quote).join(', ') + ']'
+}
+
+// The branch an `elsif` opens, and what is known of the branches before it.
+function elsifBranch(
+  prior /*: string */,
+  cond /*: string */,
+) /*: {branch: string, prior: string} */ {
+  if (prior === 'yes') return {branch: 'no', prior: 'yes'};
+  if (prior === 'no') return {branch: cond, prior: cond};
+  // An earlier branch may have run.
+  return {
+    branch: cond === 'no' ? 'no' : 'maybe',
+    prior: cond === 'yes' ? 'yes' : 'maybe',
+  };
+}
+
+/**
+ * Runs the podspec's statements over the subset above. Returns the rewritten
+ * text (same line count) and each `source_files`/`exclude_files` assignment
+ * whose value could not be evaluated.
+ */
+function evaluateRubyLocals(
+  content /*: string */,
+  podspecPath /*:: ?: string */,
+) /*: {text: string, unresolved: Array<Unresolved>, dropped: Array<string>} */ {
+  const lines = content.split('\n');
+  const out = lines.slice();
+  const env /*: Map<string, mixed> */ = new Map();
+  if (podspecPath != null) {
+    env.set('__dir__', path.dirname(path.resolve(podspecPath)));
+    env.set('__FILE__', path.resolve(podspecPath));
+  }
+  const recvs /*: Set<string> */ = new Set();
+  const unresolved /*: Array<Unresolved> */ = [];
+  // What was left out of an xcconfig value the scaffolder reads, as warnings.
+  const dropped /*: Array<string> */ = [];
+  const noteXcconfig = (lhs /*: string */, text /*: string */) => {
+    for (const m of text.matchAll(XCCONFIG_READ_KEY_RE)) {
+      const start = (m.index ?? 0) + m[0].length;
+      XCCONFIG_ANY_KEY_RE.lastIndex = start;
+      const next = XCCONFIG_ANY_KEY_RE.exec(text);
+      const value = text.slice(start, next != null ? next.index : undefined);
+      const key = m[2] + (m[3] ?? '');
+      for (const span of unresolvedInterpolations(value)) {
+        dropped.push(
+          `Left out of ${lhs} ${key}: \`${span}\`, which the podspec reader cannot evaluate; CocoaPods passes its value.`,
         );
       }
-      return whole;
-    },
-  );
+      const bare = value.match(/^\s*([A-Za-z_$]\w*)\s*,?\s*\}?\s*$/);
+      if (bare != null && rubyText(env.get(bare[1])) == null) {
+        dropped.push(
+          `Left out of ${lhs} ${key}: \`${bare[1]}\`, which the podspec reader cannot evaluate; CocoaPods passes its value.`,
+        );
+      }
+    }
+  };
+  const statementText = (st /*: {start: number, end: number} */) =>
+    out.slice(st.start, st.end + 1).join('\n');
+  // `if` blocks (which branch is being read) and other blocks.
+  const frames /*: Array<any> */ = [];
+  const blank = (st /*: {start: number, end: number} */) => {
+    for (let k = st.start; k <= st.end; k++) out[k] = '';
+  };
+  // Whether the statement being read runs: 'yes', 'no', 'maybe' (under a
+  // condition it cannot evaluate) or 'opaque' (in a block it does not run),
+  // with the condition or block that decides.
+  const activity = () /*: Activity */ => {
+    let act /*: Activity */ = {state: 'yes', why: ''};
+    for (const f of frames) {
+      const s = f.kind === 'if' ? f.branch : f.opaque ? 'opaque' : 'yes';
+      if (s === 'no') return {state: 'no', why: ''};
+      if (s !== 'yes' && act.state === 'yes') {
+        act = {state: s, why: f.kind === 'if' ? f.cond : f.code};
+      }
+    }
+    return act;
+  };
+  const condOf = (src /*: string */, negate /*: boolean */) => {
+    const v = evalRubyExpr(src, env);
+    if (isUnresolved(v)) return 'maybe';
+    return rubyTruthy(v) !== negate ? 'yes' : 'no';
+  };
+  // Lines that stay as written: `#{local}` (a known string) in their
+  // double-quoted literals, and `=> local` inside a hash, get the value.
+  const interpolate = (
+    st /*: {start: number, end: number} */,
+    hash /*: boolean */,
+  ) => {
+    // Spliced into a double-quoted literal, so its own quotes are escaped.
+    const known = (id /*: string */) =>
+      rubyText(env.get(id))?.replace(/[\\"]/g, '\\$&');
+    for (let k = st.start; k <= st.end; k++) {
+      out[k] = out[k].replace(
+        /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g,
+        lit =>
+          lit[0] === '"'
+            ? lit.replace(
+                /#\{\s*([A-Za-z_]\w*)\s*\}/g,
+                (whole, id) => known(id) ?? whole,
+              )
+            : lit,
+      );
+      if (hash) {
+        out[k] = out[k].replace(
+          /(=>\s*)([A-Za-z_]\w*)(?=\s*(?:,|\}|$))/g,
+          (whole, arrow, id) => {
+            const lit = env.has(id) ? rubyLiteral(env.get(id)) : null;
+            return lit != null ? arrow + lit : whole;
+          },
+        );
+      }
+    }
+  };
+  // A local set in a branch of a condition it cannot evaluate keeps its value
+  // for the rest of that branch (webview sets `folly_compiler_flags` and uses
+  // it in `compiler_flags` under `defined?(...)`), the next branch sees the
+  // value from before, and after `end` it is unknown. In any other block it
+  // does not run, or under a modifier, it is unknown at once.
+  const setLocal = (
+    name /*: string */,
+    value /*: mixed */,
+    act /*: Activity */,
+  ) => {
+    if (act.state === 'yes') {
+      env.set(name, value);
+      return;
+    }
+    const frame = act.modifier
+      ? null
+      : [...frames].reverse().find(f => f.kind === 'if' && f.branch === 'maybe');
+    if (frame == null) {
+      env.set(name, unknownUnder(act));
+      return;
+    }
+    if (!frame.saved.has(name)) {
+      frame.saved.set(name, env.has(name) ? {value: env.get(name)} : null);
+    }
+    env.set(name, value);
+  };
+  // The next branch of `frame` sees the locals as they were before it.
+  const restoreSaved = (frame /*: any */) => {
+    for (const [name, saved] of frame.saved) {
+      if (saved == null) env.delete(name);
+      else env.set(name, saved.value);
+    }
+  };
+
+  for (const st of rubyStatements(lines)) {
+    const code = st.code.trim();
+    if (code === '') continue;
+    const act = activity();
+    const oneLine = /[\s;]end\s*;?$/.test(code);
+    const top = frames[frames.length - 1];
+    let m;
+    m = oneLine ? null : code.match(/^(if|unless)\s+([\s\S]+?)(?:\s+then)?$/);
+    if (m != null) {
+      // Under a branch that does not run, every branch is dead.
+      const branch =
+        act.state === 'no' || act.state === 'opaque'
+          ? act.state
+          : condOf(m[2], m[1] === 'unless');
+      frames.push({
+        kind: 'if',
+        branch,
+        prior: act.state === 'no' ? 'yes' : branch,
+        cond: m[2],
+        firstCond: m[2],
+        evaluated: branch !== 'maybe' && branch !== 'opaque',
+        ctrl: [st],
+        saved: new Map(),
+      });
+      continue;
+    }
+    if (top?.kind === 'if') {
+      if ((m = code.match(/^elsif\s+([\s\S]+?)(?:\s+then)?$/))) {
+        top.ctrl.push(st);
+        restoreSaved(top);
+        if (top.branch === 'opaque') continue;
+        const cond = top.prior === 'yes' ? 'no' : condOf(m[1], false);
+        if (cond === 'maybe') top.evaluated = false;
+        Object.assign(top, elsifBranch(top.prior, cond), {cond: m[1]});
+        continue;
+      }
+      if (code === 'else') {
+        top.ctrl.push(st);
+        restoreSaved(top);
+        if (top.branch !== 'opaque') {
+          top.branch = {yes: 'no', no: 'yes', maybe: 'maybe'}[top.prior];
+        }
+        continue;
+      }
+    }
+    if (/^end\b/.test(code) && top != null) {
+      frames.pop();
+      for (const name of top.saved?.keys() ?? []) {
+        env.set(name, unknownUnder({state: 'maybe', why: top.firstCond}));
+      }
+      // An evaluated condition leaves no control lines behind.
+      if (activity().state === 'no' || (top.kind === 'if' && top.evaluated)) {
+        for (const c of top.kind === 'if' ? top.ctrl : []) blank(c);
+        blank(st);
+      }
+      continue;
+    }
+    const opensBlock =
+      !oneLine &&
+      (/^(?:case|begin|while|until|for|def|class|module)\b/.test(code) ||
+        /\bdo(?:\s*\|[^|]*\|)?\s*$/.test(code) ||
+        /=\s*(?:if|unless|case|begin)\b/.test(code));
+    if (opensBlock) {
+      // The spec's and its subspecs' blocks run; any other is opaque.
+      const spec = code.match(/Pod::Spec\.new\s+do\s*\|\s*(\w+)\s*\|\s*$/);
+      const sub = code.match(
+        /^(\w+)\.subspec\s[\s\S]*\bdo\s*\|\s*(\w+)\s*\|\s*$/,
+      );
+      const recv =
+        spec?.[1] ?? (sub != null && recvs.has(sub[1]) ? sub[2] : null);
+      if (recv != null) recvs.add(recv);
+      const assigned = code.match(/^([A-Za-z_]\w*)\s*=/);
+      if (assigned != null) {
+        setLocal(assigned[1], null, {state: 'opaque', why: code});
+      }
+      frames.push({kind: 'block', opaque: recv == null, code});
+      if (act.state === 'no') blank(st);
+      continue;
+    }
+    if (act.state === 'no') {
+      blank(st);
+      continue;
+    }
+    // A trailing `if`/`unless` modifier.
+    let core = code;
+    let stAct = act;
+    const mod = modifierIndex(code);
+    if (mod != null) {
+      core = code.slice(0, mod.at).trim();
+      const cond = code.slice(mod.at + mod.kw.length).trim();
+      const c =
+        act.state === 'yes' ? condOf(cond, mod.kw === 'unless') : act.state;
+      if (c === 'no') {
+        blank(st);
+        continue;
+      }
+      if (c === 'maybe' && act.state === 'yes') {
+        stAct = {state: 'maybe', why: cond, modifier: true};
+      }
+    }
+    // `recv.field = expr` on the spec or a subspec. Under a condition it
+    // cannot evaluate, or in a block it does not run, it is read as if it ran,
+    // as the field regexes always did: a literal stays as written, an
+    // expression is evaluated or, in a source glob, refused.
+    const field = core.match(
+      /^([A-Za-z_]\w*)(?:\.([a-z]+))?\.([a-z_]+)\s*=(?![=~>])\s*([\s\S]+)$/,
+    );
+    if (
+      field != null &&
+      recvs.has(field[1]) &&
+      (field[2] == null || PLATFORM_SCOPES.has(field[2]))
+    ) {
+      const [, recv, scope, name, rhs] = field;
+      // Only the spec's own and its `ios` scope count. The identity fields
+      // keep fix 3's reading (literals only): evaluating `s.name =
+      // package['name']` would rename the scaffolded target.
+      if ((scope != null && scope !== 'ios') || isPlainLiteral(rhs)) continue;
+      if (IDENTITY_FIELDS.has(name)) {
+        interpolate(st, false);
+        continue;
+      }
+      const lhs = `${recv}${scope != null ? '.' + scope : ''}.${name}`;
+      const refuse = (why /*: string */) =>
+        unresolved.push({field: lhs, expr: rhs.trim(), why});
+      // A hash literal stays as written, its `#{local}` and `=> local` filled in.
+      if (/^\{/.test(rhs.trim())) {
+        interpolate(st, true);
+        if (XCCONFIG_FIELDS.has(name)) noteXcconfig(lhs, statementText(st));
+        continue;
+      }
+      const v = evalRubyExpr(rhs, env, true);
+      const lit = rubyLiteral(v);
+      const u = unresolvedIn(v);
+      if (STRICT_FIELDS.has(name) && (lit == null || u != null)) {
+        refuse(u != null ? `it uses ${u.why}` : 'its value is not a string or an array of strings');
+      } else if (WHOLE_FIELDS.has(name)) {
+        if (lit == null) {
+          refuse(u != null ? `it uses ${u.why}` : 'its value is not a string or an array of strings');
+        } else if (u != null && unresolvedInterpolations(lit).length > 0) {
+          refuse(`it uses ${u.why}`);
+        }
+      }
+      if (lit != null) {
+        blank(st);
+        const indent = (lines[st.start].match(/^\s*/) ?? [''])[0];
+        out[st.start] = `${indent}${lhs} = ${lit}`;
+        if (XCCONFIG_FIELDS.has(name)) noteXcconfig(lhs, lit);
+      } else {
+        interpolate(st, false);
+        if (XCCONFIG_FIELDS.has(name)) {
+          dropped.push(
+            `Left out ${lhs} = ${rhs.trim()}: the podspec reader cannot evaluate it${u != null ? ` (${u.why})` : ''}; CocoaPods passes its value.`,
+          );
+        }
+      }
+      continue;
+    }
+    // `name = expr`, `name += expr`, `name ||= expr`.
+    const assign = core.match(
+      /^([A-Za-z_]\w*)\s*(\+=|\|\|=|=)(?![=~>])\s*([\s\S]+)$/,
+    );
+    if (assign != null && !recvs.has(assign[1])) {
+      const [, name, op, rhs] = assign;
+      let v = evalRubyExpr(rhs, env);
+      if (op !== '=' && !isUnresolved(v)) {
+        const vars = new Map([
+          ['old', env.has(name) ? env.get(name) : null],
+          ['new', v],
+        ]);
+        v = evalRubyExpr(op === '+=' ? 'old + new' : 'old || new', vars);
+      }
+      if (isUnresolved(v)) {
+        v = new RubyUnresolved(
+          `is assigned \`${rhs.trim()}\`, which the reader cannot evaluate ` +
+            `(${(v /*: any */).why})`,
+          (v /*: any */).partial,
+        );
+      }
+      setLocal(name, v, stAct);
+      interpolate(st, false);
+      continue;
+    }
+    // `name.push(...)`, `name << x`; any other change to a local makes it
+    // unknown.
+    const change = core.match(/^([A-Za-z_]\w*)\s*(?:\.|\[|<<)/);
+    if (change != null && env.has(change[1]) && !recvs.has(change[1])) {
+      const name = change[1];
+      const old = env.get(name);
+      const add =
+        core.match(/^\w+\s*\.(push|append|concat)\s*\(([\s\S]*)\)$/) ??
+        core.match(/^\w+\s*\.(push|append|concat)\s+([\s\S]+)$/) ??
+        core.match(/^\w+\s*(<<)\s*([\s\S]+)$/);
+      let v /*: mixed */ = new RubyUnresolved(
+        `is changed by \`${core}\`, which the reader cannot evaluate`,
+      );
+      if (add != null && Array.isArray(old)) {
+        // `<<` adds one value; push/append/concat take a list.
+        const args = evalRubyExpr(
+          add[1] === '<<' ? `[(${add[2]})]` : `[${add[2]}]`,
+          env,
+        );
+        if (Array.isArray(args)) {
+          if (add[1] !== 'concat') v = [...old, ...args];
+          else if (args.every(Array.isArray)) v = [...old, ...args.flat()];
+        }
+      }
+      setLocal(name, v, stAct);
+      continue;
+    }
+    interpolate(st, false);
+  }
+  return {text: out.join('\n'), unresolved, dropped: Array.from(new Set(dropped))};
 }
 
 // The library's own version. Podspecs load the package.json next to them
@@ -307,8 +1372,10 @@ function resolvePackageVersion(
 // Comment-only lines are dropped so a commented-out `# s.header_dir` cannot win
 // over the live one. A trailing `#` and a `#` inside a string survive: only the
 // first non-whitespace character counts.
-function readPodspecSource(podspecPath /*: string */) /*: string */ {
-  return resolveRubyConstants(
+function readPodspecEvaluated(
+  podspecPath /*: string */,
+) /*: {text: string, unresolved: Array<Unresolved>, dropped: Array<string>} */ {
+  return evaluateRubyLocals(
     resolvePackageVersion(
       fs
         .readFileSync(podspecPath, 'utf8')
@@ -317,7 +1384,11 @@ function readPodspecSource(podspecPath /*: string */) /*: string */ {
         .join('\n'),
       path.dirname(podspecPath),
     ),
+    podspecPath,
   );
+}
+function readPodspecSource(podspecPath /*: string */) /*: string */ {
+  return readPodspecEvaluated(podspecPath).text;
 }
 
 // The main spec's block variable: `Pod::Spec.new do |podspec|` -> `podspec`.
@@ -447,11 +1518,15 @@ function regexPodspec(
   podspecPath /*: string */,
   opts /*:: ?: {dropSubspecs?: ReadonlyArray<string>} */,
 ) /*: RawSpec */ {
-  const content = readPodspecSource(podspecPath);
+  const {
+    text: content,
+    unresolved,
+    dropped: leftOut,
+  } = readPodspecEvaluated(podspecPath);
   const dropped = new Set(opts?.dropSubspecs ?? []);
   const mainName = mainReceiverName(content);
   const MAIN_RECV = mainRecvPattern(mainName);
-  const warnings /*: Array<string> */ = [];
+  const warnings /*: Array<string> */ = [...leftOut];
   // The main spec's own statements, and each subspec block apart. The readers
   // below default to the main text and receiver; a subspec is read with the
   // same readers anchored on its block variable, then merged like
@@ -811,6 +1886,7 @@ function regexPodspec(
     ),
     __regex_partial__: true,
     __warnings__: warnings,
+    __unresolved__: unresolved,
   };
 }
 
@@ -1384,7 +2460,39 @@ function flattenSubspecs(
     partial,
     // Default: overridden in readPodspec, which can see the podspec source.
     usesInstallModulesDependencies: false,
+    // $FlowFixMe[incompatible-type] runtime-validated dynamic shape
+    unresolvedSources: Array.isArray(rawSpec.__unresolved__)
+      ? rawSpec.__unresolved__
+      : [],
   };
+}
+
+/**
+ * Why the podspec's source globs cannot be scaffolded, or null: each
+ * `source_files`/`exclude_files` value the regex path could not evaluate. A
+ * glob read in part gives a target that builds without some of the library's
+ * files (react-native-screens 4.24.0 lost all of ios/, and the app crashed at
+ * start), so the scaffolder refuses the library instead. Other callers (name
+ * resolution, header search paths) keep reading the model as before.
+ */
+function unresolvedSourcesReason(
+  podspecPath /*: string */,
+  model /*: PodspecModel */,
+) /*: ?string */ {
+  const list /*: Array<Unresolved> */ = model.unresolvedSources ?? [];
+  if (list.length === 0) return null;
+  return (
+    `${podspecPath}: ` +
+    list
+      .map(u => `\`${u.field} = ${u.expr}\` cannot be evaluated: ${u.why}`)
+      .join('; ') +
+    '. The podspec reader evaluates locals, string interpolation, arrays, ' +
+    "ENV['...'], package.json reads, comparisons, ternaries and if/unless " +
+    'blocks; building from the part it could read would leave some of the ' +
+    "library's files or settings out of its target. Install CocoaPods (`gem " +
+    'install cocoapods`) so `pod ipc spec` reads the podspec, or give the ' +
+    'library a Package.swift of its own.'
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1552,4 +2660,5 @@ module.exports = {
   runPodIpcSpec,
   regexPodspec,
   flattenSubspecs,
+  unresolvedSourcesReason,
 };

@@ -7,6 +7,8 @@ import {
   binaryInPatch,
   configCommandFor,
   parseMissingPackageSwift,
+  patchedPaths,
+  persistInclude,
   persistScaffoldArgv,
   rnSpmArgs,
   rnSpmEnv,
@@ -426,7 +428,8 @@ describe("runRnSpm", () => {
       for (const c of rnRuns) expect(c.env?.["RN_SPM_POD_TABLE"]).toBe(POD_TABLE);
       // The table is written once, before the first run: the config's entry over rn-xtool's own and the scaffolder's.
       expect(h.tables).toEqual([mergedPodTable(pods)]);
-      expect(h.tables[0]!.pods["AppAuth"]).toEqual({ ...pods.AppAuth, forwardHeaders: { "AppAuth/AppAuth.h": ["AppAuthCore", "AppAuth"] } });
+      const shipped = JSON.parse(readFileSync(path.join(packageRoot(), "data", "pods.json"), "utf8")).pods.AppAuth;
+      expect(h.tables[0]!.pods["AppAuth"]).toEqual({ ...pods.AppAuth, forwardHeaders: shipped.forwardHeaders });
       expect(h.tables[0]!.source["AppAuth"]).toBe("config");
     }
     // Without a config entry, still the shipped table.
@@ -937,5 +940,174 @@ describe("the persist guard", () => {
     expect(r.after).toBe(TEXT_PATCH);
     expect(r.logs).toContain(`✔ scaffold — persisted ${PATCH}`);
     expect(r.logs.some((l) => l.includes("Did not persist"))).toBe(false);
+  });
+});
+
+describe("persistInclude", () => {
+  it("anchors and escapes each path, the existing patch's included", () => {
+    const include = persistInclude(["Package.swift", "include/Foo+Bar/Foo+Bar.h"], ["ios/Foo.m"]);
+    expect(include).toBe("^Package\\.swift$|^include/Foo\\+Bar/Foo\\+Bar\\.h$|^ios/Foo\\.m$");
+    const re = new RegExp(include, "i");
+    for (const f of ["Package.swift", "include/Foo+Bar/Foo+Bar.h", "ios/Foo.m"]) expect(re.test(f), f).toBe(true);
+    for (const f of ["android/build/x.dex", "Package.swift.orig", "ios/Package.swift", "include/FooBar/Foo+Bar.h", "ios/FooXm"]) {
+      expect(re.test(f), f).toBe(false);
+    }
+  });
+
+  it("lists a path once, in order", () => {
+    expect(persistInclude(["Package.swift", "a.h"], ["a.h", "Package.swift", "b.m"])).toBe("^Package\\.swift$|^a\\.h$|^b\\.m$");
+  });
+
+  it("collapses the directories the scaffolder owns past 200 paths", () => {
+    const forwarders = Array.from({ length: 250 }, (_, i) => `rn-spm-pod-headers/Pod/H${i}.h`);
+    const bare = Array.from({ length: 10 }, (_, i) => `rn-spm-react-headers/R${i}.h`);
+    const include = persistInclude(["Package.swift", ...forwarders, ...bare, "include/Foo/Foo.h"], ["ios/Foo.m"]);
+    expect(include).toBe("^Package\\.swift$|^rn-spm-pod-headers/|^rn-spm-react-headers/|^include/Foo/Foo\\.h$|^ios/Foo\\.m$");
+    const re = new RegExp(include, "i");
+    expect(re.test("rn-spm-pod-headers/Pod/H7.h")).toBe(true);
+    expect(re.test("android/build/rn-spm-pod-headers/x")).toBe(false);
+  });
+});
+
+describe("patchedPaths", () => {
+  const header = (p: string, q = p) => `diff --git a/${p} b/${q}\nindex 1..2 100644\n--- a/${p}\n+++ b/${q}\n@@ -1 +1 @@\n-a\n+b\n`;
+
+  it("lists the files a library's patch touches, relative to the library", () => {
+    const text = header("node_modules/lib-a/Package.swift") + header("node_modules/lib-a/ios/Foo.m");
+    expect(patchedPaths(text, "lib-a")).toEqual(["Package.swift", "ios/Foo.m"]);
+  });
+
+  it("reads a scoped library, a path with spaces and both sides of a rename", () => {
+    const text =
+      header("node_modules/@scope/lib/ios/My File.m") + header("node_modules/@scope/lib/ios/Old.m", "node_modules/@scope/lib/ios/New.m");
+    expect(patchedPaths(text, "@scope/lib")).toEqual(["ios/My File.m", "ios/Old.m", "ios/New.m"]);
+  });
+
+  it("cannot read a patch without diff headers, or with a path outside the library", () => {
+    expect(patchedPaths("the previous patch\n", "lib-a")).toBeUndefined();
+    expect(patchedPaths("", "lib-a")).toBeUndefined();
+    expect(patchedPaths(header("node_modules/lib-b/x.m"), "lib-a")).toBeUndefined();
+    expect(patchedPaths('diff --git "a/node_modules/lib-a/\\303\\251.m" "b/node_modules/lib-a/\\303\\251.m"\n', "lib-a")).toBeUndefined();
+  });
+});
+
+describe("what a persisted patch holds", () => {
+  const tmp: string[] = [];
+  afterAll(() => {
+    for (const d of tmp) rmSync(d, { recursive: true, force: true });
+  });
+  const PATCH = "patches/lib-a+1.0.0.patch";
+  const BANNER = "// AUTO-SCAFFOLDED by react-native spm scaffold — safe to edit.\n";
+  const section = (file: string, binary = false) =>
+    binary
+      ? `diff --git a/node_modules/lib-a/${file} b/node_modules/lib-a/${file}\nnew file mode 100644\nGIT binary patch\nliteral 8\nPcmc~u&B@6x$;e;;0\n`
+      : `diff --git a/node_modules/lib-a/${file} b/node_modules/lib-a/${file}\nnew file mode 100644\n--- /dev/null\n+++ b/node_modules/lib-a/${file}\n@@ -0,0 +1 @@\n+// ${file}\n`;
+
+  /**
+   * A project where lib-a differs from its clean copy in `changed` (a `.dex` as a binary file), the scaffold result lists
+   * `files` (absent: no list), and `previous` is lib-a's patch before. The fake patch-package keeps the paths its
+   * `--include` and `--exclude` select, as patch-package does (case-insensitive), and writes them as the patch.
+   */
+  async function persisting(changed: string[], files: string[] | undefined, previous?: string) {
+    const root = mkdtempSync(path.join(tmpdir(), "rn-spm-include-"));
+    tmp.push(root);
+    const full = projectPaths(root);
+    if (previous !== undefined) {
+      mkdirSync(path.join(root, "patches"), { recursive: true });
+      writeFileSync(path.join(root, PATCH), previous);
+    }
+    const logs: string[] = [];
+    const persists: string[][] = [];
+    let n = 0;
+    const runner: RnRunner = async (cmd, args) => {
+      n++;
+      if (n === 1) return { exitCode: 1, output: missing("lib-a") };
+      if (args.includes("--scaffold")) {
+        const lib = path.join(root, "node_modules", "lib-a");
+        mkdirSync(lib, { recursive: true });
+        writeFileSync(path.join(lib, "Package.swift"), BANNER);
+        const result = { depName: "lib-a", status: "written", root: lib, ...(files !== undefined ? { files } : {}) };
+        mkdirSync(path.dirname(full.scaffoldResults), { recursive: true });
+        writeFileSync(full.scaffoldResults, JSON.stringify({ results: [result] }));
+        return { exitCode: 0, output: "" };
+      }
+      if (cmd === process.execPath && args.includes("--patch-dir")) {
+        persists.push(args);
+        const flag = (f: string) => (args.includes(f) ? new RegExp(args[args.indexOf(f) + 1]!, "i") : undefined);
+        const include = flag("--include") ?? /.*/;
+        const exclude = flag("--exclude") ?? /^package\.json$/;
+        const kept = changed.filter((f) => include.test(f) && !exclude.test(f));
+        mkdirSync(path.join(root, "patches"), { recursive: true });
+        writeFileSync(path.join(root, PATCH), kept.map((f) => section(f, f.endsWith(".dex"))).join(""), "latin1");
+        return { exitCode: 0, output: `✔ Created file ${PATCH}\n` };
+      }
+      return { exitCode: 0, output: "" };
+    };
+    await runRnSpm(full, { kind: "bare", rnScripts: "vendored", expoPlugin: "installed" }, {
+      runner,
+      log: (l) => logs.push(l),
+      rnDir,
+      writePodTable: () => POD_TABLE,
+    });
+    const file = path.join(root, PATCH);
+    return { logs, persists, patch: existsSync(file) ? readFileSync(file, "utf8") : undefined };
+  }
+  const DEX = "android/build/.transforms/0a1b/transformed/bundleLibRuntimeToDirDebug/bundleLibRuntimeToDirDebug_dex/com/BV/LinearGradient/BuildConfig.dex";
+  const GRADLE = ["android/.cxx/Debug/x/build.ninja", DEX];
+
+  it("persists a library Gradle built in place: the patch holds the scaffold's files, no build output", async () => {
+    const r = await persisting(["Package.swift", "rn-spm-pod-headers/A/A.h", ...GRADLE], ["Package.swift", "rn-spm-pod-headers/A/A.h"]);
+    expect(r.logs).toContain(`✔ scaffold — persisted ${PATCH}`);
+    expect(r.logs.some((l) => l.includes("Did not persist"))).toBe(false);
+    expect(r.patch).toContain("node_modules/lib-a/Package.swift");
+    expect(r.patch).toContain("node_modules/lib-a/rn-spm-pod-headers/A/A.h");
+    expect(r.patch).not.toContain("android");
+    const args = r.persists[0]!;
+    expect(args[args.indexOf("--include") + 1]).toBe("^Package\\.swift$|^rn-spm-pod-headers/A/A\\.h$");
+    expect(args[args.indexOf("--exclude") + 1]).toBe("(^|/)\\.build/|^package\\.json$");
+    expect(r.logs.some((l) => l.startsWith("ℹ"))).toBe(false);
+  });
+
+  it("keeps the files the library's existing patch holds, a hand fix included", async () => {
+    const previous = section("Package.swift") + section("ios/Foo.m");
+    const r = await persisting(["Package.swift", "ios/Foo.m", "ios/Bar.m", ...GRADLE], ["Package.swift"], previous);
+    expect(r.logs).toContain(`✔ scaffold — persisted ${PATCH}`);
+    expect(r.patch).toContain("node_modules/lib-a/ios/Foo.m");
+    expect(r.patch).not.toContain("ios/Bar.m");
+    expect(r.patch).not.toContain("android");
+    const args = r.persists[0]!;
+    expect(args[args.indexOf("--include") + 1]).toBe("^Package\\.swift$|^ios/Foo\\.m$");
+  });
+
+  it("diffs the whole package when it cannot read the existing patch, and says so", async () => {
+    const r = await persisting(["Package.swift", "ios/Foo.m"], ["Package.swift"], "the previous patch\n");
+    expect(r.persists[0]).not.toContain("--include");
+    expect(r.patch).toContain("node_modules/lib-a/ios/Foo.m");
+    expect(r.logs).toContain(
+      `ℹ Could not tell which files ${PATCH} changes: persisting lib-a's whole package, so its patch holds every file that differs from a clean copy`,
+    );
+    expect(r.logs.filter((l) => l.startsWith("ℹ"))).toHaveLength(1);
+  });
+
+  it("diffs the whole package when the scaffold result lists no files, and says so", async () => {
+    const r = await persisting(["Package.swift"], undefined);
+    expect(r.persists[0]).not.toContain("--include");
+    expect(r.logs).toContain(
+      "ℹ The scaffold did not list the files it wrote in lib-a: persisting its whole package, so its patch holds every file that differs from a clean copy",
+    );
+  });
+
+  it("diffs the whole package when the list would not fit in one argument, and says so", async () => {
+    const files = Array.from({ length: 2000 }, (_, i) => `include/Foo/Header${i}WithALongEnoughNameToFillTheArgument.h`);
+    const r = await persisting(["Package.swift"], ["Package.swift", ...files]);
+    expect(r.persists[0]).not.toContain("--include");
+    expect(r.logs).toContain(
+      "ℹ lib-a's scaffold wrote too many files to list for patch-package: persisting its whole package, so its patch holds every file that differs from a clean copy",
+    );
+  });
+
+  it("still refuses a binary file the existing patch's paths bring in", async () => {
+    const r = await persisting(["Package.swift", "ios/libX.dex"], ["Package.swift"], section("ios/libX.dex"));
+    expect(r.logs).toContain("⚠ Did not persist lib-a's scaffold: the patch would contain a binary file (node_modules/lib-a/ios/libX.dex)");
   });
 });

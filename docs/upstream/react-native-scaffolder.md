@@ -190,8 +190,9 @@ Fix: a pre-pass `resolveRubyConstants(content)` over the comment-stripped source
 single-line `ident = 'str' | "str" | ["a", "b"]` assignments (first wins), replaces `#{ident}` for
 known string constants, and rewrites `s.<field> = ident` (and `ss.`/`s.ios.` forms) to the literal value. Unknown
 interpolations and identifiers are left untouched; `ENV[...]` and `if` conditions are not
-evaluated (except fix 19's). The existing field regexes are unchanged. See the `resolveRubyConstants` hunk in
-`patches/react-native+0.88.1.patch`.
+evaluated (except fix 19's). The existing field regexes are unchanged. Fix 28 replaced this pass with an evaluator
+that runs the podspec's assignments and conditions in order (`evaluateRubyLocals`); the cases above are a subset of
+it.
 
 ## 4. `scripts/spm/read-podspec.js`: the regex parser is blind to subspec blocks
 
@@ -482,12 +483,20 @@ the pins, sorted by pod, on a line after the importer-paths line (or the revisio
 `// rn-xtool-pods: AppAuth=3.0.0, SwiftUIIntrospect=1.5.0`. A pod whose SwiftPM package leaves its umbrella header
 outside every target (AppAuth-iOS 3.0.0's `Sources/AppAuth.h`: `@import AppAuth;` works, `<AppAuth/AppAuth.h>` and
 `"AppAuth.h"` do not, while CocoaPods copies the header into `Headers/Public/AppAuth/`) names the header in
-`forwardHeaders` (`{ "AppAuth/AppAuth.h": ["AppAuthCore", "AppAuth"] }`). The scaffold then writes
-`rn-spm-pod-headers/AppAuth/AppAuth.h` into the library, holding the banner and `@import AppAuthCore;` and
-`@import AppAuth;`, and adds `.headerSearchPath("rn-spm-pod-headers")` to its C and C++ settings. A header key must
-be a relative path ending in `.h` without `.` or `..` segments, and each module a module name; otherwise that library
-gets the error `react-native spm scaffold: pods.<pod>.forwardHeaders.<header> must be a list of module names, under a
-relative path ending in .h`. A scaffold without forwarders removes a `rn-spm-pod-headers/` whose files all carry the
+`forwardHeaders`, with the headers the umbrella includes, as paths under the public header directories of the
+package's targets (`{ "AppAuth/AppAuth.h": ["OIDAuthState.h", …, "iOS/OIDAuthState+IOS.h", …] }`). The scaffold then
+writes `rn-spm-pod-headers/AppAuth/AppAuth.h` into the library, holding the banner and one `#import <header>` per
+entry, and adds `.headerSearchPath("rn-spm-pod-headers")` to its C and C++ settings. The forwarder is textual:
+Objective-C++ compiles with `-fmodules -fno-cxx-modules`, as Xcode does by default, so an `@import` in it stopped
+every `.mm` file that included it with `use of '@import' when modules are disabled`, while in Objective-C the
+`#import` of a module's header still imports the module. A header key must be a relative path ending in `.h` without
+`.` or `..` segments, and so must each listed header, in letters, digits and `_+.-`; otherwise that library gets the
+error `react-native spm scaffold: pods.<pod>.forwardHeaders.<header> must be a list of the pod's public headers
+(relative paths ending in .h), under a relative path ending in .h`. A module name in the list (the format before the
+forwarders were textual) gets `react-native spm scaffold: pods.<pod>.forwardHeaders.<header> lists the module <name>;
+list the pod's public headers instead (relative paths ending in .h), which the forwarder includes textually:
+Objective-C++ compiles without modules, so it cannot @import`. The textual forwarder ships with
+`RN_XTOOL_SCAFFOLD_REVISION` 5. A scaffold without forwarders removes a `rn-spm-pod-headers/` whose files all carry the
 banner. An unmapped pod gets one warning per pod (subspecs collapse to the root pod): `Dependency "<pod>" is a
 CocoaPods pod with no known SwiftPM equivalent; the scaffolded package may fail to build — add it under "pods" in
 rn-xtool.config.json: { "pods": { "<pod>": { "url": "<git URL>", "exact": "<version>", "products": ["<product>"] } }
@@ -617,8 +626,8 @@ style), for `RCT_NEW_ARCH_ENABLED` and `RCT_HERMES_V1_ENABLED`. The value is `1`
 says: React Native 0.87 and 0.88 set both to `1` outright, and the prebuilt artifacts are V1 Hermes, so a `0` left in
 the shell could only break the build, and a persisted scaffold with it. The `pod ipc` path, taken when the CocoaPods
 gem is on `PATH`, runs `pod ipc spec` with the same two values in its environment; upstream it set only
-`RCT_NEW_ARCH_ENABLED`, and only when the environment did not. Any other `ENV[...]` condition, and every `if`, is
-still not evaluated. The scaffolded worklets target then gets
+`RCT_NEW_ARCH_ENABLED`, and only when the environment did not. Any other `ENV[...]` condition, and every `if`, was
+not evaluated until fix 28, which reads every other variable as unset. The scaffolded worklets target then gets
 `.define("HERMES_V1_ENABLED")` in its C and C++ settings, and 0.8.3 builds on React Native 0.85.0. worklets 0.10.1
 (the Expo SDK 57 pin) gets the same define in a new scaffold; a scaffold persisted earlier keeps its manifest
 until `RN_XTOOL_SCAFFOLD_REVISION` 4 (fixes 20 to 24) marks it as older.
@@ -782,6 +791,88 @@ lock holds the versions), so a version change does not make a persisted scaffold
 product name is the library's error, naming the key. Only libraries that depend on such a pod get new content, and
 every earlier scaffold of them was refused, so no revision bump.
 
+## 28. `scripts/spm/read-podspec.js`: source globs built from Ruby locals and conditions are read in part
+
+react-native-screens 4.24.0 builds its globs from locals assigned under conditions:
+
+```ruby
+new_arch_enabled = ENV['RCT_NEW_ARCH_ENABLED'] == '1'
+source_files_exts = new_arch_enabled ? '{h,m,mm,cpp,swift}' : '{h,m,mm,swift}'
+source_files = ["ios/**/*.#{source_files_exts}"]
+if !new_arch_enabled
+  source_files.push("cpp/RNScreensTurboModule.cpp", "cpp/RNScreensTurboModule.h")
+end
+...
+  s.source_files = source_files
+  if !gamma_project_enabled
+    s.exclude_files = "ios/gamma/**/*.#{source_files_exts}"
+  else
+    s.exclude_files = "ios/stubs/**/*.#{source_files_exts}"
+  end
+```
+
+Fix 3's pass did not evaluate a ternary on a local, so `#{source_files_exts}` stayed in the glob, which matched
+nothing. The scaffolded `RNScreens` target held only the `common` subspec's `common/cpp/**` and `cpp/**` files (49
+entries) and none of `ios/`: it built and linked without a single Objective-C class, and the app crashed at start with
+`NSInvalidArgumentException` in `+[RCTThirdPartyComponentsProvider thirdPartyFabricComponents]` (a nil class for each
+of the 20 components codegen expects). Nothing warned: a glob that matches nothing is not an error. 4.26 and 4.30
+write `source_files_exts` as a literal, which fix 3 read.
+
+Fix: `evaluateRubyLocals` runs the comment-stripped podspec's statements in order over a side-effect-free subset of
+Ruby and hands the field regexes a flat text with the same line count. It evaluates locals (`=`, `+=`, `||=`, the last
+assignment that runs wins), single-quoted strings verbatim and double-quoted ones with `#{expr}` interpolation, arrays
+and `%w[...]`, numbers, `true`/`false`/`nil`, `ENV['X']` and `ENV.fetch('X', default)` (fix 19's two variables are
+`1`, every other one is unset; the environment is never read), `==`, `!=`, `!`/`not`, `&&`/`and`, `||`/`or`, `+` on
+strings and arrays, ternaries, `array.join(sep)`, `.to_s` and `.freeze`, `if`/`elsif`/`else`/`unless`/`end` blocks
+and `stmt if cond` / `stmt unless cond` modifiers (at the top level and inside the spec and subspec blocks), and
+`push`/`append`/`concat`/`<<` on a local array. A branch that does not run is blanked, and the control lines of a
+condition it evaluated are dropped, so a subspec under `if new_arch_enabled` is read as a plain subspec and an
+`exclude_files` in a dead `else` no longer applies. A `recv.<field> = expr` on the spec or a subspec (`s.`, `s.ios.`,
+`ss.`) whose value is not already a literal is rewritten to the literal it evaluates to; inside a hash
+(`pod_target_xcconfig`, `resource_bundles`) `=> local` is replaced by the local's value. Anything else (method calls,
+hashes, symbols, `$config[...]`, blocks other than the spec's) is not evaluated: the text stays as written, a local
+assigned from it or under a condition on it is unknown from there on, and both branches of such a condition stay
+visible, as before (react-native-vision-camera's `if enableFrameProcessors` subspec, fix 20).
+
+The evaluator also models what fix 3 and fix 15 read: `JSON.parse(File.read(File.join(__dir__, "package.json")))`
+(also with `File.dirname(__FILE__)`) is the library's own package.json as a hash, indexed with `pkg['key']`, and
+`File.read` reads only inside the podspec's directory. Hashes (`{ 'K' => v }`, `{ k: v }`) and symbols are values, so a
+local hash such as screens' `rnscreens_config` reaches `pod_target_xcconfig`. A double-quoted string with an
+interpolation it cannot compute keeps that `#{...}` as written (fix 3's behaviour), so
+`version_flags = "-DWORKLETS_VERSION=#{package['version']} -DREACT_NATIVE_MINOR_VERSION=#{$worklets_config[...]}"`
+still gives worklets 0.8.3 `WORKLETS_VERSION=0.8.3`, and fix 8 the installed React Native's minor. A local set in a
+branch of a condition it cannot evaluate keeps its value for the rest of that branch (react-native-webview sets
+`folly_compiler_flags` and uses it in `compiler_flags` under `defined?(install_modules_dependencies())`); after `end`
+it is unknown. `name`, `module_name` and `version` are read as literals only, as before: evaluating `s.name =
+package['name']` would rename react-native-app-auth's and react-native-webview's targets.
+
+A value that uses something unknown no longer degrades silently. In `source_files`, `exclude_files`,
+`compiler_flags`, `header_dir`, `header_mappings_dir`, `frameworks` and `libraries` the model carries it in
+`unresolvedSources`, and `scaffoldPackageSwiftForDep` returns `status: 'error'` with a reason naming the podspec,
+the field and the expression, for example ``<podspec>: `s.source_files = sources_for("ios")` cannot be evaluated: it
+uses the method call `sources_for(...)`.`` Name resolution and header search paths keep
+reading the model as before. In the xcconfig values the scaffolder reads (`OTHER_CFLAGS`,
+`GCC_PREPROCESSOR_DEFINITIONS`, `HEADER_SEARCH_PATHS`, `SWIFT_ACTIVE_COMPILATION_CONDITIONS` of `pod_target_xcconfig`,
+`user_target_xcconfig` and `xcconfig`) each `#{...}` it cannot evaluate is left out with a warning that names it,
+``Left out of s.pod_target_xcconfig OTHER_CFLAGS: `#{feature_flags}`, which the podspec reader cannot evaluate;
+CocoaPods passes its value.``, except `REACT_NATIVE_{MAJOR,MINOR,PATCH}_VERSION=#{...}` (fix 8) and a token with an
+Xcode `$(...)`, which the scaffolder drops anyway. They are not refused: podspecs put optional,
+configuration-driven flags there that only CocoaPods computes from the app and its Podfile, and the libraries checked
+(react-native-worklets 0.8.3 and 0.10.1, react-native-reanimated 4.3.4 and 4.5.1, react-native-vision-camera 4.7.3,
+react-native-gesture-handler 3.3.0) built and ran with those values left out.
+
+Effect on the libraries checked: screens 4.24.0 scaffolds 195 sources (147 under `ios/`), gamma excluded, as one
+clang-only target (every Swift file is under `ios/gamma`), with `ios/bridging/Swift-Bridging.h` left out of its module
+map (fix 18, it imports the module's own `-Swift.h`). react-native-svg 15.16.0 no longer excludes
+`apple/Utils/RNSVGFabricConversions.h` (excluded only in its old-architecture `else` branch), so the header is in its
+sources and its module map is no longer written. The other libraries of the reference app, of the bare 0.86 and 0.87
+apps and of the Expo SDK 57 and 58 apps read the same sources as before; their dependencies and `exclude_files` lose
+what only a dead `else` branch declared (`React-Core`, `React-jsc`, datetimepicker's `ios/fabric`). Libraries that
+set `compiler_flags` from `folly_compiler_flags` (react-native-webview, @react-native-async-storage/async-storage 1.x,
+react-native-keychain, react-native-video, @aws-amplify/react-native) now get its `-Wno-comma -Wno-shorten-64-to-32`;
+its `FOLLY_*` defines stay dropped, as for every library. The scaffold revision moves to 6, then to 7 for the
+package.json defines revision 6 lost.
+
 ## Known limitation (deferred): pure-Swift packages importing a mixed Expo module
 
 A Swift module built with a bridging header (every mixed target) makes each Swift importer re-read that
@@ -796,9 +887,9 @@ every generated or scaffolded Swift target that depends on a mixed module the sa
 
 `tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks the
 fixes against fixtures (skipped when the reference app is not present; set `RN_XTOOL_REF_APP` to point at it). It also
-asserts that each hunk is present in the installed RN files. Fixes 14 to 27 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
+asserts that each hunk is present in the installed RN files. Fixes 14 to 28 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
 against podspec fixtures from the SDK 57 pins in `tests/fixtures/podspecs/` (worklets 0.10.1, reanimated 4.5.1,
-screens 4.26.2, gesture-handler 2.32.0), from screens 4.30.1 (the clang-only importer paths and module map) and from
-worklets 0.8.3 (the `RCT_HERMES_V1_ENABLED` ternary). A golden test re-scaffolds the reference app's libraries and compares them
+screens 4.26.2, gesture-handler 2.32.0), from screens 4.30.1 (the clang-only importer paths and module map), from
+worklets 0.8.3 (the `RCT_HERMES_V1_ENABLED` ternary) and from screens 4.24.0 (fix 28's locals and conditions). A golden test re-scaffolds the reference app's libraries and compares them
 with `tests/fixtures/scaffold-golden/`. Upstream, equivalent tests belong in
 RN's own `__tests__` next to `read-podspec` and `scaffold-package-swift`.

@@ -5,6 +5,20 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 
 ## [Unreleased]
 
+### Upgrading from 0.1.0-alpha.6
+- The scaffolder is now revision 7, so every scaffold patch rn-xtool persisted in your `patches/` before this release
+  gets a warning at each `build`: "⚠ patches/<name> was written by an older rn-xtool scaffolder (revision 4, now 7);
+  delete it so rn-xtool regenerates it (also remove node_modules/<package> and reinstall: that copy still has the old
+  Package.swift)". Do what it says. A scaffolded library without a persisted patch is scaffolded again by itself.
+- A `pods.<pod>.forwardHeaders` entry in `rn-xtool.config.json` that lists modules is refused: list the pod's public
+  headers instead (see Changed).
+
+### Changed
+- `pods.<pod>.forwardHeaders` maps a forwarded header to the pod's public headers to include, as paths under the
+  public header directories of its SwiftPM targets (`["OIDAuthState.h", "iOS/OIDAuthState+IOS.h", …]`), instead of
+  module names; a module name is refused with a message saying to list the headers. rn-xtool's AppAuth entry lists
+  the headers of AppAuth-iOS 3.0.0's umbrella header.
+
 ### Fixed
 - A bare app target with an Objective-C `main.m` (the React Native templates before 0.77) builds, instead of stopping
   in SwiftPM with "library product 'App' should not contain executable targets (it has 'App')": the file is compiled
@@ -15,6 +29,28 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   compile: every header the project references under `ios/`, outside `Pods/`, is copied with its forward in
   `Sources/App/include`. A referenced header that does not exist is skipped with an `ℹ` line instead of stopping the
   build.
+- A bare app target's Objective-C sources and bridging header find React Native's headers by bare name
+  (`#import <RCTAppDelegate.h>`) and the pod table's `<Pod/Header.h>` forwards (`#import <AppAuth/AppAuth.h>`), as with
+  CocoaPods, instead of stopping with "'RCTAppDelegate.h' file not found"; the app's own headers still come first.
+- A bare app target's Objective-C++ and C++ files (an `AppDelegate.mm` importing `<RCTAppDelegate.h>`) compile with
+  the project's `CLANG_CXX_LANGUAGE_STANDARD` (C++20 when unset), instead of clang's default, which stopped on React
+  Native's C++20 headers with "unknown type name 'Hashable'" in `react/utils/hash_combine.h`.
+- An Objective-C++ file that imports a pod table forward (a bare app's `AppDelegate.mm` with
+  `#import <AppAuth/AppAuth.h>`) compiles, instead of stopping with "use of '@import' when modules are disabled": the
+  scaffold's forwarder `#import`s the pod's public headers instead of `@import`ing its modules.
+- A library that was also built for Android gets its scaffold persisted, instead of "⚠ Did not persist <library>'s
+  scaffold: the patch would contain a binary file (node_modules/<library>/android/build/…/BuildConfig.dex)" and a new
+  scaffold at every build: the patch holds the files the scaffold wrote and those its existing patch held.
+- react-native-screens 4.24.0 scaffolds with its `ios/` sources, instead of a target with only its C++ and an app that
+  crashed at start: the podspec reader evaluates Ruby locals, interpolation, `ENV` lookups, ternaries, `if`/`unless`
+  blocks, `push` on a local array, hashes and the library's `package.json`, and leaves out the branches a condition
+  rules out; a source glob, `compiler_flags`, `header_dir` or `frameworks` value it cannot evaluate stops that
+  library's scaffold with the podspec, the field and the expression, and an xcconfig flag it cannot evaluate is left
+  out with a warning that names it. react-native-worklets 0.8.3 keeps its `WORKLETS_VERSION` and
+  `REACT_NATIVE_MINOR_VERSION` defines.
+- `build` and `install` stop, and remove the packed app, when a class React Native's codegen providers name is not in
+  the app, naming the class, its component or module and its library, instead of installing an app that would crash
+  at start in `+[RCTThirdPartyComponentsProvider thirdPartyFabricComponents]`.
 
 ## [0.1.0-alpha.6] - 2026-11-05
 

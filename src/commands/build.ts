@@ -55,6 +55,7 @@ import { emptyTargetsOf } from "../pods/emptyTargets.js";
 import { PODS_LOCK } from "../pods/lock.js";
 import type { PodRoot } from "../pods/resolve.js";
 import { postPackChecks, postPackPods, type PostPackPods } from "../pods/postPack.js";
+import { checkCodegenClasses } from "../pipeline/codegenClasses.js";
 import { stagePodBinaries, type StagedPods } from "../pods/stage.js";
 import { runPodsStep, type PodsStepDeps, type PodsStepResult } from "../pods/step.js";
 
@@ -220,6 +221,11 @@ export interface BuildDeps {
   stagePods: (paths: ProjectPaths, result: PodsStepResult) => Promise<StagedPods>;
   /** After xtool-build, with binary pods: the packed app's bundles, frameworks and force-loaded classes (spec goal 7). */
   postPack: (appBundle: string, pods: PostPackPods) => Promise<void>;
+  /**
+   * After xtool-build: every class React Native's codegen providers name is in the packed app; the lines to print, or
+   * a throw after removing the app (src/pipeline/codegenClasses.ts).
+   */
+  codegenClasses: (root: string, appBundle: string) => Promise<string[]>;
   /** The app's CODE_SIGN_ENTITLEMENTS file (Debug); throws an EntitlementsError when xtool could not sign with it. */
   readEntitlements: (project: ProjectInfo, iosDir: string) => AppEntitlements | undefined;
   log: (s: string) => void;
@@ -263,6 +269,7 @@ const realDeps: BuildDeps = {
   pods: (root, roots, table, opts) => runPodsStep(root, roots, table, opts),
   stagePods: (paths, result) => stagePodBinaries(paths, result),
   postPack: (appBundle, pods) => postPackChecks(appBundle, pods, makeNmRunner()),
+  codegenClasses: (root, appBundle) => checkCodegenClasses(root, appBundle, makeNmRunner()),
   emptyTargets: (root, opts) => {
     const table = mergedPodTable(opts.pods);
     return emptyTargetsOf(table, [...scaffoldedPods(root, table, opts).values()].flat());
@@ -586,5 +593,6 @@ export async function build(
   await step("xtool-build", () => d.devBuild(d.xtoolBin(config), paths.iosXtool));
   // A failure leaves the state without the fingerprint, so the next run builds again.
   if (postPack !== undefined) await d.postPack(paths.appBundle, postPack);
+  for (const line of await d.codegenClasses(paths.root, paths.appBundle)) d.log(line);
   await writeState(paths.iosXtool, { ...state, depsFingerprint });
 }

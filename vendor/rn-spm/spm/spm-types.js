@@ -471,6 +471,10 @@ export type PodspecModel = {
   // flag as an implicit React-core dependency (a plain ObjC module using the
   // helper has no `codegenConfig` to key off).
   usesInstallModulesDependencies: boolean,
+  // The `source_files`/`exclude_files` values the regex fallback could not
+  // evaluate (a method call, an unknown local): the scaffolder refuses the
+  // library rather than build it from a partial source list.
+  unresolvedSources?: Array<{field: string, expr: string, why: string}>,
 };
 
 // Intermediate translation result — concrete data the Swift emitter consumes.
@@ -542,6 +546,9 @@ export type ScaffoldResult =
       // What became of `swiftpmConfig.name` in the library's package.json.
       // Absent when the name was not podspec-derived, so nothing was attempted.
       swiftpmName?: SwiftpmNameOutcome,
+      // Every file the scaffold wrote under the library, relative to its root
+      // (posix separators), sorted.
+      files: Array<string>,
     }
   | {
       depName: string,
