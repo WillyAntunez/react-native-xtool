@@ -482,12 +482,20 @@ the pins, sorted by pod, on a line after the importer-paths line (or the revisio
 `// rn-xtool-pods: AppAuth=3.0.0, SwiftUIIntrospect=1.5.0`. A pod whose SwiftPM package leaves its umbrella header
 outside every target (AppAuth-iOS 3.0.0's `Sources/AppAuth.h`: `@import AppAuth;` works, `<AppAuth/AppAuth.h>` and
 `"AppAuth.h"` do not, while CocoaPods copies the header into `Headers/Public/AppAuth/`) names the header in
-`forwardHeaders` (`{ "AppAuth/AppAuth.h": ["AppAuthCore", "AppAuth"] }`). The scaffold then writes
-`rn-spm-pod-headers/AppAuth/AppAuth.h` into the library, holding the banner and `@import AppAuthCore;` and
-`@import AppAuth;`, and adds `.headerSearchPath("rn-spm-pod-headers")` to its C and C++ settings. A header key must
-be a relative path ending in `.h` without `.` or `..` segments, and each module a module name; otherwise that library
-gets the error `react-native spm scaffold: pods.<pod>.forwardHeaders.<header> must be a list of module names, under a
-relative path ending in .h`. A scaffold without forwarders removes a `rn-spm-pod-headers/` whose files all carry the
+`forwardHeaders`, with the headers the umbrella includes, as paths under the public header directories of the
+package's targets (`{ "AppAuth/AppAuth.h": ["OIDAuthState.h", …, "iOS/OIDAuthState+IOS.h", …] }`). The scaffold then
+writes `rn-spm-pod-headers/AppAuth/AppAuth.h` into the library, holding the banner and one `#import <header>` per
+entry, and adds `.headerSearchPath("rn-spm-pod-headers")` to its C and C++ settings. The forwarder is textual:
+Objective-C++ compiles with `-fmodules -fno-cxx-modules`, as Xcode does by default, so an `@import` in it stopped
+every `.mm` file that included it with `use of '@import' when modules are disabled`, while in Objective-C the
+`#import` of a module's header still imports the module. A header key must be a relative path ending in `.h` without
+`.` or `..` segments, and so must each listed header, in letters, digits and `_+.-`; otherwise that library gets the
+error `react-native spm scaffold: pods.<pod>.forwardHeaders.<header> must be a list of the pod's public headers
+(relative paths ending in .h), under a relative path ending in .h`. A module name in the list (the format before the
+forwarders were textual) gets `react-native spm scaffold: pods.<pod>.forwardHeaders.<header> lists the module <name>;
+list the pod's public headers instead (relative paths ending in .h), which the forwarder includes textually:
+Objective-C++ compiles without modules, so it cannot @import`. The textual forwarder ships with
+`RN_XTOOL_SCAFFOLD_REVISION` 5. A scaffold without forwarders removes a `rn-spm-pod-headers/` whose files all carry the
 banner. An unmapped pod gets one warning per pod (subspecs collapse to the root pod): `Dependency "<pod>" is a
 CocoaPods pod with no known SwiftPM equivalent; the scaffolded package may fail to build — add it under "pods" in
 rn-xtool.config.json: { "pods": { "<pod>": { "url": "<git URL>", "exact": "<version>", "products": ["<product>"] } }

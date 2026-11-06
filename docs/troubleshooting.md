@@ -254,7 +254,8 @@ any build after `ios-xtool/.build` is deleted, needs the network for it; an offl
 SwiftPM's resolve error naming the URL.
 
 **Adding a pod.** When the pod has a SwiftPM package (a git repository with a `Package.swift`), add it under `pods` in
-`rn-xtool.config.json`. rn-xtool's own AppAuth entry is the example to copy:
+`rn-xtool.config.json`. rn-xtool's own AppAuth entry is the example to copy (its `forwardHeaders` list is shortened
+here; the shipped one, in `data/pods.json`, has all 31 headers):
 
 ```json
 {
@@ -263,7 +264,9 @@ SwiftPM's resolve error naming the URL.
       "url": "https://github.com/openid/AppAuth-iOS",
       "exact": "3.0.0",
       "products": ["AppAuth"],
-      "forwardHeaders": { "AppAuth/AppAuth.h": ["AppAuthCore", "AppAuth"] }
+      "forwardHeaders": {
+        "AppAuth/AppAuth.h": ["OIDAuthState.h", "OIDAuthorizationService.h", "iOS/OIDExternalUserAgentIOS.h"]
+      }
     }
   }
 }
@@ -274,10 +277,19 @@ SwiftPM's resolve error naming the URL.
 - `products`: the package's products the library links (`"product": "AppAuth"` works for one).
 - `subspecs` (optional): `{ "<subspec>": ["<product>", …] }`, the products for a dependency on `<pod>/<subspec>`; any
   other subspec gets `products`.
-- `forwardHeaders` (optional): `{ "<Dir/Header.h>": ["<module>", …] }`, for a pod whose umbrella header is not part
-  of its SwiftPM targets. The scaffolder writes `rn-spm-pod-headers/<Dir/Header.h>` into the library, holding one
-  `@import <module>;` per module, and adds `rn-spm-pod-headers` to the library's header search paths, so
-  `#import <AppAuth/AppAuth.h>` resolves as it does under CocoaPods.
+- `forwardHeaders` (optional): `{ "<Dir/Header.h>": ["<header>", …] }`, for a pod whose umbrella header is not part of
+  its SwiftPM targets. List the headers the umbrella includes, as paths under the public header directories of the
+  package's targets, which every importer has on its include path: AppAuth-iOS 3.0.0's `Sources/AppAuth.h` gives
+  `OIDAuthState.h` and 25 more headers from `Sources/AppAuthCore`, then, from its iOS branch, the 5 headers of
+  `Sources/AppAuth/iOS`, as `iOS/OIDAuthState+IOS.h` and so on. The scaffolder writes
+  `rn-spm-pod-headers/<Dir/Header.h>` into the library, holding one `#import <header>` per entry, and adds
+  `rn-spm-pod-headers` to the library's header search paths, so `#import <AppAuth/AppAuth.h>` resolves as it does under
+  CocoaPods. The forwarder includes the headers textually because Objective-C++ (`.mm`) files compile without C++
+  modules, as in Xcode, so an `@import` there is an error; in Objective-C (`.m`) the `#import` of a module's header
+  still imports the module. A module name in the list, the form of 0.1.0-alpha.6 (`["AppAuthCore", "AppAuth"]`), is
+  refused with `pods.<pod>.forwardHeaders.<header> lists the module <name>; list the pod's public headers instead
+  (relative paths ending in .h), which the forwarder includes textually: Objective-C++ compiles without modules, so it
+  cannot @import`.
 - `outsideRequirement` (optional): a sentence saying why `exact` is outside a requirement on purpose, checked by you.
   The pin check then prints one `ℹ` line with it instead of the `⚠` (rn-xtool's GoogleToolboxForMac entry,
   [CocoaPods binaries](#warnings-and-information-lines)). It holds for the entry's own `url` and `exact`: a config
@@ -295,8 +307,10 @@ be a version such as 3.0.0`, `pods.<pod>.subspecs must be an object of subspec n
 `pods.<pod>.subspecs.<name> must be a list of product names`, `pods.<pod>.outsideRequirement must be a sentence saying
 why the pin is outside the requirement`, `pods.<pod>.emptyTargets must be a list of target names`,
 `pods.<pod>.forwardHeaders must be an object of header paths` and `pods.<pod>.forwardHeaders.<header> must be a list
-of module names, under a relative path ending in .h`. A URL or product that is well formed but wrong is named by
-SwiftPM at `xtool-build`, in its resolve error.
+of the pod's public headers (relative paths ending in .h), under a relative path ending in .h`. A URL or product that
+is well formed but wrong is named by SwiftPM at `xtool-build`, in its resolve error. A header that is well formed but
+not in the package is named by clang, when a file that imports the forwarded header compiles: `'<header>' file not
+found`.
 
 **Changing a shipped pod.** An entry for a pod rn-xtool's table maps overrides only the fields it names, and the
 others stay. It still needs `url`, `exact` and `products`. To pin AppAuth 2.1.0:
@@ -309,7 +323,9 @@ others stay. It still needs `url`, `exact` and `products`. To pin AppAuth 2.1.0:
 }
 ```
 
-The shipped `forwardHeaders` stay; `"forwardHeaders": {}` removes them, and `"subspecs": {}` removes subspecs.
+The shipped `forwardHeaders` stay; `"forwardHeaders": {}` removes them, and `"subspecs": {}` removes subspecs. They
+list AppAuth-iOS 3.0.0's headers: if the version you pin moves or renames one, give your own `forwardHeaders` with
+that version's umbrella header list.
 
 **A pin outside the podspec's requirement.** `doctor --project` (its `pods` line) and the start of `build` print, for
 example, `⚠ AppAuth 1.0.0 (rn-xtool.config.json) is outside react-native-app-auth's requirement ">= 1.7.6"`
@@ -886,6 +902,17 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   releases also search each autolinked library's `rn-spm-pod-headers`, where the scaffold writes the pod table's
   `forwardHeaders`. See
   [Mixed Swift + Objective-C/C++ app target](bare-react-native.md#mixed-swift--objective-cc-app-target).
+- **"use of '@import' when modules are disabled"** (in `rn-spm-pod-headers/AppAuth/AppAuth.h`, compiling an
+  Objective-C++ file that imports `<AppAuth/AppAuth.h>`, such as a bare app's `AppDelegate.mm`): the scaffold of
+  rn-xtool 0.1.0-alpha.6 (scaffolder revision 4) wrote the pod table's `forwardHeaders` as `@import` lines.
+  Objective-C++ compiles with `-fmodules -fno-cxx-modules`, Xcode's default, so `@import` is an error there;
+  react-native-app-auth's own `RNAppAuth.m` is Objective-C and compiled. Later releases write the forwarder as one
+  `#import` per public header of the pod, which compiles in `.m` and `.mm` files alike, and their scaffolder revision 5
+  replaces an older scaffold: a copy in `node_modules` without a persisted patch is scaffolded again by itself, and a
+  persisted patch gets the `⚠ patches/<name> was written by an older rn-xtool scaffolder (revision 4, now 5)` line
+  above, whose steps regenerate it. A `forwardHeaders` entry of your config that still lists modules is refused with
+  `… lists the module <name>; list the pod's public headers instead`: list the headers, as in [Libraries that depend
+  on CocoaPods pods](#libraries-that-depend-on-cocoapods-pods).
 - **"react/utils/hash_combine.h: … unknown type name 'Hashable'"** (bare React Native, compiling the app's
   `AppDelegate.mm` or another Objective-C++ source of the app target, often with fold-expression errors from the same
   header): `#import <RCTAppDelegate.h>` pulls in React Native's C++20 headers, and the file compiles with clang's

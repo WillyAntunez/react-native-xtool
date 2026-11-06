@@ -407,11 +407,13 @@ The scaffolder classifies each `s.dependency` on an unconditional line of a pods
 **The pod table** is merged per pod, field by field, in this order, the later winning: the scaffolder's own baseline
 (SwiftUIIntrospect), rn-xtool's `data/pods.json` (AppAuth, and the source pods ML Kit reaches), then the `pods` of
 `rn-xtool.config.json`. rn-xtool writes the merged table to `ios/build/rn-xtool-pods.json`, with the binary pods the
-`pods` step resolved, and names it in `RN_SPM_POD_TABLE` for every React Native run of the `rn-spm` step; without it
-the scaffolder falls back to its baseline. A mapped pod's `forwardHeaders` become
-`rn-spm-pod-headers/<Dir/Header.h>` files in the library, each holding `@import <module>;` lines, on the library's
+`pods` step resolved, and names it in `RN_SPM_POD_TABLE` for every React Native run of the `rn-spm` step; without it the
+scaffolder falls back to its baseline. A mapped pod's `forwardHeaders` become `rn-spm-pod-headers/<Dir/Header.h>` files
+in the library, each holding one `#import <header>` per public header the pod's umbrella includes, on the library's
 header search path: AppAuth's umbrella header is outside its SwiftPM targets, and react-native-app-auth imports it as
-`<AppAuth/AppAuth.h>`. Each manifest records the pods it pins on a marker line, `// rn-xtool-pods: AppAuth=3.0.0`.
+`<AppAuth/AppAuth.h>`. The forwarder is textual because Objective-C++ compiles without C++ modules
+(`-fmodules -fno-cxx-modules`, Xcode's default), where `@import` is an error. Each manifest records the pods it pins
+on a marker line, `// rn-xtool-pods: AppAuth=3.0.0`.
 
 **Before the build.** `doctor --project` and `build` run the same classifier, loaded from rn-xtool's vendored copy of
 the scaffolder, never the project's. They read podspecs as text, with no `pod ipc` and no network. The linked

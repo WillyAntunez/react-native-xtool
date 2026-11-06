@@ -5,6 +5,20 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 
 ## [Unreleased]
 
+### Upgrading from 0.1.0-alpha.6
+- The scaffolder is now revision 5, so every scaffold patch rn-xtool persisted in your `patches/` before this release
+  gets a warning at each `build`: "⚠ patches/<name> was written by an older rn-xtool scaffolder (revision 4, now 5);
+  delete it so rn-xtool regenerates it (also remove node_modules/<package> and reinstall: that copy still has the old
+  Package.swift)". Do what it says. A scaffolded library without a persisted patch is scaffolded again by itself.
+- A `pods.<pod>.forwardHeaders` entry in `rn-xtool.config.json` that lists modules is refused: list the pod's public
+  headers instead (see Changed).
+
+### Changed
+- `pods.<pod>.forwardHeaders` maps a forwarded header to the pod's public headers to include, as paths under the
+  public header directories of its SwiftPM targets (`["OIDAuthState.h", "iOS/OIDAuthState+IOS.h", …]`), instead of
+  module names; a module name is refused with a message saying to list the headers. rn-xtool's AppAuth entry lists
+  the headers of AppAuth-iOS 3.0.0's umbrella header.
+
 ### Fixed
 - A bare app target with an Objective-C `main.m` (the React Native templates before 0.77) builds, instead of stopping
   in SwiftPM with "library product 'App' should not contain executable targets (it has 'App')": the file is compiled
@@ -21,6 +35,9 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 - A bare app target's Objective-C++ and C++ files (an `AppDelegate.mm` importing `<RCTAppDelegate.h>`) compile with
   the project's `CLANG_CXX_LANGUAGE_STANDARD` (C++20 when unset), instead of clang's default, which stopped on React
   Native's C++20 headers with "unknown type name 'Hashable'" in `react/utils/hash_combine.h`.
+- An Objective-C++ file that imports a pod table forward (a bare app's `AppDelegate.mm` with
+  `#import <AppAuth/AppAuth.h>`) compiles, instead of stopping with "use of '@import' when modules are disabled": the
+  scaffold's forwarder `#import`s the pod's public headers instead of `@import`ing its modules.
 
 ## [0.1.0-alpha.6] - 2026-11-05
 
