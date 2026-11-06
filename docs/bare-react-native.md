@@ -245,7 +245,9 @@ remove `main.swift` from the app target.
 If the target compiles any `.m`, `.mm`, `.c` or `.cpp` file, it is built as one mixed-language target, the same
 mechanism as the scaffolded mixed libraries (the two manifests described in
 [How it works](how-it-works.md#mixed-language-manifests)). The bridging header is passed with `-import-objc-header`
-and your header search paths and defines are applied. Verified on a device with an Objective-C module next to a Swift
+and your header search paths and defines are applied. The target's `.mm` and `.cpp` files compile with the project's
+`CLANG_CXX_LANGUAGE_STANDARD` (C++20 when unset), passed to them as `-std=` because Swift Build does not apply the
+package's `cxxLanguageStandard` to a mixed target. Verified on a device with an Objective-C module next to a Swift
 module.
 
 Swift Build names the generated Swift header `App-Swift.h` (the SwiftPM target is `App`), so `build` also writes

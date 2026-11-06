@@ -18,6 +18,9 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 - A bare app target's Objective-C sources and bridging header find React Native's headers by bare name
   (`#import <RCTAppDelegate.h>`) and the pod table's `<Pod/Header.h>` forwards (`#import <AppAuth/AppAuth.h>`), as with
   CocoaPods, instead of stopping with "'RCTAppDelegate.h' file not found"; the app's own headers still come first.
+- A bare app target's Objective-C++ and C++ files (an `AppDelegate.mm` importing `<RCTAppDelegate.h>`) compile with
+  the project's `CLANG_CXX_LANGUAGE_STANDARD` (C++20 when unset), instead of clang's default, which stopped on React
+  Native's C++20 headers with "unknown type name 'Hashable'" in `react/utils/hash_combine.h`.
 
 ## [0.1.0-alpha.6] - 2026-11-05
 

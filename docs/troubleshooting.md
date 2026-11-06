@@ -884,6 +884,13 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   releases also search each autolinked library's `rn-spm-pod-headers`, where the scaffold writes the pod table's
   `forwardHeaders`. See
   [Mixed Swift + Objective-C/C++ app target](bare-react-native.md#mixed-swift--objective-cc-app-target).
+- **"react/utils/hash_combine.h: … unknown type name 'Hashable'"** (bare React Native, compiling the app's
+  `AppDelegate.mm` or another Objective-C++ source of the app target, often with fold-expression errors from the same
+  header): `#import <RCTAppDelegate.h>` pulls in React Native's C++20 headers, and the file compiles with clang's
+  default standard (gnu++17). Swift Build does not apply the package's `cxxLanguageStandard` to a mixed-language target,
+  and rn-xtool 0.1.0-alpha.6 and earlier pass no `-std=` to the App target. Later releases pass the project's
+  `CLANG_CXX_LANGUAGE_STANDARD` (C++20 when unset) to the app's `.mm` and `.cpp` files. See
+  [Mixed Swift + Objective-C/C++ app target](bare-react-native.md#mixed-swift--objective-cc-app-target).
 - **"rn-xtool could not patch <package>":** your project has a different version of a package than the one this release
   of rn-xtool patches, and the patch does not apply to it (on SDK 57 or 58, a newer patch of the SDK that changed a
   patched file; on bare React Native, a newer patch of its line). The message names the versions. On SDK 58 (Expo
