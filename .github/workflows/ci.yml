@@ -1,5 +1,6 @@
 # CI: on every pull request to main and every push to main, install, fetch the pinned upstream tarballs the tests
 # read, type-check, scan the tracked files for private identifiers and run the whole test suite.
+# A second job runs the podspec reader's Ruby shim tests on the oldest Ruby the shim supports.
 #
 # Nothing is compiled for iOS and no device is touched: there is no Swift, no Darwin SDK and no iPhone here. Tests that
 # need a real app, a toolchain or a device are skipped, and the run summary lists them by name (and, on a red run, the
@@ -46,9 +47,32 @@ jobs:
       # Before the tests: a leak is reported even when the suite is red.
       - name: Scan for private identifiers
         run: npm run scan:private
+      # The runner image ships Ruby; tests/podspecShim.test.ts fails here without it, instead of skipping.
+      - name: Ruby (the podspec reader needs it)
+        run: ruby --version
       - name: Test
         run: npm test -- --reporter=default --reporter=json --outputFile=test-results.json
       # Runs after a failed test step too, so a red run still says what did not run.
       - name: List skipped tests
         if: ${{ !cancelled() }}
         run: node scripts/ci-skipped.mjs test-results.json >> "$GITHUB_STEP_SUMMARY"
+
+  # The podspec reader's Ruby shim on the oldest Ruby it supports: the floor its --probe reports is what this job runs.
+  shim-ruby-floor:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "2.7"
+      - name: Install and build
+        run: npm ci
+      - name: Test the shim on Ruby 2.7
+        run: npx vitest run tests/podspecShim.test.ts

@@ -45,4 +45,8 @@ describe("the npm package", () => {
   it("ships the pod table and the vendors' terms", () => {
     expect(listed()).toEqual(expect.arrayContaining(["data/pods.json", "data/pod-terms.json"]));
   });
+
+  it("ships the podspec reader's shim", () => {
+    expect(listed()).toContain("vendor/rn-spm/spm/read-podspec-shim.rb");
+  });
 });

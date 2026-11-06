@@ -217,6 +217,7 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
       expect(reader).toContain("function unresolvedSourcesReason");
       expect(src("scaffold-package-swift.js")).toContain("unresolvedSourcesReason(podspecPath, model)");
     });
+    it("the scaffolder has the fix 29 shim", () => expect(existsSync(path.join(SPM, "read-podspec-shim.rb"))).toBe(true));
   });
 
   it("gives the per-app header farm a header-less module map, so Objective-C imports it textually", () => {

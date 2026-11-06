@@ -21,6 +21,7 @@ type Workflow = {
 const text = (): string => readFileSync(WORKFLOW, "utf8");
 const doc = (): Workflow => parse(text()) as Workflow;
 const steps = (): Step[] => Object.values(doc().jobs).flatMap((j) => j.steps);
+const jobSteps = (job: string): Step[] => doc().jobs[job]!.steps;
 const lines = (): string[] => text().split("\n");
 const indent = (l: string): number => l.length - l.trimStart().length;
 
@@ -47,9 +48,14 @@ const RUNS = [
   "npm run lint",
   // The scan runs before the tests, so a red suite never hides a leak.
   "npm run scan:private",
+  // The podspec shim's tests fail without Ruby on CI: the step says which Ruby they ran on.
+  "ruby --version",
   "npm test -- --reporter=default --reporter=json --outputFile=test-results.json",
   'node scripts/ci-skipped.mjs test-results.json >> "$GITHUB_STEP_SUMMARY"',
 ];
+/** The shim-ruby-floor job: the podspec shim's tests on the oldest Ruby the shim supports. */
+const FLOOR_RUNS = ["npm ci", "npx vitest run tests/podspecShim.test.ts"];
+const SHIM = path.join(root, "vendor", "rn-spm", "spm", "read-podspec-shim.rb");
 
 describe("CI workflow", () => {
   it("runs on PRs to main and on pushes to main", () => {
@@ -68,9 +74,9 @@ describe("CI workflow", () => {
 
   it("keeps credentials and secrets out", () => {
     const checkouts = steps().filter((s) => s.uses?.startsWith("actions/checkout"));
-    expect(checkouts).toHaveLength(1);
+    expect(checkouts).toHaveLength(2);
     for (const c of checkouts) expect(c.with?.["persist-credentials"]).toBe(false);
-    expect(text().match(/persist-credentials: false/g)).toHaveLength(1);
+    expect(text().match(/persist-credentials: false/g)).toHaveLength(2);
     expect(text()).not.toMatch(/secrets\./);
     expect(text()).not.toContain("GH_TOKEN");
     expect(text()).not.toMatch(/\btoken\b/i);
@@ -78,25 +84,33 @@ describe("CI workflow", () => {
 
   it("never puts an expression into run text", () => {
     const runs = runBlocks();
-    expect(runs).toHaveLength(RUNS.length);
+    expect(runs).toHaveLength(RUNS.length + FLOOR_RUNS.length);
     for (const r of runs) expect(r).not.toContain("${{");
     for (const s of steps()) if (s.run !== undefined) expect(s.run).not.toContain("${{");
   });
 
-  it("uses Node 22 on hosted Ubuntu and two actions", () => {
-    const uses = steps().flatMap((s) => (s.uses ? [s.uses] : []));
-    expect(uses).toEqual(["actions/checkout@v7", "actions/setup-node@v7"]);
-    const node = steps().find((s) => s.uses === "actions/setup-node@v7")!;
-    expect(node.with?.["node-version"]).toBe(22);
-    expect(node.with?.["cache"]).toBe("npm");
+  it("uses Node 22 on hosted Ubuntu, and setup-ruby only for the Ruby floor", () => {
+    const uses = (job: string) => jobSteps(job).flatMap((s) => (s.uses ? [s.uses] : []));
+    expect(uses("test")).toEqual(["actions/checkout@v7", "actions/setup-node@v7"]);
+    expect(uses("shim-ruby-floor")).toEqual(["actions/checkout@v7", "actions/setup-node@v7", "ruby/setup-ruby@v1"]);
+    for (const node of steps().filter((s) => s.uses === "actions/setup-node@v7")) {
+      expect(node.with?.["node-version"]).toBe(22);
+      expect(node.with?.["cache"]).toBe("npm");
+    }
     const runsOn = Object.values(doc().jobs).map((j) => j["runs-on"]);
-    expect(runsOn).toEqual(["ubuntu-latest"]);
+    expect(runsOn).toEqual(["ubuntu-latest", "ubuntu-22.04"]);
+  });
+
+  it("runs the shim's tests on the Ruby floor the shim reports", () => {
+    const ruby = jobSteps("shim-ruby-floor").find((s) => s.uses === "ruby/setup-ruby@v1")!;
+    const floor = /^RN_XTOOL_RUBY_FLOOR = '(\d+\.\d+)\.\d+'$/m.exec(readFileSync(SHIM, "utf8"))?.[1];
+    expect(ruby.with?.["ruby-version"]).toBe(floor);
   });
 
   it("stops a stuck job after 15 minutes", () => {
     // The fetch script's npm pack has no timeout of its own; the job's covers it.
-    expect(Object.keys(doc().jobs)).toEqual(["test"]);
-    expect(doc().jobs["test"]!["timeout-minutes"]).toBe(15);
+    expect(Object.keys(doc().jobs)).toEqual(["test", "shim-ruby-floor"]);
+    for (const job of Object.values(doc().jobs)) expect(job["timeout-minutes"]).toBe(15);
   });
 
   it("cancels the older run of the same PR, never a run on main", () => {
@@ -117,11 +131,14 @@ describe("CI workflow", () => {
   });
 
   it("runs the steps in order", () => {
-    const runs = steps().flatMap((s) => (s.run !== undefined ? [s.run.trim()] : []));
-    expect(runs).toEqual(RUNS);
-    const all = steps();
-    expect(all.findIndex((s) => s.uses?.startsWith("actions/checkout"))).toBe(0);
-    expect(all.findIndex((s) => s.uses?.startsWith("actions/setup-node"))).toBe(1);
+    const runs = (job: string) => jobSteps(job).flatMap((s) => (s.run !== undefined ? [s.run.trim()] : []));
+    expect(runs("test")).toEqual(RUNS);
+    expect(runs("shim-ruby-floor")).toEqual(FLOOR_RUNS);
+    for (const job of Object.keys(doc().jobs)) {
+      const all = jobSteps(job);
+      expect(all.findIndex((s) => s.uses?.startsWith("actions/checkout")), job).toBe(0);
+      expect(all.findIndex((s) => s.uses?.startsWith("actions/setup-node")), job).toBe(1);
+    }
   });
 
   it("lists the skipped tests in the summary, even when the tests fail", () => {
