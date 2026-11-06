@@ -55,14 +55,14 @@ scaffolded libraries, CocoaPods binaries); [recipe.md](recipe.md) has every step
      resources only Xcode's tools compile (asset catalogs, storyboards); refuses modules built from vendored C sources
      such as expo-sqlite ([upstream/expo-spm-plugin-mixed-modules.md](upstream/expo-spm-plugin-mixed-modules.md)).
    - **React Native** (`patches/react-native+0.88.1.patch`, and its identical copy `react-native+0.88.0.patch` for bare
-     0.88.0; about 3.0k lines across 3 files under
-     `react-native/scripts/spm/`: `read-podspec.js`, `scaffold-package-swift.js`, `spm-utils.js`): 25 generic fixes to
-     the `spm scaffold` podspec reader and `Package.swift` generator, including mixed Swift + Objective-C/C++ targets,
-     CocoaPods dependencies mapped to SwiftPM packages through a pod table file (or to the local package of CocoaPods
-     binaries), the Swift importer paths of mixed
-     targets, dependencies on
-     packages that are not installed left out, the Swift 5 language mode and Swift compilation conditions, plus two to
-     the per-app header farm ([upstream/react-native-scaffolder.md](upstream/react-native-scaffolder.md)).
+     0.88.0; about 5.7k lines across 6 files under `react-native/scripts/spm/`: `read-podspec.js` and its Ruby shim
+     `read-podspec-shim.rb`, `scaffold-package-swift.js`, `spm-utils.js`, `expand-spm-dependencies.js`,
+     `spm-types.js`): 29 generic fixes to the `spm scaffold` podspec reader, the `Package.swift` generator and (two)
+     the per-app header farm, including reading podspecs in Ruby, mixed Swift + Objective-C/C++ targets, CocoaPods
+     dependencies mapped to SwiftPM packages through a pod table file (or to the local package of CocoaPods binaries),
+     the Swift importer paths of mixed targets, dependencies on packages that are not installed left out, the Swift 5
+     language mode and Swift compilation conditions
+     ([upstream/react-native-scaffolder.md](upstream/react-native-scaffolder.md)).
 
    Then, in the same step, rn-xtool makes the libraries' own `Package.swift` files portable to Linux, because SwiftPM
    compiles them on the host. In each top-level and scoped package of the project's `node_modules`, it rewrites a known

@@ -65,6 +65,9 @@ does not work yet (a library's own vendored binaries, Xcode-only tools).
 - FUSE 2 for the xtool AppImage (`sudo apt install libfuse2t64` on Ubuntu 24.04 and newer, `sudo apt install libfuse2`
   on older releases), `python3`, `iproute2`. `setup` installs Swift and prints the exact `apt-get` line for any missing
   Swift system packages ([list](docs/how-it-works.md#what-setup-installs)).
+- Ruby 2.7+ (`sudo apt install ruby`), which reads podspecs as CocoaPods does. Without it, rn-xtool reads them with a
+  reduced reader that evaluates a subset of Ruby, and `rn-spm` says so in a `⚠` line
+  ([details](docs/troubleshooting.md#podspec-reader)).
 - npm or Yarn classic. patch-package needs a flat `node_modules`; pnpm and Yarn PnP are not supported, and `build`
   stops on them early ([details](docs/troubleshooting.md#pnpm-and-yarn-pnp)).
 
