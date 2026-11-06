@@ -857,6 +857,16 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
 - **"Missing SceneDelegate.swift: <path> (Info.plist's UIApplicationSceneManifest names ...)":** `SceneDelegate.swift`
   is optional (SDK 57's template has none), but Info.plist names a scene delegate class and the file is missing, so
   `ios/` is incomplete. `rn-xtool build --clean` regenerates it with `expo prebuild --clean`.
+- **"library product 'App' should not contain executable targets (it has 'App')"** (bare React Native, from SwiftPM in
+  the `xtool` step): the app target compiles a file named `main`, usually the `main.m` of a React Native template from
+  before 0.77 (`AppDelegate.h`/`AppDelegate.mm` plus `main.m`). SwiftPM takes a target with a file named `main.<ext>`
+  for an executable target, while xtool links the app's entry point from the App library, so rn-xtool 0.1.0-alpha.6
+  and earlier stop here. Later releases copy a C-family `main` file as `AppMain.<ext>` in the same folder and print
+  "ℹ <Target>/main.m is compiled as AppMain.m: SwiftPM takes a target with a file named main for an executable, and
+  xtool links the app's entry point from the App library"; the app starts as before. A `main.swift` stops the build
+  before the patches with "The app target compiles <Target>/main.swift: …", which gives the remedy: mark the app
+  delegate class `@main`, move any other top-level code into it, and remove `main.swift` from the app target. See
+  [Sources](bare-react-native.md#sources).
 - **"rn-xtool could not patch <package>":** your project has a different version of a package than the one this release
   of rn-xtool patches, and the patch does not apply to it (on SDK 57 or 58, a newer patch of the SDK that changed a
   patched file; on bare React Native, a newer patch of its line). The message names the versions. On SDK 58 (Expo

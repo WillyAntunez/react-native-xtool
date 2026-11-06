@@ -5,6 +5,13 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 
 ## [Unreleased]
 
+### Fixed
+- A bare app target with an Objective-C `main.m` (the React Native templates before 0.77) builds, instead of stopping
+  in SwiftPM with "library product 'App' should not contain executable targets (it has 'App')": the file is compiled
+  as `AppMain.m` in its folder (any C-family `main.<ext>` as `AppMain.<ext>`), and the build says so in an `ℹ` line. A
+  `main.swift` is refused early, by `build` and `doctor --project`, with the remedy: mark the app delegate class
+  `@main` and remove `main.swift` from the app target.
+
 ## [0.1.0-alpha.6] - 2026-11-05
 
 ### Upgrading from 0.1.0-alpha.5
