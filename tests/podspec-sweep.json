@@ -1,0 +1,5 @@
+[
+  { "spec": "react-native-gesture-handler@3.4.0", "rn": "react-native@0.88.1" },
+  { "spec": "react-native-screens@4.30.0", "rn": "react-native@0.88.1" },
+  { "spec": "react-native-svg@15.16.0", "rn": "react-native@0.88.1" }
+]
