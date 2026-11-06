@@ -873,6 +873,90 @@ react-native-keychain, react-native-video, @aws-amplify/react-native) now get it
 its `FOLLY_*` defines stay dropped, as for every library. The scaffold revision moves to 6, then to 7 for the
 package.json defines revision 6 lost.
 
+## 29. `scripts/spm/read-podspec.js`: podspecs are read without React Native's helpers, or in part
+
+`readPodspec` had two readers, and neither read a podspec as CocoaPods does. With CocoaPods installed it wrote a copy
+of the podspec with `install_modules_dependencies(…)` and `use_react_native!(…)` commented out and ran `pod ipc spec`
+on it. With the helpers stripped, `defined?(install_modules_dependencies())` and
+`respond_to?(:install_modules_dependencies, true)` were false, so react-native-webview,
+`@react-native-async-storage/async-storage`, react-native-keychain and react-native-video took their old-architecture
+branch. And `flattenSubspecs`, which reads that JSON, read no `ios` key: in CocoaPods' JSON form an `s.ios.` attribute
+lives under `"ios"`, so react-native-svg's `s.ios.exclude_files` did not apply there, while the regex path merged it
+(fix 6). Without CocoaPods (every Linux machine), fix 28's evaluator read the subset of Ruby it models. It left out
+the rest with a warning, such as react-native-gesture-handler 3.3.0's `-DRNGH_USE_WORKLETS=1`, which its own
+`GestureHandlerUtils` computes by running `node`, or refused the library. So the same podspec gave a different model
+on a machine with CocoaPods, and an incomplete one on a machine without.
+
+Fix: the podspec runs in real Ruby. `read-podspec-shim.rb`, next to `read-podspec.js`, is run by the system `ruby`
+(2.7 or later, standard library only) once per podspec, in the podspec's folder, with an empty stdin, a 30 s timeout
+and an environment of `PATH`, `HOME`, `LANG` and fix 19's two variables (`RCT_NEW_ARCH_ENABLED=1`,
+`RCT_HERMES_V1_ENABLED=1`). It evaluates the podspec inside `module Pod`, as CocoaPods-core does, against a
+`Pod::Specification` with the attributes of CocoaPods 1.16's DSL (a setter and a getter each, the singular aliases
+stored under their plural keys), `dependency`, `subspec`, `test_spec`, `app_spec` and the platform proxies (`s.ios`,
+`s.osx`, `s.tvos`, `s.visionos`, `s.watchos`; `s.macos` stores under `osx`). It writes the spec in CocoaPods' JSON
+form, what `pod ipc spec` printed, so `flattenSubspecs` reads it unchanged. `ruby <shim> --probe` checks the Ruby
+version before anything loads.
+
+The shim models what a static scan found called in the podspecs of the reference apps, of the Expo SDK 57 and 58
+references and of the podspec fixtures, and in the scripts they load. React Native's helpers:
+`install_modules_dependencies` is recorded and adds nothing (the scaffold supplies React core and
+`RCT_NEW_ARCH_ENABLED` from the record, which replaces the source regex `usesInstallModulesDependencies` used);
+`add_dependency` adds the dependency and drops `subspec:`, as React Native's does; `get_folly_config` returns a fresh
+hash of React Native's folly version, git URL and compiler flags on each call; `min_ios_version_supported` returns
+`15.1`; and `spm_dependency` is recorded with its arguments. `defined?` and `respond_to?` answer for them as under
+React Native's Podfile, and `use_expo_modules!` is not defined. Expo's `PackagesConfig` answers a source build
+(`coreFeatures` is empty, `try_link_with_prebuilt_xcframework` is false). `Pod::UI` lines are captured, not printed.
+`Pod::Config.instance` gives the app's `ios` folder as `installation_root` and `project_root` (`RN_SPM_APP_IOS_DIR`
+when set, else the podspec's path cut before its first `/node_modules/` plus `/ios`, else the podspec's folder), that
+folder's `Pods` as `project_pods_root`, and no `@podfile`. `Pod::VERSION` is `1.16.2`. `require` loads a name on
+Ruby's own load path, the library's files by path, and a stub of `colored2`; `require_relative`, backticks, `system`,
+`raise` and `abort` are real Ruby, so a library's own scripts run as under CocoaPods (worklets finds React Native, and
+gesture-handler finds worklets, with `node`). Every `ENV` name the podspec reads is recorded; other environment
+variables and globals are unset. React Native's other helpers stay undefined, and a call to one fails as `method`.
+
+A podspec Ruby cannot read stops the read with a `PodspecReadError`; nothing falls back. A gap of the shim names where
+it stopped (`<podspec>:<line>`, or `<podspec> (<file>:<line>)` in another of the library's files): `method` (the
+podspec calls `<name>(…)`, which the reader does not model), `constant`, `attribute` (one CocoaPods does not define),
+`require` (a gem other than `colored2`) or `not-a-spec`. Its message, like a podspec that does not finish in 30 s,
+ends with `Set RN_XTOOL_PODSPEC_READER=reduced to read it with the reduced reader for one run, and report it with
+rn-xtool doctor --report.` A podspec's own `raise`, `abort`, `exit` or syntax error (`raised`) keeps Ruby's message,
+and a Ruby that ends without a model says `ruby exited with <code or signal>` with its last stderr line. Without a
+usable Ruby (none, older than 2.7, no `json`, the shim missing), or with `RN_XTOOL_PODSPEC_READER=reduced`, fix 28's
+evaluator reads the podspec as before, and `podspecReader()` says why; another value of the variable is named in a
+warning and ignored. `name`, `module_name` and `version` stay the literal readings under both readers.
+`readPodspecCached` keys on the reader too. When `RN_SPM_PODSPEC_READS` names a file, each read appends one JSON line
+to it: the podspec, the reader and why, whether it was forced, the Ruby, the `ENV` names and helpers the podspec used,
+and whether it read, with the error.
+
+`pod ipc spec` is never run (`patchPodspecForPodIpc`, `runPodIpcSpec` and `cleanupPatchedPodspec` are gone), so a
+machine with CocoaPods reads a podspec as any machine with Ruby. `flattenSubspecs` merges each selected layer's `ios`
+over it, as CocoaPods' consumer does for an iOS target: arrays concatenated, the layer's first (a string read as a
+one-element array); hashes key by key, two strings joined by one space and an array on either side concatenated;
+anything else the platform's value. `osx`, `tvos`, `visionos` and `watchos` are never read, and a subspec's `ios`
+dependencies count when fix 20 drops a subspec. A key a CocoaPods build applies and the scaffold does not, in any
+selected layer or its `ios`, gets a warning: `The podspec sets <key>, which a CocoaPods build applies and rn-xtool's
+scaffold does not.` for `script_phases`, `prepare_command`, `info_plist` and `module_map`. A podspec that calls
+`spm_dependency` is refused with `status: 'error'` and `<podspec>: uses spm_dependency(url: <url>, products: <a, b>),
+which rn-xtool does not map yet`: the target would not link without that package.
+
+The reader's callers caught every throw, which a reader that can fail would hide: the name facts (`podspecFor` and
+`defaultReadPodspec` in `expand-spm-dependencies.js`) returned null, and the autolinking's header search paths
+(`extractPodspecHeaderSearchPaths` in `generate-spm-autolinking.js`) returned `[]`. The three catches now rethrow a
+`PodspecReadError` and keep their old answer for any other error, so a podspec Ruby cannot read stops autolinking with
+its message. The two in `expand-spm-dependencies.js` are in the 0.88 patches. The third is edit E6 of
+`vendor/rn-spm/rn-xtool-edits.patch`, in the vendored copy only: React Native 0.88.1 has no
+`extractPodspecHeaderSearchPaths`, so the identical 0.88 patches cannot carry it, and on 0.88.0 the scaffold's own
+read of the same podspec still stops.
+
+Each scaffolded manifest records its reader on the last line of the marker block, after the cache slot:
+`// rn-xtool-podspec-reader: ruby` or `// rn-xtool-podspec-reader: reduced`, and the scaffold's result carries it as
+`reader`. Effect on the libraries checked (the golden): react-native-gesture-handler 3.3.0 gets `RNGH_USE_WORKLETS=1`
+when react-native-worklets 0.8 or later is installed, as under CocoaPods. react-native-webview 14.0.1 takes its
+`install_modules_dependencies` branch, so the `-Wno-comma -Wno-shorten-64-to-32` that fix 28 read from its `else`
+branch no longer apply. React Native 0.88's helper adds only `-DRCT_NEW_ARCH_ENABLED=1`, which the scaffold defines.
+react-native-screens 4.30.0, react-native-pager-view 9.0.7, react-native-svg 15.16.0 and
+`@react-native-community/datetimepicker` 9.2.1 scaffold as before. The scaffold revision moves to 8.
+
 ## Known limitation (deferred): pure-Swift packages importing a mixed Expo module
 
 A Swift module built with a bridging header (every mixed target) makes each Swift importer re-read that
@@ -885,11 +969,16 @@ every generated or scaffolded Swift target that depends on a mixed module the sa
 
 ## Tests
 
-`tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks the
-fixes against fixtures (skipped when the reference app is not present; set `RN_XTOOL_REF_APP` to point at it). It also
-asserts that each hunk is present in the installed RN files. Fixes 14 to 28 are tested on the vendored copy (`vendor/rn-spm/spm`), so they never skip,
-against podspec fixtures from the SDK 57 pins in `tests/fixtures/podspecs/` (worklets 0.10.1, reanimated 4.5.1,
-screens 4.26.2, gesture-handler 2.32.0), from screens 4.30.1 (the clang-only importer paths and module map), from
-worklets 0.8.3 (the `RCT_HERMES_V1_ENABLED` ternary) and from screens 4.24.0 (fix 28's locals and conditions). A golden test re-scaffolds the reference app's libraries and compares them
-with `tests/fixtures/scaffold-golden/`. Upstream, equivalent tests belong in
-RN's own `__tests__` next to `read-podspec` and `scaffold-package-swift`.
+`tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks the fixes against fixtures
+(skipped when the reference app is not present; set `RN_XTOOL_REF_APP` to point at it). It also asserts that each hunk
+is present in the installed RN files. Fixes 14 to 29 are tested on the vendored copy (`vendor/rn-spm/spm`), so they
+run without the reference app, against podspec fixtures from the SDK 57 pins in `tests/fixtures/podspecs/` (worklets
+0.10.1, reanimated 4.5.1, screens 4.26.2, gesture-handler 2.32.0), from screens 4.30.1 (the clang-only importer paths
+and module map), from worklets 0.8.3 (the `RCT_HERMES_V1_ENABLED` ternary) and from screens 4.24.0 (fix 28's locals
+and conditions). Fix 29's shim is tested in `tests/podspecShim.test.ts` (also on Ruby 2.7, in CI's `shim-ruby-floor`
+job), the reader's choice, its runs of the shim, `readPodspec`, the `ios` merge and the rethrows in
+`tests/podspecReader.test.ts`, and the reader sweep (`tests/podspecReaderSweep.test.ts`) reads the podspecs of pinned
+library tarballs with both readers against reviewed goldens. A golden test re-scaffolds the reference app's libraries,
+read by Ruby, and compares them with `tests/fixtures/scaffold-golden/` (`RN_XTOOL_WRITE_GOLDEN=1` writes them
+instead). Upstream, equivalent tests belong in RN's own `__tests__` next to `read-podspec` and
+`scaffold-package-swift`.

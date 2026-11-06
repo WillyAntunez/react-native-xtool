@@ -558,6 +558,8 @@ export type ScaffoldResult =
       // Every file the scaffold wrote under the library, relative to its root
       // (posix separators), sorted.
       files: Array<string>,
+      // Which reader read the podspec (PodspecModel.reader).
+      reader: 'ruby' | 'reduced',
     }
   | {
       depName: string,

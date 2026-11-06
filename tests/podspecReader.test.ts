@@ -537,7 +537,11 @@ describe("flattenSubspecs on the shim's model", () => {
     expect(reduced.model.dependencies).toEqual(["React-Core"]);
     expect(ruby.scaffolded.status).toBe("written");
     expect(reduced.scaffolded.status).toBe("written");
-    expect(reduced.scaffolded.packageSwift).toBe(ruby.scaffolded.packageSwift);
+    // The same manifest but for the marker's reader line (fix 29).
+    expect(ruby.scaffolded.packageSwift).toMatch(/^\/\/ rn-xtool-podspec-reader: ruby$/m);
+    expect(reduced.scaffolded.packageSwift).toMatch(/^\/\/ rn-xtool-podspec-reader: reduced$/m);
+    const withoutReader = (pkg: string) => pkg.replace(/^\/\/ rn-xtool-podspec-reader: \w+\n/m, "");
+    expect(withoutReader(reduced.scaffolded.packageSwift)).toBe(withoutReader(ruby.scaffolded.packageSwift));
   });
 
   it.skipIf(needsRuby !== "")(`drops a subspec on Ruby's model as on the reduced one${needsRuby}`, () => {

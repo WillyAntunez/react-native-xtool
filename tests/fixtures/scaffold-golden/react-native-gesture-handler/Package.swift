@@ -1,9 +1,10 @@
 // swift-tools-version: 6.0
 // AUTO-SCAFFOLDED by react-native spm scaffold — safe to edit & commit via patch-package.
 // AUTO-SCAFFOLDED-VERSION: 20
-// rn-xtool-scaffold-revision: 7
+// rn-xtool-scaffold-revision: 8
 // rn-xtool-swift-importer-paths: ["apple/Handlers","apple","shared/runtime","shared/shadowNodes/react/renderer/components/rngesturehandler_codegen","."]
 // Cache slot: 0.86.3/dual-flavor
+// rn-xtool-podspec-reader: ruby
 // Edit the contents below if needed and re-run `npx patch-package <dep-name>`
 // to persist across `npm install`. To regenerate from the podspec, remove
 // this file (or just this marker) and re-run `npx react-native spm scaffold`.
@@ -98,8 +99,8 @@ let package = Package(
                 "shared/shadowNodes/react/renderer/components/rngesturehandler_codegen/RNGestureHandlerDetectorState.h",
             ],
             publicHeadersPath: "include",
-            cSettings: [.define("RCT_NEW_ARCH_ENABLED", to: "1"), .headerSearchPath("apple/Handlers"), .headerSearchPath("apple"), .headerSearchPath("shared/runtime"), .headerSearchPath("shared/shadowNodes/react/renderer/components/rngesturehandler_codegen"), .headerSearchPath("."), .unsafeFlags(["-include", "react-native-spm-prefix.h"])],
-            cxxSettings: [.define("RCT_NEW_ARCH_ENABLED", to: "1"), .headerSearchPath("apple/Handlers"), .headerSearchPath("apple"), .headerSearchPath("shared/runtime"), .headerSearchPath("shared/shadowNodes/react/renderer/components/rngesturehandler_codegen"), .headerSearchPath("."), .unsafeFlags(["-include", "react-native-spm-prefix.h"]), .define("DEBUG", .when(configuration: .debug)), .define("NDEBUG", .when(configuration: .release))],
+            cSettings: [.define("RNGH_USE_WORKLETS", to: "1"), .define("RCT_NEW_ARCH_ENABLED", to: "1"), .headerSearchPath("apple/Handlers"), .headerSearchPath("apple"), .headerSearchPath("shared/runtime"), .headerSearchPath("shared/shadowNodes/react/renderer/components/rngesturehandler_codegen"), .headerSearchPath("."), .unsafeFlags(["-include", "react-native-spm-prefix.h"])],
+            cxxSettings: [.define("RNGH_USE_WORKLETS", to: "1"), .define("RCT_NEW_ARCH_ENABLED", to: "1"), .headerSearchPath("apple/Handlers"), .headerSearchPath("apple"), .headerSearchPath("shared/runtime"), .headerSearchPath("shared/shadowNodes/react/renderer/components/rngesturehandler_codegen"), .headerSearchPath("."), .unsafeFlags(["-include", "react-native-spm-prefix.h"]), .define("DEBUG", .when(configuration: .debug)), .define("NDEBUG", .when(configuration: .release))],
             linkerSettings: [.linkedFramework("UIKit"), .linkedFramework("Foundation"), .linkedFramework("CoreGraphics")]
         ),
     ],

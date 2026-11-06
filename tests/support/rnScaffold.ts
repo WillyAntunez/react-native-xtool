@@ -47,7 +47,7 @@ function mkTmp(prefix: string): string {
   return d;
 }
 
-export type ScaffoldResult = { depName: string; status: string; reason?: string; warnings?: string[] };
+export type ScaffoldResult = { depName: string; status: string; reason?: string; warnings?: string[]; reader?: string };
 type ScaffoldAll = { scaffoldAll(o: object): ScaffoldResult[] };
 
 function listFiles(dir: string, rel = ""): string[] {
@@ -103,7 +103,9 @@ export function podspecCopy(file: string): string {
  * Copies each library (`name` → its source dir) into a temp `node_modules`, drops the scaffolder's
  * earlier output (a persisted scaffold patch), runs `scaffoldAll` over them with `spmDir`, and
  * returns each library's status and every file the run created or changed, keyed
- * `<name>/<relative path>`, with the temp root replaced by `<tmp>`. The libraries in `noIos` are listed
+ * `<name>/<relative path>`, with the temp root replaced by `<tmp>`. The temp tree is an app's install: `<tmp>/app`
+ * with its package.json and `ios/` (`RN_SPM_APP_IOS_DIR` for the run), beside a `node_modules/react-native` of 0.86.3,
+ * so a podspec read by Ruby finds React Native and the app as in a project. The libraries in `noIos` are listed
  * without an iOS platform, as autolinking lists a package a config takes out of iOS. `options` are passed
  * to `scaffoldAll` over the defaults (`force: true` among them), and `rerun` runs it again on the same copies.
  */
@@ -121,6 +123,10 @@ export function scaffoldLibraries(
   const base = mkTmp("rn-scaffold-");
   const projectRoot = path.join(base, "app");
   const appRoot = path.join(projectRoot, "ios");
+  mkdirSync(appRoot, { recursive: true });
+  writeFileSync(path.join(projectRoot, "package.json"), JSON.stringify({ name: "app", version: "1.0.0" }));
+  mkdirSync(path.join(base, "node_modules", "react-native"), { recursive: true });
+  writeFileSync(path.join(base, "node_modules", "react-native", "package.json"), JSON.stringify({ name: "react-native", version: "0.86.3" }));
   const dependencies: Record<string, object> = {};
   const before = new Map<string, Buffer>();
   const roots: Record<string, string> = {};
@@ -160,19 +166,27 @@ export function scaffoldLibraries(
   writeFileSync(autolinkingJsonPath, JSON.stringify({ root: projectRoot, dependencies }, null, 2));
 
   const { scaffoldAll } = createRequire(import.meta.url)(path.join(spmDir, "scaffold-package-swift.js")) as ScaffoldAll;
-  const run = (over: Record<string, unknown>) =>
-    withRnRoot("0.86.3", () =>
-      scaffoldAll({
-        appRoot,
-        projectRoot,
-        reactNativeRoot: path.join(base, "node_modules", "react-native"),
-        autolinkingJsonPath,
-        iosDeploymentTarget: "16.4",
-        cacheSlotLabel: "0.86.3/dual-flavor",
-        force: true,
-        ...over,
-      }),
-    );
+  const run = (over: Record<string, unknown>) => {
+    const saved = process.env["RN_SPM_APP_IOS_DIR"];
+    process.env["RN_SPM_APP_IOS_DIR"] = appRoot;
+    try {
+      return withRnRoot("0.86.3", () =>
+        scaffoldAll({
+          appRoot,
+          projectRoot,
+          reactNativeRoot: path.join(base, "node_modules", "react-native"),
+          autolinkingJsonPath,
+          iosDeploymentTarget: "16.4",
+          cacheSlotLabel: "0.86.3/dual-flavor",
+          force: true,
+          ...over,
+        }),
+      );
+    } finally {
+      if (saved === undefined) delete process.env["RN_SPM_APP_IOS_DIR"];
+      else process.env["RN_SPM_APP_IOS_DIR"] = saved;
+    }
+  };
   const results = run(options);
 
   const files: Record<string, string> = {};
@@ -197,4 +211,16 @@ export function readGolden(): { statuses: Record<string, string>; files: Record<
     for (const f of listFiles(dir)) files[path.join(lib, f)] = readFileSync(path.join(dir, f), "utf8");
   }
   return { statuses, files };
+}
+
+/** Writes `golden` (a {@link scaffoldLibraries} run over {@link GOLDEN_LIBS}) as the golden files {@link readGolden} reads. */
+export function writeGolden(golden: { statuses: Record<string, string>; files: Record<string, string> }): void {
+  for (const lib of GOLDEN_LIBS) rmSync(path.join(SCAFFOLD_GOLDEN, lib), { recursive: true, force: true });
+  mkdirSync(SCAFFOLD_GOLDEN, { recursive: true });
+  writeFileSync(path.join(SCAFFOLD_GOLDEN, "statuses.json"), `${JSON.stringify(golden.statuses, null, 2)}\n`);
+  for (const [key, text] of Object.entries(golden.files)) {
+    const file = path.join(SCAFFOLD_GOLDEN, key);
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, text);
+  }
 }

@@ -359,7 +359,7 @@ const SLOT_LABEL_RE = /^\+\/\/ Cache slot: (\S+)\/dual-flavor\s*$/m;
 const REVISION_RE = /^\+\/\/ (?:rn|expo)-xtool-scaffold-revision: (\d+)\s*$/m;
 
 /** The scaffolder's RN_XTOOL_SCAFFOLD_REVISION (patches/react-native+0.88.{0,1}.patch and vendor/rn-spm). */
-export const SCAFFOLD_REVISION = 7;
+export const SCAFFOLD_REVISION = 8;
 
 const PATCH_PODS_RE = /^\+\/\/ rn-xtool-pods: (.*?)\s*$/m;
 const MANIFEST_PODS_RE = /^\/\/ rn-xtool-pods: (.*?)\s*$/m;

@@ -75,7 +75,7 @@ module.exports = {
   scaffoldAll(opts) {
     record('scaffoldAll', opts);
     return [
-      {depName: 'lib-a', status: 'written', warnings: ['check the header paths'], files: ['Package.swift', 'include/Foo/Foo.h']},
+      {depName: 'lib-a', status: 'written', warnings: ['check the header paths'], files: ['Package.swift', 'include/Foo/Foo.h'], reader: 'ruby'},
       {depName: 'lib-b', status: 'error', reason: 'no podspec readable'},
       {depName: 'lib-c', status: 'already-set'},
     ];
@@ -364,7 +364,14 @@ describe("rn-spm-generate.js", () => {
     expect(r.exitCode, r.all).toBe(0);
     expect(JSON.parse(readFileSync(results, "utf8"))).toEqual({
       results: [
-        { depName: "lib-a", status: "written", warnings: ["check the header paths"], root: "/nm/lib-a", files: ["Package.swift", "include/Foo/Foo.h"] },
+        {
+          depName: "lib-a",
+          status: "written",
+          warnings: ["check the header paths"],
+          root: "/nm/lib-a",
+          files: ["Package.swift", "include/Foo/Foo.h"],
+          reader: "ruby",
+        },
         { depName: "lib-b", status: "error", reason: "no podspec readable", root: "/nm/lib-b" },
         { depName: "lib-c", status: "already-set" },
       ],

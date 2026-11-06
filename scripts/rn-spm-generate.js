@@ -220,8 +220,8 @@ async function scaffold(rn, scaffoldAll, opts, resultsPath) {
   }
 }
 
-// rn-xtool reads this to tell which named library failed, and why, before anything is persisted, and
-// which files each scaffold wrote, which is what it persists.
+// rn-xtool reads this to tell which named library failed, and why, before anything is persisted, which
+// files each scaffold wrote, which is what it persists, and which reader read its podspec.
 function writeResults(file, results, autolinkingJsonPath) {
   let deps = {};
   try {
@@ -236,6 +236,7 @@ function writeResults(file, results, autolinkingJsonPath) {
       ...(r.warnings != null && r.warnings.length > 0 ? {warnings: r.warnings} : {}),
       ...(typeof root === 'string' ? {root} : {}),
       ...(Array.isArray(r.files) ? {files: r.files} : {}),
+      ...(r.reader != null ? {reader: r.reader} : {}),
     };
   });
   fs.mkdirSync(path.dirname(file), {recursive: true});
