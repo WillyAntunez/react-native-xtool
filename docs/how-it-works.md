@@ -360,10 +360,13 @@ patch above is what makes that scaffolder work for real-world podspecs.
   `||`, ternaries, `+` on strings and arrays, `join`, `if`/`elsif`/`else`/`unless` blocks and `if`/`unless`
   modifiers, and `push`, `<<` and `concat` on a local array. A branch its condition rules out is left out, as
   CocoaPods leaves it out; both branches of a condition it cannot evaluate (a method call such as
-  `respond_to?(:install_modules_dependencies, true)`) are read. A `source_files` or `exclude_files` value that uses
-  anything else (a method call, a local it could not evaluate) fails that library's scaffold, with a reason that
-  names the podspec, the field and the expression, since a target built from the globs it could read would lack some
-  of the library's files
+  `respond_to?(:install_modules_dependencies, true)`) are read. It also reads the library's own `package.json`
+  (`JSON.parse(File.read(File.join(__dir__, "package.json")))`) and hashes. A `source_files`, `exclude_files`,
+  `compiler_flags`, `header_dir`, `header_mappings_dir`, `frameworks` or `libraries` value that uses anything else (a
+  method call, a local it could not evaluate) fails that library's scaffold, with a reason that names the podspec,
+  the field and the expression, since a target built from the part it could read would lack some of the library's
+  files or settings; an xcconfig value it cannot evaluate in part is left out with a `Left out of …` warning that
+  names it
   ([fix 28](upstream/react-native-scaffolder.md#28-scriptsspmread-podspecjs-source-globs-built-from-ruby-locals-and-conditions-are-read-in-part)).
 - After `xtool-build`, `build` checks that every class React Native's codegen providers name
   (`ios/build/generated/ios/ReactCodegen/RCTThirdPartyComponentsProvider.mm` and `RCTModuleProviders.mm`) is defined

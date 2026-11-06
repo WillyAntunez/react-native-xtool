@@ -43,8 +43,11 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   scaffold at every build: the patch holds the files the scaffold wrote and those its existing patch held.
 - react-native-screens 4.24.0 scaffolds with its `ios/` sources, instead of a target with only its C++ and an app that
   crashed at start: the podspec reader evaluates Ruby locals, interpolation, `ENV` lookups, ternaries, `if`/`unless`
-  blocks and `push` on a local array, and leaves out the branches a condition rules out; a source glob it cannot
-  evaluate stops that library's scaffold with the podspec, the field and the expression.
+  blocks, `push` on a local array, hashes and the library's `package.json`, and leaves out the branches a condition
+  rules out; a source glob, `compiler_flags`, `header_dir` or `frameworks` value it cannot evaluate stops that
+  library's scaffold with the podspec, the field and the expression, and an xcconfig flag it cannot evaluate is left
+  out with a warning that names it. react-native-worklets 0.8.3 keeps its `WORKLETS_VERSION` and
+  `REACT_NATIVE_MINOR_VERSION` defines.
 - `build` and `install` stop, and remove the packed app, when a class React Native's codegen providers name is not in
   the app, naming the class, its component or module and its library, instead of installing an app that would crash
   at start in `+[RCTThirdPartyComponentsProvider thirdPartyFabricComponents]`.

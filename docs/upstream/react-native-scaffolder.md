@@ -834,11 +834,32 @@ hashes, symbols, `$config[...]`, blocks other than the spec's) is not evaluated:
 assigned from it or under a condition on it is unknown from there on, and both branches of such a condition stay
 visible, as before (react-native-vision-camera's `if enableFrameProcessors` subspec, fix 20).
 
-A `source_files` or `exclude_files` value that uses something unknown no longer degrades silently: the model carries it
-in `unresolvedSources`, and `scaffoldPackageSwiftForDep` returns `status: 'error'` with a reason naming the podspec,
+The evaluator also models what fix 3 and fix 15 read: `JSON.parse(File.read(File.join(__dir__, "package.json")))`
+(also with `File.dirname(__FILE__)`) is the library's own package.json as a hash, indexed with `pkg['key']`, and
+`File.read` reads only inside the podspec's directory. Hashes (`{ 'K' => v }`, `{ k: v }`) and symbols are values, so a
+local hash such as screens' `rnscreens_config` reaches `pod_target_xcconfig`. A double-quoted string with an
+interpolation it cannot compute keeps that `#{...}` as written (fix 3's behaviour), so
+`version_flags = "-DWORKLETS_VERSION=#{package['version']} -DREACT_NATIVE_MINOR_VERSION=#{$worklets_config[...]}"`
+still gives worklets 0.8.3 `WORKLETS_VERSION=0.8.3`, and fix 8 the installed React Native's minor. A local set in a
+branch of a condition it cannot evaluate keeps its value for the rest of that branch (react-native-webview sets
+`folly_compiler_flags` and uses it in `compiler_flags` under `defined?(install_modules_dependencies())`); after `end`
+it is unknown. `name`, `module_name` and `version` are read as literals only, as before: evaluating `s.name =
+package['name']` would rename react-native-app-auth's and react-native-webview's targets.
+
+A value that uses something unknown no longer degrades silently. In `source_files`, `exclude_files`,
+`compiler_flags`, `header_dir`, `header_mappings_dir`, `frameworks` and `libraries` the model carries it in
+`unresolvedSources`, and `scaffoldPackageSwiftForDep` returns `status: 'error'` with a reason naming the podspec,
 the field and the expression, for example ``<podspec>: `s.source_files = sources_for("ios")` cannot be evaluated: it
 uses the method call `sources_for(...)`.`` Name resolution and header search paths keep
-reading the model as before.
+reading the model as before. In the xcconfig values the scaffolder reads (`OTHER_CFLAGS`,
+`GCC_PREPROCESSOR_DEFINITIONS`, `HEADER_SEARCH_PATHS`, `SWIFT_ACTIVE_COMPILATION_CONDITIONS` of `pod_target_xcconfig`,
+`user_target_xcconfig` and `xcconfig`) each `#{...}` it cannot evaluate is left out with a warning that names it,
+``Left out of s.pod_target_xcconfig OTHER_CFLAGS: `#{feature_flags}`, which the podspec reader cannot evaluate;
+CocoaPods passes its value.``, except `REACT_NATIVE_{MAJOR,MINOR,PATCH}_VERSION=#{...}` (fix 8) and a token with an
+Xcode `$(...)`, which the scaffolder drops anyway. They are not refused: podspecs put optional,
+configuration-driven flags there that only CocoaPods computes from the app and its Podfile, and the libraries checked
+(react-native-worklets 0.8.3 and 0.10.1, react-native-reanimated 4.3.4 and 4.5.1, react-native-vision-camera 4.7.3,
+react-native-gesture-handler 3.3.0) built and ran with those values left out.
 
 Effect on the libraries checked: screens 4.24.0 scaffolds 195 sources (147 under `ios/`), gamma excluded, as one
 clang-only target (every Swift file is under `ios/gamma`), with `ios/bridging/Swift-Bridging.h` left out of its module
@@ -846,8 +867,10 @@ map (fix 18, it imports the module's own `-Swift.h`). react-native-svg 15.16.0 n
 `apple/Utils/RNSVGFabricConversions.h` (excluded only in its old-architecture `else` branch), so the header is in its
 sources and its module map is no longer written. The other libraries of the reference app, of the bare 0.86 and 0.87
 apps and of the Expo SDK 57 and 58 apps read the same sources as before; their dependencies and `exclude_files` lose
-what only a dead `else` branch declared (`React-Core`, `React-jsc`, datetimepicker's `ios/fabric`). The scaffold
-revision moves to 6.
+what only a dead `else` branch declared (`React-Core`, `React-jsc`, datetimepicker's `ios/fabric`). Libraries that
+set `compiler_flags` from `folly_compiler_flags` (react-native-webview, @react-native-async-storage/async-storage 1.x,
+react-native-keychain, react-native-video, @aws-amplify/react-native) now get its `-Wno-comma -Wno-shorten-64-to-32`;
+its `FOLLY_*` defines stay dropped, as for every library. The scaffold revision moves to 6.
 
 ## Known limitation (deferred): pure-Swift packages importing a mixed Expo module
 

@@ -1064,8 +1064,15 @@ module is unavailable.`
   <library> failed: <podspec>: `s.source_files = <expression>` cannot be evaluated: it uses <what>. …``. The reader
   evaluates locals, string interpolation, arrays, `ENV['…']`, comparisons, ternaries and `if`/`unless` blocks
   ([how it works](how-it-works.md#cocoapods-only-libraries)); a method call or a value it does not know in a source
-  glob is refused. Installing CocoaPods (`gem install cocoapods`) lets `pod ipc spec` read the podspec instead, or give
-  the library a `Package.swift` of its own.
+  glob, `compiler_flags`, `header_dir`, `header_mappings_dir`, `frameworks` or `libraries` is refused. Installing
+  CocoaPods (`gem install cocoapods`) lets `pod ipc spec` read the podspec instead, or give the library a
+  `Package.swift` of its own.
+- **"! <library>: Left out of s.pod_target_xcconfig OTHER_CFLAGS: `#{feature_flags}`, which the podspec reader cannot
+  evaluate; CocoaPods passes its value."** (also `GCC_PREPROCESSOR_DEFINITIONS`, `HEADER_SEARCH_PATHS`,
+  `SWIFT_ACTIVE_COMPILATION_CONDITIONS`): the scaffold left that part of the value out. CocoaPods computes it from the
+  app or the Podfile: react-native-worklets' and react-native-reanimated's static feature flags (their defaults
+  apply), react-native-vision-camera's frame processor and location switches (both off). To set such a value, edit
+  the library's `Package.swift` and persist it in `patches/`.
 - **A hand-edited `Package.swift`** that leaves out the files defining a class: put them back.
 - **"ℹ The packed app's binaries list no Objective-C class symbols, so rn-xtool could not check the <n> classes React
   Native's codegen providers name.":** the binaries have no symbol table, so nothing is checked and the build goes on.
