@@ -4,6 +4,9 @@ Status: skeleton, 2026-11-06. The [alpha.8 design](../specs/2026-11-06-alpha-8-f
 its rulings R1–R13. This file lists the task groups and the failure-walk rows each group owns; every row 1–118 has
 exactly one owner. The tasks, their tests and the execution order are written next.
 
+Plans: [plan 1, the podspec reader](2026-11-06-alpha-8-plan-1-podspec-reader.md) covers group A (rows 1–28), F1 (rows
+104–108), F3 (rows 112–115) and records row 29 as deferred.
+
 Two gates come before the groups that depend on them:
 
 - **The device spike** (R9) runs first of all: it decides the build stamp's carrier (`RNXtoolBuildStamp`, then
