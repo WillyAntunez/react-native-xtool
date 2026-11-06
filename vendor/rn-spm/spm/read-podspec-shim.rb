@@ -20,12 +20,20 @@ if (RUBY_VERSION.split('.').map(&:to_i) <=> RN_XTOOL_RUBY_FLOOR.split('.').map(&
   exit 0
 end
 
+# A podspec's files read as UTF-8 whatever the locale (`LANG=C` would make them US-ASCII).
+Encoding.default_external = Encoding::UTF_8
+# Ruby's own load path, before any gem activates: the names a podspec's `require` may load.
+RN_XTOOL_LOAD_PATH = $LOAD_PATH.dup.freeze
+
 require 'json'
 
 if ARGV == ['--probe']
   puts JSON.generate('ruby' => RUBY_VERSION, 'floor' => RN_XTOOL_RUBY_FLOOR, 'usable' => true)
   exit 0
 end
+
+require 'pathname'
+require 'singleton'
 
 module Pod
   # A spec as CocoaPods 1.16's DSL builds it: each attribute is stored as the podspec gave it.
@@ -165,25 +173,201 @@ module Pod
   end
 end
 
-# The command line's run: evaluate, then write the model or the error file.
+# ---- The podspec's environment ----
+# What a Podfile that requires React Native's `react_native_pods.rb` (and Expo's autolinking) gives a podspec under
+# CocoaPods 1.16. Each part records what the podspec used.
+
+module RnXtoolShim
+  # What the podspec's run used, written as the model's `__rn_xtool__`.
+  USED = { env: [], helpers: [], ui: [], spm_dependencies: [] }.freeze
+
+  def self.used(kind, value)
+    USED.fetch(kind) << value
+    nil
+  end
+end
+
+# CocoaPods: its version, `Pod::UI` and `Pod::Config`.
+module Pod
+  VERSION = '1.16.2'
+
+  # What the podspec prints through CocoaPods: captured into `ui`, not printed.
+  module UI
+    def self.puts(message = '')
+      RnXtoolShim.used(:ui, message.to_s)
+    end
+
+    def self.warn(message, _actions = [], _verbose_only = false)
+      RnXtoolShim.used(:ui, message.to_s)
+    end
+
+    # CocoaPods runs the block under the message.
+    def self.info(message)
+      RnXtoolShim.used(:ui, message.to_s)
+      yield if block_given?
+    end
+  end
+
+  # The app's `ios/` folder, from the command line's installation root; `Pods` in it need not exist. No Podfile.
+  class Config
+    class << self
+      attr_accessor :instance
+    end
+
+    attr_reader :installation_root, :project_pods_root
+    alias project_root installation_root
+
+    def initialize(installation_root)
+      @installation_root = Pathname.new(installation_root)
+      @project_pods_root = @installation_root + 'Pods'
+    end
+  end
+end
+
+# Expo's autolinking (expo-modules-autolinking's `packages_config.rb`) as it answers for a build from sources: no core
+# features, no prebuilt xcframework linked.
+module Expo
+  class PackagesConfig
+    include Singleton
+
+    attr_reader :coreFeatures
+
+    def initialize
+      @coreFeatures = []
+    end
+
+    def try_link_with_prebuilt_xcframework(_spec)
+      false
+    end
+  end
+end
+
+# React Native's Podfile helpers (scripts/react_native_pods.rb), with its signatures: a Podfile's `require` makes them
+# private methods of Object. Each call is recorded into `helpers`; the others of that file stay undefined.
+module RnXtoolShim
+  # React Native's `Helpers::Constants` (scripts/cocoapods/helpers.rb), the same in every supported line.
+  FOLLY_CONFIG = {
+    version: '2024.11.18.00',
+    git: 'https://github.com/facebook/folly.git',
+    compiler_flags: '-DFOLLY_MOBILE=1 -DFOLLY_USE_LIBCPP=1 -DFOLLY_CFG_NO_COROUTINES=1 -DFOLLY_HAVE_CLOCK_GETTIME=1 ' \
+                    '-Wno-comma -Wno-shorten-64-to-32'
+  }.freeze
+  MIN_IOS_VERSION_SUPPORTED = '15.1'
+end
+
+class Object
+  private
+
+  # Recorded only: the scaffold adds React Native's dependencies itself.
+  def install_modules_dependencies(spec, new_arch_enabled: true)
+    RnXtoolShim.used(:helpers, 'install_modules_dependencies')
+  end
+
+  def add_dependency(spec, pod_name, subspec: nil, additional_framework_paths: [], framework_name: nil, version: nil,
+                     base_dir: 'PODS_CONFIGURATION_BUILD_DIR')
+    RnXtoolShim.used(:helpers, 'add_dependency')
+    spec.dependency(subspec ? "#{pod_name}/#{subspec}" : pod_name, *[version].compact)
+  end
+
+  # A fresh hash per call: podspecs append to its flags.
+  def get_folly_config
+    RnXtoolShim.used(:helpers, 'get_folly_config')
+    RnXtoolShim::FOLLY_CONFIG.transform_values(&:dup)
+  end
+
+  def min_ios_version_supported
+    RnXtoolShim.used(:helpers, 'min_ios_version_supported')
+    RnXtoolShim::MIN_IOS_VERSION_SUPPORTED.dup
+  end
+
+  # Recorded with its arguments, so that the scaffold can refuse the library by name.
+  def spm_dependency(spec, url:, requirement:, products:)
+    RnXtoolShim.used(:helpers, 'spm_dependency')
+    RnXtoolShim.used(:spm_dependencies, { url: url, requirement: requirement, products: products })
+  end
+end
+
+# `require`: a name on Ruby's own load path loads, `colored2` loads its stub, any other name fails. `require_relative`
+# of the library's own files is Ruby's.
+module RnXtoolShim
+  # colored2 (a gem CocoaPods brings): its String colours and effects.
+  COLORED2 = %w[
+    black red green yellow blue magenta cyan white no_color bold dark italic underlined reversed plain normal
+  ].freeze
+
+  # A `require` of a name that is neither on Ruby's own load path nor stubbed.
+  class Unstubbed < LoadError; end
+
+  def self.on_load_path?(feature)
+    files = File.extname(feature).empty? ? ["#{feature}.rb", "#{feature}.#{RbConfig::CONFIG['DLEXT']}"] : [feature]
+    RN_XTOOL_LOAD_PATH.any? { |dir| files.any? { |file| File.file?(File.join(dir, file)) } }
+  end
+
+  # The stub: colours and effects return the string uncoloured. False once loaded, as `require` answers.
+  def self.load_colored2
+    return false if @colored2
+
+    COLORED2.each { |method| String.send(:define_method, method) { dup } }
+    @colored2 = true
+  end
+end
+
+class Object
+  private
+
+  def require(name)
+    feature = name.to_s
+    return RnXtoolShim.load_colored2 if feature == 'colored2'
+    raise RnXtoolShim::Unstubbed, "cannot load such file -- #{feature}" unless RnXtoolShim.on_load_path?(feature)
+
+    super
+  end
+end
+
+# `ENV` as the podspec reads it: each name read is recorded into `env`.
+module RnXtoolShim
+  module EnvReads
+    %i[[] fetch key? has_key? include? member?].each do |method|
+      define_method(method) do |name, *rest, &block|
+        RnXtoolShim.used(:env, name.to_s)
+        super(name, *rest, &block)
+      end
+    end
+
+    def values_at(*names)
+      names.each { |name| RnXtoolShim.used(:env, name.to_s) }
+      super
+    end
+  end
+end
+ENV.singleton_class.prepend(RnXtoolShim::EnvReads)
+
+# ---- The command line's run: evaluate, then write the model or the error file ----
 module RnXtoolShim
   module_function
 
-  # Writes the model, or the error, to `out`; whether the podspec read.
-  def run(podspec, out)
+  # Writes the model, or the error, to `out`; whether the podspec read. `root` is the app's `ios/` folder.
+  def run(podspec, out, root)
+    Pod::Config.instance = Pod::Config.new(root)
     spec = Pod._eval_podspec(File.read(podspec, encoding: 'UTF-8'), podspec)
     unless spec.is_a?(Pod::Specification)
       write(out, 'error' => { 'kind' => 'not-a-spec', 'message' => "#{podspec}: the podspec does not evaluate to a Pod::Spec" })
       return false
     end
-    write(out, spec.to_model.merge(
-      '__rn_xtool__' => { 'env' => [], 'helpers' => [], 'ui' => [], 'spm_dependencies' => [] }
-    ))
+    write(out, spec.to_model.merge('__rn_xtool__' => used_model))
     true
   rescue ScriptError, StandardError, SystemExit => e
     kind, message = failure(e, podspec)
     write(out, 'error' => { 'kind' => kind, 'message' => message })
     false
+  end
+
+  # `env` and `helpers` sorted and unique; `ui` and `spm_dependencies` as called.
+  def used_model
+    {
+      'env' => USED[:env].uniq.sort, 'helpers' => USED[:helpers].uniq.sort, 'ui' => USED[:ui],
+      'spm_dependencies' => plain(USED[:spm_dependencies])
+    }
   end
 
   def write(out, value)
@@ -202,6 +386,10 @@ module RnXtoolShim
 
   # [kind, message] of an exception the podspec's run raised.
   def failure(error, podspec)
+    if error.is_a?(Unstubbed)
+      return ['require', "#{podspec}: #{error.message}; rn-xtool's podspec reader stubs only colored2"]
+    end
+
     where = where(error, podspec)
     if error.is_a?(NameError)
       receiver = receiver_of(error)
@@ -230,12 +418,12 @@ module RnXtoolShim
     nil
   end
 
-  # `Pod`, the main object, `Object` (a top-level constant) or an object of the shim's.
+  # `Pod`, `Expo`, the main object, `Object` (a top-level constant) or an object of the shim's.
   def modeled?(receiver)
     return true if receiver.equal?(TOPLEVEL_BINDING.receiver) || receiver.equal?(Object)
 
     namespace = Module === receiver ? receiver : receiver.class
-    namespace.name.to_s.split('::').first == 'Pod'
+    %w[Pod Expo].include?(namespace.name.to_s.split('::').first)
   end
 
   # How the podspec's line names the spec an unknown attribute was set on: `s`, `ss.ios`.
@@ -295,4 +483,4 @@ module RnXtoolShim
 end
 
 abort 'usage: ruby read-podspec-shim.rb --probe | <podspec> <out.json> <installation-root>' unless ARGV.length == 3
-exit(RnXtoolShim.run(ARGV[0], ARGV[1]) ? 0 : 1)
+exit(RnXtoolShim.run(ARGV[0], ARGV[1], ARGV[2]) ? 0 : 1)

@@ -23,6 +23,13 @@ afterAll(() => {
   for (const d of tmp) rmSync(d, { recursive: true, force: true });
 });
 
+/** A fresh temp folder, removed after the test file. */
+export function tempDir(): string {
+  const dir = mkdtempSync(path.join(tmpdir(), "rn-xtool-shim-"));
+  tmp.push(dir);
+  return dir;
+}
+
 export type ShimRun = { status: number; json: any; stdout: string; podspec: string };
 
 /**
@@ -34,8 +41,7 @@ export function runShim(
   body: string,
   opts: { files?: Record<string, string>; env?: Record<string, string>; root?: string } = {},
 ): ShimRun {
-  const base = mkdtempSync(path.join(tmpdir(), "rn-xtool-shim-"));
-  tmp.push(base);
+  const base = tempDir();
   const lib = path.join(base, "lib");
   mkdirSync(lib);
   const podspec = path.join(lib, "Foo.podspec");
