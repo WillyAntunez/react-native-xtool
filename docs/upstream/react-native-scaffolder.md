@@ -925,8 +925,8 @@ usable Ruby (none, older than 2.7, no `json`, the shim missing), or with `RN_XTO
 evaluator reads the podspec as before, and `podspecReader()` says why; another value of the variable is named in a
 warning and ignored. `name`, `module_name` and `version` stay the literal readings under both readers.
 `readPodspecCached` keys on the reader too. When `RN_SPM_PODSPEC_READS` names a file, each read appends one JSON line
-to it: the podspec, the reader and why, whether it was forced, the Ruby, the `ENV` names and helpers the podspec used,
-and whether it read, with the error.
+to it: the podspec, the reader and why, whether it was forced, the Ruby, the reader choice's warning (an unknown
+`RN_XTOOL_PODSPEC_READER` value), the `ENV` names and helpers the podspec used, and whether it read, with the error.
 
 `pod ipc spec` is never run (`patchPodspecForPodIpc`, `runPodIpcSpec` and `cleanupPatchedPodspec` are gone), so a
 machine with CocoaPods reads a podspec as any machine with Ruby. `flattenSubspecs` merges each selected layer's `ios`
