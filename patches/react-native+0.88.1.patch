@@ -516,10 +516,18 @@ index 0000000..1536aa7
 +abort 'usage: ruby read-podspec-shim.rb --probe | <podspec> <out.json> <installation-root>' unless ARGV.length == 3
 +exit(RnXtoolShim.run(ARGV[0], ARGV[1], ARGV[2]) ? 0 : 1)
 diff --git a/node_modules/react-native/scripts/spm/read-podspec.js b/node_modules/react-native/scripts/spm/read-podspec.js
-index 8fcf04b..6897fdb 100644
+index 8fcf04b..7ef3500 100644
 --- a/node_modules/react-native/scripts/spm/read-podspec.js
 +++ b/node_modules/react-native/scripts/spm/read-podspec.js
-@@ -102,13 +102,12 @@ function runPodIpcSpec(podspecPath /*: string */) /*: RawSpec | null */ {
+@@ -29,6 +29,7 @@
+ 
+ const {spawnSync} = require('node:child_process');
+ const fs = require('node:fs');
++const os = require('node:os');
+ const path = require('node:path');
+ 
+ /*::
+@@ -102,13 +103,12 @@ function runPodIpcSpec(podspecPath /*: string */) /*: RawSpec | null */ {
        maxBuffer: 8 * 1024 * 1024,
        // Many RN podspecs gate subspec definitions on `RCT_NEW_ARCH_ENABLED`
        // (e.g. safe-area-context wraps its Fabric `common` + `fabric`
@@ -539,7 +547,277 @@ index 8fcf04b..6897fdb 100644
      });
    } catch {
      cleanupPatchedPodspec(patchedPath);
-@@ -170,58 +169,1412 @@ function cleanupPatchedPodspec(patchedPath /*: ?string */) /*: void */ {
+@@ -166,62 +166,1682 @@ function cleanupPatchedPodspec(patchedPath /*: ?string */) /*: void */ {
+   }
+ }
+ 
++// ---------------------------------------------------------------------------
++// The podspec reader: Ruby or the reduced reader
++// ---------------------------------------------------------------------------
++
++// The podspec reader runs each podspec with the system Ruby, against a shim of
++// CocoaPods' DSL (read-podspec-shim.rb), which writes the spec in CocoaPods'
++// JSON form. Without a usable Ruby, or with RN_XTOOL_PODSPEC_READER=reduced,
++// the reduced reader (the evaluator below) reads it instead, and the choice
++// says why.
++
++/*::
++type PodspecReaderChoice =
++  | {reader: 'ruby', ruby: string, forced: false, warning: ?string}
++  | {reader: 'reduced', why: string, forced: boolean, warning: ?string};
++type RubyProbe = {usable: true, ruby: string} | {usable: false, why: string};
++*/
++
++const PODSPEC_SHIM = path.join(__dirname, 'read-podspec-shim.rb');
++const PODSPEC_READER_VAR = 'RN_XTOOL_PODSPEC_READER';
++const RUBY_PROBE_TIMEOUT_MS = 10000;
++const PODSPEC_TIMEOUT_MS = 30000;
++// What a read that stopped on a gap of the shim, or a podspec that did not
++// finish, says to do next. A podspec's own `raise` keeps the shim's message.
++const PODSPEC_READ_REMEDY =
++  'Set RN_XTOOL_PODSPEC_READER=reduced to read it with the reduced reader ' +
++  'for one run, and report it with rn-xtool doctor --report.';
++const SHIM_GAP_KINDS = [
++  'method',
++  'constant',
++  'attribute',
++  'require',
++  'not-a-spec',
++];
++
++// One probe per `PATH` (and shim): the Ruby it finds does not change during a
++// run.
++const rubyProbes /*: Map<string, RubyProbe> */ = new Map();
++
++class PodspecReadError extends Error {
++  /*:: code: string; kind: string; */
++  constructor(message /*: string */, kind /*: string */) {
++    super(message);
++    this.name = 'PodspecReadError';
++    this.code = 'RN_SPM_PODSPEC_READ';
++    this.kind = kind;
++  }
++}
++
++// By `code` as well, so an error of another copy of this file (the vendored
++// scaffolder and the patched one) counts too.
++function isPodspecReadError(e /*: mixed */) /*: boolean */ {
++  return (
++    e instanceof PodspecReadError ||
++    (e != null && typeof e === 'object' && e.code === 'RN_SPM_PODSPEC_READ')
++  );
++}
++
++// The child's whole environment: `PATH`, `HOME`, `LANG` and React Native's
++// two pod variables (`RN_POD_ENV`), so neither RUBYOPT, Bundler, a gem home
++// nor a `0` in the shell changes how a podspec reads.
++function podspecChildEnv(
++  env /*: {+[string]: ?string} */,
++) /*: {[string]: string} */ {
++  const child /*: {[string]: string} */ = {};
++  for (const name of ['PATH', 'HOME', 'LANG']) {
++    const value = env[name];
++    if (value != null) child[name] = value;
++  }
++  return {...child, ...RN_POD_ENV};
++}
++
++function nonEmptyLines(text /*: ?string */) /*: Array<string> */ {
++  return String(text ?? '')
++    .split('\n')
++    .map(line => line.trim())
++    .filter(line => line !== '');
++}
++
++// `<code>` or `<signal>` of an ended child.
++function howRubyEnded(
++  result /*: {status: ?number, signal: ?string, ...} */,
++) /*: string */ {
++  return result.status != null ? String(result.status) : String(result.signal);
++}
++
++function probeRuby(
++  shim /*: string */,
++  env /*: {+[string]: ?string} */,
++) /*: RubyProbe */ {
++  const result = spawnSync('ruby', [shim, '--probe'], {
++    encoding: 'utf8',
++    env: podspecChildEnv(env),
++    stdio: ['ignore', 'pipe', 'pipe'],
++    timeout: RUBY_PROBE_TIMEOUT_MS,
++    killSignal: 'SIGKILL',
++  });
++  if (result.error != null && result.error.code === 'ENOENT') {
++    return {usable: false, why: 'Ruby was not found'};
++  }
++  if (result.status === 0) {
++    let answer;
++    try {
++      answer = JSON.parse(result.stdout);
++    } catch {
++      answer = null;
++    }
++    if (answer?.usable === true && typeof answer.ruby === 'string') {
++      return {usable: true, ruby: answer.ruby};
++    }
++    if (answer?.usable === false && typeof answer.why === 'string') {
++      return {usable: false, why: answer.why};
++    }
++  }
++  const stderr = nonEmptyLines(result.stderr);
++  if (stderr.some(line => /cannot load such file -- json\b/.test(line))) {
++    return {usable: false, why: 'ruby cannot load json'};
++  }
++  let detail;
++  if (stderr.length > 0) {
++    detail = stderr[0];
++  } else if (result.error != null && result.error.code === 'ETIMEDOUT') {
++    detail = `did not finish in ${RUBY_PROBE_TIMEOUT_MS / 1000} s`;
++  } else if (result.error != null) {
++    detail = result.error.message;
++  } else if (result.status === 0) {
++    detail = 'its probe printed no answer';
++  } else {
++    detail = `exited with ${howRubyEnded(result)}`;
++  }
++  return {
++    usable: false,
++    why: `ruby could not run the podspec reader (${detail})`,
++  };
++}
++
++// Which reader reads the podspecs, and why when it is not Ruby.
++// RN_XTOOL_PODSPEC_READER is read on every call; the Ruby probe is memoised.
++function podspecReader(
++  opts /*: {env?: {+[string]: ?string}, shim?: string} */ = {},
++) /*: PodspecReaderChoice */ {
++  const env = opts.env ?? process.env;
++  const shim = opts.shim ?? PODSPEC_SHIM;
++  const value = env[PODSPEC_READER_VAR];
++  if (value === 'reduced') {
++    return {
++      reader: 'reduced',
++      why: `${PODSPEC_READER_VAR}=reduced is set`,
++      forced: true,
++      warning: null,
++    };
++  }
++  // An empty value counts as unset.
++  const warning =
++    value != null && value !== ''
++      ? `${PODSPEC_READER_VAR}=${value} is not a reader rn-xtool knows ` +
++        '(only reduced); reading podspecs with Ruby'
++      : null;
++  if (!fs.existsSync(shim)) {
++    return {
++      reader: 'reduced',
++      why: `the podspec reader's Ruby shim is missing from ${shim}`,
++      forced: false,
++      warning,
++    };
++  }
++  const key = `${shim}\0${env.PATH ?? ''}`;
++  let probe = rubyProbes.get(key);
++  if (probe == null) {
++    probe = probeRuby(shim, env);
++    rubyProbes.set(key, probe);
++  }
++  return probe.usable
++    ? {reader: 'ruby', ruby: probe.ruby, forced: false, warning}
++    : {reader: 'reduced', why: probe.why, forced: false, warning};
++}
++
++// The app's `ios/` folder, CocoaPods' installation root for the podspec:
++// RN_SPM_APP_IOS_DIR when set, else the folder that holds the first
++// `node_modules` of the podspec's path (as given, not through its links) plus
++// `ios`, else the podspec's own folder.
++function installationRootFor(podspecPath /*: string */) /*: string */ {
++  const appIosDir = process.env.RN_SPM_APP_IOS_DIR;
++  if (appIosDir != null && appIosDir !== '') return appIosDir;
++  const full = path.resolve(podspecPath);
++  const nodeModules = full.indexOf('/node_modules/');
++  if (nodeModules >= 0) return path.join(full.slice(0, nodeModules), 'ios');
++  return path.dirname(full);
++}
++
++// Runs the podspec with Ruby through the shim, in the podspec's folder, with
++// an empty stdin and `podspecChildEnv`: its model, and what it printed.
++function runPodspecShim(
++  podspecPath /*: string */,
++  opts /*: {timeoutMs?: number, installationRoot?: string} */ = {},
++) /*: {raw: RawSpec, output: string} */ {
++  const podspec = path.resolve(podspecPath);
++  const timeoutMs = opts.timeoutMs ?? PODSPEC_TIMEOUT_MS;
++  const root = opts.installationRoot ?? installationRootFor(podspec);
++  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rn-xtool-podspec-'));
++  const out = path.join(outDir, 'spec.json');
++  let result;
++  let written = null;
++  try {
++    result = spawnSync('ruby', [PODSPEC_SHIM, podspec, out, root], {
++      cwd: path.dirname(podspec),
++      encoding: 'utf8',
++      env: podspecChildEnv(process.env),
++      stdio: ['ignore', 'pipe', 'pipe'],
++      timeout: timeoutMs,
++      killSignal: 'SIGKILL',
++      maxBuffer: 8 * 1024 * 1024,
++    });
++    if (fs.existsSync(out)) written = fs.readFileSync(out, 'utf8');
++  } finally {
++    fs.rmSync(outDir, {recursive: true, force: true});
++  }
++  if (result.error != null && result.error.code === 'ETIMEDOUT') {
++    throw new PodspecReadError(
++      `${podspec} did not finish in ${timeoutMs / 1000} s. ` +
++        PODSPEC_READ_REMEDY,
++      'timeout',
++    );
++  }
++  const stderr = nonEmptyLines(result.stderr);
++  const lastStderr = stderr.length > 0 ? `: ${stderr[stderr.length - 1]}` : '';
++  if (written == null) {
++    const error = result.error;
++    if (error != null && result.status == null && result.signal == null) {
++      throw new PodspecReadError(
++        `${podspec}: ruby could not run (${error.message})`,
++        'exit',
++      );
++    }
++    throw new PodspecReadError(
++      `${podspec}: ruby exited with ${howRubyEnded(result)}${lastStderr}`,
++      'exit',
++    );
++  }
++  let model;
++  try {
++    model = JSON.parse(written);
++  } catch (e) {
++    throw new PodspecReadError(
++      `${podspec}: the podspec reader wrote no JSON (${e.message})`,
++      'exit',
++    );
++  }
++  if (model != null && typeof model.error === 'object' && model.error != null) {
++    const kind = String(model.error.kind);
++    const message = String(model.error.message);
++    throw new PodspecReadError(
++      SHIM_GAP_KINDS.includes(kind)
++        ? `${message} ${PODSPEC_READ_REMEDY}`
++        : message,
++      kind,
++    );
++  }
++  if (result.status !== 0) {
++    throw new PodspecReadError(
++      `${podspec}: ruby exited with ${howRubyEnded(result)}${lastStderr}`,
++      'exit',
++    );
++  }
++  return {raw: model, output: result.stdout};
++}
++
+ // ---------------------------------------------------------------------------
  // Regex fallback
  // ---------------------------------------------------------------------------
  
@@ -1980,7 +2258,7 @@ index 8fcf04b..6897fdb 100644
    }
  
    // The fields that identify the spec, and only when the receiver spelling
-@@ -235,9 +1588,27 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -235,9 +1855,27 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    // Matches:
    //   s.<field> = ["a", "b"]            (array)
    //   s.<field> = "single"              (single value treated as 1-element array)
@@ -2011,7 +2289,7 @@ index 8fcf04b..6897fdb 100644
      if (mArr != null) {
        const inner = mArr[1];
        const out /*: Array<string> */ = [];
-@@ -249,16 +1620,37 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -249,16 +1887,37 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
        }
        return out;
      }
@@ -2054,7 +2332,7 @@ index 8fcf04b..6897fdb 100644
        if (m == null) break;
        out.push(m[1]);
      }
-@@ -269,21 +1661,25 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -269,21 +1928,25 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    //   s.framework "X"          → ["X"]
    //   s.framework = "X"        → ["X"]
    //   s.frameworks = ["X","Y"] → ["X","Y"]
@@ -2085,7 +2363,7 @@ index 8fcf04b..6897fdb 100644
        if (m == null) break;
        const itemRe = /["']([^"']+)["']/g;
        while (true) {
-@@ -298,12 +1694,14 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -298,12 +1961,14 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    // Matches:  'HEADER_SEARCH_PATHS' => '...'   or  => ["...","..."]
    // Returns the raw token strings (still containing $(PODS_TARGET_SRCROOT)
    // etc.); substitution happens at translation time.
@@ -2102,7 +2380,7 @@ index 8fcf04b..6897fdb 100644
        if (m == null) break;
        const itemRe = /["']((?:[^"'\\]|\\.)+)["']/g;
        while (true) {
-@@ -321,7 +1719,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -321,7 +1986,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      const strRe =
        /["']HEADER_SEARCH_PATHS["']\s*=>\s*["']((?:[^"'\\]|\\.)+)["']/g;
      while (true) {
@@ -2111,7 +2389,7 @@ index 8fcf04b..6897fdb 100644
        if (m == null) break;
        for (const token of m[1].split(/\s+/)) {
          if (token.length > 0) {
-@@ -332,15 +1730,53 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -332,15 +1997,53 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      return Array.from(new Set(out));
    }
  
@@ -2167,7 +2445,7 @@ index 8fcf04b..6897fdb 100644
      );
    }
    if (/install_modules_dependencies/.test(content)) {
-@@ -354,26 +1790,103 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -354,26 +2057,103 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      );
    }
  
@@ -2284,7 +2562,7 @@ index 8fcf04b..6897fdb 100644
    };
  }
  
-@@ -423,6 +1936,58 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
+@@ -423,6 +2203,58 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
    return tokens;
  }
  
@@ -2343,7 +2621,7 @@ index 8fcf04b..6897fdb 100644
  // ---------------------------------------------------------------------------
  // Subspec flattening
  // ---------------------------------------------------------------------------
-@@ -438,8 +2003,16 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
+@@ -438,8 +2270,16 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
   *   - String fields → top-level wins; if absent, take the first subspec's value
   *   - pod_target_xcconfig HEADER_SEARCH_PATHS → array-union across all selected subspecs
   *   - dependencies  → array-union of name strings (version constraints dropped)
@@ -2361,7 +2639,7 @@ index 8fcf04b..6897fdb 100644
    const warnings /*: Array<string> */ = [];
    // $FlowFixMe[prop-missing] dynamic shape
    const partial /*: boolean */ = rawSpec.__regex_partial__ === true;
-@@ -456,7 +2029,12 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -456,7 +2296,12 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
    //   - `default_subspecs`: array of names (or undefined → use all subspecs)
    const subspecs = Array.isArray(rawSpec.subspecs) ? rawSpec.subspecs : [];
    let selected = subspecs;
@@ -2375,7 +2653,7 @@ index 8fcf04b..6897fdb 100644
      const wanted = new Set(rawSpec.default_subspecs);
      selected = subspecs.filter(s => {
        // $FlowFixMe[prop-missing] dynamic shape
-@@ -464,6 +2042,10 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -464,6 +2309,10 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        return name != null && wanted.has(name);
      });
    }
@@ -2386,7 +2664,7 @@ index 8fcf04b..6897fdb 100644
    const layers = [rawSpec, ...selected];
  
    function mergeArrayField(key /*: string */) /*: Array<string> */ {
-@@ -482,6 +2064,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -482,6 +2331,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return Array.from(new Set(out));
    }
  
@@ -2404,7 +2682,7 @@ index 8fcf04b..6897fdb 100644
    // Only the spec's own value: a subspec's `header_dir` names that subspec's
    // headers, and several subspecs can disagree.
    function specStringField(key /*: string */) /*: string | null */ {
-@@ -544,6 +2137,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -544,6 +2404,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
    // `-D`s are safe to forward; arbitrary flags may be machine- or
    // example-app-specific. $(inherited), unresolved $(...) tokens, and invalid
    // C identifiers are skipped.
@@ -2425,7 +2703,7 @@ index 8fcf04b..6897fdb 100644
    function mergePreprocessorDefines() /*: Array<PreprocessorDefine> */ {
      const out /*: Array<PreprocessorDefine> */ = [];
      const seen /*: Set<string> */ = new Set();
-@@ -554,7 +2161,23 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -554,7 +2428,23 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        config /*: ?('debug' | 'release') */,
      ) => {
        if (!validName.test(name)) return;
@@ -2450,7 +2728,7 @@ index 8fcf04b..6897fdb 100644
          return; // unresolved Xcode/Ruby token — don't emit a broken define
        }
        const key = `${name}|${config ?? ''}`;
-@@ -571,6 +2194,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -571,6 +2461,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        'xcconfig',
        'user_target_xcconfig',
      ];
@@ -2471,7 +2749,7 @@ index 8fcf04b..6897fdb 100644
      for (const layer of layers) {
        if (layer == null || typeof layer !== 'object') continue;
        for (const xcKey of XCCONFIG_KEYS) {
-@@ -627,44 +2264,119 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -627,44 +2531,119 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return out;
    }
  
@@ -2616,7 +2894,7 @@ index 8fcf04b..6897fdb 100644
        }
      }
      return out;
-@@ -677,6 +2389,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -677,6 +2656,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        ? false
        : true; // RN ecosystem default
  
@@ -2637,7 +2915,7 @@ index 8fcf04b..6897fdb 100644
    return {
      name: specStringField('name') ?? '',
      version: specStringField('version') ?? '',
-@@ -693,23 +2419,82 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -693,23 +2686,82 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      // header_mappings_dir copy step, which SPM has no equivalent for.
      headerMappingsDirs: mergeArrayField('header_mappings_dir'),
      headerDir: specStringField('header_dir'),
@@ -2722,7 +3000,7 @@ index 8fcf04b..6897fdb 100644
  // ---------------------------------------------------------------------------
  // Top-level entry
  // ---------------------------------------------------------------------------
-@@ -722,15 +2507,18 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -722,15 +2774,18 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
   * Throws when the file doesn't exist. Otherwise always returns a
   * PodspecModel — warnings on the model surface partial parses to the
   * caller, who can decide whether to proceed or abort scaffolding for that
@@ -2745,7 +3023,7 @@ index 8fcf04b..6897fdb 100644
    // Record whether the podspec calls `install_modules_dependencies(s)`. We
    // strip that helper before `pod ipc` and the regex parser can't expand it,
    // so the React-Core family it injects never lands in `model.dependencies`.
-@@ -746,21 +2534,46 @@ function readPodspec(podspecPath /*: string */) /*: PodspecModel */ {
+@@ -746,21 +2801,46 @@ function readPodspec(podspecPath /*: string */) /*: PodspecModel */ {
    return model;
  }
  
@@ -2796,7 +3074,7 @@ index 8fcf04b..6897fdb 100644
    podspecModels.set(key, model);
    return model;
  }
-@@ -794,12 +2607,13 @@ function readPodspecNames(
+@@ -794,12 +2874,13 @@ function readPodspecNames(
    if (hasShadowingSubspec(source)) {
      return null;
    }
@@ -2811,8 +3089,19 @@ index 8fcf04b..6897fdb 100644
  
    const name = field('name');
    const moduleName = field('module_name');
-@@ -840,4 +2654,5 @@ module.exports = {
+@@ -834,10 +2915,16 @@ function findPodspecs(dir /*: string */) /*: Array<string> */ {
+ 
+ module.exports = {
+   findPodspecs,
++  installationRootFor,
++  isPodspecReadError,
++  PodspecReadError,
++  podspecReader,
+   readPodspec,
+   readPodspecCached,
+   readPodspecNames,
    runPodIpcSpec,
++  runPodspecShim,
    regexPodspec,
    flattenSubspecs,
 +  unresolvedSourcesReason,

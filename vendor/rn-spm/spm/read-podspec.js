@@ -29,6 +29,7 @@
 
 const {spawnSync} = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 /*::
@@ -163,6 +164,272 @@ function cleanupPatchedPodspec(patchedPath /*: ?string */) /*: void */ {
     // best-effort cleanup; the file is named with `.spm-scaffold-...tmp`
     // so a leftover is identifiable.
   }
+}
+
+// ---------------------------------------------------------------------------
+// The podspec reader: Ruby or the reduced reader
+// ---------------------------------------------------------------------------
+
+// The podspec reader runs each podspec with the system Ruby, against a shim of
+// CocoaPods' DSL (read-podspec-shim.rb), which writes the spec in CocoaPods'
+// JSON form. Without a usable Ruby, or with RN_XTOOL_PODSPEC_READER=reduced,
+// the reduced reader (the evaluator below) reads it instead, and the choice
+// says why.
+
+/*::
+type PodspecReaderChoice =
+  | {reader: 'ruby', ruby: string, forced: false, warning: ?string}
+  | {reader: 'reduced', why: string, forced: boolean, warning: ?string};
+type RubyProbe = {usable: true, ruby: string} | {usable: false, why: string};
+*/
+
+const PODSPEC_SHIM = path.join(__dirname, 'read-podspec-shim.rb');
+const PODSPEC_READER_VAR = 'RN_XTOOL_PODSPEC_READER';
+const RUBY_PROBE_TIMEOUT_MS = 10000;
+const PODSPEC_TIMEOUT_MS = 30000;
+// What a read that stopped on a gap of the shim, or a podspec that did not
+// finish, says to do next. A podspec's own `raise` keeps the shim's message.
+const PODSPEC_READ_REMEDY =
+  'Set RN_XTOOL_PODSPEC_READER=reduced to read it with the reduced reader ' +
+  'for one run, and report it with rn-xtool doctor --report.';
+const SHIM_GAP_KINDS = [
+  'method',
+  'constant',
+  'attribute',
+  'require',
+  'not-a-spec',
+];
+
+// One probe per `PATH` (and shim): the Ruby it finds does not change during a
+// run.
+const rubyProbes /*: Map<string, RubyProbe> */ = new Map();
+
+class PodspecReadError extends Error {
+  /*:: code: string; kind: string; */
+  constructor(message /*: string */, kind /*: string */) {
+    super(message);
+    this.name = 'PodspecReadError';
+    this.code = 'RN_SPM_PODSPEC_READ';
+    this.kind = kind;
+  }
+}
+
+// By `code` as well, so an error of another copy of this file (the vendored
+// scaffolder and the patched one) counts too.
+function isPodspecReadError(e /*: mixed */) /*: boolean */ {
+  return (
+    e instanceof PodspecReadError ||
+    (e != null && typeof e === 'object' && e.code === 'RN_SPM_PODSPEC_READ')
+  );
+}
+
+// The child's whole environment: `PATH`, `HOME`, `LANG` and React Native's
+// two pod variables (`RN_POD_ENV`), so neither RUBYOPT, Bundler, a gem home
+// nor a `0` in the shell changes how a podspec reads.
+function podspecChildEnv(
+  env /*: {+[string]: ?string} */,
+) /*: {[string]: string} */ {
+  const child /*: {[string]: string} */ = {};
+  for (const name of ['PATH', 'HOME', 'LANG']) {
+    const value = env[name];
+    if (value != null) child[name] = value;
+  }
+  return {...child, ...RN_POD_ENV};
+}
+
+function nonEmptyLines(text /*: ?string */) /*: Array<string> */ {
+  return String(text ?? '')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line !== '');
+}
+
+// `<code>` or `<signal>` of an ended child.
+function howRubyEnded(
+  result /*: {status: ?number, signal: ?string, ...} */,
+) /*: string */ {
+  return result.status != null ? String(result.status) : String(result.signal);
+}
+
+function probeRuby(
+  shim /*: string */,
+  env /*: {+[string]: ?string} */,
+) /*: RubyProbe */ {
+  const result = spawnSync('ruby', [shim, '--probe'], {
+    encoding: 'utf8',
+    env: podspecChildEnv(env),
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: RUBY_PROBE_TIMEOUT_MS,
+    killSignal: 'SIGKILL',
+  });
+  if (result.error != null && result.error.code === 'ENOENT') {
+    return {usable: false, why: 'Ruby was not found'};
+  }
+  if (result.status === 0) {
+    let answer;
+    try {
+      answer = JSON.parse(result.stdout);
+    } catch {
+      answer = null;
+    }
+    if (answer?.usable === true && typeof answer.ruby === 'string') {
+      return {usable: true, ruby: answer.ruby};
+    }
+    if (answer?.usable === false && typeof answer.why === 'string') {
+      return {usable: false, why: answer.why};
+    }
+  }
+  const stderr = nonEmptyLines(result.stderr);
+  if (stderr.some(line => /cannot load such file -- json\b/.test(line))) {
+    return {usable: false, why: 'ruby cannot load json'};
+  }
+  let detail;
+  if (stderr.length > 0) {
+    detail = stderr[0];
+  } else if (result.error != null && result.error.code === 'ETIMEDOUT') {
+    detail = `did not finish in ${RUBY_PROBE_TIMEOUT_MS / 1000} s`;
+  } else if (result.error != null) {
+    detail = result.error.message;
+  } else if (result.status === 0) {
+    detail = 'its probe printed no answer';
+  } else {
+    detail = `exited with ${howRubyEnded(result)}`;
+  }
+  return {
+    usable: false,
+    why: `ruby could not run the podspec reader (${detail})`,
+  };
+}
+
+// Which reader reads the podspecs, and why when it is not Ruby.
+// RN_XTOOL_PODSPEC_READER is read on every call; the Ruby probe is memoised.
+function podspecReader(
+  opts /*: {env?: {+[string]: ?string}, shim?: string} */ = {},
+) /*: PodspecReaderChoice */ {
+  const env = opts.env ?? process.env;
+  const shim = opts.shim ?? PODSPEC_SHIM;
+  const value = env[PODSPEC_READER_VAR];
+  if (value === 'reduced') {
+    return {
+      reader: 'reduced',
+      why: `${PODSPEC_READER_VAR}=reduced is set`,
+      forced: true,
+      warning: null,
+    };
+  }
+  // An empty value counts as unset.
+  const warning =
+    value != null && value !== ''
+      ? `${PODSPEC_READER_VAR}=${value} is not a reader rn-xtool knows ` +
+        '(only reduced); reading podspecs with Ruby'
+      : null;
+  if (!fs.existsSync(shim)) {
+    return {
+      reader: 'reduced',
+      why: `the podspec reader's Ruby shim is missing from ${shim}`,
+      forced: false,
+      warning,
+    };
+  }
+  const key = `${shim}\0${env.PATH ?? ''}`;
+  let probe = rubyProbes.get(key);
+  if (probe == null) {
+    probe = probeRuby(shim, env);
+    rubyProbes.set(key, probe);
+  }
+  return probe.usable
+    ? {reader: 'ruby', ruby: probe.ruby, forced: false, warning}
+    : {reader: 'reduced', why: probe.why, forced: false, warning};
+}
+
+// The app's `ios/` folder, CocoaPods' installation root for the podspec:
+// RN_SPM_APP_IOS_DIR when set, else the folder that holds the first
+// `node_modules` of the podspec's path (as given, not through its links) plus
+// `ios`, else the podspec's own folder.
+function installationRootFor(podspecPath /*: string */) /*: string */ {
+  const appIosDir = process.env.RN_SPM_APP_IOS_DIR;
+  if (appIosDir != null && appIosDir !== '') return appIosDir;
+  const full = path.resolve(podspecPath);
+  const nodeModules = full.indexOf('/node_modules/');
+  if (nodeModules >= 0) return path.join(full.slice(0, nodeModules), 'ios');
+  return path.dirname(full);
+}
+
+// Runs the podspec with Ruby through the shim, in the podspec's folder, with
+// an empty stdin and `podspecChildEnv`: its model, and what it printed.
+function runPodspecShim(
+  podspecPath /*: string */,
+  opts /*: {timeoutMs?: number, installationRoot?: string} */ = {},
+) /*: {raw: RawSpec, output: string} */ {
+  const podspec = path.resolve(podspecPath);
+  const timeoutMs = opts.timeoutMs ?? PODSPEC_TIMEOUT_MS;
+  const root = opts.installationRoot ?? installationRootFor(podspec);
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rn-xtool-podspec-'));
+  const out = path.join(outDir, 'spec.json');
+  let result;
+  let written = null;
+  try {
+    result = spawnSync('ruby', [PODSPEC_SHIM, podspec, out, root], {
+      cwd: path.dirname(podspec),
+      encoding: 'utf8',
+      env: podspecChildEnv(process.env),
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: timeoutMs,
+      killSignal: 'SIGKILL',
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    if (fs.existsSync(out)) written = fs.readFileSync(out, 'utf8');
+  } finally {
+    fs.rmSync(outDir, {recursive: true, force: true});
+  }
+  if (result.error != null && result.error.code === 'ETIMEDOUT') {
+    throw new PodspecReadError(
+      `${podspec} did not finish in ${timeoutMs / 1000} s. ` +
+        PODSPEC_READ_REMEDY,
+      'timeout',
+    );
+  }
+  const stderr = nonEmptyLines(result.stderr);
+  const lastStderr = stderr.length > 0 ? `: ${stderr[stderr.length - 1]}` : '';
+  if (written == null) {
+    const error = result.error;
+    if (error != null && result.status == null && result.signal == null) {
+      throw new PodspecReadError(
+        `${podspec}: ruby could not run (${error.message})`,
+        'exit',
+      );
+    }
+    throw new PodspecReadError(
+      `${podspec}: ruby exited with ${howRubyEnded(result)}${lastStderr}`,
+      'exit',
+    );
+  }
+  let model;
+  try {
+    model = JSON.parse(written);
+  } catch (e) {
+    throw new PodspecReadError(
+      `${podspec}: the podspec reader wrote no JSON (${e.message})`,
+      'exit',
+    );
+  }
+  if (model != null && typeof model.error === 'object' && model.error != null) {
+    const kind = String(model.error.kind);
+    const message = String(model.error.message);
+    throw new PodspecReadError(
+      SHIM_GAP_KINDS.includes(kind)
+        ? `${message} ${PODSPEC_READ_REMEDY}`
+        : message,
+      kind,
+    );
+  }
+  if (result.status !== 0) {
+    throw new PodspecReadError(
+      `${podspec}: ruby exited with ${howRubyEnded(result)}${lastStderr}`,
+      'exit',
+    );
+  }
+  return {raw: model, output: result.stdout};
 }
 
 // ---------------------------------------------------------------------------
@@ -2654,10 +2921,15 @@ function findPodspecs(dir /*: string */) /*: Array<string> */ {
 
 module.exports = {
   findPodspecs,
+  installationRootFor,
+  isPodspecReadError,
+  PodspecReadError,
+  podspecReader,
   readPodspec,
   readPodspecCached,
   readPodspecNames,
   runPodIpcSpec,
+  runPodspecShim,
   regexPodspec,
   flattenSubspecs,
   unresolvedSourcesReason,

@@ -161,7 +161,7 @@
    resolveLocalHermesCompilerVersion,
 --- a/spm/read-podspec.js
 +++ b/spm/read-podspec.js
-@@ -2536,9 +2536,15 @@
+@@ -2803,9 +2803,15 @@
  
  // The installed React Native's version as the macros libraries derive from it.
  function readRnVersionMacros() /*: {[string]: number} */ {
