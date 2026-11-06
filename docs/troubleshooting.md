@@ -704,7 +704,14 @@ shapes below end `Leave the library out with "exclude" in rn-xtool.config.json.`
 - **The persist guard.** The `pods` and `pod-binaries` steps write nothing under `node_modules`, so a persisted scaffold never holds the
   vendor's files. As a guard, rn-xtool does not persist a scaffold patch that would hold a binary file:
   `⚠ Did not persist <library>'s scaffold: the patch would contain a binary file (<path>)`, or `⚠ Did not persist
-  <library>'s scaffold: rn-xtool could not read <patch> to check it for binary files`. The build goes on.
+  <library>'s scaffold: rn-xtool could not read <patch> to check it for binary files`. The build goes on. A
+  persisted patch holds only the files the scaffold wrote and those the library's existing patch held, so the Android
+  build outputs under the package (`android/build/…/*.dex`) stay out of it. The binary line can still appear when the library's existing patch holds a binary file, or when rn-xtool
+  diffs the whole package and a build left binaries under it: an `ℹ … persisting <library>'s whole package, …` line
+  before it says why (most often `ℹ Could not tell which files patches/<file> changes`, a patch whose
+  `diff --git a/node_modules/<library>/…` headers it cannot read). For the first, remove the binary file's section from
+  the patch; for the second, fix or delete the patch the `ℹ` line names, or remove the library's build outputs
+  (`android/build`, `android/.cxx`), then build.
 
 ### knownLimits.allow and binary pods
 

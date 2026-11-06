@@ -358,7 +358,12 @@ patch above is what makes that scaffolder work for real-world podspecs.
   `rn-spm`, `build` prints one `ℹ Not copied into the app: …` line naming what still does not arrive: plain
   `resources`, and bundles whose name or files are Ruby code.
 
-- rn-xtool persists the generated file in your project's `patches/` with patch-package: commit those files.
+- rn-xtool persists the generated file in your project's `patches/` with patch-package: commit those files. A
+  persisted patch holds the files the scaffold wrote (the scaffold step lists them) and the files the library's
+  existing patch already held, so a fix of your own in that patch stays, and build outputs under the package (Gradle's
+  `android/build` and `.cxx`) never enter it. When rn-xtool cannot read which files the existing patch holds (or the
+  list would not fit in one argument), it diffs the whole package, as patch-package does by itself, and says so in an
+  `ℹ` line.
 - On every build the `patches` step applies rn-xtool's own patches and then your project's `patches/` (when present),
   so a fresh `node_modules` gets those Package.swift files back. A patch whose package is not installed is left out
   with a `⚠` line, and the others apply
