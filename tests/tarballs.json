@@ -73,5 +73,10 @@
     "spec": "dnssd-advertise@1.1.6",
     "file": "dnssd-advertise-1.1.6.tgz",
     "integrity": "sha512-Ndrrf6BMPalkQPd/zubL+4YghH2J9NspapQ09uDXwYbvOPkP0oaqf5CkcwJ0b50kS2O3ul6yVu+jz+RY62Cejg=="
+  },
+  {
+    "spec": "react-native-gesture-handler@2.32.0",
+    "file": "react-native-gesture-handler-2.32.0.tgz",
+    "integrity": "sha512-uYIMOKlKENORq2SABE+jIjbPU+h5I/sQKcq2v16zRq848nwEp1fWRVwML4QWqijc8UcXJC25o54S8GQd4Mf2OA=="
   }
 ]
