@@ -1,7 +1,7 @@
 // swift-tools-version: 6.0
 // AUTO-SCAFFOLDED by react-native spm scaffold — safe to edit & commit via patch-package.
 // AUTO-SCAFFOLDED-VERSION: 20
-// rn-xtool-scaffold-revision: 4
+// rn-xtool-scaffold-revision: 5
 // rn-xtool-swift-importer-paths: ["ios","ios/fabric","ios/fabric/cpp/react/renderer/components/RNDateTimePicker","."]
 // Cache slot: 0.86.3/dual-flavor
 // Edit the contents below if needed and re-run `npx patch-package <dep-name>`

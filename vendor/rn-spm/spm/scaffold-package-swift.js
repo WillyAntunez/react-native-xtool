@@ -124,8 +124,10 @@ const SCAFFOLDER_VERSION_LINE_RE = /^\/\/ AUTO-SCAFFOLDED-VERSION: (\d+)$/m;
 // (CLANG_MODULE_MAP). Revision 4 (fixes 20–24): dependencies on packages that
 // are not linked for iOS left out, with the subspecs that declare them; the
 // Swift 5 language mode; the umbrella-directory shim; the codegen header's
-// bare spelling; and Swift compilation conditions.
-const RN_XTOOL_SCAFFOLD_REVISION = 4;
+// bare spelling; and Swift compilation conditions. Revision 5: pod header
+// forwarders that `#import` the pod's public headers instead of `@import`ing
+// its modules, which stopped every Objective-C++ file that included them.
+const RN_XTOOL_SCAFFOLD_REVISION = 5;
 const RN_XTOOL_SCAFFOLD_REVISION_RE = /^\/\/ rn-xtool-scaffold-revision: (\d+)$/m;
 
 // An importer (Swift, or a Clang module) builds the target's module from its
