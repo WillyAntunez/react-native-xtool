@@ -232,21 +232,143 @@ const RN_POD_ENV /*: {[string]: string} */ = {
   RCT_HERMES_V1_ENABLED: '1',
 };
 
-// A value the evaluator could not compute, and why.
+// A value the evaluator could not compute, and why. A string with an
+// interpolation it could not compute keeps that `#{...}` as written in
+// `partial`, as fix 3's pass did: fix 8 still reads
+// `REACT_NATIVE_MINOR_VERSION=#{...}` from it, and what is left is reported.
 class RubyUnresolved {
-  /*:: why: string; */
-  constructor(why /*: string */) {
+  /*:: why: string; partial: ?string; */
+  constructor(why /*: string */, partial /*:: ?: ?string */) {
     this.why = why;
+    this.partial = partial ?? null;
   }
 }
 const isUnresolved = (v /*: mixed */) /*: boolean */ =>
   v instanceof RubyUnresolved;
+// A string value's text, also a partial one's; null for anything else.
+function rubyText(v /*: mixed */) /*: ?string */ {
+  if (typeof v === 'string') return v;
+  return v instanceof RubyUnresolved ? v.partial : null;
+}
+// A Ruby symbol (`:name`).
+class RubySymbol {
+  /*:: name: string; */
+  constructor(name /*: string */) {
+    this.name = name;
+  }
+}
+// A Ruby hash: insertion-ordered, keyed by string or symbol.
+class RubyHash {
+  /*:: entries: Map<string, {key: mixed, value: mixed}>; */
+  constructor() {
+    this.entries = new Map();
+  }
+  static keyOf(k /*: mixed */) /*: ?string */ {
+    if (typeof k === 'string') return `s:${k}`;
+    if (k instanceof RubySymbol) return `y:${k.name}`;
+    return null;
+  }
+  get(k /*: mixed */) /*: mixed */ {
+    const key = RubyHash.keyOf(k);
+    return key != null ? (this.entries.get(key)?.value ?? null) : null;
+  }
+  set(k /*: mixed */, value /*: mixed */) /*: boolean */ {
+    const key = RubyHash.keyOf(k);
+    if (key == null) return false;
+    this.entries.set(key, {key: k, value});
+    return true;
+  }
+}
+// JSON (a package.json) as Ruby values: objects become hashes with string keys.
+function fromJson(v /*: mixed */) /*: mixed */ {
+  if (Array.isArray(v)) return v.map(fromJson);
+  if (v != null && typeof v === 'object') {
+    const h = new RubyHash();
+    for (const [k, x] of Object.entries(v)) h.set(k, fromJson(x));
+    return h;
+  }
+  return v;
+}
 
 // The source-glob fields an unevaluated expression must not reach silently.
 const STRICT_FIELDS /*: Set<string> */ = new Set([
   'source_files',
   'exclude_files',
 ]);
+// Fields that name the library: read as literals only, as before.
+const IDENTITY_FIELDS /*: Set<string> */ = new Set([
+  'name',
+  'module_name',
+  'version',
+]);
+// Fields whose whole value an unevaluated part changes: refused too.
+const WHOLE_FIELDS /*: Set<string> */ = new Set([
+  'compiler_flags',
+  'header_dir',
+  'header_mappings_dir',
+  'frameworks',
+  'framework',
+  'weak_frameworks',
+  'weak_framework',
+  'libraries',
+  'library',
+]);
+// The xcconfig hashes, and the keys of them the scaffolder reads. A part of
+// those values it cannot evaluate is left out with a warning that names it:
+// podspecs put optional, configuration-driven flags there (worklets' static
+// feature flags, vision-camera's frame processor switch), which CocoaPods
+// computes from the app and the Podfile.
+const XCCONFIG_FIELDS /*: Set<string> */ = new Set([
+  'pod_target_xcconfig',
+  'user_target_xcconfig',
+  'xcconfig',
+]);
+const XCCONFIG_READ_KEY_RE =
+  /(["'])(OTHER_CFLAGS|GCC_PREPROCESSOR_DEFINITIONS|HEADER_SEARCH_PATHS|SWIFT_ACTIVE_COMPILATION_CONDITIONS)(\[[^\]]*\])?\1\s*=>/g;
+const XCCONFIG_ANY_KEY_RE = /(["'])[A-Z_]+(\[[^\]]*\])?\1\s*=>/g;
+
+// Each `#{...}` left in `text` that the scaffolder does not handle itself.
+// Fix 8 gives `REACT_NATIVE_{MAJOR,MINOR,PATCH}_VERSION=#{...}` the installed
+// React Native's number, and a token with an Xcode `$(...)` (`$(PODS_ROOT)/
+// #{...}`) is dropped for that already.
+function unresolvedInterpolations(text /*: string */) /*: Array<string> */ {
+  const out = [];
+  for (let i = text.indexOf('#{'); i >= 0; i = text.indexOf('#{', i + 2)) {
+    let depth = 0;
+    let end = -1;
+    for (let j = i + 1; j < text.length; j++) {
+      if (text[j] === '{') depth++;
+      else if (text[j] === '}' && --depth === 0) {
+        end = j;
+        break;
+      }
+    }
+    if (end < 0) break;
+    const before = text.slice(0, i).split(/[\s"']/).pop() ?? '';
+    const after = text.slice(end + 1).split(/[\s"']/)[0] ?? '';
+    const token = before + text.slice(i, end + 1) + after;
+    const rnVersion = /REACT_NATIVE_(?:MAJOR|MINOR|PATCH)_VERSION=$/.test(before);
+    if (!rnVersion && !/\$[({]/.test(token)) out.push(text.slice(i, end + 1));
+  }
+  return out;
+}
+// The first value in `v` it could not evaluate (also inside arrays and hashes).
+function unresolvedIn(v /*: mixed */) /*: ?RubyUnresolved */ {
+  if (v instanceof RubyUnresolved) return v;
+  if (Array.isArray(v)) {
+    for (const x of v) {
+      const u = unresolvedIn(x);
+      if (u != null) return u;
+    }
+  }
+  if (v instanceof RubyHash) {
+    for (const {value} of v.entries.values()) {
+      const u = unresolvedIn(value);
+      if (u != null) return u;
+    }
+  }
+  return null;
+}
 const PLATFORM_SCOPES /*: Set<string> */ = new Set([
   'ios',
   'osx',
@@ -329,13 +451,19 @@ function tokenizeRubyExpr(src /*: string */) /*: Array<any> */ {
       const text = m != null ? m[0] : c;
       tokens.push({t: 'num', v: Number(text.replace(/_/g, ''))});
       i += text.length;
-    } else if (/[A-Za-z_]/.test(c)) {
-      const m = src.slice(i).match(/^[A-Za-z_]\w*(?:[?!](?=\())?/);
+    } else if (/[A-Za-z_]/.test(c) || (c === '$' && /[A-Za-z_]/.test(src[i + 1] ?? ''))) {
+      // `$name` is a global.
+      const m = src.slice(i).match(/^\$?[A-Za-z_]\w*(?:[?!](?=\())?/);
       const text = m != null ? m[0] : c;
       tokens.push({t: 'id', v: text});
       i += text.length;
-    } else if (c === ':' && /[A-Za-z_"']/.test(src[i + 1] ?? '')) {
-      tokens.push({t: 'bad', v: src.slice(i)}); // a symbol
+    } else if (c === ':' && /[A-Za-z_]/.test(src[i + 1] ?? '') && src[i - 1] !== ':') {
+      const m = src.slice(i + 1).match(/^[A-Za-z_]\w*[?!]?/);
+      const text = m != null ? m[0] : '';
+      tokens.push({t: 'sym', v: text});
+      i += 1 + text.length;
+    } else if (c === ':' && /["']/.test(src[i + 1] ?? '')) {
+      tokens.push({t: 'bad', v: src.slice(i)}); // a quoted symbol
       i = src.length;
     } else {
       const two = src.slice(i, i + 2);
@@ -357,6 +485,9 @@ function rubyEqual(a /*: mixed */, b /*: mixed */) /*: boolean */ {
   if (Array.isArray(a) && Array.isArray(b)) {
     return a.length === b.length && a.every((x, k) => rubyEqual(x, b[k]));
   }
+  if (a instanceof RubySymbol && b instanceof RubySymbol) {
+    return a.name === b.name;
+  }
   return a === b;
 }
 
@@ -365,7 +496,24 @@ function rubyToS(v /*: mixed */) /*: string | RubyUnresolved */ {
   if (typeof v === 'string') return v;
   if (v == null) return '';
   if (typeof v === 'boolean' || typeof v === 'number') return String(v);
+  if (v instanceof RubySymbol) return v.name;
   return new RubyUnresolved('an array or hash inside `#{...}`');
+}
+
+// `File.read` reads only inside the podspec's own directory.
+function readInside(dir /*: mixed */, file /*: mixed */) /*: mixed */ {
+  if (typeof dir !== 'string' || typeof file !== 'string') {
+    return new RubyUnresolved('`File.read` of a path it cannot evaluate');
+  }
+  const full = path.resolve(dir, file);
+  if (full !== dir && !full.startsWith(dir + path.sep)) {
+    return new RubyUnresolved(`\`File.read\` outside the podspec's directory (${file})`);
+  }
+  try {
+    return fs.readFileSync(full, 'utf8');
+  } catch {
+    return new RubyUnresolved(`\`File.read\` of a file that cannot be read (${path.relative(dir, full)})`);
+  }
 }
 
 /**
@@ -400,6 +548,27 @@ function evalRubyExpr(
       if (tk.t === 'op' && ')]}'.includes(tk.v)) depth--;
     } while (depth > 0);
   };
+  // `{k => v, k: v}` (already past `{`). A value it cannot evaluate stays in
+  // the hash as unresolved, so the other entries can still be read.
+  const parseHash = () => {
+    const h = new RubyHash();
+    while (!peek('}')) {
+      if (tokens[pos] == null) return fail('a missing `}`');
+      let key;
+      if (tokens[pos].t === 'id' && tokens[pos + 1]?.t === 'op' && tokens[pos + 1].v === ':') {
+        key = new RubySymbol(tokens[pos].v);
+        pos += 2;
+      } else {
+        key = parseTernary();
+        if (!take('=>')) return fail('a hash entry without `=>`');
+      }
+      const value = parseTernary();
+      if (isUnresolved(key) || !h.set(key, value)) return fail('a hash key it cannot evaluate');
+      if (!take(',')) break;
+    }
+    if (!take('}')) return fail('a missing `}`');
+    return h;
+  };
   // Comma-separated expressions up to `close` (already past the opener).
   const parseItems = (close /*: string */) => {
     const items = [];
@@ -409,26 +578,34 @@ function evalRubyExpr(
       if (!take(',')) break;
     }
     if (!take(close)) return fail(`a missing \`${close}\``);
-    return items.find(isUnresolved) ?? items;
+    // A partial string stays an element; anything else unknown fails it.
+    return items.find(x => isUnresolved(x) && rubyText(x) == null) ?? items;
   };
   function parsePrimary() /*: mixed */ {
     const tk = tokens[pos++];
     if (tk == null) return fail('an incomplete expression');
     if (tk.t === 'str') {
       let out = '';
+      let why = null;
       for (const part of tk.parts) {
         if (typeof part === 'string') {
           out += part;
           continue;
         }
         const inner = evalRubyExpr(part.expr, env);
-        if (isUnresolved(inner)) return inner;
-        const s = rubyToS(inner);
-        if (isUnresolved(s)) return s;
-        out += (s /*: any */);
+        const s = isUnresolved(inner) ? inner : rubyToS(inner);
+        if (typeof s === 'string') {
+          out += s;
+          continue;
+        }
+        // Kept as written, or as the partial text of a partial string.
+        const u /*: RubyUnresolved */ = (s /*: any */);
+        why ??= u.why;
+        out += u.partial ?? `#{${part.expr}}`;
       }
-      return out;
+      return why != null ? new RubyUnresolved(why, out) : out;
     }
+    if (tk.t === 'sym') return new RubySymbol(tk.v);
     if (tk.t === 'words') return tk.v;
     if (tk.t === 'num') return tk.v;
     if (tk.t === 'bad') return fail(`\`${tk.v}\``);
@@ -438,7 +615,7 @@ function evalRubyExpr(
         return take(')') ? v : fail('a missing `)`');
       }
       if (tk.v === '[') return parseItems(']');
-      if (tk.v === '{') return fail('a hash');
+      if (tk.v === '{') return parseHash();
       return fail(`\`${tk.v}\``);
     }
     // An identifier.
@@ -464,14 +641,50 @@ function evalRubyExpr(
       }
       return fail('`ENV` used other than `ENV[...]` or `ENV.fetch(...)`');
     }
+    // The package.json load podspecs share: `JSON.parse(File.read(File.join(
+    // __dir__, "package.json")))`, also with `File.dirname(__FILE__)`.
+    if ((name === 'File' || name === 'JSON') && peek('.')) {
+      pos++;
+      const m = tokens[pos++];
+      const method = m != null && m.t === 'id' ? m.v : '?';
+      const call = `${name}.${method}`;
+      if (!take('(')) return fail(`the method \`${call}\``);
+      const args = parseItems(')');
+      if (isUnresolved(args)) return args;
+      const a = (args /*: any */);
+      if (call === 'File.join' && a.every(x => typeof x === 'string')) {
+        return path.join(...a);
+      }
+      if (call === 'File.dirname' && typeof a[0] === 'string') {
+        return path.dirname(a[0]);
+      }
+      if (call === 'File.read' && a.length === 1) {
+        return readInside(env.get('__dir__'), a[0]);
+      }
+      if (call === 'JSON.parse' && typeof a[0] === 'string') {
+        try {
+          return fromJson(JSON.parse(a[0]));
+        } catch {
+          return fail('`JSON.parse` of text that is not JSON');
+        }
+      }
+      return fail(`the method call \`${call}(...)\``);
+    }
     if (peek('(')) {
       skipGroup();
       return fail(`the method call \`${name}(...)\``);
     }
-    if (!env.has(name)) return fail(`the unknown identifier \`${name}\``);
+    if (!env.has(name)) {
+      return fail(
+        name.startsWith('$')
+          ? `the global \`${name}\`, which the podspec does not set`
+          : `the unknown identifier \`${name}\``,
+      );
+    }
     const v = env.get(name);
     if (isUnresolved(v)) {
-      return fail(`\`${name}\`, which ${(v /*: any */).why}`);
+      const u /*: RubyUnresolved */ = (v /*: any */);
+      return new RubyUnresolved(`\`${name}\`, which ${u.why}`, u.partial);
     }
     return v;
   }
@@ -479,9 +692,13 @@ function evalRubyExpr(
     let v = parsePrimary();
     while (peek('.') || peek('[')) {
       if (take('[')) {
-        pos--;
-        skipGroup();
-        v = isUnresolved(v) ? v : fail('an index `[...]`');
+        const key = parseTernary();
+        if (!take(']')) return fail('a missing `]`');
+        if (isUnresolved(v)) continue;
+        if (isUnresolved(key)) v = key;
+        else if (v instanceof RubyHash) v = v.get(key);
+        else if (Array.isArray(v) && typeof key === 'number') v = v[key] ?? null;
+        else v = fail('an index `[...]` on a value it cannot index');
         continue;
       }
       take('.');
@@ -503,10 +720,19 @@ function evalRubyExpr(
       }
       if (method === 'join' && Array.isArray(v)) {
         const sep = args.length > 0 ? args[0] : '';
-        const parts = v.flat(Infinity).map(rubyToS);
-        const bad = parts.find(isUnresolved);
-        v =
-          bad ?? (typeof sep === 'string' ? parts.join(sep) : fail('`join`'));
+        const parts = v
+          .flat(Infinity)
+          .map(x => (isUnresolved(x) ? x : rubyToS(x)));
+        const texts = parts.map(rubyText);
+        const partial = parts.find(isUnresolved);
+        if (typeof sep !== 'string') v = fail('`join`');
+        else if (texts.every(x => x != null)) {
+          const joined = texts.join(sep);
+          v =
+            partial != null
+              ? new RubyUnresolved((partial /*: any */).why, joined)
+              : joined;
+        } else v = partial;
         continue;
       }
       v = fail(`the method call \`.${method}\``);
@@ -524,6 +750,13 @@ function evalRubyExpr(
     let l = parseUnary();
     while (take('+')) {
       const r = parseUnary();
+      const lt = rubyText(l);
+      const rt = rubyText(r);
+      if (lt != null && rt != null && (isUnresolved(l) || isUnresolved(r))) {
+        const u /*: RubyUnresolved */ = (isUnresolved(l) ? l : r /*: any */);
+        l = new RubyUnresolved(u.why, lt + rt);
+        continue;
+      }
       if (isUnresolved(l)) continue;
       if (isUnresolved(r)) l = r;
       else if (typeof l === 'string' && typeof r === 'string') l = l + r;
@@ -582,7 +815,7 @@ function evalRubyExpr(
   if (list === true && peek(',')) {
     const items = [value];
     while (take(',')) items.push(parseTernary());
-    value = items.find(isUnresolved) ?? items;
+    value = items.find(x => isUnresolved(x) && rubyText(x) == null) ?? items;
   }
   if (pos < tokens.length && !isUnresolved(value)) {
     const rest = tokens[pos];
@@ -605,14 +838,28 @@ function isPlainLiteral(rhs /*: string */) /*: boolean */ {
   ).test(rhs.trim());
 }
 
-// The literal a field is rewritten to, or null when the value has none.
+// The literal a field is rewritten to, or null when the value has none. A
+// partial string is written with its `#{...}` as written; a hash entry whose
+// value has no literal is left out (the field regexes never read it).
 function rubyLiteral(v /*: mixed */) /*: ?string */ {
-  if (typeof v === 'string') return JSON.stringify(v);
+  const text = rubyText(v);
+  if (text != null) return JSON.stringify(text);
   if (typeof v === 'boolean') return String(v);
   if (Array.isArray(v)) {
-    const flat = v.flat(Infinity);
-    if (!flat.every(x => typeof x === 'string')) return null;
+    const flat = v.flat(Infinity).map(rubyText);
+    if (!flat.every(x => x != null)) return null;
     return '[' + flat.map(x => JSON.stringify(x)).join(', ') + ']';
+  }
+  if (v instanceof RubyHash) {
+    const items = [];
+    for (const {key, value} of v.entries.values()) {
+      const lit = rubyLiteral(value);
+      if (lit == null) continue;
+      const k =
+        key instanceof RubySymbol ? `:${key.name}` : JSON.stringify(key);
+      items.push(`${k} => ${lit}`);
+    }
+    return `{ ${items.join(', ')} }`;
   }
   return null;
 }
@@ -710,7 +957,11 @@ function modifierIndex(code /*: string */) /*: ?{at: number, kw: string} */ {
 
 /*::
 type Unresolved = {field: string, expr: string, why: string};
-type Activity = {state: 'yes' | 'no' | 'maybe' | 'opaque', why: string};
+type Activity = {
+  state: 'yes' | 'no' | 'maybe' | 'opaque',
+  why: string,
+  modifier?: boolean,
+};
 */
 
 // Why a local set under `act` is unknown from there on.
@@ -743,12 +994,41 @@ function elsifBranch(
  */
 function evaluateRubyLocals(
   content /*: string */,
-) /*: {text: string, unresolved: Array<Unresolved>} */ {
+  podspecPath /*:: ?: string */,
+) /*: {text: string, unresolved: Array<Unresolved>, dropped: Array<string>} */ {
   const lines = content.split('\n');
   const out = lines.slice();
   const env /*: Map<string, mixed> */ = new Map();
+  if (podspecPath != null) {
+    env.set('__dir__', path.dirname(path.resolve(podspecPath)));
+    env.set('__FILE__', path.resolve(podspecPath));
+  }
   const recvs /*: Set<string> */ = new Set();
   const unresolved /*: Array<Unresolved> */ = [];
+  // What was left out of an xcconfig value the scaffolder reads, as warnings.
+  const dropped /*: Array<string> */ = [];
+  const noteXcconfig = (lhs /*: string */, text /*: string */) => {
+    for (const m of text.matchAll(XCCONFIG_READ_KEY_RE)) {
+      const start = (m.index ?? 0) + m[0].length;
+      XCCONFIG_ANY_KEY_RE.lastIndex = start;
+      const next = XCCONFIG_ANY_KEY_RE.exec(text);
+      const value = text.slice(start, next != null ? next.index : undefined);
+      const key = m[2] + (m[3] ?? '');
+      for (const span of unresolvedInterpolations(value)) {
+        dropped.push(
+          `Left out of ${lhs} ${key}: \`${span}\`, which the podspec reader cannot evaluate; CocoaPods passes its value.`,
+        );
+      }
+      const bare = value.match(/^\s*([A-Za-z_$]\w*)\s*,?\s*\}?\s*$/);
+      if (bare != null && rubyText(env.get(bare[1])) == null) {
+        dropped.push(
+          `Left out of ${lhs} ${key}: \`${bare[1]}\`, which the podspec reader cannot evaluate; CocoaPods passes its value.`,
+        );
+      }
+    }
+  };
+  const statementText = (st /*: {start: number, end: number} */) =>
+    out.slice(st.start, st.end + 1).join('\n');
   // `if` blocks (which branch is being read) and other blocks.
   const frames /*: Array<any> */ = [];
   const blank = (st /*: {start: number, end: number} */) => {
@@ -779,10 +1059,9 @@ function evaluateRubyLocals(
     st /*: {start: number, end: number} */,
     hash /*: boolean */,
   ) => {
-    const known = (id /*: string */) => {
-      const v = env.get(id);
-      return typeof v === 'string' ? v : null;
-    };
+    // Spliced into a double-quoted literal, so its own quotes are escaped.
+    const known = (id /*: string */) =>
+      rubyText(env.get(id))?.replace(/[\\"]/g, '\\$&');
     for (let k = st.start; k <= st.end; k++) {
       out[k] = out[k].replace(
         /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g,
@@ -805,12 +1084,38 @@ function evaluateRubyLocals(
       }
     }
   };
+  // A local set in a branch of a condition it cannot evaluate keeps its value
+  // for the rest of that branch (webview sets `folly_compiler_flags` and uses
+  // it in `compiler_flags` under `defined?(...)`), the next branch sees the
+  // value from before, and after `end` it is unknown. In any other block it
+  // does not run, or under a modifier, it is unknown at once.
   const setLocal = (
     name /*: string */,
     value /*: mixed */,
     act /*: Activity */,
   ) => {
-    env.set(name, act.state === 'yes' ? value : unknownUnder(act));
+    if (act.state === 'yes') {
+      env.set(name, value);
+      return;
+    }
+    const frame = act.modifier
+      ? null
+      : [...frames].reverse().find(f => f.kind === 'if' && f.branch === 'maybe');
+    if (frame == null) {
+      env.set(name, unknownUnder(act));
+      return;
+    }
+    if (!frame.saved.has(name)) {
+      frame.saved.set(name, env.has(name) ? {value: env.get(name)} : null);
+    }
+    env.set(name, value);
+  };
+  // The next branch of `frame` sees the locals as they were before it.
+  const restoreSaved = (frame /*: any */) => {
+    for (const [name, saved] of frame.saved) {
+      if (saved == null) env.delete(name);
+      else env.set(name, saved.value);
+    }
   };
 
   for (const st of rubyStatements(lines)) {
@@ -832,14 +1137,17 @@ function evaluateRubyLocals(
         branch,
         prior: act.state === 'no' ? 'yes' : branch,
         cond: m[2],
+        firstCond: m[2],
         evaluated: branch !== 'maybe' && branch !== 'opaque',
         ctrl: [st],
+        saved: new Map(),
       });
       continue;
     }
     if (top?.kind === 'if') {
       if ((m = code.match(/^elsif\s+([\s\S]+?)(?:\s+then)?$/))) {
         top.ctrl.push(st);
+        restoreSaved(top);
         if (top.branch === 'opaque') continue;
         const cond = top.prior === 'yes' ? 'no' : condOf(m[1], false);
         if (cond === 'maybe') top.evaluated = false;
@@ -848,6 +1156,7 @@ function evaluateRubyLocals(
       }
       if (code === 'else') {
         top.ctrl.push(st);
+        restoreSaved(top);
         if (top.branch !== 'opaque') {
           top.branch = {yes: 'no', no: 'yes', maybe: 'maybe'}[top.prior];
         }
@@ -856,6 +1165,9 @@ function evaluateRubyLocals(
     }
     if (/^end\b/.test(code) && top != null) {
       frames.pop();
+      for (const name of top.saved?.keys() ?? []) {
+        env.set(name, unknownUnder({state: 'maybe', why: top.firstCond}));
+      }
       // An evaluated condition leaves no control lines behind.
       if (activity().state === 'no' || (top.kind === 'if' && top.evaluated)) {
         for (const c of top.kind === 'if' ? top.ctrl : []) blank(c);
@@ -903,7 +1215,7 @@ function evaluateRubyLocals(
         continue;
       }
       if (c === 'maybe' && act.state === 'yes') {
-        stAct = {state: 'maybe', why: cond};
+        stAct = {state: 'maybe', why: cond, modifier: true};
       }
     }
     // `recv.field = expr` on the spec or a subspec. Under a condition it
@@ -919,25 +1231,47 @@ function evaluateRubyLocals(
       (field[2] == null || PLATFORM_SCOPES.has(field[2]))
     ) {
       const [, recv, scope, name, rhs] = field;
-      // Only the spec's own and its `ios` scope count.
+      // Only the spec's own and its `ios` scope count. The identity fields
+      // keep fix 3's reading (literals only): evaluating `s.name =
+      // package['name']` would rename the scaffolded target.
       if ((scope != null && scope !== 'ios') || isPlainLiteral(rhs)) continue;
+      if (IDENTITY_FIELDS.has(name)) {
+        interpolate(st, false);
+        continue;
+      }
       const lhs = `${recv}${scope != null ? '.' + scope : ''}.${name}`;
+      const refuse = (why /*: string */) =>
+        unresolved.push({field: lhs, expr: rhs.trim(), why});
+      // A hash literal stays as written, its `#{local}` and `=> local` filled in.
+      if (/^\{/.test(rhs.trim())) {
+        interpolate(st, true);
+        if (XCCONFIG_FIELDS.has(name)) noteXcconfig(lhs, statementText(st));
+        continue;
+      }
       const v = evalRubyExpr(rhs, env, true);
-      const lit = isUnresolved(v) ? null : rubyLiteral(v);
+      const lit = rubyLiteral(v);
+      const u = unresolvedIn(v);
+      if (STRICT_FIELDS.has(name) && (lit == null || u != null)) {
+        refuse(u != null ? `it uses ${u.why}` : 'its value is not a string or an array of strings');
+      } else if (WHOLE_FIELDS.has(name)) {
+        if (lit == null) {
+          refuse(u != null ? `it uses ${u.why}` : 'its value is not a string or an array of strings');
+        } else if (u != null && unresolvedInterpolations(lit).length > 0) {
+          refuse(`it uses ${u.why}`);
+        }
+      }
       if (lit != null) {
         blank(st);
         const indent = (lines[st.start].match(/^\s*/) ?? [''])[0];
         out[st.start] = `${indent}${lhs} = ${lit}`;
-      } else if (STRICT_FIELDS.has(name)) {
-        unresolved.push({
-          field: lhs,
-          expr: rhs.trim(),
-          why: isUnresolved(v)
-            ? `it uses ${(v /*: any */).why}`
-            : 'its value is not a string or an array of strings',
-        });
+        if (XCCONFIG_FIELDS.has(name)) noteXcconfig(lhs, lit);
       } else {
-        interpolate(st, /^\{/.test(rhs.trim()));
+        interpolate(st, false);
+        if (XCCONFIG_FIELDS.has(name)) {
+          dropped.push(
+            `Left out ${lhs} = ${rhs.trim()}: the podspec reader cannot evaluate it${u != null ? ` (${u.why})` : ''}; CocoaPods passes its value.`,
+          );
+        }
       }
       continue;
     }
@@ -959,6 +1293,7 @@ function evaluateRubyLocals(
         v = new RubyUnresolved(
           `is assigned \`${rhs.trim()}\`, which the reader cannot evaluate ` +
             `(${(v /*: any */).why})`,
+          (v /*: any */).partial,
         );
       }
       setLocal(name, v, stAct);
@@ -994,7 +1329,7 @@ function evaluateRubyLocals(
     }
     interpolate(st, false);
   }
-  return {text: out.join('\n'), unresolved};
+  return {text: out.join('\n'), unresolved, dropped: Array.from(new Set(dropped))};
 }
 
 // The library's own version. Podspecs load the package.json next to them
@@ -1039,7 +1374,7 @@ function resolvePackageVersion(
 // first non-whitespace character counts.
 function readPodspecEvaluated(
   podspecPath /*: string */,
-) /*: {text: string, unresolved: Array<Unresolved>} */ {
+) /*: {text: string, unresolved: Array<Unresolved>, dropped: Array<string>} */ {
   return evaluateRubyLocals(
     resolvePackageVersion(
       fs
@@ -1049,6 +1384,7 @@ function readPodspecEvaluated(
         .join('\n'),
       path.dirname(podspecPath),
     ),
+    podspecPath,
   );
 }
 function readPodspecSource(podspecPath /*: string */) /*: string */ {
@@ -1182,11 +1518,15 @@ function regexPodspec(
   podspecPath /*: string */,
   opts /*:: ?: {dropSubspecs?: ReadonlyArray<string>} */,
 ) /*: RawSpec */ {
-  const {text: content, unresolved} = readPodspecEvaluated(podspecPath);
+  const {
+    text: content,
+    unresolved,
+    dropped: leftOut,
+  } = readPodspecEvaluated(podspecPath);
   const dropped = new Set(opts?.dropSubspecs ?? []);
   const mainName = mainReceiverName(content);
   const MAIN_RECV = mainRecvPattern(mainName);
-  const warnings /*: Array<string> */ = [];
+  const warnings /*: Array<string> */ = [...leftOut];
   // The main spec's own statements, and each subspec block apart. The readers
   // below default to the main text and receiver; a subspec is read with the
   // same readers anchored on its block variable, then merged like
@@ -2147,10 +2487,11 @@ function unresolvedSourcesReason(
       .map(u => `\`${u.field} = ${u.expr}\` cannot be evaluated: ${u.why}`)
       .join('; ') +
     '. The podspec reader evaluates locals, string interpolation, arrays, ' +
-    "ENV['...'], comparisons, ternaries and if/unless blocks; building from " +
-    'the globs it could read would leave some of the library\'s files out of ' +
-    'its target. Install CocoaPods (`gem install cocoapods`) so `pod ipc spec` ' +
-    'reads the podspec, or give the library a Package.swift of its own.'
+    "ENV['...'], package.json reads, comparisons, ternaries and if/unless " +
+    'blocks; building from the part it could read would leave some of the ' +
+    "library's files or settings out of its target. Install CocoaPods (`gem " +
+    'install cocoapods`) so `pod ipc spec` reads the podspec, or give the ' +
+    'library a Package.swift of its own.'
   );
 }
 

@@ -1267,20 +1267,22 @@ describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
     expect(defineOf(pkg, "FOO_VERSION")).toBe("1.2.3");
   });
 
-  it('15: also reads #{package["version"]}, and still drops any other interpolation', () => {
+  it('15: also reads #{package["version"]} and the other keys of the package.json (fix 28)', () => {
     const files = { "ios/Foo.h": "", "ios/Foo.m": "", "package.json": JSON.stringify({ name: "foo", version: "1.2.3" }) };
     const root = lib(
       files,
       '  pkg = JSON.parse(File.read(File.join(File.dirname(__FILE__), "package.json")))\n' +
         '  s.source_files = "ios/**/*.{h,m}"\n' +
-        '  s.compiler_flags = "-DFOO_VERSION=#{pkg["version"]} -DFOO_NAME=#{pkg[\'name\']} -DBAR=#{other[\'version\']}"\n' +
+        '  s.compiler_flags = "-DFOO_VERSION=#{pkg["version"]} -DFOO_NAME=#{pkg[\'name\']}"\n' +
         "  s.pod_target_xcconfig = { \"OTHER_CFLAGS\" => \"$(inherited) -DFOO_V2=#{pkg['version']}\" }\n" +
         "  s.xcconfig = { 'OTHER_CFLAGS' => '-DFOO_SQ=#{pkg[\"version\"]}' }",
     );
     const { pkg } = scaffoldOne(root);
     expect(defineOf(pkg, "FOO_VERSION")).toBe("1.2.3");
+    expect(defineOf(pkg, "FOO_NAME")).toBe("foo");
     expect(defineOf(pkg, "FOO_V2")).toBe("1.2.3");
-    for (const name of ["FOO_NAME", "BAR", "FOO_SQ"]) expect(pkg).not.toContain(`.define("${name}"`);
+    // Single quotes do not interpolate, as in Ruby.
+    expect(pkg).not.toContain('.define("FOO_SQ"');
   });
 
   it("16: maps subspec header_mappings_dir under header_dir", () => {
@@ -2499,8 +2501,10 @@ describe("scaffolder fix 28: podspec locals and conditions (vendor/rn-spm)", () 
     ["a method call", '  s.source_files = Dir.glob("ios/*.m")', "source_files", 'Dir.glob("ios/*.m")'],
     ["an interpolated call", '  s.exclude_files = "ios/#{helper(1)}/**"', "exclude_files", '"ios/#{helper(1)}/**"'],
     ["a local built from a call", '  srcs = ["ios/*.m"] + extra_sources\n  s.source_files = srcs', "source_files", "srcs"],
+    ["a method call in compiler_flags", '  s.source_files = "ios/*.m"\n  s.compiler_flags = "-DFOO=#{helper(1)}"', "compiler_flags", "helper(...)"],
+    ["an unknown local as header_dir", '  s.source_files = "ios/*.m"\n  s.header_dir = mystery_dir', "header_dir", "mystery_dir"],
     ["a local set under a condition it cannot evaluate", "  if respond_to?(:foo)\n    exts = '{h,m}'\n  end\n  s.source_files = \"ios/*.#{exts}\"", "source_files", "respond_to?(:foo)"],
-  ])("28: refuses %s in a source glob, naming the podspec, the field and the expression", (_, body, field, expr) => {
+  ])("28: refuses %s, naming the podspec, the field and the expression", (_, body, field, expr) => {
     const run = scaffoldPod(podLib(FILES, `Pod::Spec.new do |s|\n  s.name = "Foo"\n${body}\nend\n`));
     const res = run.results[0]!;
     expect(res.status).toBe("error");
@@ -2508,6 +2512,44 @@ describe("scaffolder fix 28: podspec locals and conditions (vendor/rn-spm)", () 
     expect(res.reason).toContain(field);
     expect(res.reason).toContain(expr);
     expect(run.files["react-native-foo/Package.swift"]).toBeUndefined();
+  });
+
+  it("28: keeps worklets 0.8.3's version defines and names the flags it leaves out", () => {
+    // `version_flags = "-DWORKLETS_VERSION=#{package['version']} -DREACT_NATIVE_MINOR_VERSION=#{$worklets_config[...]}"`
+    // in OTHER_CFLAGS: the version comes from its package.json, the React Native minor from the installed React Native
+    // (fix 8; the harness installs 0.86.3). The first fix 28 lost both: WorkletsVersion.cpp did not compile.
+    const run = scaffoldLibraries(VENDORED_RN_SPM, { "react-native-worklets": fixture("RNWorklets-0.8.3") });
+    expect(run.results[0]?.status, run.results[0]?.reason).toBe("written");
+    const cxx = run.files["react-native-worklets/Package.swift"]!.split("\n").find((l) => l.trim().startsWith("cxxSettings:"))!;
+    expect(cxx).toContain('.define("WORKLETS_VERSION", to: "0.8.3")');
+    expect(cxx).toContain('.define("REACT_NATIVE_MINOR_VERSION", to: "86")');
+    expect(cxx).toContain('.define("HERMES_V1_ENABLED")');
+    // Its static feature flags come from a Ruby helper the reader does not run: named, not dropped silently.
+    for (const span of ["#{feature_flags}", "#{fetch_preview_flag}"]) {
+      expect(run.results[0]?.warnings, span).toContain(
+        `Left out of s.pod_target_xcconfig OTHER_CFLAGS: \`${span}\`, which the podspec reader cannot evaluate; CocoaPods passes its value.`,
+      );
+    }
+  });
+
+  it("28: reads a hash held in a local, and package.json keys in any field", () => {
+    const podspec =
+      'package = JSON.parse(File.read(File.join(__dir__, "package.json")))\n' +
+      "flags = []\n" +
+      'flags << "-DFOO_DEBUG=1" if ENV["FOO_DEBUG"] == "1"\n' +
+      "config = { 'OTHER_CFLAGS' => \"$(inherited) -DFOO_NAME=#{package['name']} #{flags.join(' ')}\" }\n" +
+      "Pod::Spec.new do |s|\n" +
+      '  s.name = "Foo"\n' +
+      "  s.version = package['version']\n" +
+      '  s.source_files = "ios/*.{h,mm}"\n' +
+      "  s.pod_target_xcconfig = config\n" +
+      "end\n";
+    const run = scaffoldPod(podLib(FILES, podspec));
+    expect(run.results[0]?.status, run.results[0]?.reason).toBe("written");
+    const pkg = run.files["react-native-foo/Package.swift"]!;
+    expect(pkg).toContain('.define("FOO_NAME", to: "foo")');
+    expect(pkg).not.toContain("FOO_DEBUG");
+    expect(run.results[0]?.warnings?.filter((w) => w.startsWith("Left out"))).toEqual([]);
   });
 
   it("28: reads both branches of a condition it cannot evaluate, as before", () => {
