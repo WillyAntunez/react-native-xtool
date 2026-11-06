@@ -1,5 +1,6 @@
 import { lstat, mkdir, mkdtemp, readlink, rm, writeFile } from "node:fs/promises";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -100,6 +101,18 @@ describe("patches", () => {
     // A scaffolder fix edits both: bare 0.88.0 and 0.88.1 share the scaffolder files the patch touches.
     const read = (v: string) => readFileSync(path.join(packageRoot(), "patches", `react-native+${v}.patch`));
     expect(read("0.88.0").equals(read("0.88.1"))).toBe(true);
+  });
+
+  it("every bundled patch parses as patch-package reads it", () => {
+    // patch-package reads each file's header as `diff --git a/<path> b/<path>`; `git diff --no-index` writes a new
+    // file's as `b/<path> b/<path>`, which the RELEASING recipe rewrites.
+    const { parsePatchFile } = createRequire(import.meta.url)("patch-package/dist/patch/parse.js") as {
+      parsePatchFile(text: string): unknown[];
+    };
+    const dir = path.join(packageRoot(), "patches");
+    for (const f of readdirSync(dir).filter((n) => n.endsWith(".patch"))) {
+      expect(() => parsePatchFile(readFileSync(path.join(dir, f), "utf8")), f).not.toThrow();
+    }
   });
 
   it("applyPatchesArgv passes the staged dir relative to the project root", () => {

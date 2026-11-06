@@ -63,9 +63,13 @@ and `vendor/rn-spm/rn-xtool-edits.patch` (E1–E5) applied, for 0.85–0.87 and 
      "$T/b/node_modules/react-native/scripts/"
    patch -R -p1 -F0 -d "$T/b/node_modules/react-native/scripts" -i "$PWD/vendor/rn-spm/rn-xtool-edits.patch"
    (cd "$T" && git diff --no-index --no-color --src-prefix= --dst-prefix= \
-      a/node_modules/react-native/scripts b/node_modules/react-native/scripts) > "$T/rn.patch"
+      a/node_modules/react-native/scripts b/node_modules/react-native/scripts) \
+     | sed -E 's#^diff --git [ab]/([^ ]+) [ab]/#diff --git a/\1 b/#' > "$T/rn.patch"
    cp "$T/rn.patch" patches/react-native+0.88.0.patch && cp "$T/rn.patch" patches/react-native+0.88.1.patch
    ```
+
+   The `sed` gives a new file's header the `a/` side patch-package reads (`git diff --no-index` names both sides
+   `b/`, and patch-package then refuses the whole patch).
 
    When the reverse `patch` fails, the change moved the context of an E-edit. That `b/` is half-reversed and holds
    `.rej` files, so a diff from it would drop the E-edit from `rn-xtool-edits.patch` and move it into the 0.88 patch.
