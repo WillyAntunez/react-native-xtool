@@ -218,9 +218,17 @@ list dictionary ([troubleshooting.md](troubleshooting.md#entitlements)).
 ## Sources
 
 The target's Sources phase is copied to `ios-xtool/Sources/App` keeping its layout: `.swift`, `.m`, `.mm`, `.c`,
-`.cpp`/`.cc`/`.cxx` and headers (every header in the app folder too), with `.lproj` variant groups. Any other source
-type (`.xcdatamodeld`, `.intentdefinition`, `.s`, ...) stops the build with `unsupported source type in the app target`.
-Sources outside `ios/` and two compiled files with the same name are errors.
+`.cpp`/`.cc`/`.cxx` and headers, with `.lproj` variant groups. Any other source type (`.xcdatamodeld`,
+`.intentdefinition`, `.s`, ...) stops the build with `unsupported source type in the app target`. Sources outside
+`ios/` and two compiled files with the same name are errors.
+
+Every header the Xcode project references under `ios/`, in any group and outside `Pods/`, `build/`, frameworks and the
+Products group, is copied too, with a forward in `Sources/App/include`, so `#import "X.h"` resolves from any source of
+the target as it does with Xcode's header map: an `AppDelegate.h` next to the `.xcodeproj` is found from
+`<Target>/main.m`. When two headers share a name, a header of the Sources phase or of the app folder wins and the
+build prints `ℹ Two app headers are named X.h (…)`. A referenced header that does not exist is skipped with `ℹ Skipped <path>: the Xcode
+project references this header, but the file does not exist`. Headers outside `ios/` are not copied: move them into
+`ios/`.
 
 SwiftPM takes a target with a compiled file named `main.<ext>` (in any case) for an executable target, and xtool links
 the app's entry point from the App library, so a C-family `main` file is copied under another name in its folder:

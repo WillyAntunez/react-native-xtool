@@ -312,12 +312,75 @@ describe("readTargetContent", () => {
     expect((await read(derived)).content().productModuleName).toBe("Hello_App");
   });
 
-  it("includes app-folder headers that are in no build phase, and only those", async () => {
-    let src = await withObjc();
-    src = addFile(src, { path: "Bridge.hpp", group: HELLO });
-    src = addFile(src, { path: "Outside.h", group: MAIN });
+  it("includes app-folder headers that are in no build phase", async () => {
+    const src = addFile(await withObjc(), { path: "Bridge.hpp", group: HELLO });
     const { content } = await read(src);
     expect(rel(content().headers)).toEqual(["HelloWorld/Bridge.hpp", "HelloWorld/Native/NativeModule.h"]);
+  });
+
+  const PODS = "BBD78D7AC51CEA395F1C20DB";
+  const PRODUCTS = "83CBBA001A601CBA00E9B192";
+
+  /** Adds a PBXGroup `uuid` (with `path` and/or `name`) as a child of `parent`. */
+  function addGroup(pbxproj: string, o: { uuid: string; parent: string; path?: string; name?: string }): string {
+    const fields = `${o.name ? `\t\t\tname = "${o.name}";\n` : ""}${o.path ? `\t\t\tpath = "${o.path}";\n` : ""}`;
+    const re = new RegExp(`(${o.parent}[^=\\n]*= \\{\\n\\t\\t\\tisa = PBXGroup;\\n\\t\\t\\tchildren = \\(\\n)`);
+    expect(pbxproj).toMatch(re);
+    return pbxproj
+      .replace(re, `$1\t\t\t\t${o.uuid},\n`)
+      .replace(
+        "/* End PBXGroup section */",
+        `\t\t${o.uuid} = {\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = (\n\t\t\t);\n${fields}\t\t\tsourceTree = "<group>";\n\t\t};\n/* End PBXGroup section */`,
+      );
+  }
+
+  it("includes a header that is a direct child of the main group, after the app folder's", async () => {
+    let src = await withObjc();
+    src = addFile(src, { path: "AppDelegate.h", group: MAIN });
+    src = addFile(src, { path: "Bridge.hpp", group: HELLO });
+    const { ios, content } = await read(src);
+    const headers = content().headers;
+    expect(headers.map((h) => h.relPath)).toEqual(["HelloWorld/Bridge.hpp", "HelloWorld/Native/NativeModule.h", "AppDelegate.h"]);
+    expect(headers[2]!.absPath).toBe(path.join(ios, "AppDelegate.h"));
+  });
+
+  it("includes headers of any group of the project, in groups with and without a path", async () => {
+    let src = await withObjc();
+    src = addGroup(src, { uuid: "C50000000000000000000001", parent: MAIN, path: "Native" });
+    src = addFile(src, { path: "Helpers.h", group: "C50000000000000000000001" });
+    src = addGroup(src, { uuid: "C50000000000000000000002", parent: MAIN, name: "Support" });
+    src = addFile(src, { path: "Support/Keys.h", group: "C50000000000000000000002" });
+    src = addFile(src, { path: "Shared/Util.hpp", sourceTree: "SOURCE_ROOT", group: "C50000000000000000000002" });
+    const { content } = await read(src);
+    expect(rel(content().headers)).toEqual([
+      "HelloWorld/Native/NativeModule.h",
+      "Native/Helpers.h",
+      "Shared/Util.hpp",
+      "Support/Keys.h",
+    ]);
+  });
+
+  it("leaves out headers of Pods, build/, frameworks and the Products group", async () => {
+    let src = await withObjc();
+    src = addFile(src, { path: "Headers/Public/React/RCTBridge.h", group: PODS });
+    src = addFile(src, { path: "Pods/Headers/Public/Yoga/Yoga.h", group: MAIN });
+    src = addFile(src, { path: "build/Generated/Codegen.h", group: MAIN });
+    src = addFile(src, { path: "Vendor/Lib.xcframework/ios-arm64/Headers/Lib.h", group: MAIN });
+    src = addFile(src, { path: "Vendor/Kit.framework/Headers/Kit.h", group: MAIN });
+    src = addFile(src, { path: "Product.h", group: PRODUCTS });
+    src = addGroup(src, { uuid: "C50000000000000000000003", parent: MAIN, name: "Pods" });
+    src = addFile(src, { path: "Target Support Files/Pods-HelloWorld/Pods-HelloWorld-umbrella.h", group: "C50000000000000000000003" });
+    const { content } = await read(src);
+    expect(rel(content().headers)).toEqual(["HelloWorld/Native/NativeModule.h"]);
+  });
+
+  it("leaves out headers outside ios/, without an error", async () => {
+    let src = await withObjc();
+    src = addFile(src, { path: "../shared/Shared.h", group: MAIN });
+    src = addFile(src, { path: "/opt/shared/Abs.h", sourceTree: "<absolute>", group: MAIN });
+    src = addFile(src, { path: "Gen.h", sourceTree: "BUILT_PRODUCTS_DIR", group: MAIN });
+    const { content } = await read(src);
+    expect(rel(content().headers)).toEqual(["HelloWorld/Native/NativeModule.h"]);
   });
 
   it("keeps an Objective-C main.m among the C sources", async () => {

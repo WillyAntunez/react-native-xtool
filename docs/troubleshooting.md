@@ -867,6 +867,14 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   before the patches with "The app target compiles <Target>/main.swift: …", which gives the remedy: mark the app
   delegate class `@main`, move any other top-level code into it, and remove `main.swift` from the app target. See
   [Sources](bare-react-native.md#sources).
+- **"'AppDelegate.h' file not found"** (bare React Native, compiling `ios-xtool/Sources/App/AppMain.m` or another
+  source of the app target): the header sits outside the app folder's group in the Xcode project, typically next to
+  the `.xcodeproj` in the project's main group with `main.m` and `AppDelegate.mm`. rn-xtool 0.1.0-alpha.6 and earlier
+  copy only the headers of the Sources phase and of the app folder's group, so the header never reaches
+  `Sources/App`. Later releases copy every header the project references under `ios/` (outside `Pods/`), each with a
+  forward in `Sources/App/include`, so `#import "AppDelegate.h"` resolves as with Xcode's header map. A header outside
+  `ios/` is still not copied: move it into `ios/` and add it to the project. See
+  [Sources](bare-react-native.md#sources).
 - **"rn-xtool could not patch <package>":** your project has a different version of a package than the one this release
   of rn-xtool patches, and the patch does not apply to it (on SDK 57 or 58, a newer patch of the SDK that changed a
   patched file; on bare React Native, a newer patch of its line). The message names the versions. On SDK 58 (Expo

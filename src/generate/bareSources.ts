@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { cp, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { compiledName, type BareTargetContent, type TargetFile } from "../project/index.js";
@@ -38,9 +39,9 @@ async function copyListed(file: TargetFile, dest: string): Promise<void> {
  * target folder (`ios/<Target>/Native/X.m` → `Native/X.m`; files elsewhere in ios/ keep their
  * path from ios/), with one forwarding header per header in `include/` so `#import "X.h"` resolves
  * from any folder as Xcode's header maps allow, plus `<ProductModuleName>-Swift.h` forwarding to `App-Swift.h`
- * in a mixed target. A C-family `main.m` (any `main.<ext>`) is copied as `AppMain.<ext>` in its folder, so SwiftPM keeps
- * App a library target. Resources are staged flat in `resourcesDir`, laid
- * out as Xcode copies them to the bundle root (xtool.yml lists each top-level entry).
+ * in a mixed target. A header the project references that does not exist is skipped with a note. A C-family `main.m`
+ * (any `main.<ext>`) is copied as `AppMain.<ext>` in its folder, so SwiftPM keeps App a library target. Resources are
+ * staged flat in `resourcesDir`, laid out as Xcode copies them to the bundle root (xtool.yml lists each top-level entry).
  */
 export async function copyBareTarget(
   bare: BareTargetContent,
@@ -74,8 +75,14 @@ export async function copyBareTarget(
 
   const code = [...bare.swiftSources, ...bare.cSources, ...bare.headers, ...(bare.bridgingHeader ? [bare.bridgingHeader] : [])];
   const cSources = new Set(bare.cSources);
+  const headers = new Set(bare.headers);
   const codeDest = new Map<TargetFile, string>();
   for (const file of code) {
+    // Xcode builds with a referenced header missing until a source imports it; so does the generated target.
+    if (headers.has(file) && !existsSync(file.absPath)) {
+      log(`ℹ Skipped ${file.relPath}: the Xcode project references this header, but the file does not exist`);
+      continue;
+    }
     let dest = place(file);
     const base = path.posix.basename(dest);
     const name = cSources.has(file) ? compiledName(dest) : base;
@@ -95,7 +102,8 @@ export async function copyBareTarget(
 
   const forwarded = new Map<string, string>();
   for (const header of bare.headers) {
-    const dest = codeDest.get(header)!;
+    const dest = codeDest.get(header);
+    if (dest === undefined) continue;
     const base = path.posix.basename(dest);
     const first = forwarded.get(base);
     if (first !== undefined) {
