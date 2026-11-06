@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { VENDORED_RN_SPM } from "./support/rnScaffold.js";
 import { SHIM, needsRuby, tempDir } from "./support/ruby.js";
 import { tool } from "./support/tools.js";
@@ -10,7 +10,9 @@ import { tool } from "./support/tools.js";
 // The reader's choice runs fake `ruby` scripts (a temp `bin` alone on `PATH`) and needs no Ruby; the shim's runs need
 // the real one.
 const req = createRequire(path.join(VENDORED_RN_SPM, "read-podspec.js"));
-const { podspecReader, runPodspecShim, isPodspecReadError, installationRootFor } = req("./read-podspec.js");
+const readPodspecJs = req("./read-podspec.js");
+const { podspecReader, runPodspecShim, isPodspecReadError, installationRootFor } = readPodspecJs;
+const { readPodspec, readPodspecCached, unresolvedSourcesReason } = readPodspecJs;
 const REMEDY =
   "Set RN_XTOOL_PODSPEC_READER=reduced to read it with the reduced reader for one run, and report it with rn-xtool doctor --report.";
 
@@ -253,5 +255,129 @@ describe.skipIf(needsRuby !== "")(`running the podspec shim${needsRuby}`, () => 
     const { raw } = runPodspecShim(podspec);
     expect(raw).toMatchObject({ name: "Lib", version: "4.5.6", summary: "from scripts/v.rb", description: path.join(proj, "ios") });
     expect(existsSync(path.join(proj, "ios"))).toBe(false);
+  });
+});
+
+describe.skipIf(needsRuby !== "")(`readPodspec${needsRuby}`, () => {
+  const INSTALL_RUBY =
+    "Install Ruby (sudo apt install ruby) so rn-xtool reads the podspec as CocoaPods does, or give the library a Package.swift of its own.";
+  beforeEach(() => {
+    const rn = tempDir();
+    writeFileSync(path.join(rn, "package.json"), JSON.stringify({ name: "react-native", version: "0.86.3" }));
+    vi.stubEnv("RN_SPM_RN_ROOT", rn);
+    vi.stubEnv("RN_XTOOL_PODSPEC_READER", undefined);
+    vi.stubEnv("RN_SPM_PODSPEC_READS", undefined);
+  });
+  const forceReduced = () => vi.stubEnv("RN_XTOOL_PODSPEC_READER", "reduced");
+
+  it("reads with Ruby and says so", () => {
+    const podspec = library(spec(' s.version = "1.0.0"', ' s.source_files = "ios/**/*.{h,m}"'));
+    expect(readPodspec(podspec)).toMatchObject({
+      reader: "ruby",
+      partial: false,
+      name: "Foo",
+      version: "1.0.0",
+      sourceFiles: ["ios/**/*.{h,m}"],
+    });
+  });
+
+  it("never falls back after a shim failure", () => {
+    const podspec = library(spec(' s.source_files = sources_for("ios")'));
+    const e = thrown(() => readPodspec(podspec));
+    expect(isPodspecReadError(e)).toBe(true);
+    expect(e.kind).toBe("method");
+  });
+
+  it("reads with the reduced reader when forced", () => {
+    forceReduced();
+    expect(readPodspec(library(spec()))).toMatchObject({ reader: "reduced", partial: true, name: "Foo" });
+  });
+
+  it("keeps the literal identity fields", () => {
+    const podspec = library(
+      [
+        "package = JSON.parse(File.read(File.join(__dir__, 'package.json')))",
+        "Pod::Spec.new do |s|",
+        " s.name = package['name']",
+        " s.version = package['version']",
+        ' s.module_name = "Foo"',
+        "end",
+      ].join("\n"),
+      { "package.json": JSON.stringify({ name: "react-native-foo", version: "1.2.3" }) },
+    );
+    expect(readPodspec(podspec)).toMatchObject({ reader: "ruby", name: "", version: "", moduleName: "Foo" });
+    forceReduced();
+    expect(readPodspec(podspec)).toMatchObject({ reader: "reduced", name: "", version: "", moduleName: "Foo" });
+  });
+
+  it("marks React core from the helper actually called", () => {
+    expect(readPodspec(library(spec(" install_modules_dependencies(s)"))).usesInstallModulesDependencies).toBe(true);
+    const notCalled = library(spec(" install_modules_dependencies(s) if false"));
+    expect(readPodspec(notCalled).usesInstallModulesDependencies).toBe(false);
+    forceReduced();
+    expect(readPodspec(notCalled).usesInstallModulesDependencies).toBe(true);
+  });
+
+  it("caches per reader", () => {
+    const podspec = library(spec());
+    const ruby = readPodspecCached(podspec);
+    expect(readPodspecCached(podspec)).toBe(ruby);
+    forceReduced();
+    const reduced = readPodspecCached(podspec);
+    expect(reduced).not.toBe(ruby);
+    expect([ruby.reader, reduced.reader]).toEqual(["ruby", "reduced"]);
+  });
+
+  it("never runs pod", () => {
+    const marker = path.join(tempDir(), "pod-ran");
+    const bin = path.join(tempDir(), "bin");
+    mkdirSync(bin);
+    writeFileSync(path.join(bin, "pod"), `#!/bin/sh\ntouch '${marker}'\nexit 1\n`);
+    chmodSync(path.join(bin, "pod"), 0o755);
+    vi.stubEnv("PATH", `${bin}${path.delimiter}${process.env.PATH ?? ""}`);
+    const podspec = library(spec());
+    expect(readPodspec(podspec).reader).toBe("ruby");
+    readPodspecCached(podspec);
+    forceReduced();
+    readPodspec(podspec);
+    expect(existsSync(marker)).toBe(false);
+    expect(readPodspecJs).not.toHaveProperty("runPodIpcSpec");
+  });
+
+  it("appends each read to RN_SPM_PODSPEC_READS", () => {
+    const reads = path.join(tempDir(), "reads.jsonl");
+    vi.stubEnv("RN_SPM_PODSPEC_READS", reads);
+    const lines = () => {
+      const text = readFileSync(reads, "utf8");
+      expect(text.endsWith("\n")).toBe(true);
+      return text.slice(0, -1).split("\n").map((line) => JSON.parse(line));
+    };
+    const ruby = podspecReader().ruby;
+    const ok = library(spec(" s.summary = ENV['RCT_NEW_ARCH_ENABLED']", " install_modules_dependencies(s)"));
+    readPodspecCached(ok);
+    const okLine = {
+      podspec: ok,
+      reader: "ruby",
+      forced: false,
+      ruby,
+      env: ["RCT_NEW_ARCH_ENABLED"],
+      helpers: ["install_modules_dependencies"],
+      ok: true,
+    };
+    expect(lines()).toEqual([okLine]);
+    const bad = library(spec(' s.source_files = sources_for("ios")'));
+    const e = thrown(() => readPodspecCached(bad));
+    readPodspecCached(ok);
+    expect(lines()).toEqual([
+      okLine,
+      { podspec: bad, reader: "ruby", forced: false, ruby, env: [], helpers: [], ok: false, error: e.message },
+    ]);
+  });
+
+  it("tells a refused glob to install Ruby", () => {
+    forceReduced();
+    const podspec = library(spec(' s.source_files = sources_for("ios")'));
+    const reason: string = unresolvedSourcesReason(podspec, readPodspec(podspec));
+    expect(reason.slice(-INSTALL_RUBY.length - 1)).toBe(` ${INSTALL_RUBY}`);
   });
 });

@@ -411,8 +411,8 @@ export type PreprocessorDefine = {
 // Scaffold types — for the `npx react-native spm scaffold` command that
 // generates a `Package.swift` into `node_modules/<dep>/` for community RN
 // libraries that don't ship SPM support. Inputs come from the dep's podspec
-// (read via `pod ipc spec --format=json` when CocoaPods is available, or a
-// regex fallback). The output Package.swift is treated as "self-managed" by
+// (read with Ruby through read-podspec-shim.rb when it is usable, or the
+// reduced reader). The output Package.swift is treated as "self-managed" by
 // the autolinker — see isSelfManagedPackage in generate-spm-autolinking.js.
 // ---------------------------------------------------------------------------
 
@@ -440,9 +440,11 @@ export type PodspecModel = {
   frameworks: Array<string>,
   weakFrameworks: Array<string>,
   libraries: Array<string>,
-  // Merged dependency name list. With pod-ipc, includes the deps materialized
-  // by `install_modules_dependencies(s)` (React-Core, React-Fabric, ...).
-  // Version constraints stripped — we only need the name to bucket.
+  // Merged dependency name list. Never includes the React-Core family that
+  // `install_modules_dependencies(s)` injects under CocoaPods: the shim only
+  // records the call (see usesInstallModulesDependencies), and the reduced
+  // reader cannot expand it. Version constraints stripped — we only need the
+  // name to bucket.
   dependencies: Array<string>,
   compilerFlags: Array<string>,
   // Raw header-search-path entries from `pod_target_xcconfig['HEADER_SEARCH_PATHS']`.
@@ -450,7 +452,7 @@ export type PodspecModel = {
   headerSearchPaths: Array<string>,
   // Preprocessor defines lifted from pod_target_xcconfig OTHER_CFLAGS (`-D`
   // tokens) + GCC_PREPROCESSOR_DEFINITIONS (incl. per-config variants). Already
-  // resolved by `pod ipc` (e.g. `-DWORKLETS_VERSION=#{package['version']}` →
+  // resolved by the reader (e.g. `-DWORKLETS_VERSION=#{package['version']}` →
   // `WORKLETS_VERSION=0.9.2`). Emitted as `.define(...)` on the SPM target.
   preprocessorDefines: Array<PreprocessorDefine>,
   // File paths or glob patterns the dep declares as bundled resources.
@@ -460,16 +462,20 @@ export type PodspecModel = {
   // a user can spot fields that didn't translate cleanly (unknown env vars,
   // unrecognized $(...) tokens, etc.). Never throws on parse errors.
   warnings: Array<string>,
-  // True when produced by the regex fallback rather than pod-ipc. Used to
-  // emit a louder banner in the scaffold summary explaining that dependency
-  // wiring may be incomplete.
+  // Which reader read the podspec: Ruby through read-podspec-shim.rb, or the
+  // reduced reader (podspecReader in read-podspec.js says why).
+  reader: 'ruby' | 'reduced',
+  // True when produced by the reduced reader rather than Ruby. Used to emit a
+  // louder banner in the scaffold summary explaining that dependency wiring
+  // may be incomplete.
   partial: boolean,
-  // True when the podspec source calls `install_modules_dependencies(s)` —
-  // RN's Podfile-side helper that injects the React-Core family. We strip that
-  // helper before evaluating the spec (and the regex parser can't expand it),
-  // so React-Core never surfaces in `dependencies`. The scaffolder treats this
-  // flag as an implicit React-core dependency (a plain ObjC module using the
-  // helper has no `codegenConfig` to key off).
+  // True when the podspec calls `install_modules_dependencies(s)` — RN's
+  // Podfile-side helper that injects the React-Core family. With Ruby, when
+  // the run called it (the shim records the call and adds nothing); with the
+  // reduced reader, when the source names it. React-Core never surfaces in
+  // `dependencies`, so the scaffolder treats this flag as an implicit
+  // React-core dependency (a plain ObjC module using the helper has no
+  // `codegenConfig` to key off).
   usesInstallModulesDependencies: boolean,
   // The `source_files`/`exclude_files` values the regex fallback could not
   // evaluate (a method call, an unknown local): the scaffolder refuses the
@@ -489,7 +495,7 @@ export type SpmScaffoldSpec = {
   // Header search paths resolved to dep-root-relative form. Each entry
   // becomes `.headerSearchPath("<path>")` in cSettings + cxxSettings.
   headerSearchPaths: Array<string>,
-  // Preprocessor defines (resolved by pod ipc) — emitted as `.define(...)` in
+  // Preprocessor defines (resolved by the reader) — emitted as `.define(...)` in
   // cSettings + cxxSettings, honoring any per-config scope.
   preprocessorDefines: Array<PreprocessorDefine>,
   // True when the target has ObjC(++) sources (.m/.mm). Drives emitting +

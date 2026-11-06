@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { packageRoot } from "../src/tools/exec.js";
 import { RN_INTEGRITY as INTEGRITY, RN_TARBALL as TARBALL } from "./support/rnScaffold.js";
 import { FETCH_HINT } from "./support/tarballs.js";
@@ -78,6 +78,8 @@ describe("vendor/rn-spm provenance", () => {
 });
 
 describe("vendor/rn-spm dependencies and edits", () => {
+  beforeEach(() => vi.stubEnv("RN_XTOOL_PODSPEC_READER", "reduced"));
+  afterEach(() => vi.unstubAllEnvs());
   it("the vendored scripts resolve yargs and micromatch from rn-xtool", () => {
     const nm = path.join(packageRoot(), "node_modules");
     expect(req.resolve("yargs").startsWith(nm)).toBe(true);
