@@ -27,6 +27,7 @@ import {
 import { mergedPodTable } from "../src/project/podTable.js";
 import { AUTOLINKING_CONFIG_COMMAND, rnSpmArgs } from "../src/pipeline/rnSpm.js";
 import { packageRoot } from "../src/tools/exec.js";
+import type { PodspecReaderChoice } from "../src/tools/podspecReader.js";
 import { projectPaths } from "../src/paths.js";
 
 const tempDirs: string[] = [];
@@ -883,8 +884,15 @@ describe("patch-package failure detection", () => {
 });
 
 describe("scaffold patches from another React Native version", () => {
-  /** A persisted scaffold patch; `revision: null` is a hand-made patch without rn-xtool's marker. */
-  const scaffoldPatch = (slot: string | null, revision: number | null = SCAFFOLD_REVISION) =>
+  /**
+   * A persisted scaffold patch; `revision: null` is a hand-made patch without rn-xtool's marker, `reader` the podspec
+   * reader its marker block names (null: none, as before revision 8).
+   */
+  const scaffoldPatch = (
+    slot: string | null,
+    revision: number | null = SCAFFOLD_REVISION,
+    reader: "ruby" | "reduced" | null = null,
+  ) =>
     [
       "diff --git a/node_modules/lib/Package.swift b/node_modules/lib/Package.swift",
       "new file mode 100644",
@@ -895,9 +903,52 @@ describe("scaffold patches from another React Native version", () => {
       "+// AUTO-SCAFFOLDED-VERSION: 20",
       ...(revision !== null ? [`+// rn-xtool-scaffold-revision: ${revision}`] : []),
       ...(slot !== null ? [`+// Cache slot: ${slot}/dual-flavor`] : []),
+      ...(reader !== null ? [`+// rn-xtool-podspec-reader: ${reader}`] : []),
       "+import PackageDescription",
       "",
     ].join("\n");
+  const RUBY_HERE: PodspecReaderChoice = { reader: "ruby", ruby: "ruby 3.3.8", forced: false, warning: null };
+  const REDUCED_HERE: PodspecReaderChoice = { reader: "reduced", why: "Ruby was not found", forced: false, warning: null };
+  const SVG = "react-native-svg+15.16.0.patch";
+  /** An app on React Native 0.88.1 whose react-native-svg scaffold patch is `text`. */
+  async function svgApp(text: string): Promise<string> {
+    const { root } = await tempProject();
+    await installPkg(root, "react-native", "0.88.1");
+    await mkdir(path.join(root, "patches"));
+    await writeFile(path.join(root, "patches", SVG), text);
+    await installPkg(root, "react-native-svg");
+    return root;
+  }
+
+  it("warns when a reduced-reader scaffold meets Ruby", async () => {
+    const root = await svgApp(scaffoldPatch("0.88.1", SCAFFOLD_REVISION, "reduced"));
+    expect(scaffoldPatchWarnings(root, undefined, [], undefined, RUBY_HERE)).toEqual([
+      `⚠ patches/${SVG} was written by the reduced podspec reader; Ruby is available here: delete it so rn-xtool ` +
+        "regenerates it (also remove node_modules/react-native-svg and reinstall: that copy still has the old Package.swift)",
+    ]);
+  });
+
+  it("warns when a Ruby scaffold meets the reduced reader", async () => {
+    const root = await svgApp(scaffoldPatch("0.88.1", SCAFFOLD_REVISION, "ruby"));
+    expect(scaffoldPatchWarnings(root, undefined, [], undefined, REDUCED_HERE)).toEqual([
+      `⚠ patches/${SVG} was written by the Ruby podspec reader, and this machine reads podspecs with the reduced one ` +
+        "(Ruby was not found): keep the patch, and install Ruby (sudo apt install ruby) before you regenerate it",
+    ]);
+  });
+
+  it("says nothing when the readers agree or the patch is older", async () => {
+    const ruby = await svgApp(scaffoldPatch("0.88.1", SCAFFOLD_REVISION, "ruby"));
+    expect(scaffoldPatchWarnings(ruby, undefined, [], undefined, RUBY_HERE)).toEqual([]);
+    const reduced = await svgApp(scaffoldPatch("0.88.1", SCAFFOLD_REVISION, "reduced"));
+    expect(scaffoldPatchWarnings(reduced, undefined, [], undefined, REDUCED_HERE)).toEqual([]);
+    // Revision 7 wrote no reader line: the revision line says it is stale.
+    const older = await svgApp(scaffoldPatch("0.88.1", 7));
+    expect(scaffoldPatchWarnings(older, undefined, [], undefined, REDUCED_HERE)).toEqual([
+      `⚠ patches/${SVG} was written by an older rn-xtool scaffolder (revision 7, now ${SCAFFOLD_REVISION}); delete it so ` +
+        "rn-xtool regenerates it (also remove node_modules/react-native-svg and reinstall: that copy still has the old " +
+        "Package.swift)",
+    ]);
+  });
 
   it("warns once per scaffold patch whose cache slot names another version", async () => {
     const { root } = await tempProject();
@@ -1302,6 +1353,18 @@ describe("pod pins in scaffolds", () => {
     await persist(stale, patch("AppAuth=2.1.0").replace(`revision: ${SCAFFOLD_REVISION}`, "revision: 3"));
     expect(scaffoldPatchWarnings(stale, mergedPodTable())).toEqual([expect.stringContaining("older rn-xtool scaffolder (revision 3")]);
     expect(scaffoldPinWarnings(stale, mergedPodTable())).toEqual([]);
+  });
+
+  it("still compares the pins of a Ruby scaffold this machine cannot regenerate with Ruby", async () => {
+    const reduced: PodspecReaderChoice = { reader: "reduced", why: "Ruby was not found", forced: false, warning: null };
+    const root = await app();
+    await persist(root, patch("AppAuth=2.1.0").replace("+// Cache slot:", "+// rn-xtool-podspec-reader: ruby\n+// Cache slot:"));
+    const pins = `⚠ patches/${PATCH} pins AppAuth 2.1.0, rn-xtool's table says 3.0.0; delete it so rn-xtool regenerates it ${TAIL}`;
+    expect(scaffoldPatchWarnings(root, mergedPodTable(), [], undefined, reduced)).toEqual([
+      expect.stringContaining("was written by the Ruby podspec reader"),
+      pins,
+    ]);
+    expect(scaffoldPinWarnings(root, mergedPodTable(), [], undefined, reduced)).toEqual([pins]);
   });
 
   it("expects the pods of a subspec whose sibling Expo's autolinking links as a peer", async () => {

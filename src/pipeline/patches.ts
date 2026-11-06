@@ -16,6 +16,7 @@ import { scaffoldedPods } from "../project/earlyChecks.js";
 import type { PodSource, PodTable } from "../project/podTable.js";
 import type { ProjectKind } from "../project/types.js";
 import { packageRoot, toolEnv } from "../tools/exec.js";
+import { podspecReaderHere, type PodspecReaderChoice } from "../tools/podspecReader.js";
 import { outside, packagesWithManifest } from "./manifests.js";
 
 /** The patch-package pinned in this CLI's own dependencies, not whatever npx would fetch. */
@@ -362,6 +363,13 @@ const REVISION_RE = /^\+\/\/ (?:rn|expo)-xtool-scaffold-revision: (\d+)\s*$/m;
 export const SCAFFOLD_REVISION = 8;
 
 const PATCH_PODS_RE = /^\+\/\/ rn-xtool-pods: (.*?)\s*$/m;
+const PODSPEC_READER_RE = /^\+\/\/ rn-xtool-podspec-reader: (ruby|reduced)\s*$/m;
+
+/** The podspec reader a persisted scaffold patch's marker block names; undefined without the line (before revision 8). */
+export function scaffoldReaderOf(patchText: string): "ruby" | "reduced" | undefined {
+  const reader = PODSPEC_READER_RE.exec(patchText)?.[1];
+  return reader === "ruby" || reader === "reduced" ? reader : undefined;
+}
 const MANIFEST_PODS_RE = /^\/\/ rn-xtool-pods: (.*?)\s*$/m;
 
 /** The `pod=exact` pairs of an rn-xtool-pods line; empty without one. */
@@ -428,13 +436,14 @@ const mappedNow = (c: PinChange): string =>
 /** "the config says 3.1.0", "rn-xtool's table says 3.0.0" */
 const says = (c: PinChange): string => `${c.source === "config" ? "the config" : "rn-xtool's table"} says ${c.now}`;
 
-type ScaffoldPatchFinding = { kind: "slot" | "revision" | "pins"; line: string };
+type ScaffoldPatchFinding = { kind: "slot" | "revision" | "reader" | "pins"; line: string };
 
 function scaffoldPatchFindings(
   projectRoot: string,
   table: PodTable | undefined,
   exclude: readonly string[],
   kind: ProjectKind | undefined,
+  reader: PodspecReaderChoice | undefined,
 ): ScaffoldPatchFinding[] {
   const installed = installedVersion(projectRoot, "react-native");
   const dir = path.join(projectRoot, "patches");
@@ -480,6 +489,29 @@ function scaffoldPatchFindings(
       });
       continue;
     }
+    const written = scaffoldReaderOf(text);
+    if (written !== undefined) {
+      // Probed once per call, and only for a patch that names its reader.
+      reader ??= podspecReaderHere();
+      if (written === "reduced" && reader.reader === "ruby") {
+        findings.push({
+          kind: "reader",
+          line:
+            `⚠ patches/${name} was written by the reduced podspec reader; Ruby is available here: delete it so rn-xtool ` +
+            `regenerates it ${tail}`,
+        });
+        continue;
+      }
+      // Advice to keep the patch, so its pins are still compared below.
+      if (written === "ruby" && reader.reader === "reduced") {
+        findings.push({
+          kind: "reader",
+          line:
+            `⚠ patches/${name} was written by the Ruby podspec reader, and this machine reads podspecs with the reduced one ` +
+            `(${reader.why}): keep the patch, and install Ruby (sudo apt install ruby) before you regenerate it`,
+        });
+      }
+    }
     if (table === undefined) continue;
     expected ??= scaffoldedPods(projectRoot, table, { exclude, ...(kind !== undefined ? { kind } : {}) });
     const wanted = pkg === undefined ? [] : (expected.get(pkg) ?? []);
@@ -506,17 +538,21 @@ function scaffoldPatchFindings(
  * Package.swift is only regenerated when the manifest is missing, so one is stale when its cache-slot label names
  * another React Native version than the installed one, when an older scaffolder revision wrote it, or (with `table`)
  * when its `rn-xtool-pods` line pins a pod at another version than the table, or leaves out a pod the library's
- * podspec maps. One line per patch for the slot (which wins) or the revision, else one per pod. Patches of the
- * packages the config's `exclude` lists get none: rn-xtool does not scaffold them again. `kind` decides which packages
- * autolinking links, as in the early checks (`scaffoldedPods`).
+ * podspec maps. One line per patch for the slot (which wins) or the revision, else one per pod. A patch whose
+ * `rn-xtool-podspec-reader` line names another reader than this machine's (`reader`, else `podspecReaderHere()`) gets
+ * a line too: the reduced reader's patch where Ruby is available is stale (one line, as the revision), a Ruby patch
+ * where only the reduced reader runs is kept (its pins are still compared). Patches of the packages the config's
+ * `exclude` lists get none: rn-xtool does not scaffold them again. `kind` decides which packages autolinking links, as
+ * in the early checks (`scaffoldedPods`).
  */
 export function scaffoldPatchWarnings(
   projectRoot: string,
   table?: PodTable,
   exclude: readonly string[] = [],
   kind?: ProjectKind,
+  reader?: PodspecReaderChoice,
 ): string[] {
-  return scaffoldPatchFindings(projectRoot, table, exclude, kind).map((f) => f.line);
+  return scaffoldPatchFindings(projectRoot, table, exclude, kind, reader).map((f) => f.line);
 }
 
 /** `scaffoldPatchWarnings`' pin lines alone, for `doctor --project`. */
@@ -525,8 +561,9 @@ export function scaffoldPinWarnings(
   table: PodTable,
   exclude: readonly string[] = [],
   kind?: ProjectKind,
+  reader?: PodspecReaderChoice,
 ): string[] {
-  return scaffoldPatchFindings(projectRoot, table, exclude, kind)
+  return scaffoldPatchFindings(projectRoot, table, exclude, kind, reader)
     .filter((f) => f.kind === "pins")
     .map((f) => f.line);
 }
