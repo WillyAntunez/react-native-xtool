@@ -20,6 +20,8 @@ import {
 } from "../src/commands/setup.js";
 
 const all = { hasSwift: true, hasXtool: true, hasSdk: true, loggedIn: true };
+const withRuby = () => ({ reader: "ruby", ruby: "3.3.8", forced: false, warning: null }) as const;
+const RUBY_LINE = "✔ ruby 3.3.8";
 const noPending = async () => undefined;
 
 // No test reaches the network: a download that slips through fails here instead.
@@ -58,12 +60,14 @@ const noInstaller = (name: string) => async () => {
 };
 /**
  * Every setup() in this file goes through here: the real installers are replaced by ones that throw (a test's own
- * fakes win), the disk is roomy unless the test probes it, and HOME is temporary unless the test set one up.
+ * fakes win), the disk is roomy unless the test probes it, Ruby 3.3.8 reads podspecs unless the test says otherwise,
+ * and HOME is temporary unless the test set one up.
  */
 const setup = (opts: Parameters<typeof realSetup>[0], deps: Partial<SetupDeps> = {}) => {
   if (!underTmp(process.env.HOME)) tmpHome();
   return realSetup(opts, {
     spaceProbes: { filesystemOf: async () => ({ dev: 1, freeBytes: 100 * GB }) },
+    podspecReader: withRuby,
     ...deps,
     actions: {
       installSwift: noInstaller("installSwift"),
@@ -109,6 +113,25 @@ describe("setup", () => {
     const log = vi.fn();
     await setup({}, { checkSwiftPackages: noPending, probe: async () => all, log });
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Nothing to do"));
+  });
+
+  it("says whether Ruby is there and installs nothing", async () => {
+    const lines = async (deps: Partial<SetupDeps>): Promise<string[]> => {
+      const log = vi.fn();
+      await setup({}, { checkSwiftPackages: noPending, probe: async () => all, ...deps, log });
+      return log.mock.calls.map((c) => c[0] as string);
+    };
+    const noRuby = () => ({ reader: "reduced", why: "Ruby was not found", forced: false, warning: null }) as const;
+    expect(await lines({ podspecReader: noRuby })).toEqual([
+      "⚠ Ruby was not found: rn-xtool reads podspecs with its reduced reader; install Ruby with: sudo apt install ruby",
+      "✔ Nothing to do: toolchain already set up",
+    ]);
+    expect(await lines({ podspecReader: withRuby })).toEqual(["✔ ruby 3.3.8", "✔ Nothing to do: toolchain already set up"]);
+    // With an action to run, the line comes before it; the throwing installers prove nothing is installed for Ruby.
+    expect(await lines({ podspecReader: noRuby, probe: async () => ({ ...all, loggedIn: false }) })).toEqual([
+      "⚠ Ruby was not found: rn-xtool reads podspecs with its reduced reader; install Ruby with: sudo apt install ruby",
+      "Run: rn-xtool auth login",
+    ]);
   });
 });
 
@@ -240,7 +263,9 @@ describe("setup space check", () => {
       };
       await setup({}, { checkSwiftPackages: noPending, probe: async () => state, spaceProbes, actions: spies(), log });
       expect(order).toEqual(
-        state === all ? [removing, "✔ Nothing to do: toolchain already set up"] : [removing, "measured", "✔ xtool 1.24.0"],
+        state === all
+          ? [removing, RUBY_LINE, "✔ Nothing to do: toolchain already set up"]
+          : [removing, "measured", RUBY_LINE, "✔ xtool 1.24.0"],
       );
       expect(existsSync(staging)).toBe(false);
     }
@@ -319,20 +344,20 @@ describe("setup on a second run", () => {
     const m = machine("'Logged in.' '- Apple ID: me@example.com' '- Team ID: TEAMID0000'");
     await m.run();
     expect(calls(m)).toEqual([1, 1, 1, 4]);
-    expect(await m.run()).toEqual(["✔ Nothing to do: toolchain already set up"]);
+    expect(await m.run()).toEqual([RUBY_LINE, "✔ Nothing to do: toolchain already set up"]);
     expect(calls(m)).toEqual([1, 1, 1, 4]);
 
     const out = machine("'Logged out.'");
     expect(await out.run()).toContain("Run: rn-xtool auth login");
     expect(calls(out)).toEqual([1, 1, 1, 4]);
-    expect(await out.run()).toEqual(["Run: rn-xtool auth login"]);
+    expect(await out.run()).toEqual([RUBY_LINE, "Run: rn-xtool auth login"]);
     expect(calls(out)).toEqual([1, 1, 1, 4]);
   });
 
   it("a second run downloads nothing with XDG_CONFIG_HOME set", async () => {
     const m = machine("'Logged in.'", true);
     await m.run();
-    expect(await m.run()).toEqual(["✔ Nothing to do: toolchain already set up"]);
+    expect(await m.run()).toEqual([RUBY_LINE, "✔ Nothing to do: toolchain already set up"]);
     expect(calls(m)).toEqual([1, 1, 1, 4]);
   });
 });

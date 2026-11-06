@@ -22,6 +22,7 @@ import { readState } from "../state.js";
 import { NO_FINGERPRINT_WARNING } from "./start.js";
 import { sha256File } from "../tools/download.js";
 import { toolEnv } from "../tools/exec.js";
+import { podspecReaderHere, rubyCheck, type PodspecReaderChoice } from "../tools/podspecReader.js";
 import { authStatus, listDevices, defaultXtoolPath, xtoolBin, xtoolUnrunnableError, type AuthStatus, type Device } from "../tools/xtool.js";
 import {
   XTOOL_VERSION,
@@ -59,6 +60,8 @@ export interface DoctorReport {
 
 export interface DoctorProbes {
   nodeVersion: () => string;
+  /** Which reader the scaffolder reads podspecs with: Ruby, or the reduced reader and why (a local probe only). */
+  podspecReader: () => PodspecReaderChoice;
   swiftVersion: () => Promise<string | undefined>;
   /** The LLVM version of the Swift toolchain's llvm-nm (G4 needs it); rejects with LLVM_NM_MISSING when it is missing. */
   llvmNmVersion: () => Promise<string>;
@@ -172,6 +175,7 @@ export function realProbes(config: ExpoXtoolConfig, opts: { offline?: boolean } 
   const bin = (): string => xtoolBin(config);
   return {
     nodeVersion: () => process.versions.node,
+    podspecReader: () => podspecReaderHere(),
     swiftVersion: () => swiftVersionText(PROBE_TIMEOUT_MS),
     llvmNmVersion: async () =>
       /LLVM version (\S+)/.exec(await makeNmRunner("llvm-nm", PROBE_TIMEOUT_MS)(["--version"]))?.[1] ?? "unknown",
@@ -519,12 +523,12 @@ async function check(name: string, fn: () => Promise<Omit<DoctorCheck, "name">>)
 }
 
 /**
- * Every check, or with `projectOnly` (`doctor --project`) only node, the project and its capabilities: no toolchain,
- * login, device or build-state probe runs, so it works where Swift and xtool are not installed. `withCapabilities`
- * (`doctor --report`) appends the capability lines to every check when there is a root; as under `--project`, a
- * capability probe that throws fails the project line. `noLiveProbes` (`doctor --report`) leaves out the device probe
- * (`xtool devices` opens a lockdown connection to each iPhone, over Wi‑Fi too) and the Wi‑Fi probe (a lockdown session
- * with the USB iPhone, a connection to its last known IP).
+ * Every check, or with `projectOnly` (`doctor --project`) only node, ruby, the project and its capabilities: no
+ * toolchain, login, device or build-state probe runs, so it works where Swift and xtool are not installed.
+ * `withCapabilities` (`doctor --report`) appends the capability lines to every check when there is a root; as under
+ * `--project`, a capability probe that throws fails the project line. `noLiveProbes` (`doctor --report`) leaves out the
+ * device probe (`xtool devices` opens a lockdown connection to each iPhone, over Wi‑Fi too) and the Wi‑Fi probe (a
+ * lockdown session with the USB iPhone, a connection to its last known IP).
  */
 export async function doctorWithProbes(
   p: DoctorProbes,
@@ -542,6 +546,7 @@ export async function doctorWithProbes(
       ? { status: "ok", detail: v }
       : { status: "fail", detail: `${v} (need ${NODE_MIN} or newer)` };
   });
+  await add("ruby", async () => rubyCheck(p.podspecReader()));
   if (opts.projectOnly) {
     const dir = root ?? process.cwd();
     const [project, caps] = await Promise.all([settle(() => p.project(dir)), settle(() => p.capabilities(dir))]);

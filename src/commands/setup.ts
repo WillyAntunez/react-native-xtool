@@ -6,6 +6,7 @@ import path from "node:path";
 import { cacheDir } from "../paths.js";
 import { downloadFile } from "../tools/download.js";
 import { run, toolEnv } from "../tools/exec.js";
+import { podspecReaderHere, type PodspecReaderChoice } from "../tools/podspecReader.js";
 import { authStatus, defaultXtoolPath } from "../tools/xtool.js";
 import { SWIFT_VERSION, XTOOL_SHA256, XTOOL_VERSION } from "../versions.js";
 
@@ -28,6 +29,15 @@ export interface SetupDeps {
   log: (line: string) => void;
   /** Message to fail with while Swift's system packages from a previous run are still missing. */
   checkSwiftPackages: () => Promise<string | undefined>;
+  /** Which reader the scaffolder reads podspecs with; setup only reports it. */
+  podspecReader: () => PodspecReaderChoice;
+}
+
+/** setup's Ruby line: Ruby is never installed, only named. */
+function rubySetupLine(c: PodspecReaderChoice): string {
+  return c.reader === "ruby"
+    ? `✔ ruby ${c.ruby}`
+    : `⚠ ${c.why}: rn-xtool reads podspecs with its reduced reader; install Ruby with: sudo apt install ruby`;
 }
 
 export const GB = 1024 ** 3;
@@ -330,8 +340,10 @@ export async function setup(
     log(`ℹ Removing ${tilde(staging)}, left by an interrupted Darwin SDK install.`);
     await rm(staging, { recursive: true, force: true });
   };
+  const logRuby = (): void => log(rubySetupLine((deps.podspecReader ?? podspecReaderHere)()));
   if (actions.length === 0) {
     await removeSdkStaging();
+    logRuby();
     log("✔ Nothing to do: toolchain already set up");
     return;
   }
@@ -348,6 +360,7 @@ export async function setup(
     installSdk: (to: string, xip: string) => installSdk(to, xip, log),
     ...deps.actions,
   };
+  logRuby();
   for (const action of actions) {
     switch (action) {
       case "install-swift":

@@ -89,6 +89,7 @@ const probes: DoctorProbes = {
   portFree: async () => true,
   wifi: async () => ({ usb: { udid: "00008110-000000000000AAAA", enabled: true } }),
   capabilities: async () => caps,
+  podspecReader: () => ({ reader: "ruby", ruby: "3.3.8", forced: false, warning: null }),
 };
 const env: ReportEnv = { rnXtoolVersion: "9.9.9", os: "Ubuntu 24.04.1 LTS, Linux 6.8.0-45-generic", arch: "x64", home: "/home/me" };
 
@@ -152,6 +153,7 @@ describe("doctorReport", () => {
       "os: Ubuntu 24.04.1 LTS, Linux 6.8.0-45-generic, x64",
       "project: expo, Expo SDK 58, expo 58.0.21, react-native 0.88.1",
       "✔ node — 24.15.0",
+      "✔ ruby — 3.3.8",
       "✔ swift — 6.4",
       "✔ llvm-nm — LLVM 21.0.0",
       "✔ llvm-ar — LLVM 21.0.0",

@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, wr
 import { createRequire } from "node:module";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { podspecReaderHere } from "../src/tools/podspecReader.js";
 import { PODSPEC_FIXTURES, VENDORED_RN_SPM, installedCopy, podspecCopy } from "./support/rnScaffold.js";
 import { SHIM, needsRuby, tempDir } from "./support/ruby.js";
 import { needsTarball, packageFromTarball } from "./support/tarballs.js";
@@ -646,5 +647,15 @@ describe("reader failures propagate", () => {
       throw new Error(`readPodspec: file does not exist: ${podspecPath}`);
     };
     expect(expand(dep, unreadable)[0]).toMatchObject({ swiftNameSource: "npm" });
+  });
+});
+
+describe("the podspec reader rn-xtool reports", () => {
+  it("doctor and the scaffolder pick the same reader", () => {
+    const forced = { ...process.env, RN_XTOOL_PODSPEC_READER: "reduced" };
+    expect(podspecReaderHere(forced)).toEqual(podspecReader({ env: forced }));
+    const withFake = { PATH: usableRuby() };
+    expect(podspecReaderHere(withFake)).toEqual(podspecReader({ env: withFake }));
+    expect(podspecReaderHere(withFake)).toEqual({ reader: "ruby", ruby: "3.3.8", forced: false, warning: null });
   });
 });
