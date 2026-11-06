@@ -204,7 +204,7 @@ describe.skipIf(needsRuby !== "")(`running the podspec shim${needsRuby}`, () => 
     const e = thrown(() => runPodspecShim(gap));
     expect(isPodspecReadError(e)).toBe(true);
     expect(e.kind).toBe("method");
-    expect(e.message).toBe(`${shimMessage(gap)} ${REMEDY}`);
+    expect(e.message).toBe(`${shimMessage(gap)}. ${REMEDY}`);
     const raised = library(spec(' raise "the podspec stops here"'));
     const r = thrown(() => runPodspecShim(raised));
     expect(r.kind).toBe("raised");

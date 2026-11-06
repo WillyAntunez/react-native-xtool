@@ -289,7 +289,7 @@ function runPodspecShim(
     const message = String(model.error.message);
     throw new PodspecReadError(
       SHIM_GAP_KINDS.includes(kind)
-        ? `${message} ${PODSPEC_READ_REMEDY}`
+        ? `${message}. ${PODSPEC_READ_REMEDY}`
         : message,
       kind,
     );

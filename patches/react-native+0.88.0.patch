@@ -516,7 +516,7 @@ index 0000000..1536aa7
 +abort 'usage: ruby read-podspec-shim.rb --probe | <podspec> <out.json> <installation-root>' unless ARGV.length == 3
 +exit(RnXtoolShim.run(ARGV[0], ARGV[1], ARGV[2]) ? 0 : 1)
 diff --git a/node_modules/react-native/scripts/spm/read-podspec.js b/node_modules/react-native/scripts/spm/read-podspec.js
-index 8fcf04b..7f1df66 100644
+index 8fcf04b..14af29e 100644
 --- a/node_modules/react-native/scripts/spm/read-podspec.js
 +++ b/node_modules/react-native/scripts/spm/read-podspec.js
 @@ -16,11 +16,12 @@
@@ -898,7 +898,7 @@ index 8fcf04b..7f1df66 100644
 +    const message = String(model.error.message);
 +    throw new PodspecReadError(
 +      SHIM_GAP_KINDS.includes(kind)
-+        ? `${message} ${PODSPEC_READ_REMEDY}`
++        ? `${message}. ${PODSPEC_READ_REMEDY}`
 +        : message,
 +      kind,
 +    );
