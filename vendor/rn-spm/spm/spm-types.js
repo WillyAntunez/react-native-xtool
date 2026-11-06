@@ -481,6 +481,9 @@ export type PodspecModel = {
   // evaluate (a method call, an unknown local): the scaffolder refuses the
   // library rather than build it from a partial source list.
   unresolvedSources?: Array<{field: string, expr: string, why: string}>,
+  // The SwiftPM packages the podspec's run asked for with `spm_dependency`
+  // (Ruby only): the scaffolder refuses the library (spmDependencyReason).
+  spmDependencies?: Array<{url: string, products: Array<string>}>,
 };
 
 // Intermediate translation result — concrete data the Swift emitter consumes.

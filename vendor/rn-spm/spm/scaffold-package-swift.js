@@ -48,6 +48,7 @@ const {MIN_IOS_VERSION_SUPPORTED} = require('./ios-deployment-target');
 const {
   findPodspecs,
   readPodspecCached,
+  spmDependencyReason,
   unresolvedSourcesReason,
 } = require('./read-podspec');
 const {
@@ -2294,6 +2295,12 @@ function scaffoldPackageSwiftForDep(
   const unresolved = unresolvedSourcesReason(podspecPath, model);
   if (unresolved != null) {
     return {depName, status: 'error', reason: unresolved};
+  }
+  // A SwiftPM package the podspec asks for (`spm_dependency`): the target
+  // would not link without it.
+  const spmDependency = spmDependencyReason(podspecPath, model);
+  if (spmDependency != null) {
+    return {depName, status: 'error', reason: spmDependency};
   }
 
   const spec = translatePodspecToSpmTarget(

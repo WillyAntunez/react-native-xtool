@@ -2,8 +2,9 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileS
 import { createRequire } from "node:module";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { VENDORED_RN_SPM } from "./support/rnScaffold.js";
+import { PODSPEC_FIXTURES, VENDORED_RN_SPM, installedCopy, podspecCopy } from "./support/rnScaffold.js";
 import { SHIM, needsRuby, tempDir } from "./support/ruby.js";
+import { needsTarball, packageFromTarball } from "./support/tarballs.js";
 import { tool } from "./support/tools.js";
 
 // How the vendored scaffolder (vendor/rn-spm/spm/read-podspec.js) picks its podspec reader and runs the Ruby shim.
@@ -13,6 +14,8 @@ const req = createRequire(path.join(VENDORED_RN_SPM, "read-podspec.js"));
 const readPodspecJs = req("./read-podspec.js");
 const { podspecReader, runPodspecShim, isPodspecReadError, installationRootFor } = readPodspecJs;
 const { readPodspec, readPodspecCached, unresolvedSourcesReason } = readPodspecJs;
+const { flattenSubspecs, findPodspecs, spmDependencyReason } = readPodspecJs;
+const { scaffoldPackageSwiftForDep } = req("./scaffold-package-swift.js");
 const REMEDY =
   "Set RN_XTOOL_PODSPEC_READER=reduced to read it with the reduced reader for one run, and report it with rn-xtool doctor --report.";
 
@@ -379,5 +382,194 @@ describe.skipIf(needsRuby !== "")(`readPodspec${needsRuby}`, () => {
     const podspec = library(spec(' s.source_files = sources_for("ios")'));
     const reason: string = unresolvedSourcesReason(podspec, readPodspec(podspec));
     expect(reason.slice(-INSTALL_RUBY.length - 1)).toBe(` ${INSTALL_RUBY}`);
+  });
+});
+
+describe("flattenSubspecs on the shim's model", () => {
+  const SVG = "react-native-svg@15.16.0";
+  const unapplied = (key: string) => `The podspec sets ${key}, which a CocoaPods build applies and rn-xtool's scaffold does not.`;
+  beforeEach(() => {
+    const rn = tempDir();
+    writeFileSync(path.join(rn, "package.json"), JSON.stringify({ name: "react-native", version: "0.86.3" }));
+    vi.stubEnv("RN_SPM_RN_ROOT", rn);
+    vi.stubEnv("RN_XTOOL_PODSPEC_READER", undefined);
+    vi.stubEnv("RN_SPM_APP_IOS_DIR", undefined);
+  });
+  const withReader = <T>(reader: "ruby" | "reduced", read: () => T): T => {
+    vi.stubEnv("RN_XTOOL_PODSPEC_READER", reader === "reduced" ? "reduced" : undefined);
+    return read();
+  };
+  /** The library in `root` scaffolded as rn-xtool's driver does, its app's `ios/` beside its `node_modules`. */
+  function scaffold(root: string): { status: string; reason?: string; packageSwift?: string } {
+    const base = path.resolve(root, "..", "..");
+    vi.stubEnv("RN_SPM_RN_ROOT", path.join(base, "node_modules", "react-native"));
+    const podspec = findPodspecs(root)[0];
+    const dep = { name: path.basename(root), root, swiftName: "Lib", swiftNameSource: "podspec", platforms: { ios: { podspecPath: podspec } } };
+    const ctx = {
+      appRoot: path.join(base, "ios"),
+      projectRoot: base,
+      reactNativeRoot: path.join(base, "node_modules", "react-native"),
+      force: true,
+      dryRun: false,
+      cacheSlotLabel: null,
+      remote: null,
+    };
+    const r = scaffoldPackageSwiftForDep(dep, ctx);
+    const pkg = path.join(root, "Package.swift");
+    return existsSync(pkg) ? { ...r, packageSwift: readFileSync(pkg, "utf8").split(base).join("<tmp>") } : r;
+  }
+
+  it("merges ios attributes over each layer", () => {
+    const m = flattenSubspecs({
+      name: "Foo",
+      source_files: "a/**/*.m",
+      exclude_files: "x",
+      ios: { exclude_files: "**/*.macos.m" },
+      osx: { exclude_files: "**/*.ios.m" },
+      pod_target_xcconfig: { OTHER_CFLAGS: "-DA" },
+      subspecs: [{ name: "c", ios: { pod_target_xcconfig: { OTHER_CFLAGS: "-DB" } } }],
+    });
+    expect(m.excludeFiles).toEqual(["x", "**/*.macos.m"]);
+    expect(m.preprocessorDefines.map((d: { name: string }) => d.name)).toEqual(["A", "B"]);
+  });
+
+  it("merges a hash key by key and lets ios win other values", () => {
+    const m = flattenSubspecs({
+      name: "Foo",
+      header_dir: "generic",
+      requires_arc: false,
+      frameworks: "UIKit",
+      pod_target_xcconfig: { OTHER_CFLAGS: "-DA", GCC_PREPROCESSOR_DEFINITIONS: ["KEPT=1"] },
+      ios: {
+        header_dir: "iosdir",
+        requires_arc: true,
+        frameworks: ["WebKit"],
+        pod_target_xcconfig: { OTHER_CFLAGS: "-DB", GCC_PREPROCESSOR_DEFINITIONS: "IOS=1" },
+      },
+      tvos: { frameworks: "TVUIKit" },
+      visionos: { frameworks: "RealityKit" },
+      watchos: { frameworks: "WatchKit" },
+    });
+    expect(m.headerDir).toBe("iosdir");
+    expect(m.requiresArc).toBe(true);
+    expect(m.frameworks).toEqual(["UIKit", "WebKit"]);
+    expect(m.preprocessorDefines.map((d: { name: string }) => d.name)).toEqual(["A", "B", "IOS"]);
+  });
+
+  it("warns about keys the scaffold does not apply", () => {
+    const m = flattenSubspecs({
+      name: "Foo",
+      script_phases: [{ name: "Codegen", script: "echo" }],
+      ios: { info_plist: { NSCameraUsageDescription: "camera" } },
+      osx: { module_map: "mac.modulemap" },
+    });
+    expect(m.warnings).toEqual([unapplied("script_phases"), unapplied("info_plist")]);
+    expect(flattenSubspecs({ name: "Foo", prepare_command: "make", subspecs: [{ name: "c", module_map: "c.modulemap" }] }).warnings).toEqual([
+      unapplied("prepare_command"),
+      unapplied("module_map"),
+    ]);
+  });
+
+  it.skipIf(needsRuby !== "")(`refuses a library that declares a SwiftPM dependency${needsRuby}`, () => {
+    const model = flattenSubspecs({ name: "Foo", __rn_xtool__: { spm_dependencies: [{ url: "https://x/y", requirement: {}, products: ["Y"] }] } });
+    expect(model.spmDependencies).toEqual([{ url: "https://x/y", products: ["Y"] }]);
+    expect(flattenSubspecs({ name: "Foo" }).spmDependencies).toEqual([]);
+    const root = installedCopy(
+      path.dirname(
+        library(
+          spec(
+            ' s.source_files = "ios/*.m"',
+            ' spm_dependency(s, url: "https://x/y", requirement: {kind: "upToNextMajorVersion", minimumVersion: "1.0.0"}, products: ["Y"])',
+          ),
+          { "ios/Foo.m": "", "package.json": JSON.stringify({ name: "react-native-foo", version: "1.0.0" }) },
+        ),
+      ),
+    );
+    const podspec = path.join(root, "Foo.podspec");
+    const reason = `${podspec}: uses spm_dependency(url: https://x/y, products: Y), which rn-xtool does not map yet`;
+    expect(spmDependencyReason(podspec, readPodspec(podspec))).toBe(reason);
+    expect(scaffold(root)).toEqual({ depName: "react-native-foo", status: "error", reason });
+  });
+
+  it.skipIf(needsRuby !== "" || needsTarball(SVG) !== "")(
+    `reads react-native-svg 15.16.0's iOS excludes with Ruby${needsRuby}${needsTarball(SVG)}`,
+    () => {
+      const m = readPodspec(podspecCopy(path.join(packageFromTarball(SVG)!, "RNSVG.podspec")));
+      expect(m.reader).toBe("ruby");
+      expect(m.excludeFiles).toContain("**/*.macos.{h,m,mm}");
+      expect(m.excludeFiles).not.toContain("**/*.ios.{h,m,mm}");
+      expect(m.excludeFiles).not.toContain("apple/Utils/RNSVGFabricConversions.h");
+    },
+  );
+
+  it.skipIf(needsRuby !== "")(`reads react-native-screens 4.24.0's locals with Ruby${needsRuby}`, () => {
+    const m = readPodspec(podspecCopy(path.join(PODSPEC_FIXTURES, "RNScreens-4.24.0", "RNScreens.podspec")));
+    expect(m.reader).toBe("ruby");
+    expect(m.sourceFiles).toEqual(["ios/**/*.{h,m,mm,cpp,swift}", "common/cpp/**/*.{cpp,h}", "cpp/**/*.{cpp,h}"]);
+    expect(m.excludeFiles).toEqual(["ios/gamma/**/*.{h,m,mm,cpp,swift}"]);
+  });
+
+  // The reduced reader cannot evaluate `defined?(install_modules_dependencies())`, so it reads both branches.
+  it.skipIf(needsRuby !== "")(`scaffolds gesture-handler 2.32.0 the same with Ruby as with the reduced reader${needsRuby}`, () => {
+    const fixture = path.join(PODSPEC_FIXTURES, "RNGestureHandler-2.32.0");
+    const run = (reader: "ruby" | "reduced") =>
+      withReader(reader, () => {
+        const root = installedCopy(fixture);
+        const model = readPodspec(path.join(root, "RNGestureHandler.podspec"));
+        return { model, scaffolded: scaffold(root) };
+      });
+    const ruby = run("ruby");
+    const reduced = run("reduced");
+    expect([ruby.model.reader, reduced.model.reader]).toEqual(["ruby", "reduced"]);
+    expect(ruby.model.sourceFiles).toEqual(["apple/**/*.{h,m,mm}"]);
+    expect(reduced.model.sourceFiles).toEqual(ruby.model.sourceFiles);
+    expect(ruby.model.dependencies).toEqual([]);
+    expect(ruby.model.usesInstallModulesDependencies).toBe(true);
+    expect(reduced.model.dependencies).toEqual(["React-Core"]);
+    expect(ruby.scaffolded.status).toBe("written");
+    expect(reduced.scaffolded.status).toBe("written");
+    expect(reduced.scaffolded.packageSwift).toBe(ruby.scaffolded.packageSwift);
+  });
+
+  it.skipIf(needsRuby !== "")(`drops a subspec on Ruby's model as on the reduced one${needsRuby}`, () => {
+    // react-native-vision-camera 4.7.3's shape.
+    const podspec = library(
+      [
+        "enableFrameProcessors = true",
+        "if defined?($VCEnableFrameProcessors)",
+        '  Pod::UI.puts "[VisionCamera] $VCEnableFrameProcessors is set to #{$VCEnableFrameProcessors}!"',
+        "  enableFrameProcessors = $VCEnableFrameProcessors",
+        "end",
+        'Pod::UI.puts("[VisionCamera] VisionCamera_enableFrameProcessors is set to #{enableFrameProcessors}!")',
+        "Pod::Spec.new do |s|",
+        '  s.name = "VisionCamera"',
+        "  s.subspec 'Core' do |core|",
+        '    core.source_files = ["ios/Core/**/*.swift"]',
+        "  end",
+        "  s.subspec 'React' do |core|",
+        '    core.source_files = ["ios/React/**/*.{h,m,swift}"]',
+        '    core.dependency "React-Core"',
+        "    if enableFrameProcessors",
+        '      core.dependency "VisionCamera/FrameProcessors"',
+        "    end",
+        "  end",
+        "  if enableFrameProcessors",
+        "    s.subspec 'FrameProcessors' do |fp|",
+        '      fp.source_files = ["ios/FrameProcessors/**/*.{h,m,mm}"]',
+        '      fp.dependency "react-native-worklets-core"',
+        "    end",
+        "  end",
+        "end",
+      ].join("\n"),
+    );
+    for (const reader of ["ruby", "reduced"] as const) {
+      const all = withReader(reader, () => readPodspec(podspec));
+      expect(all.reader).toBe(reader);
+      expect(all.sourceFiles).toContain("ios/FrameProcessors/**/*.{h,m,mm}");
+      expect(all.dependencies).toContain("react-native-worklets-core");
+      const m = withReader(reader, () => readPodspec(podspec, { dropSubspecs: ["FrameProcessors"] }));
+      expect(m.sourceFiles, reader).toEqual(["ios/Core/**/*.swift", "ios/React/**/*.{h,m,swift}"]);
+      expect(m.dependencies, reader).toEqual(["React-Core"]);
+    }
   });
 });

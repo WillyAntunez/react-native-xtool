@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
@@ -8,6 +8,7 @@ import {
   GOLDEN_LIBS,
   PODSPEC_FIXTURES,
   VENDORED_RN_SPM,
+  podspecCopy,
   readGolden,
   scaffoldLibraries,
   withRnRoot,
@@ -70,18 +71,6 @@ function tempDir(): string {
 afterAll(() => {
   for (const d of tmp) rmSync(d, { recursive: true, force: true });
 });
-/**
- * A copy of a library podspec, with what it reads (package.json, svg's scripts/): reading a podspec runs it, and
- * nothing it may write must land in the shared pristine tree.
- */
-function podspecCopy(file: string): string {
-  const dir = tempDir();
-  for (const f of [path.basename(file), "package.json", "scripts"]) {
-    const src = path.join(path.dirname(file), f);
-    if (existsSync(src)) cpSync(src, path.join(dir, f), { recursive: true, dereference: true });
-  }
-  return path.join(dir, path.basename(file));
-}
 
 describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () => {
   beforeAll(() => {
@@ -394,9 +383,6 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
   });
 
   describe("read-podspec platform-scoped fields", () => {
-    // Pinned until Task 5 adds the `ios` merge to the Ruby path and gives the svg copy a react-native beside it; Task 5 removes this pin.
-    beforeEach(() => vi.stubEnv("RN_XTOOL_PODSPEC_READER", "reduced"));
-    afterEach(() => vi.unstubAllEnvs());
     const readModel = (body: string) =>
       load<ReadPodspec>("read-podspec.js").readPodspecCached(podspec(body)) as Model & {
         excludeFiles: string[];
@@ -452,6 +438,7 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
   });
 
   describe("preprocessor defines", () => {
+    // The reduced reader's: Ruby cannot run their `#{x}` interpolations of undefined locals.
     beforeEach(() => vi.stubEnv("RN_XTOOL_PODSPEC_READER", "reduced"));
     afterEach(() => vi.unstubAllEnvs());
     type Def = { name: string; value: string | null; config: string | null };
@@ -1174,6 +1161,7 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
 // gesture-handler 2.32.0, plus screens 4.30.1, which has no Swift (a clang-only target), and
 // worklets 0.8.3 (fix 19's `RCT_HERMES_V1_ENABLED` ternary).
 describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
+  // The reduced reader's: the RNReanimated-4.5.1 and RNWorklets-0.10.1 fixtures lack the scripts/*.rb they require.
   beforeEach(() => vi.stubEnv("RN_XTOOL_PODSPEC_READER", "reduced"));
   afterEach(() => vi.unstubAllEnvs());
   const req = createRequire(import.meta.url);

@@ -71,6 +71,35 @@ export function withRnRoot<T>(version: string, run: () => T): T {
 }
 
 /**
+ * An installed copy of the library in `src`, as an app's install lays it out: `<tmp>/node_modules/<its package name>`
+ * (by value; only `files`, relative to `src`, when given), beside a `node_modules/react-native` of `rnVersion` and the
+ * app's `ios/` folder. Reading a podspec runs it, and its Ruby helpers look React Native up from there. Its folder.
+ */
+export function installedCopy(src: string, { files, rnVersion = "0.86.3" }: { files?: string[]; rnVersion?: string } = {}): string {
+  const base = mkTmp("rn-scaffold-installed-");
+  const pkg = path.join(src, "package.json");
+  const name = existsSync(pkg) ? (JSON.parse(readFileSync(pkg, "utf8")) as { name?: string }).name : undefined;
+  const root = path.join(base, "node_modules", name ?? path.basename(src));
+  mkdirSync(root, { recursive: true });
+  for (const f of files ?? readdirSync(src)) {
+    if (existsSync(path.join(src, f))) cpSync(path.join(src, f), path.join(root, f), { recursive: true, dereference: true });
+  }
+  mkdirSync(path.join(base, "node_modules", "react-native"));
+  writeFileSync(path.join(base, "node_modules", "react-native", "package.json"), JSON.stringify({ name: "react-native", version: rnVersion }));
+  mkdirSync(path.join(base, "ios"));
+  return root;
+}
+
+/**
+ * An installed copy ({@link installedCopy}) of a library podspec, with what it reads (package.json, svg's scripts/):
+ * reading a podspec runs it, and nothing it may write must land in the shared pristine tree. The copy's podspec.
+ */
+export function podspecCopy(file: string): string {
+  const name = path.basename(file);
+  return path.join(installedCopy(path.dirname(file), { files: [name, "package.json", "scripts"] }), name);
+}
+
+/**
  * Copies each library (`name` → its source dir) into a temp `node_modules`, drops the scaffolder's
  * earlier output (a persisted scaffold patch), runs `scaffoldAll` over them with `spmDir`, and
  * returns each library's status and every file the run created or changed, keyed

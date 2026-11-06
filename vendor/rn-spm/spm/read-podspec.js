@@ -2130,6 +2130,84 @@ function headerDirScopes(
 // Subspec flattening
 // ---------------------------------------------------------------------------
 
+// The attributes CocoaPods' DSL declares with an Array container: for an iOS
+// target its consumer appends the `ios` value to the spec's.
+const ARRAY_ATTRIBUTES /*: Set<string> */ = new Set([
+  'compiler_flags',
+  'exclude_files',
+  'frameworks',
+  'libraries',
+  'preserve_paths',
+  'private_header_files',
+  'project_header_files',
+  'public_header_files',
+  'resources',
+  'source_files',
+  'vendored_frameworks',
+  'vendored_libraries',
+  'weak_frameworks',
+]);
+
+// What a CocoaPods build applies and the scaffold does not: each is named in
+// a warning when the spec or a selected subspec sets it.
+const UNAPPLIED_KEYS /*: Array<string> */ = [
+  'script_phases',
+  'prepare_command',
+  'info_plist',
+  'module_map',
+];
+
+const isHash = (v /*: mixed */) /*: boolean */ =>
+  v != null && typeof v === 'object' && !Array.isArray(v);
+
+/**
+ * A spec (or subspec) of the shim's model as CocoaPods' consumer reads it for
+ * an iOS target: each value under its `ios` merged over the spec's. An
+ * ARRAY_ATTRIBUTES value is the spec's followed by the platform's (a string
+ * read as a one-element array); two hashes merge key by key, two strings
+ * under one key joined by one space; anything else is the platform's value.
+ * The other platforms (`osx`, `tvos`, `visionos`, `watchos`) are never read.
+ * The reduced reader's model has no `ios`: it is returned as it is.
+ */
+function mergeIos(layer /*: mixed */) /*: mixed */ {
+  // $FlowFixMe[incompatible-use] layer narrowed by isHash
+  if (!isHash(layer) || !isHash(layer.ios)) return layer;
+  // $FlowFixMe[incompatible-use] layer narrowed by isHash
+  const spec /*: {[string]: mixed} */ = layer;
+  // $FlowFixMe[incompatible-type] narrowed by isHash
+  const ios /*: {[string]: mixed} */ = spec.ios;
+  const out /*: {[string]: mixed} */ = {...spec};
+  for (const key of Object.keys(ios)) {
+    const own = spec[key];
+    const platform = ios[key];
+    if (platform == null) continue;
+    if (own == null) {
+      out[key] = platform;
+    } else if (ARRAY_ATTRIBUTES.has(key)) {
+      out[key] = [
+        ...(Array.isArray(own) ? own : [own]),
+        ...(Array.isArray(platform) ? platform : [platform]),
+      ];
+    } else if (isHash(own) && isHash(platform)) {
+      // $FlowFixMe[incompatible-type] narrowed by isHash
+      const ownHash /*: {[string]: mixed} */ = own;
+      // $FlowFixMe[incompatible-type] narrowed by isHash
+      const platformHash /*: {[string]: mixed} */ = platform;
+      const merged /*: {[string]: mixed} */ = {...ownHash};
+      for (const k of Object.keys(platformHash)) {
+        const a = ownHash[k];
+        const b = platformHash[k];
+        merged[k] =
+          typeof a === 'string' && typeof b === 'string' ? `${a} ${b}` : b;
+      }
+      out[key] = merged;
+    } else {
+      out[key] = platform;
+    }
+  }
+  return out;
+}
+
 /**
  * Merges a podspec's default subspecs (or all subspecs when no defaults are
  * declared) into a single logical view. RN libraries use subspecs for
@@ -2184,7 +2262,18 @@ function flattenSubspecs(
     // $FlowFixMe[prop-missing] dynamic shape
     s => !(s != null && typeof s.name === 'string' && dropped.has(s.name)),
   );
-  const layers = [rawSpec, ...selected];
+  // Each layer as CocoaPods reads it for iOS, before any reader below.
+  const layers = [rawSpec, ...selected].map(mergeIos);
+  // $FlowFixMe[incompatible-type] mergeIos keeps the spec's shape
+  const spec /*: RawSpec */ = layers[0];
+  for (const key of UNAPPLIED_KEYS) {
+    // $FlowFixMe[incompatible-use] layer narrowed from `mixed`
+    if (layers.some(l => isHash(l) && l[key] != null)) {
+      warnings.push(
+        `The podspec sets ${key}, which a CocoaPods build applies and rn-xtool's scaffold does not.`,
+      );
+    }
+  }
 
   function mergeArrayField(key /*: string */) /*: Array<string> */ {
     const out /*: Array<string> */ = [];
@@ -2217,7 +2306,7 @@ function flattenSubspecs(
   // headers, and several subspecs can disagree.
   function specStringField(key /*: string */) /*: string | null */ {
     // $FlowFixMe[incompatible-use] dynamic shape
-    const value = rawSpec[key];
+    const value = spec[key];
     return typeof value === 'string' && value.length > 0 ? value : null;
   }
 
@@ -2431,6 +2520,21 @@ function flattenSubspecs(
     return Array.from(new Set(out));
   }
 
+  // The SwiftPM packages the podspec's run asked for with
+  // `spm_dependency(spec, url:, requirement:, products:)`, as the shim
+  // recorded them.
+  function spmDependencies() /*: Array<{url: string, products: Array<string>}> */ {
+    // $FlowFixMe[prop-missing] the shim's dynamic shape
+    const recorded = rawSpec.__rn_xtool__?.spm_dependencies;
+    if (!Array.isArray(recorded)) return [];
+    return recorded.filter(isHash).map(d => ({
+      url: String(d.url),
+      products: (Array.isArray(d.products) ? d.products : [d.products]).filter(
+        p => typeof p === 'string',
+      ),
+    }));
+  }
+
   // Each selected subspec's own dependencies, by subspec name.
   function subspecDependencies() /*: {[string]: Array<string>} */ {
     const out /*: {[string]: Array<string>} */ = {};
@@ -2521,7 +2625,7 @@ function flattenSubspecs(
   }
 
   // $FlowFixMe[prop-missing] dynamic shape
-  const reqArc /*: unknown */ = rawSpec.requires_arc;
+  const reqArc /*: unknown */ = spec.requires_arc;
   const requiresArc =
     reqArc === false || (Array.isArray(reqArc) && reqArc.length === 0)
       ? false
@@ -2603,6 +2707,7 @@ function flattenSubspecs(
     unresolvedSources: Array.isArray(rawSpec.__unresolved__)
       ? rawSpec.__unresolved__
       : [],
+    spmDependencies: spmDependencies(),
   };
 }
 
@@ -2631,6 +2736,28 @@ function unresolvedSourcesReason(
     "library's files or settings out of its target. Install Ruby (sudo apt " +
     'install ruby) so rn-xtool reads the podspec as CocoaPods does, or give ' +
     'the library a Package.swift of its own.'
+  );
+}
+
+/**
+ * Why the library cannot be scaffolded for the SwiftPM packages its podspec
+ * declares with `spm_dependency`, or null: a CocoaPods build resolves them,
+ * and a scaffold without them would not link.
+ */
+function spmDependencyReason(
+  podspecPath /*: string */,
+  model /*: PodspecModel */,
+) /*: ?string */ {
+  const list = model.spmDependencies ?? [];
+  if (list.length === 0) return null;
+  return (
+    `${podspecPath}: uses ` +
+    list
+      .map(
+        d => `spm_dependency(url: ${d.url}, products: ${d.products.join(', ')})`,
+      )
+      .join(', ') +
+    ', which rn-xtool does not map yet'
   );
 }
 
@@ -2875,5 +3002,6 @@ module.exports = {
   runPodspecShim,
   regexPodspec,
   flattenSubspecs,
+  spmDependencyReason,
   unresolvedSourcesReason,
 };
