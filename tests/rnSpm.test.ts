@@ -426,7 +426,8 @@ describe("runRnSpm", () => {
       for (const c of rnRuns) expect(c.env?.["RN_SPM_POD_TABLE"]).toBe(POD_TABLE);
       // The table is written once, before the first run: the config's entry over rn-xtool's own and the scaffolder's.
       expect(h.tables).toEqual([mergedPodTable(pods)]);
-      expect(h.tables[0]!.pods["AppAuth"]).toEqual({ ...pods.AppAuth, forwardHeaders: { "AppAuth/AppAuth.h": ["AppAuthCore", "AppAuth"] } });
+      const shipped = JSON.parse(readFileSync(path.join(packageRoot(), "data", "pods.json"), "utf8")).pods.AppAuth;
+      expect(h.tables[0]!.pods["AppAuth"]).toEqual({ ...pods.AppAuth, forwardHeaders: shipped.forwardHeaders });
       expect(h.tables[0]!.source["AppAuth"]).toBe("config");
     }
     // Without a config entry, still the shipped table.

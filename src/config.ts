@@ -36,7 +36,10 @@ export interface PodEntry {
   product?: string;
   /** `<pod>/<subspec>` dependency → its products. */
   subspecs?: Record<string, string[]>;
-  /** A header the package leaves outside its targets (`AppAuth/AppAuth.h`) → the modules a forwarder `@import`s. */
+  /**
+   * A header the package leaves outside its targets (`AppAuth/AppAuth.h`) → the headers a forwarder `#import`s, as paths
+   * under the public header directories of the package's targets (`OIDAuthState.h`, `iOS/OIDAuthState+IOS.h`).
+   */
   forwardHeaders?: Record<string, string[]>;
   /**
    * Why a pin outside a podspec's requirement was checked and is meant: the pin check prints an ℹ line with it instead
@@ -86,6 +89,8 @@ const TARGET_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** A relative path ending in .h, without empty, `.` or `..` segments. */
 const isHeaderKey = (h: string): boolean =>
   h.endsWith(".h") && !h.includes("\\") && h.split("/").every((seg) => seg !== "" && seg !== "." && seg !== "..");
+/** A header a forwarder `#import`s: a header key in characters that cannot end the `#import <…>` line. */
+const HEADER_PATH = /^[A-Za-z0-9_+.-]+(?:\/[A-Za-z0-9_+.-]+)*\.h$/;
 
 /**
  * Throws a ConfigError naming `file` and the key when `pods` is not an object of pod names, each mapped to
@@ -122,9 +127,19 @@ export function checkPodEntries(file: string, pods: unknown): void {
     }
     if (e.forwardHeaders !== undefined) {
       if (!isRecord(e.forwardHeaders)) fail(`pods.${pod}.forwardHeaders`, "an object of header paths");
-      for (const [header, modules] of Object.entries(e.forwardHeaders as Record<string, unknown>)) {
-        if (!isHeaderKey(header) || !isNames(modules, MODULE_NAME)) {
-          fail(`pods.${pod}.forwardHeaders.${header}`, "a list of module names, under a relative path ending in .h");
+      for (const [header, headers] of Object.entries(e.forwardHeaders as Record<string, unknown>)) {
+        const key = `pods.${pod}.forwardHeaders.${header}`;
+        const shape = "a list of the pod's public headers (relative paths ending in .h), under a relative path ending in .h";
+        if (!isHeaderKey(header) || !Array.isArray(headers) || headers.length === 0) fail(key, shape);
+        for (const h of headers as unknown[]) {
+          // The format before forwarders were textual: an `@import` stops every Objective-C++ file that includes it.
+          if (typeof h === "string" && !h.endsWith(".h") && MODULE_NAME.test(h)) {
+            throw new ConfigError(
+              `${file}: ${key} lists the module ${h}; list the pod's public headers instead (relative paths ending in .h), ` +
+                "which the forwarder includes textually: Objective-C++ compiles without modules, so it cannot @import",
+            );
+          }
+          if (typeof h !== "string" || !HEADER_PATH.test(h) || !isHeaderKey(h)) fail(key, shape);
         }
       }
     }

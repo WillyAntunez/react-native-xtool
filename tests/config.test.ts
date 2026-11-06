@@ -64,7 +64,7 @@ describe("loadConfig", () => {
     url: "https://github.com/openid/AppAuth-iOS",
     exact: "3.0.0",
     products: ["AppAuth"],
-    forwardHeaders: { "AppAuth/AppAuth.h": ["AppAuthCore", "AppAuth"] },
+    forwardHeaders: { "AppAuth/AppAuth.h": ["OIDAuthState.h", "iOS/OIDAuthState+IOS.h"] },
   };
 
   it("reads pods", async () => {
@@ -101,7 +101,11 @@ describe("loadConfig", () => {
   const PRODUCTS = "pods.AppAuth.products must be a list of product names";
   const OUTSIDE = "pods.AppAuth.outsideRequirement must be a sentence saying why the pin is outside the requirement";
   const EMPTY_TARGETS = "pods.AppAuth.emptyTargets must be a list of target names";
-  const FORWARD = (h: string) => `pods.AppAuth.forwardHeaders.${h} must be a list of module names, under a relative path ending in .h`;
+  const FORWARD = (h: string) =>
+    `pods.AppAuth.forwardHeaders.${h} must be a list of the pod's public headers (relative paths ending in .h), under a relative path ending in .h`;
+  const MODULE = (m: string) =>
+    `pods.AppAuth.forwardHeaders.AppAuth/AppAuth.h lists the module ${m}; list the pod's public headers instead (relative ` +
+    "paths ending in .h), which the forwarder includes textually: Objective-C++ compiles without modules, so it cannot @import";
   it.each<[string, unknown, string]>([
     ["a list", ["AppAuth"], OBJECT],
     ["null", null, OBJECT],
@@ -123,11 +127,17 @@ describe("loadConfig", () => {
     ["an empty product", { AppAuth: { url: APPAUTH.url, exact: "3.0.0", product: "" } }, PRODUCTS],
     ["a subspec without a list", entry({ subspecs: { Core: "AppAuthCore" } }), "pods.AppAuth.subspecs.Core must be a list of product names"],
     ["a subspec with an empty list", entry({ subspecs: { Core: [] } }), "pods.AppAuth.subspecs.Core must be a list of product names"],
-    ["a header key that leaves the folder", entry({ forwardHeaders: { "../x.h": ["AppAuth"] } }), FORWARD("../x.h")],
-    ["an absolute header key", entry({ forwardHeaders: { "/abs.h": ["AppAuth"] } }), FORWARD("/abs.h")],
-    ["a header key that is not a header", entry({ forwardHeaders: { "AppAuth/AppAuth.m": ["AppAuth"] } }), FORWARD("AppAuth/AppAuth.m")],
-    ["a header without modules", entry({ forwardHeaders: { "AppAuth/AppAuth.h": [] } }), FORWARD("AppAuth/AppAuth.h")],
-    ["a module that is not a module name", entry({ forwardHeaders: { "AppAuth/AppAuth.h": ["App Auth"] } }), FORWARD("AppAuth/AppAuth.h")],
+    ["a header key that leaves the folder", entry({ forwardHeaders: { "../x.h": ["OIDAuthState.h"] } }), FORWARD("../x.h")],
+    ["an absolute header key", entry({ forwardHeaders: { "/abs.h": ["OIDAuthState.h"] } }), FORWARD("/abs.h")],
+    ["a header key that is not a header", entry({ forwardHeaders: { "AppAuth/AppAuth.m": ["OIDAuthState.h"] } }), FORWARD("AppAuth/AppAuth.m")],
+    ["a forwarded header without headers", entry({ forwardHeaders: { "AppAuth/AppAuth.h": [] } }), FORWARD("AppAuth/AppAuth.h")],
+    ["a module name, the old form", entry({ forwardHeaders: { "AppAuth/AppAuth.h": ["AppAuthCore", "AppAuth"] } }), MODULE("AppAuthCore")],
+    ["a submodule name", entry({ forwardHeaders: { "AppAuth/AppAuth.h": ["OIDAuthState.h", "AppAuth.Core"] } }), MODULE("AppAuth.Core")],
+    ["a header that leaves the include path", entry({ forwardHeaders: { "AppAuth/AppAuth.h": ["../x.h"] } }), FORWARD("AppAuth/AppAuth.h")],
+    ["an absolute header", entry({ forwardHeaders: { "AppAuth/AppAuth.h": ["/abs.h"] } }), FORWARD("AppAuth/AppAuth.h")],
+    ["a header with a space", entry({ forwardHeaders: { "AppAuth/AppAuth.h": ["App Auth.h"] } }), FORWARD("AppAuth/AppAuth.h")],
+    ["a header that would end the #import", entry({ forwardHeaders: { "AppAuth/AppAuth.h": ["x.h>\n#import <y.h"] } }), FORWARD("AppAuth/AppAuth.h")],
+    ["a header that is not a string", entry({ forwardHeaders: { "AppAuth/AppAuth.h": [4] } }), FORWARD("AppAuth/AppAuth.h")],
     ["an outsideRequirement that is not a string", entry({ outsideRequirement: 4 }), OUTSIDE],
     ["an empty outsideRequirement", entry({ outsideRequirement: " " }), OUTSIDE],
     ["an emptyTargets string", entry({ emptyTargets: "GTMDefines" }), EMPTY_TARGETS],

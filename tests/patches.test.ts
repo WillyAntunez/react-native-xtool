@@ -1065,8 +1065,8 @@ describe("scaffolded manifests in node_modules older than the scaffolder or the 
     const root = await project();
     await installPkg(root, "react-native-app-auth", "8.5.1");
     const forwarder =
-      "// AUTO-SCAFFOLDED by react-native spm scaffold — forwards <AppAuth/AppAuth.h> to the SwiftPM modules of the pod AppAuth.\n" +
-      "@import AppAuthCore;\n@import AppAuth;\n";
+      "// AUTO-SCAFFOLDED by react-native spm scaffold — forwards <AppAuth/AppAuth.h> to the public headers of the pod AppAuth.\n" +
+      "#import <OIDAuthState.h>\n#import <iOS/OIDAuthState+IOS.h>\n";
     const current = { "Package.swift": manifest(4, "0.87.1"), "rn-spm-pod-headers/AppAuth/AppAuth.h": forwarder };
     await put(root, "patches/react-native-app-auth+8.5.1.patch", newFilesPatch("react-native-app-auth", current));
     await put(root, "node_modules/react-native-app-auth/Package.swift", manifest(3, "0.87.1"));

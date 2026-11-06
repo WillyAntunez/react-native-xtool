@@ -1317,7 +1317,7 @@ describe("writeIosXtool", () => {
     const farm = await reactHeadersFarm(paths.xcframeworks);
     const appAuth = await autolinkedLib(paths, root, "ReactNativeAppAuth");
     await mkdir(join(appAuth, "rn-spm-pod-headers", "AppAuth"), { recursive: true });
-    await writeFile(join(appAuth, "rn-spm-pod-headers", "AppAuth", "AppAuth.h"), "@import AppAuthCore;\n@import AppAuth;\n");
+    await writeFile(join(appAuth, "rn-spm-pod-headers", "AppAuth", "AppAuth.h"), "#import <OIDAuthState.h>\n#import <iOS/OIDAuthState+IOS.h>\n");
     await autolinkedLib(paths, root, "RNSVG");
     await writeIosXtool(ctx);
     const { clang, bridging } = appIncludes(await readFile(join(paths.iosXtool, "Package.swift"), "utf8"));
@@ -1337,7 +1337,7 @@ describe("writeIosXtool", () => {
     const farm = await reactHeadersFarm(paths.xcframeworks);
     const lib = await autolinkedLib(paths, ctx.project.root, "ReactNativeAppAuth");
     await mkdir(join(lib, "rn-spm-pod-headers", "AppAuth"), { recursive: true });
-    await writeFile(join(lib, "rn-spm-pod-headers", "AppAuth", "AppAuth.h"), "@import AppAuth;\n");
+    await writeFile(join(lib, "rn-spm-pod-headers", "AppAuth", "AppAuth.h"), "#import <OIDAuthState.h>\n");
     await writeIosXtool(ctx);
     const pkg = await readFile(join(paths.iosXtool, "Package.swift"), "utf8");
     expect(pkg).toBe(before);

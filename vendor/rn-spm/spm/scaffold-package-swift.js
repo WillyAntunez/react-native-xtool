@@ -222,7 +222,7 @@ function podTableEntry(
     throw new Error(`pods.${pod}.subspecs is not an object of product lists`);
   }
   if (forwardHeaders !== undefined && !isNameLists(forwardHeaders)) {
-    throw new Error(`pods.${pod}.forwardHeaders is not an object of module lists`);
+    throw new Error(`pods.${pod}.forwardHeaders is not an object of header lists`);
   }
   // $FlowFixMe[incompatible-return] checked above
   return {
@@ -587,38 +587,58 @@ const REACT_BARE_HEADERS_DIR = 'rn-spm-react-headers';
 
 // A pod's umbrella header that its SwiftPM package leaves outside every target
 // (AppAuth-iOS's Sources/AppAuth.h), so neither `<AppAuth/AppAuth.h>` nor
-// `"AppAuth.h"` resolves, while `@import AppAuth;` does. CocoaPods copies the
-// header into Headers/Public/<Pod>/. A pod table entry's `forwardHeaders`
-// (`{"AppAuth/AppAuth.h": ["AppAuthCore", "AppAuth"]}`) makes the scaffold
-// write that path under this directory, holding the `@import` lines, and put
-// the directory on the target's header search path.
+// `"AppAuth.h"` resolves. CocoaPods copies the header into
+// Headers/Public/<Pod>/. A pod table entry's `forwardHeaders` maps that path to
+// the headers the umbrella includes, as paths under the public header
+// directories of the pod's SwiftPM targets, which are on every importer's
+// include path (`{"AppAuth/AppAuth.h": ["OIDAuthState.h", …,
+// "iOS/OIDAuthState+IOS.h", …]}`). The scaffold writes that path under this
+// directory, holding one `#import <header>` per entry, and puts the directory
+// on the target's header search path. The forwarder is textual: Objective-C++
+// compiles with -fmodules -fno-cxx-modules (Xcode's default), so an `@import`
+// in it would stop every `.mm` that includes it, while in Objective-C the
+// `#import` of a header of a module still imports the module.
 const POD_HEADERS_DIR = 'rn-spm-pod-headers';
 const MODULE_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/;
+const HEADER_PATH_RE = /^[A-Za-z0-9_+.-]+(\/[A-Za-z0-9_+.-]+)*\.h$/;
+
+// A relative path ending in .h without empty, `.` or `..` segments.
+function isRelativeHeader(header /*: string */) /*: boolean */ {
+  return (
+    /\.h$/.test(header) &&
+    !path.posix.isAbsolute(header) &&
+    !header.includes('\\') &&
+    !header.split('/').some(seg => seg === '' || seg === '.' || seg === '..')
+  );
+}
 
 // The forwarders of one pod's `forwardHeaders`; throws naming a header key
-// that is not a relative path ending in .h inside the directory, or a module
-// list that is not one.
+// that is not a relative path ending in .h inside the directory, or a header
+// list that is not one of such paths (a module name, the format before the
+// forwarders were textual, gets its own message).
 function podHeaderForwarders(
   pod /*: string */,
   forwardHeaders /*: ?{[header: string]: Array<string>} */,
-) /*: Array<{pod: string, header: string, modules: Array<string>}> */ {
+) /*: Array<{pod: string, header: string, headers: Array<string>}> */ {
   return Object.keys(forwardHeaders ?? {}).map(header => {
-    const modules = forwardHeaders?.[header];
-    const segments = header.split('/');
-    if (
-      !/\.h$/.test(header) ||
-      path.posix.isAbsolute(header) ||
-      header.includes('\\') ||
-      segments.some(seg => seg === '' || seg === '.' || seg === '..') ||
-      !Array.isArray(modules) ||
-      modules.length === 0 ||
-      !modules.every(m => typeof m === 'string' && MODULE_NAME_RE.test(m))
-    ) {
-      throw new Error(
-        `react-native spm scaffold: pods.${pod}.forwardHeaders.${header} must be a list of module names, under a relative path ending in .h`,
-      );
+    const headers = forwardHeaders?.[header];
+    const where = `react-native spm scaffold: pods.${pod}.forwardHeaders.${header}`;
+    const shape = `${where} must be a list of the pod's public headers (relative paths ending in .h), under a relative path ending in .h`;
+    if (!isRelativeHeader(header) || !Array.isArray(headers) || headers.length === 0) {
+      throw new Error(shape);
     }
-    return {pod, header, modules};
+    for (const h of headers) {
+      if (typeof h === 'string' && !/\.h$/.test(h) && MODULE_NAME_RE.test(h)) {
+        throw new Error(
+          `${where} lists the module ${h}; list the pod's public headers instead (relative paths ending in .h), ` +
+            'which the forwarder includes textually: Objective-C++ compiles without modules, so it cannot @import',
+        );
+      }
+      if (typeof h !== 'string' || !HEADER_PATH_RE.test(h) || !isRelativeHeader(h)) {
+        throw new Error(shape);
+      }
+    }
+    return {pod, header, headers};
   });
 }
 
@@ -972,7 +992,7 @@ function translatePodspecToSpmTarget(
   let coreReactNative = false;
   const siblingNames /*: Array<string> */ = [];
   const externalPackages /*: Array<{pod: string, url: string, exact: string, products: Array<string>, package: string}> */ = [];
-  const podForwarders /*: Array<{pod: string, header: string, modules: Array<string>}> */ = [];
+  const podForwarders /*: Array<{pod: string, header: string, headers: Array<string>}> */ = [];
   // Pods built from prebuilt binaries (fix 27), each once, in podspec order.
   const binaryPods /*: Array<{pod: string, product: string}> */ = [];
   const unmappedPods /*: Array<string> */ = [];
@@ -2432,13 +2452,13 @@ function scaffoldPackageSwiftForDep(
     if (fs.existsSync(podHeadersDir) && ownPodHeadersDir(podHeadersDir)) {
       fs.rmSync(podHeadersDir, {recursive: true, force: true});
     }
-    for (const {pod, header, modules} of spec.podForwarders ?? []) {
+    for (const {pod, header, headers} of spec.podForwarders ?? []) {
       const file = path.join(podHeadersDir, ...header.split('/'));
       fs.mkdirSync(path.dirname(file), {recursive: true});
       fs.writeFileSync(
         file,
-        `// ${SCAFFOLDER_BANNER} — forwards <${header}> to the SwiftPM modules of the pod ${pod}.\n` +
-          modules.map(m => `@import ${m};\n`).join(''),
+        `// ${SCAFFOLDER_BANNER} — forwards <${header}> to the public headers of the pod ${pod}.\n` +
+          headers.map(h => `#import <${h}>\n`).join(''),
         'utf8',
       );
     }

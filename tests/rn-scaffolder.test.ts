@@ -168,7 +168,11 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
       expect(src("scaffold-package-swift.js")).toMatch(/const REACT_CORE_DEP_EXACT = \[[^\]]*'ReactNativeDependencies'/);
     });
     it("scaffold-package-swift.js has the pod header forwarder hunk", () => {
-      expect(src("scaffold-package-swift.js")).toContain("const POD_HEADERS_DIR = 'rn-spm-pod-headers'");
+      const f = src("scaffold-package-swift.js");
+      expect(f).toContain("const POD_HEADERS_DIR = 'rn-spm-pod-headers'");
+      // Textual forwarders: Objective-C++ compiles without modules.
+      expect(f).toContain("headers.map(h => `#import <${h}>\\n`)");
+      expect(f).not.toContain("@import ${m};");
     });
     it("scaffold-package-swift.js has the fix 27 hunk", () => {
       const f = src("scaffold-package-swift.js");
@@ -2145,14 +2149,17 @@ describe("scaffolder fix 13: the pod table (vendor/rn-spm)", () => {
   });
 
   describe("13: pod umbrella header forwarders", () => {
-    const FORWARD = { "AppAuth/AppAuth.h": ["AppAuthCore", "AppAuth"] };
+    const FORWARD = { "AppAuth/AppAuth.h": ["OIDAuthState.h", "iOS/OIDAuthState+IOS.h"] };
     const forwarding = (forwardHeaders: unknown) => tableFile({ AppAuth: { ...APPAUTH, forwardHeaders } });
     const FORWARDER = [
-      "// AUTO-SCAFFOLDED by react-native spm scaffold — forwards <AppAuth/AppAuth.h> to the SwiftPM modules of the pod AppAuth.",
-      "@import AppAuthCore;",
-      "@import AppAuth;",
+      "// AUTO-SCAFFOLDED by react-native spm scaffold — forwards <AppAuth/AppAuth.h> to the public headers of the pod AppAuth.",
+      "#import <OIDAuthState.h>",
+      "#import <iOS/OIDAuthState+IOS.h>",
       "",
     ].join("\n");
+    const SHAPE = (key: string) =>
+      `react-native spm scaffold: pods.AppAuth.forwardHeaders.${key} must be a list of the pod's public headers ` +
+      "(relative paths ending in .h), under a relative path ending in .h";
     const settings = (pkg: string, key: string) => pkg.split("\n").find((l) => l.trim().startsWith(`${key}:`)) ?? "";
 
     it("13: writes a forwarding header for each forwardHeaders entry (AppAuth's shape)", () => {
@@ -2162,6 +2169,13 @@ describe("scaffolder fix 13: the pod table (vendor/rn-spm)", () => {
       expect(settings(pkg, "cSettings")).toContain('.headerSearchPath("rn-spm-pod-headers")');
       expect(settings(pkg, "cxxSettings")).toContain('.headerSearchPath("rn-spm-pod-headers")');
       expect(Object.keys(run.files).filter((k) => k.includes("rn-spm-pod-headers"))).toEqual(["foo/rn-spm-pod-headers/AppAuth/AppAuth.h"]);
+    });
+
+    it("13: the forwarder includes the pod's headers textually, without @import (Objective-C++ compiles without modules)", () => {
+      const run = scaffold(APPAUTH_DEP, forwarding(FORWARD));
+      const text = run.files["foo/rn-spm-pod-headers/AppAuth/AppAuth.h"]!;
+      expect(text.split("\n").filter((l) => l.startsWith("#import "))).toEqual(["#import <OIDAuthState.h>", "#import <iOS/OIDAuthState+IOS.h>"]);
+      expect(text).not.toContain("@import");
     });
 
     it("13: the forwarder holds no absolute path", () => {
@@ -2192,19 +2206,32 @@ describe("scaffolder fix 13: the pod table (vendor/rn-spm)", () => {
     it.each(["../x.h", "/abs.h", "AppAuth/../../x.h", "AppAuth/AppAuth.m", "./AppAuth.h"])(
       "13: refuses a header key that leaves the folder or is not a header (%s)",
       (key) => {
-        const run = scaffold(APPAUTH_DEP, forwarding({ [key]: ["AppAuth"] }));
+        const run = scaffold(APPAUTH_DEP, forwarding({ [key]: ["OIDAuthState.h"] }));
         expect(run.statuses["foo"]).toBe("error");
-        expect(run.results[0]!.reason).toBe(
-          `react-native spm scaffold: pods.AppAuth.forwardHeaders.${key} must be a list of module names, under a relative path ending in .h`,
-        );
+        expect(run.results[0]!.reason).toBe(SHAPE(key));
         expect(existsSync(path.join(run.roots["foo"]!, "rn-spm-pod-headers"))).toBe(false);
       },
     );
 
-    it("13: refuses a module name that is not one", () => {
-      const run = scaffold(APPAUTH_DEP, forwarding({ "AppAuth/AppAuth.h": ["AppAuth;\n#import <x>"] }));
+    it.each([[["OIDAuthState.h>\n#import <x.h"]], [["../x.h"]], [["/abs.h"]], [["iOS//x.h"]], [["./x.h"]], [["OID-x.m"]], [["a b.h"]]])(
+      "13: refuses a header list that is not one of relative header paths (%j)",
+      (headers) => {
+        const run = scaffold(APPAUTH_DEP, forwarding({ "AppAuth/AppAuth.h": headers }));
+        expect(run.statuses["foo"]).toBe("error");
+        expect(run.results[0]!.reason).toBe(SHAPE("AppAuth/AppAuth.h"));
+        expect(existsSync(path.join(run.roots["foo"]!, "rn-spm-pod-headers"))).toBe(false);
+      },
+    );
+
+    it("13: refuses a module name in a header list, saying to list the pod's public headers", () => {
+      const run = scaffold(APPAUTH_DEP, forwarding({ "AppAuth/AppAuth.h": ["OIDAuthState.h", "AppAuthCore", "AppAuth"] }));
       expect(run.statuses["foo"]).toBe("error");
-      expect(run.results[0]!.reason).toContain("pods.AppAuth.forwardHeaders.AppAuth/AppAuth.h must be a list of module names");
+      expect(run.results[0]!.reason).toBe(
+        "react-native spm scaffold: pods.AppAuth.forwardHeaders.AppAuth/AppAuth.h lists the module AppAuthCore; list the " +
+          "pod's public headers instead (relative paths ending in .h), which the forwarder includes textually: " +
+          "Objective-C++ compiles without modules, so it cannot @import",
+      );
+      expect(existsSync(path.join(run.roots["foo"]!, "rn-spm-pod-headers"))).toBe(false);
     });
   });
 
