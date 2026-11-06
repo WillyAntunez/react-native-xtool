@@ -5,6 +5,8 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 
 ## [Unreleased]
 
+## [0.1.0-alpha.7] - 2026-11-06
+
 ### Upgrading from 0.1.0-alpha.6
 - The scaffolder is now revision 7, so every scaffold patch rn-xtool persisted in your `patches/` before this release
   gets a warning at each `build`: "⚠ patches/<name> was written by an older rn-xtool scaffolder (revision 4, now 7);
@@ -18,6 +20,12 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   public header directories of its SwiftPM targets (`["OIDAuthState.h", "iOS/OIDAuthState+IOS.h", …]`), instead of
   module names; a module name is refused with a message saying to list the headers. rn-xtool's AppAuth entry lists
   the headers of AppAuth-iOS 3.0.0's umbrella header.
+- A part of a scaffolded library's xcconfig value that only CocoaPods computes (in `OTHER_CFLAGS`,
+  `GCC_PREPROCESSOR_DEFINITIONS`, `HEADER_SEARCH_PATHS` or `SWIFT_ACTIVE_COMPILATION_CONDITIONS`) is still left out,
+  and `build` now names it in a `! <library>: Left out of …` line instead of dropping it silently:
+  react-native-worklets' and react-native-reanimated's static feature flags (all off, worklets'
+  `IOS_DYNAMIC_FRAMERATE_ENABLED` included) and react-native-vision-camera's frame processor and location switches
+  (off). See [troubleshooting.md](docs/troubleshooting.md#rctthirdpartycomponentsprovider-thirdpartyfabriccomponents).
 
 ### Fixed
 - A bare app target with an Objective-C `main.m` (the React Native templates before 0.77) builds, instead of stopping
@@ -45,9 +53,8 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   crashed at start: the podspec reader evaluates Ruby locals, interpolation, `ENV` lookups, ternaries, `if`/`unless`
   blocks, `push` on a local array, hashes and the library's `package.json`, and leaves out the branches a condition
   rules out; a source glob, `compiler_flags`, `header_dir` or `frameworks` value it cannot evaluate stops that
-  library's scaffold with the podspec, the field and the expression, and an xcconfig flag it cannot evaluate is left
-  out with a warning that names it. react-native-worklets 0.8.3 keeps its `WORKLETS_VERSION` and
-  `REACT_NATIVE_MINOR_VERSION` defines.
+  library's scaffold with the podspec, the field and the expression (an xcconfig flag it cannot evaluate is left out,
+  see Changed). react-native-worklets 0.8.3 keeps its `WORKLETS_VERSION` and `REACT_NATIVE_MINOR_VERSION` defines.
 - `build` and `install` stop, and remove the packed app, when a class React Native's codegen providers name is not in
   the app, naming the class, its component or module and its library, instead of installing an app that would crash
   at start in `+[RCTThirdPartyComponentsProvider thirdPartyFabricComponents]`.
@@ -540,7 +547,8 @@ First public release, as `react-native-xtool` (command `rn-xtool`).
 - No Xcode tools on Linux: asset catalogs, storyboards and Metal shaders are skipped; library resource bundles and
   vendored xcframeworks are not supported yet.
 
-[Unreleased]: https://github.com/WillyAntunez/react-native-xtool/compare/v0.1.0-alpha.6...HEAD
+[Unreleased]: https://github.com/WillyAntunez/react-native-xtool/compare/v0.1.0-alpha.7...HEAD
+[0.1.0-alpha.7]: https://github.com/WillyAntunez/react-native-xtool/compare/v0.1.0-alpha.6...v0.1.0-alpha.7
 [0.1.0-alpha.6]: https://github.com/WillyAntunez/react-native-xtool/compare/v0.1.0-alpha.5...v0.1.0-alpha.6
 [0.1.0-alpha.5]: https://github.com/WillyAntunez/react-native-xtool/compare/v0.1.0-alpha.4...v0.1.0-alpha.5
 [0.1.0-alpha.4]: https://github.com/WillyAntunez/react-native-xtool/compare/v0.1.0-alpha.3...v0.1.0-alpha.4
