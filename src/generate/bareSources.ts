@@ -1,6 +1,6 @@
 import { cp, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { BareTargetContent, TargetFile } from "../project/index.js";
+import { compiledName, type BareTargetContent, type TargetFile } from "../project/index.js";
 
 /** What the copy of a bare app target gives the manifest (absolute paths). */
 export interface CopiedBareTarget {
@@ -38,7 +38,8 @@ async function copyListed(file: TargetFile, dest: string): Promise<void> {
  * target folder (`ios/<Target>/Native/X.m` → `Native/X.m`; files elsewhere in ios/ keep their
  * path from ios/), with one forwarding header per header in `include/` so `#import "X.h"` resolves
  * from any folder as Xcode's header maps allow, plus `<ProductModuleName>-Swift.h` forwarding to `App-Swift.h`
- * in a mixed target. Resources are staged flat in `resourcesDir`, laid
+ * in a mixed target. A C-family `main.m` (any `main.<ext>`) is copied as `AppMain.<ext>` in its folder, so SwiftPM keeps
+ * App a library target. Resources are staged flat in `resourcesDir`, laid
  * out as Xcode copies them to the bundle root (xtool.yml lists each top-level entry).
  */
 export async function copyBareTarget(
@@ -72,9 +73,19 @@ export async function copyBareTarget(
   };
 
   const code = [...bare.swiftSources, ...bare.cSources, ...bare.headers, ...(bare.bridgingHeader ? [bare.bridgingHeader] : [])];
+  const cSources = new Set(bare.cSources);
   const codeDest = new Map<TargetFile, string>();
   for (const file of code) {
-    const dest = place(file);
+    let dest = place(file);
+    const base = path.posix.basename(dest);
+    const name = cSources.has(file) ? compiledName(dest) : base;
+    if (name !== base) {
+      dest = path.posix.join(path.posix.dirname(dest), name);
+      log(
+        `ℹ ${file.relPath} is compiled as ${name}: SwiftPM takes a target with a file named main for an executable, ` +
+          "and xtool links the app's entry point from the App library",
+      );
+    }
     if (dest.split("/")[0] === INCLUDE_DIR) {
       throw new Error(`${file.relPath} would land in Sources/App/${INCLUDE_DIR}/, which holds the generated header forwards; rename its folder`);
     }

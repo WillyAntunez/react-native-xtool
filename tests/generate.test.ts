@@ -935,6 +935,50 @@ describe("writeIosXtool", () => {
     expect(await readFile(join(paths.iosXtool, "xtool.yml"), "utf8")).toContain("  - Resources/Inter.ttf\n");
   });
 
+  /** The with-objc pbxproj with `file` (relative to HelloWorld/) in the app group and the Sources phase. */
+  const withAppSource = (src: string, file: string): string =>
+    src
+      .replace(
+        "/* End PBXFileReference section */",
+        `\t\tD10000000000000000000001 = {isa = PBXFileReference; path = "${file}"; sourceTree = "<group>"; };\n/* End PBXFileReference section */`,
+      )
+      .replace(
+        "/* End PBXBuildFile section */",
+        "\t\tD10000000000000000000002 = {isa = PBXBuildFile; fileRef = D10000000000000000000001; };\n/* End PBXBuildFile section */",
+      )
+      .replace(/(13B07FAE1A68108700A75B9A \/\* HelloWorld \*\/ = \{\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = \(\n)/, "$1\t\t\t\tD10000000000000000000001,\n")
+      .replace(/(isa = PBXSourcesBuildPhase;\n\t\t\tbuildActionMask = 2147483647;\n\t\t\tfiles = \(\n)/, "$1\t\t\t\tD10000000000000000000002,\n");
+
+  it.each([
+    ["main.m", "AppMain.m"],
+    ["main.mm", "AppMain.mm"],
+    ["Main.c", "AppMain.c"],
+    ["Supporting/main.m", "Supporting/AppMain.m"],
+  ])("compiles a bare %s as %s, so SwiftPM keeps App a library", async (file, copied) => {
+    const { app, paths, ctx, logs } = await bareProject({ pbxproj: (src) => withAppSource(src, file) });
+    expect(ctx.project.bare!.cSources.map((f) => f.relPath)).toContain(`HelloWorld/${file}`);
+    const text = '#import "AppDelegate.h"\nint main(int argc, char *argv[]) { return 0; }\n';
+    await mkdir(join(app, file, ".."), { recursive: true });
+    await writeFile(join(app, file), text);
+    await writeIosXtool(ctx);
+    expect(await readFile(join(paths.sources, copied), "utf8")).toBe(text);
+    expect(await readdir(join(paths.sources, copied, ".."))).not.toContain(file.split("/").pop());
+    expect(logs).toContain(
+      `ℹ HelloWorld/${file} is compiled as ${copied.split("/").pop()}: SwiftPM takes a target with a file named main ` +
+        "for an executable, and xtool links the app's entry point from the App library",
+    );
+  });
+
+  it("refuses an app file named like the copy of main.m", async () => {
+    const { app, ctx } = await bareProject({ pbxproj: (src) => withAppSource(src, "main.m") });
+    await writeFile(join(app, "main.m"), "int main(void) { return 0; }\n");
+    await writeFile(join(app, "AppMain.m"), "// mine\n");
+    ctx.project.bare!.cSources.push({ absPath: join(app, "AppMain.m"), relPath: "HelloWorld/AppMain.m" });
+    await expect(writeIosXtool(ctx)).rejects.toThrow(
+      "HelloWorld/main.m and HelloWorld/AppMain.m would both be copied to Sources/App/AppMain.m",
+    );
+  });
+
   it("refuses a header that would land among the include/ forwards", async () => {
     const { app, ctx } = await bareProject();
     await mkdir(join(app, "include"), { recursive: true });

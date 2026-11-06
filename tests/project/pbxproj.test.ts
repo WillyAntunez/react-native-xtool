@@ -319,4 +319,45 @@ describe("readTargetContent", () => {
     const { content } = await read(src);
     expect(rel(content().headers)).toEqual(["HelloWorld/Bridge.hpp", "HelloWorld/Native/NativeModule.h"]);
   });
+
+  it("keeps an Objective-C main.m among the C sources", async () => {
+    const src = addFile(await withObjc(), { path: "main.m", group: HELLO, phase: "Sources" });
+    const { content } = await read(src);
+    expect(rel(content().cSources)).toEqual(["HelloWorld/Native/NativeModule.m", "HelloWorld/main.m"]);
+  });
+
+  it("rejects a compiled source named like the copy of main.m, in any folder", async () => {
+    for (const other of ["AppMain.m", "Other/AppMain.m"]) {
+      let src = await withObjc();
+      src = addFile(src, { path: "main.m", group: HELLO, phase: "Sources" });
+      src = addFile(src, { path: other, group: HELLO, phase: "Sources" });
+      const { content } = await read(src);
+      expect(content).toThrow(
+        `Two compiled sources share the name AppMain.m (HelloWorld/main.m, which is compiled as AppMain.m, and HelloWorld/${other}); ` +
+          "the generated target needs unique file names",
+      );
+    }
+  });
+
+  it("refuses main.swift, in any case, with the remedy", async () => {
+    for (const name of ["main.swift", "Main.swift"]) {
+      const src = addFile(await withObjc(), { path: name, group: HELLO, phase: "Sources" });
+      const { content } = await read(src);
+      expect(content).toThrow(
+        `The app target compiles HelloWorld/${name}: SwiftPM takes a target with a file named main for an executable, ` +
+          "and xtool links the app's entry point from the App library. Mark the app delegate class @main " +
+          `(as the React Native template's AppDelegate.swift does), move any other top-level code of ${name} into it, ` +
+          `and remove ${name} from the app target`,
+      );
+    }
+  });
+
+  it("leaves names that only start with main alone", async () => {
+    let src = await withObjc();
+    src = addFile(src, { path: "main.test.m", group: HELLO, phase: "Sources" });
+    src = addFile(src, { path: "MainView.swift", group: HELLO, phase: "Sources" });
+    const { content } = await read(src);
+    expect(rel(content().cSources)).toContain("HelloWorld/main.test.m");
+    expect(rel(content().swiftSources)).toContain("HelloWorld/MainView.swift");
+  });
 });
