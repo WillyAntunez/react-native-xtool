@@ -97,6 +97,31 @@ describe.skipIf(needsRuby !== "")(`the podspec shim${needsRuby}`, () => {
     expect(r.json.error.message).toBe(`${r.podspec}:2: boom`);
   });
 
+  // Ruby words these messages differently from version to version: the tests pin the kind and the place only.
+  it("passes a syntax error in the podspec on with its line", () => {
+    const r = runShim(`Pod::Spec.new do |s|\n s.name = "Foo" )\nend`);
+    expect([r.status, r.json.error.kind]).toEqual([1, "raised"]);
+    expect(r.json.error.message.startsWith(`${r.podspec}:2: `)).toBe(true);
+  });
+
+  it("passes a syntax error in a library file on with that file's line", () => {
+    const r = runShim(`require_relative "scripts/x"\n${spec()}`, { files: { "scripts/x.rb": 'x = "a" )\n' } });
+    expect([r.status, r.json.error.kind]).toEqual([1, "raised"]);
+    expect(r.json.error.message.startsWith(`${r.podspec} (scripts/x.rb:1): `)).toBe(true);
+  });
+
+  it("passes a method called on nil on as the podspec's own failure", () => {
+    const r = runShim(`Pod::Spec.new do |s|\n s.name = nil.upcase\nend`);
+    expect([r.status, r.json.error.kind]).toEqual([1, "raised"]);
+    expect(r.json.error.message.startsWith(`${r.podspec}:2: `)).toBe(true);
+  });
+
+  it("passes the podspec's exit on as a failure", () => {
+    const r = runShim(`Pod::Spec.new do |s|\n exit 0\nend`);
+    expect([r.status, r.json.error.kind]).toEqual([1, "raised"]);
+    expect(r.json.error.message.startsWith(`${r.podspec}:2: `)).toBe(true);
+  });
+
   it("refuses a file that is not a spec", () => {
     const r = runShim("42\n");
     expect([r.status, r.json.error.kind]).toEqual([1, "not-a-spec"]);
