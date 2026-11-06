@@ -157,7 +157,7 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
       expect(src("read-podspec.js")).toContain("const RN_POD_ENV");
       expect(src("read-podspec.js")).toContain("env: {...process.env, ...RN_POD_ENV}");
       const f = src("scaffold-package-swift.js");
-      expect(f).toContain("RN_XTOOL_SCAFFOLD_REVISION = 5");
+      expect(f).toContain("RN_XTOOL_SCAFFOLD_REVISION = 6");
       expect(f).toContain("rn-xtool-swift-importer-paths");
       expect(f).toContain("function importsOwnSwiftHeader");
       expect(f).toContain("function clangModuleExcludes");
@@ -1109,7 +1109,7 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
 
       it("emits the rn-xtool-scaffold-revision marker next to AUTO-SCAFFOLDED-VERSION", () => {
         const pkg = readFileSync(path.join(fresh(), "Package.swift"), "utf8");
-        expect(pkg).toMatch(/^\/\/ AUTO-SCAFFOLDED-VERSION: \d+\n\/\/ rn-xtool-scaffold-revision: 5$/m);
+        expect(pkg).toMatch(/^\/\/ AUTO-SCAFFOLDED-VERSION: \d+\n\/\/ rn-xtool-scaffold-revision: 6$/m);
       });
 
       it("keeps a scaffold that carries the current marker", () => {
@@ -1122,14 +1122,14 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
         writeFileSync(file, readFileSync(file, "utf8").replace(/^\/\/ rn-xtool-scaffold-revision: \d+\n/m, "").replace("exact:", "from:"));
         expect(scaffoldAgain(root)).toBe("written");
         const pkg = readFileSync(file, "utf8");
-        expect(pkg).toContain("rn-xtool-scaffold-revision: 5");
+        expect(pkg).toContain("rn-xtool-scaffold-revision: 6");
         expect(pkg).toContain('exact: "1.5.0"');
       });
 
       it("regenerates a scaffold whose marker is lower than the current revision", () => {
         const root = fresh();
         const file = path.join(root, "Package.swift");
-        writeFileSync(file, readFileSync(file, "utf8").replace("revision: 5", "revision: 4"));
+        writeFileSync(file, readFileSync(file, "utf8").replace("revision: 6", "revision: 5"));
         expect(scaffoldAgain(root)).toBe("written");
       });
     });
@@ -1214,7 +1214,7 @@ describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
       // Mixed (pager-view) or clang-only, each of these targets searches beyond its public headers path, so each
       // manifest records its importer paths right after the revision line.
       for (const k of manifests) {
-        expect(now.files[k], k).toMatch(/^\/\/ rn-xtool-scaffold-revision: 5\n\/\/ rn-xtool-swift-importer-paths: \[.+\]$/m);
+        expect(now.files[k], k).toMatch(/^\/\/ rn-xtool-scaffold-revision: 6\n\/\/ rn-xtool-swift-importer-paths: \[.+\]$/m);
       }
       expect(now.files).toEqual(golden.files);
     },
@@ -1315,7 +1315,7 @@ describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
   it("17: records the Swift importer paths", () => {
     for (const manifest of ["Package.swift", "Package@swift-6.5.swift"]) {
       const pkg = file(`react-native-screens/${manifest}`);
-      expect(pkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 5\n\/\/ rn-xtool-swift-importer-paths: \[.*\]$/m);
+      expect(pkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 6\n\/\/ rn-xtool-swift-importer-paths: \[.*\]$/m);
       const paths = JSON.parse(pkg.match(IMPORTER)![1]!) as string[];
       expect(paths).toContain(".");
       expect(paths).toContain("ios/bridging");
@@ -1330,7 +1330,7 @@ describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
     expect(pkg.split("\n")[0]).toBe("// swift-tools-version: 6.0");
     expect(files["react-native-screens/Package@swift-6.5.swift"]).toBeUndefined();
     expect(pkg).toContain('publicHeadersPath: "ios",');
-    expect(pkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 5\n\/\/ rn-xtool-swift-importer-paths: \[.*\]$/m);
+    expect(pkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 6\n\/\/ rn-xtool-swift-importer-paths: \[.*\]$/m);
     const paths = JSON.parse(pkg.match(IMPORTER)![1]!) as string[];
     expect(paths).toContain("ios/utils");
     expect(paths).toEqual(searchPaths(pkg));
@@ -2149,7 +2149,7 @@ describe("scaffolder fix 13: the pod table (vendor/rn-spm)", () => {
     const pkg = manifest(scaffold(`${APPAUTH_DEP}\n  s.dependency "SwiftUIIntrospect", '~> 1.0'`, table));
     // Clang-only, searching beyond its public headers: after the importer-paths line.
     expect(pkg).toMatch(
-      /^\/\/ rn-xtool-scaffold-revision: 5\n\/\/ rn-xtool-swift-importer-paths: \[.*\]\n\/\/ rn-xtool-pods: AppAuth=3\.0\.0, SwiftUIIntrospect=1\.5\.0\n\/\/ Cache slot: /m,
+      /^\/\/ rn-xtool-scaffold-revision: 6\n\/\/ rn-xtool-swift-importer-paths: \[.*\]\n\/\/ rn-xtool-pods: AppAuth=3\.0\.0, SwiftUIIntrospect=1\.5\.0\n\/\/ Cache slot: /m,
     );
     // Pure Swift (no importer-paths line): after the revision line.
     const swift = tempDir();
@@ -2161,7 +2161,7 @@ describe("scaffolder fix 13: the pod table (vendor/rn-spm)", () => {
       `Pod::Spec.new do |s|\n  s.name = "Foo"\n  s.source_files = "ios/**/*.swift"\n${APPAUTH_DEP}\nend\n`,
     );
     const swiftPkg = manifest(withTable(table, () => scaffoldLibraries(VENDORED_RN_SPM, { foo: swift })));
-    expect(swiftPkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 5\n\/\/ rn-xtool-pods: AppAuth=3\.0\.0\n/m);
+    expect(swiftPkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 6\n\/\/ rn-xtool-pods: AppAuth=3\.0\.0\n/m);
     // No pinned pod, no line.
     expect(manifest(scaffold("", table))).not.toContain("rn-xtool-pods");
   });

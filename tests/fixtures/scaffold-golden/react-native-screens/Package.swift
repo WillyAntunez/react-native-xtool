@@ -1,7 +1,7 @@
 // swift-tools-version: 6.0
 // AUTO-SCAFFOLDED by react-native spm scaffold — safe to edit & commit via patch-package.
 // AUTO-SCAFFOLDED-VERSION: 20
-// rn-xtool-scaffold-revision: 5
+// rn-xtool-scaffold-revision: 6
 // rn-xtool-swift-importer-paths: ["common/cpp","common/cpp/react/renderer/components/rnscreens","common/cpp/react/renderer/components/rnscreens/utils","cpp","ios","ios/bridging","ios/conversion","ios/events","ios/helpers/container","ios/helpers/image","ios/helpers/scroll-view","ios/integrations","ios/safe-area","ios/stubs","ios/tabs","ios/tabs/bottom-accessory","ios/tabs/extensions","ios/tabs/host","ios/tabs/screen","ios/utils","ios/utils/extensions",".","include"]
 // Cache slot: 0.86.3/dual-flavor
 // Edit the contents below if needed and re-run `npx patch-package <dep-name>`

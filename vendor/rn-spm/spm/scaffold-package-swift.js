@@ -131,7 +131,10 @@ const SCAFFOLDER_VERSION_LINE_RE = /^\/\/ AUTO-SCAFFOLDED-VERSION: (\d+)$/m;
 // bare spelling; and Swift compilation conditions. Revision 5: pod header
 // forwarders that `#import` the pod's public headers instead of `@import`ing
 // its modules, which stopped every Objective-C++ file that included them.
-const RN_XTOOL_SCAFFOLD_REVISION = 5;
+// Revision 6 (fix 28): source globs built from Ruby locals and conditions
+// (react-native-screens 4.24.0 had no ios/ sources), and the branches a
+// condition rules out left out of the target.
+const RN_XTOOL_SCAFFOLD_REVISION = 6;
 const RN_XTOOL_SCAFFOLD_REVISION_RE = /^\/\/ rn-xtool-scaffold-revision: (\d+)$/m;
 
 // An importer (Swift, or a Clang module) builds the target's module from its
