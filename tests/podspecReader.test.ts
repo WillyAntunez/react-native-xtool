@@ -453,7 +453,16 @@ describe("flattenSubspecs on the shim's model", () => {
     expect(m.headerDir).toBe("iosdir");
     expect(m.requiresArc).toBe(true);
     expect(m.frameworks).toEqual(["UIKit", "WebKit"]);
-    expect(m.preprocessorDefines.map((d: { name: string }) => d.name)).toEqual(["A", "B", "IOS"]);
+    expect(m.preprocessorDefines.map((d: { name: string }) => d.name)).toEqual(["A", "B", "KEPT", "IOS"]);
+  });
+
+  it("merges a subspec's ios dependencies into its own", () => {
+    const m = flattenSubspecs({
+      name: "Foo",
+      subspecs: [{ name: "c", dependencies: { A: [] }, ios: { dependencies: { B: [">= 1"] } }, osx: { dependencies: { C: [] } } }],
+    });
+    expect(m.dependencies).toEqual(["A", "B"]);
+    expect(m.subspecDependencies).toEqual({ c: ["A", "B"] });
   });
 
   it("warns about keys the scaffold does not apply", () => {

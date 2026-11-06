@@ -2164,8 +2164,10 @@ const isHash = (v /*: mixed */) /*: boolean */ =>
  * A spec (or subspec) of the shim's model as CocoaPods' consumer reads it for
  * an iOS target: each value under its `ios` merged over the spec's. An
  * ARRAY_ATTRIBUTES value is the spec's followed by the platform's (a string
- * read as a one-element array); two hashes merge key by key, two strings
- * under one key joined by one space; anything else is the platform's value.
+ * read as a one-element array); two hashes merge key by key as CocoaPods'
+ * `merge_hash_value` does (two strings joined by one space, an array on
+ * either side concatenated with the other read as an array, any other pair
+ * the platform's value); anything else is the platform's value.
  * The other platforms (`osx`, `tvos`, `visionos`, `watchos`) are never read.
  * The reduced reader's model has no `ios`: it is returned as it is.
  */
@@ -2197,8 +2199,16 @@ function mergeIos(layer /*: mixed */) /*: mixed */ {
       for (const k of Object.keys(platformHash)) {
         const a = ownHash[k];
         const b = platformHash[k];
-        merged[k] =
-          typeof a === 'string' && typeof b === 'string' ? `${a} ${b}` : b;
+        if (typeof a === 'string' && typeof b === 'string') {
+          merged[k] = `${a} ${b}`;
+        } else if (a != null && (Array.isArray(a) || Array.isArray(b))) {
+          merged[k] = [
+            ...(Array.isArray(a) ? a : [a]),
+            ...(Array.isArray(b) ? b : [b]),
+          ].filter(v => v != null);
+        } else {
+          merged[k] = b;
+        }
       }
       out[key] = merged;
     } else {
@@ -2546,7 +2556,7 @@ function flattenSubspecs(
       }
       return out;
     }
-    for (const sub of selected) {
+    for (const sub of layers.slice(1)) {
       // $FlowFixMe[prop-missing] dynamic shape
       if (sub == null || typeof sub.name !== 'string') continue;
       // $FlowFixMe[prop-missing] dynamic shape

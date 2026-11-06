@@ -516,7 +516,7 @@ index 0000000..1536aa7
 +abort 'usage: ruby read-podspec-shim.rb --probe | <podspec> <out.json> <installation-root>' unless ARGV.length == 3
 +exit(RnXtoolShim.run(ARGV[0], ARGV[1], ARGV[2]) ? 0 : 1)
 diff --git a/node_modules/react-native/scripts/spm/read-podspec.js b/node_modules/react-native/scripts/spm/read-podspec.js
-index 8fcf04b..00d53dc 100644
+index 8fcf04b..032bc7c 100644
 --- a/node_modules/react-native/scripts/spm/read-podspec.js
 +++ b/node_modules/react-native/scripts/spm/read-podspec.js
 @@ -16,11 +16,12 @@
@@ -2674,7 +2674,7 @@ index 8fcf04b..00d53dc 100644
    };
  }
  
-@@ -423,10 +2074,140 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
+@@ -423,10 +2074,150 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
    return tokens;
  }
  
@@ -2768,8 +2768,10 @@ index 8fcf04b..00d53dc 100644
 + * A spec (or subspec) of the shim's model as CocoaPods' consumer reads it for
 + * an iOS target: each value under its `ios` merged over the spec's. An
 + * ARRAY_ATTRIBUTES value is the spec's followed by the platform's (a string
-+ * read as a one-element array); two hashes merge key by key, two strings
-+ * under one key joined by one space; anything else is the platform's value.
++ * read as a one-element array); two hashes merge key by key as CocoaPods'
++ * `merge_hash_value` does (two strings joined by one space, an array on
++ * either side concatenated with the other read as an array, any other pair
++ * the platform's value); anything else is the platform's value.
 + * The other platforms (`osx`, `tvos`, `visionos`, `watchos`) are never read.
 + * The reduced reader's model has no `ios`: it is returned as it is.
 + */
@@ -2801,8 +2803,16 @@ index 8fcf04b..00d53dc 100644
 +      for (const k of Object.keys(platformHash)) {
 +        const a = ownHash[k];
 +        const b = platformHash[k];
-+        merged[k] =
-+          typeof a === 'string' && typeof b === 'string' ? `${a} ${b}` : b;
++        if (typeof a === 'string' && typeof b === 'string') {
++          merged[k] = `${a} ${b}`;
++        } else if (a != null && (Array.isArray(a) || Array.isArray(b))) {
++          merged[k] = [
++            ...(Array.isArray(a) ? a : [a]),
++            ...(Array.isArray(b) ? b : [b]),
++          ].filter(v => v != null);
++        } else {
++          merged[k] = b;
++        }
 +      }
 +      out[key] = merged;
 +    } else {
@@ -2815,7 +2825,7 @@ index 8fcf04b..00d53dc 100644
  /**
   * Merges a podspec's default subspecs (or all subspecs when no defaults are
   * declared) into a single logical view. RN libraries use subspecs for
-@@ -438,8 +2219,16 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
+@@ -438,8 +2229,16 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
   *   - String fields → top-level wins; if absent, take the first subspec's value
   *   - pod_target_xcconfig HEADER_SEARCH_PATHS → array-union across all selected subspecs
   *   - dependencies  → array-union of name strings (version constraints dropped)
@@ -2833,7 +2843,7 @@ index 8fcf04b..00d53dc 100644
    const warnings /*: Array<string> */ = [];
    // $FlowFixMe[prop-missing] dynamic shape
    const partial /*: boolean */ = rawSpec.__regex_partial__ === true;
-@@ -451,12 +2240,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -451,12 +2250,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      }
    }
  
@@ -2853,7 +2863,7 @@ index 8fcf04b..00d53dc 100644
      const wanted = new Set(rawSpec.default_subspecs);
      selected = subspecs.filter(s => {
        // $FlowFixMe[prop-missing] dynamic shape
-@@ -464,7 +2258,22 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -464,7 +2268,22 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        return name != null && wanted.has(name);
      });
    }
@@ -2877,7 +2887,7 @@ index 8fcf04b..00d53dc 100644
  
    function mergeArrayField(key /*: string */) /*: Array<string> */ {
      const out /*: Array<string> */ = [];
-@@ -482,11 +2291,22 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -482,11 +2301,22 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return Array.from(new Set(out));
    }
  
@@ -2901,7 +2911,7 @@ index 8fcf04b..00d53dc 100644
      return typeof value === 'string' && value.length > 0 ? value : null;
    }
  
-@@ -544,6 +2364,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -544,6 +2374,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
    // `-D`s are safe to forward; arbitrary flags may be machine- or
    // example-app-specific. $(inherited), unresolved $(...) tokens, and invalid
    // C identifiers are skipped.
@@ -2922,7 +2932,7 @@ index 8fcf04b..00d53dc 100644
    function mergePreprocessorDefines() /*: Array<PreprocessorDefine> */ {
      const out /*: Array<PreprocessorDefine> */ = [];
      const seen /*: Set<string> */ = new Set();
-@@ -554,7 +2388,23 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -554,7 +2398,23 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        config /*: ?('debug' | 'release') */,
      ) => {
        if (!validName.test(name)) return;
@@ -2947,7 +2957,7 @@ index 8fcf04b..00d53dc 100644
          return; // unresolved Xcode/Ruby token — don't emit a broken define
        }
        const key = `${name}|${config ?? ''}`;
-@@ -571,6 +2421,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -571,6 +2431,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        'xcconfig',
        'user_target_xcconfig',
      ];
@@ -2968,7 +2978,7 @@ index 8fcf04b..00d53dc 100644
      for (const layer of layers) {
        if (layer == null || typeof layer !== 'object') continue;
        for (const xcKey of XCCONFIG_KEYS) {
-@@ -627,56 +2491,160 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -627,56 +2501,160 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return out;
    }
  
@@ -3038,7 +3048,7 @@ index 8fcf04b..00d53dc 100644
 +      }
 +      return out;
 +    }
-+    for (const sub of selected) {
++    for (const sub of layers.slice(1)) {
 +      // $FlowFixMe[prop-missing] dynamic shape
 +      if (sub == null || typeof sub.name !== 'string') continue;
 +      // $FlowFixMe[prop-missing] dynamic shape
@@ -3155,7 +3165,7 @@ index 8fcf04b..00d53dc 100644
    return {
      name: specStringField('name') ?? '',
      version: specStringField('version') ?? '',
-@@ -693,80 +2661,262 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -693,80 +2671,262 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      // header_mappings_dir copy step, which SPM has no equivalent for.
      headerMappingsDirs: mergeArrayField('header_mappings_dir'),
      headerDir: specStringField('header_dir'),
@@ -3447,7 +3457,7 @@ index 8fcf04b..00d53dc 100644
   * spawn — name resolution runs for every dep, including self-managed ones that
   * need nothing else from the podspec.
   *
-@@ -794,12 +2944,13 @@ function readPodspecNames(
+@@ -794,12 +2954,13 @@ function readPodspecNames(
    if (hasShadowingSubspec(source)) {
      return null;
    }
@@ -3462,7 +3472,7 @@ index 8fcf04b..00d53dc 100644
  
    const name = field('name');
    const moduleName = field('module_name');
-@@ -817,8 +2968,9 @@ function readPodspecNames(
+@@ -817,8 +2978,9 @@ function readPodspecNames(
  
  /**
   * Every podspec in `dir`, sorted so two of them name a target the same way on
@@ -3474,7 +3484,7 @@ index 8fcf04b..00d53dc 100644
   */
  function findPodspecs(dir /*: string */) /*: Array<string> */ {
    try {
-@@ -834,10 +2986,16 @@ function findPodspecs(dir /*: string */) /*: Array<string> */ {
+@@ -834,10 +2996,16 @@ function findPodspecs(dir /*: string */) /*: Array<string> */ {
  
  module.exports = {
    findPodspecs,
