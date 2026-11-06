@@ -15,6 +15,9 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   compile: every header the project references under `ios/`, outside `Pods/`, is copied with its forward in
   `Sources/App/include`. A referenced header that does not exist is skipped with an `ℹ` line instead of stopping the
   build.
+- A bare app target's Objective-C sources and bridging header find React Native's headers by bare name
+  (`#import <RCTAppDelegate.h>`) and the pod table's `<Pod/Header.h>` forwards (`#import <AppAuth/AppAuth.h>`), as with
+  CocoaPods, instead of stopping with "'RCTAppDelegate.h' file not found"; the app's own headers still come first.
 
 ## [0.1.0-alpha.6] - 2026-11-05
 

@@ -253,6 +253,15 @@ Swift Build names the generated Swift header `App-Swift.h` (the SwiftPM target i
 where `<Module>` is `PRODUCT_MODULE_NAME`, or `PRODUCT_NAME` with characters other than letters, digits and `_` turned
 into `_`.
 
+React Native's public Objective-C headers are importable by their bare name (`#import <RCTAppDelegate.h>`) as well as
+by module (`#import <React/RCTAppDelegate.h>`), as CocoaPods' per-pod header search paths allow, and so are the
+`<Pod/Header.h>` spellings of the pod table's `forwardHeaders` (`#import <AppAuth/AppAuth.h>`). The app's Objective-C
+sources and its bridging header search the app's own headers and `HEADER_SEARCH_PATHS` first, then
+`ios/build/xcframeworks/ReactHeadersTarget/include/React`, then each per-module directory of
+`ReactNativeHeaders.xcframework` that its module map names (`React_RCTAppDelegate`, `RCTImage`, `yoga`, …), then each
+autolinked library's `rn-spm-pod-headers`, so an app header with the same name wins. React Native's C++ headers keep
+their path spelling (`<react/debug/flags.h>`, `<jsi/jsi.h>`).
+
 ## Resources
 
 The Resources phase is copied to `ios-xtool/Resources` (by file name; `*.lproj/` and `*.bundle/` stay whole) and listed

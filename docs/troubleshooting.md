@@ -875,6 +875,15 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   forward in `Sources/App/include`, so `#import "AppDelegate.h"` resolves as with Xcode's header map. A header outside
   `ios/` is still not copied: move it into `ios/` and add it to the project. See
   [Sources](bare-react-native.md#sources).
+- **"'RCTAppDelegate.h' file not found"** (bare React Native, compiling the app's `AppDelegate.h` or another
+  Objective-C source of the app target): the app imports a React Native header by its bare name
+  (`#import <RCTAppDelegate.h>`, the spelling of the React Native 0.7x templates), which CocoaPods resolves through its
+  per-pod header search paths. rn-xtool 0.1.0-alpha.6 and earlier give the App target only the `<React/…>` spelling.
+  Later releases also search React Native's header directories by bare name, after the app's own paths. A sibling
+  symptom is "'AppAuth/AppAuth.h' file not found" (react-native-app-auth's README has the app import it): later
+  releases also search each autolinked library's `rn-spm-pod-headers`, where the scaffold writes the pod table's
+  `forwardHeaders`. See
+  [Mixed Swift + Objective-C/C++ app target](bare-react-native.md#mixed-swift--objective-cc-app-target).
 - **"rn-xtool could not patch <package>":** your project has a different version of a package than the one this release
   of rn-xtool patches, and the patch does not apply to it (on SDK 57 or 58, a newer patch of the SDK that changed a
   patched file; on bare React Native, a newer patch of its line). The message names the versions. On SDK 58 (Expo
