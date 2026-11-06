@@ -1022,6 +1022,50 @@ the `Package.swift` of every other library, persisted in `patches/` or edited by
   unavailable. When every resource named is a privacy manifest, the line ends "Development builds run without them;
   privacy manifests are read only at App Store submission." instead; there is nothing to do for a development build.
 
+### `RCTThirdPartyComponentsProvider thirdPartyFabricComponents`
+
+An app that crashes at start with `NSInvalidArgumentException` in `+[RCTThirdPartyComponentsProvider
+thirdPartyFabricComponents]` (`-[__NSPlaceholderDictionary initWithObjects:forKeys:count:]: attempt to insert nil
+object`) lacks the class of a third-party Fabric component. React Native's codegen writes a dictionary of
+`NSClassFromString(@"<Class>")` for every component the autolinked libraries declare, and one class missing from the
+app is a nil value that stops it. The build itself succeeded: the library's target compiled without the files that
+define its classes.
+
+`build` checks for it after `xtool-build`, and `install` (with `run`) checks the app xtool builds again before it
+installs it: every class named in `ios/build/generated/ios/ReactCodegen/RCTThirdPartyComponentsProvider.mm` and
+`RCTModuleProviders.mm` must be defined in the App binary or in a framework under `App.app/Frameworks`. When one is
+not, rn-xtool removes the packed app and its `.ipa`, installs nothing and stops:
+
+```
+React Native's codegen names classes the packed app does not define, so rn-xtool removed it and does not install it:
+  - RNSFullWindowOverlay (component RNSFullWindowOverlay, react-native-screens)
+  - RNSModalScreen (component RNSModalScreen, react-native-screens)
+  …
+  - and 12 more
+With a component class missing, the app would crash at start: +[RCTThirdPartyComponentsProvider thirdPartyFabricComponents] throws NSInvalidArgumentException (-[__NSPlaceholderDictionary initWithObjects:forKeys:count:]: attempt to insert nil object).
+Check the sources of node_modules/react-native-screens/Package.swift: its target was built without the files that define them. A scaffold persisted in patches/ by an older rn-xtool can be the cause: delete that patch, reinstall the library and build again.
+```
+
+Each line names the class, the component (or module) and the library that declares it, from the provider file or the
+library's `codegenConfig`, else "a library". A missing module provider class does not crash the app: the message says
+`With a module class missing, React Native logs "Module provider <class> cannot be found in the runtime" and the
+module is unavailable.`
+
+- **react-native-screens 4.24.0 scaffolded by an older rn-xtool:** its podspec builds `source_files` from Ruby locals
+  and conditions, which the podspec reader did not evaluate before scaffolder revision 6, so the scaffolded `RNScreens`
+  target held only the C++ of its `common` subspec ([fix 28](upstream/react-native-scaffolder.md)). The revision
+  warning above names its persisted patch; re-scaffold it as in [Scaffolded libraries](#scaffolded-libraries).
+- **A podspec the reader cannot evaluate** stops the scaffold instead of building such a target: ``✖ Scaffolding
+  <library> failed: <podspec>: `s.source_files = <expression>` cannot be evaluated: it uses <what>. …``. The reader
+  evaluates locals, string interpolation, arrays, `ENV['…']`, comparisons, ternaries and `if`/`unless` blocks
+  ([how it works](how-it-works.md#cocoapods-only-libraries)); a method call or a value it does not know in a source
+  glob is refused. Installing CocoaPods (`gem install cocoapods`) lets `pod ipc spec` read the podspec instead, or give
+  the library a `Package.swift` of its own.
+- **A hand-edited `Package.swift`** that leaves out the files defining a class: put them back.
+- **"ℹ The packed app's binaries list no Objective-C class symbols, so rn-xtool could not check the <n> classes React
+  Native's codegen providers name.":** the binaries have no symbol table, so nothing is checked and the build goes on.
+  xtool's debug builds keep their symbols; if you see this line, [report it](#reporting-a-problem).
+
 ## Newer than the verified versions
 
 Each supported line has a floor: the oldest version rn-xtool accepts. A newer patch of the line builds, with a

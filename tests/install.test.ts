@@ -456,6 +456,32 @@ describe("install with binary pods (row 88)", () => {
     expect(calls).toEqual(["dev run"]);
   });
 
+  it("checks the codegen classes of the app xtool builds before xtool dev run installs it, without binary pods too", async () => {
+    const codegen = (check: () => Promise<string[]>) => {
+      const { deps, calls } = usb({ state: { postPack: undefined } });
+      const logs: string[] = [];
+      const xtool = {
+        ...deps.xtool,
+        hasCodegenClasses: (root: string) => root === "/p",
+        codegenClasses: async (root: string, app: string) => {
+          calls.push(`codegen-classes ${root} ${app}`);
+          return check();
+        },
+      };
+      return { deps: { ...deps, xtool, log: (s: string) => void logs.push(s) }, calls, logs };
+    };
+    const ok = codegen(async () => ["ℹ codegen line"]);
+    await install("/p", ok.deps);
+    expect(ok.calls).toEqual(["dev build /p/ios-xtool", "codegen-classes /p /p/ios-xtool/xtool/App.app", "dev run"]);
+    expect(ok.logs).toContain("ℹ codegen line");
+
+    const refused = codegen(async () => {
+      throw new Error("React Native's codegen names classes the packed app does not define");
+    });
+    await expect(install("/p", refused.deps)).rejects.toThrow("codegen names classes");
+    expect(refused.calls).not.toContain("dev run");
+  });
+
   it("checks the app before xtool builds the ipa, and does not install a refused one over Wi-Fi", async () => {
     const calls: string[] = [];
     const installOverWifi = vi.fn();

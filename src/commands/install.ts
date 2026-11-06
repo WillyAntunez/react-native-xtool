@@ -24,6 +24,7 @@ import { detectLanRoute, isPrivateIpv4, looksLikeTunnel, type LanRoute } from ".
 import { projectPaths } from "../paths.js";
 import { writeEmptyTargetObjects } from "../pods/emptyTargets.js";
 import { postPackChecks, type PostPackPods } from "../pods/postPack.js";
+import { checkCodegenClasses, hasCodegenClasses } from "../pipeline/codegenClasses.js";
 import { makeNmRunner } from "../pipeline/symbols.js";
 import { IOS_MIN } from "../versions.js";
 import { readState, rememberDevice, writeState, type BuildState } from "../state.js";
@@ -59,6 +60,9 @@ export interface InstallDeps {
     /** With binary pods: xtool builds the app first, so the post-pack checks read it before anything installs. */
     devBuild?: (bin: string, iosXtoolDir: string) => Promise<void>;
     postPack?: (appBundle: string, pods: PostPackPods) => Promise<void>;
+    /** Whether React Native's codegen providers name classes: then xtool builds the app first and they are checked. */
+    hasCodegenClasses?: (root: string) => boolean;
+    codegenClasses?: (root: string, appBundle: string) => Promise<string[]>;
   };
   wifi?: {
     /** This computer's default route (address + interface), unless `lanIp` is configured. */
@@ -205,13 +209,27 @@ async function emptyObjects(x: NonNullable<InstallDeps["xtool"]>, iosXtool: stri
 /**
  * Row 88: with binary pods, the app xtool installs comes from `.build`, not from the App.app build checked. xtool
  * builds and packs it first (`xtool dev run` and `xtool dev build --ipa` then find nothing to rebuild), and the
- * post-pack checks read it: a refused app is removed and never installed.
+ * post-pack checks read it: a refused app is removed and never installed. The same holds for the classes React
+ * Native's codegen providers name: a build refused for a missing one would otherwise be rebuilt and installed here.
  */
-async function checkedApp(x: NonNullable<InstallDeps["xtool"]>, bin: string, root: string, state: InstallState): Promise<void> {
-  if (state.postPack === undefined) return;
+async function checkedApp(
+  x: NonNullable<InstallDeps["xtool"]>,
+  bin: string,
+  root: string,
+  state: InstallState,
+  log: (s: string) => void,
+): Promise<void> {
+  const codegen = (x.hasCodegenClasses ?? hasCodegenClasses)(root);
+  if (state.postPack === undefined && !codegen) return;
   const paths = projectPaths(root);
   await explainingXtool(() => (x.devBuild ?? devBuild)(bin, paths.iosXtool));
-  await (x.postPack ?? ((app, pods) => postPackChecks(app, pods, makeNmRunner())))(paths.appBundle, state.postPack);
+  if (state.postPack !== undefined) {
+    await (x.postPack ?? ((app, pods) => postPackChecks(app, pods, makeNmRunner())))(paths.appBundle, state.postPack);
+  }
+  if (codegen) {
+    const check = x.codegenClasses ?? ((r, app) => checkCodegenClasses(r, app, makeNmRunner()));
+    for (const line of await check(paths.root, paths.appBundle)) log(line);
+  }
 }
 
 export async function install(root: string, deps: InstallDeps = {}, opts: InstallOptions = {}): Promise<void> {
@@ -232,7 +250,7 @@ export async function install(root: string, deps: InstallDeps = {}, opts: Instal
   if (!state) throw new Error("No build found. Run `rn-xtool build` first.");
   await restaged(x, root, state, log);
   await emptyObjects(x, iosXtool, state);
-  await checkedApp(x, bin, root, state);
+  await checkedApp(x, bin, root, state, log);
   await explainingXtool(() => (x.devRun ?? devRun)(bin, iosXtool));
   const id = installedBundleId(auth.teamId, state.bundleIdentifier);
   // Which iPhone got this build: `run` must not skip the install for a different one. The id is the one xtool signs
@@ -257,7 +275,7 @@ async function installNetwork(root: string, deps: InstallDeps, opts: InstallOpti
 
   await restaged(x, root, state, log);
   await emptyObjects(x, iosXtool, state);
-  await checkedApp(x, bin, root, state);
+  await checkedApp(x, bin, root, state, log);
   const ipa = await explainingXtool(() => (x.devBuildIpa ?? devBuildIpa)(bin, iosXtool));
   const bundleId = installedBundleId(auth.teamId, state.bundleIdentifier);
   const route: LanRoute = config.lanIp
