@@ -47,7 +47,7 @@ versions). Check the result: `npm view react-native-xtool dist-tags` and `npx re
 
 React Native's scaffolder ships twice: as `patches/react-native+0.88.0.patch` and its byte-identical copy
 `react-native+0.88.1.patch`, applied to an installed 0.88.x, and as `vendor/rn-spm/`, pristine 0.88.0 with that patch
-and `vendor/rn-spm/rn-xtool-edits.patch` (E1–E5) applied, for 0.85–0.87 and Expo SDK 57. A change to the scaffolder:
+and `vendor/rn-spm/rn-xtool-edits.patch` (E1–E6) applied, for 0.85–0.87 and Expo SDK 57. A change to the scaffolder:
 
 1. Edits the vendored copy (`vendor/rn-spm/spm/*.js`), and documents the fix in
    [upstream/react-native-scaffolder.md](upstream/react-native-scaffolder.md) and the count in

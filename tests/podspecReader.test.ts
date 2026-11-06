@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -580,5 +580,67 @@ describe("flattenSubspecs on the shim's model", () => {
       expect(m.sourceFiles, reader).toEqual(["ios/Core/**/*.swift", "ios/React/**/*.{h,m,swift}"]);
       expect(m.dependencies, reader).toEqual(["React-Core"]);
     }
+  });
+});
+
+describe("reader failures propagate", () => {
+  const { autolinkingDepToSpmTarget } = req("./generate-spm-autolinking.js");
+  const { defaultReadPodspec, expandSpmDependencies } = req("./expand-spm-dependencies.js");
+  beforeEach(() => {
+    vi.stubEnv("RN_XTOOL_PODSPEC_READER", undefined);
+    vi.stubEnv("RN_SPM_APP_IOS_DIR", undefined);
+    vi.stubEnv("RN_SPM_PODSPEC_READS", undefined);
+  });
+  /**
+   * An installed copy ({@link installedCopy}) of `react-native-foo`, whose `Foo.podspec` is `podspec` (a symlink to
+   * nowhere when null), listed as autolinking.json lists it, with the autolinker's output folder beside its app's `ios/`.
+   */
+  function installedDep(podspec: string | null) {
+    const src = path.dirname(library(spec(), { "package.json": JSON.stringify({ name: "react-native-foo", version: "1.0.0" }) }));
+    const root = installedCopy(src);
+    const podspecPath = path.join(root, "Foo.podspec");
+    if (podspec == null) {
+      rmSync(podspecPath);
+      symlinkSync(path.join(root, "Missing.podspec"), podspecPath);
+    } else writeFileSync(podspecPath, podspec);
+    const base = path.resolve(root, "..", "..");
+    vi.stubEnv("RN_SPM_RN_ROOT", path.join(base, "node_modules", "react-native"));
+    const dep = { name: "react-native-foo", root, swiftName: "Foo", platforms: { ios: { podspecPath, sourceDir: root } } };
+    return { root, podspecPath, dep, outputDir: path.join(base, "ios", "build", "generated", "autolinking") };
+  }
+  const expand = (dep: { name: string; root: string; platforms: object }, readPodspec: unknown) =>
+    expandSpmDependencies([{ name: dep.name, root: dep.root, platforms: dep.platforms }], {
+      readConfig: () => null,
+      resolveDep: () => null,
+      readSwiftpmConfig: () => null,
+      readPodspec,
+    });
+
+  it.skipIf(needsRuby !== "")(`stops autolinking on a shim failure${needsRuby}`, () => {
+    const { podspecPath, dep, outputDir } = installedDep(spec(' s.source_files = sources_for("ios")'));
+    const e = thrown(() => autolinkingDepToSpmTarget(dep.name, dep, outputDir, new Map()));
+    expect(isPodspecReadError(e)).toBe(true);
+    expect(e.kind).toBe("method");
+    expect(e.message.startsWith(`${podspecPath}:`)).toBe(true);
+  });
+
+  it.skipIf(needsRuby !== "")(`stops name resolution on a shim failure${needsRuby}`, () => {
+    const { root, podspecPath, dep } = installedDep(["Pod::Spec.new do |s|", " s.name = compute_name()", "end"].join("\n"));
+    const e = thrown(() => defaultReadPodspec(root, podspecPath));
+    expect(isPodspecReadError(e)).toBe(true);
+    expect(e.message.startsWith(`${podspecPath}:`)).toBe(true);
+    expect(thrown(() => defaultReadPodspec(root, undefined)).message).toBe(e.message);
+    expect(thrown(() => expand(dep, defaultReadPodspec)).message).toBe(e.message);
+  });
+
+  it("keeps the old answer for an unreadable file", () => {
+    const { root, podspecPath, dep, outputDir } = installedDep(null);
+    expect(defaultReadPodspec(root, podspecPath)).toBeNull();
+    expect(defaultReadPodspec(root, undefined)).toBeNull();
+    expect(autolinkingDepToSpmTarget(dep.name, dep, outputDir, new Map())).toMatchObject({ name: "Foo", headerSearchPaths: undefined });
+    const unreadable = () => {
+      throw new Error(`readPodspec: file does not exist: ${podspecPath}`);
+    };
+    expect(expand(dep, unreadable)[0]).toMatchObject({ swiftNameSource: "npm" });
   });
 });

@@ -12,6 +12,7 @@
 
 const {
   findPodspecs,
+  isPodspecReadError,
   readPodspecCached,
   readPodspecNames,
 } = require('./read-podspec');
@@ -300,7 +301,8 @@ function expandSpmDependencies(
     byName.set(dep.name, {...dep, spmDependencies: []});
   }
   // A podspec that cannot be read leaves the name to the next precedence step,
-  // rather than failing a build over a file only CocoaPods needs.
+  // rather than failing a build over a file only CocoaPods needs. One the
+  // podspec reader failed on stops the run with its message instead.
   const podspecFor = (
     root /*: string */,
     podspecPath /*: ?string */,
@@ -310,7 +312,10 @@ function expandSpmDependencies(
     }
     try {
       return readPodspec(root, podspecPath);
-    } catch {
+    } catch (e) {
+      if (isPodspecReadError(e)) {
+        throw e;
+      }
       return null;
     }
   };
@@ -478,9 +483,14 @@ function defaultReadPodspec(
   }
   try {
     // Ruby-computed fields need the real evaluator; everything else is spared
-    // the `pod ipc spec` spawn.
+    // the Ruby shim's spawn.
     return readPodspecNames(found) ?? readPodspecCached(found);
-  } catch {
+  } catch (e) {
+    // A file that cannot be read names nothing; a podspec the reader failed on
+    // stops the run.
+    if (isPodspecReadError(e)) {
+      throw e;
+    }
     return null;
   }
 }

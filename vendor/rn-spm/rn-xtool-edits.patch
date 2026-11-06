@@ -159,6 +159,35 @@
    resolveCacheSlotVersion,
    resolveHermesArtifact,
    resolveLocalHermesCompilerVersion,
+--- a/spm/generate-spm-autolinking.js
++++ b/spm/generate-spm-autolinking.js
+@@ -71,7 +71,11 @@
+   MIN_IOS_VERSION_SUPPORTED,
+   sanitizeIosDeploymentTarget,
+ } = require('./ios-deployment-target');
+-const {findPodspecs, readPodspecCached} = require('./read-podspec');
++const {
++  findPodspecs,
++  isPodspecReadError,
++  readPodspecCached,
++} = require('./read-podspec');
+ const {
+   AUTOLINKED_PACKAGE_NAME,
+   REACT_CODEGEN_PACKAGE_NAME,
+@@ -833,7 +837,12 @@
+   let model;
+   try {
+     model = readPodspecCached(podspecPath);
+-  } catch {
++  } catch (e) {
++    // A file that cannot be read adds no search paths; a podspec the reader
++    // failed on stops the run.
++    if (isPodspecReadError(e)) {
++      throw e;
++    }
+     return [];
+   }
+ 
 --- a/spm/read-podspec.js
 +++ b/spm/read-podspec.js
 @@ -2882,9 +2882,15 @@

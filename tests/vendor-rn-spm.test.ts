@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -45,6 +45,7 @@ const spmUtils = () => req("./spm-utils.js");
 const downloader = () => req("./download-spm-artifacts.js");
 const podspec = () => req("./read-podspec.js");
 const plugins = () => req("./autolinking-plugins.js");
+const autolinking = () => req("./generate-spm-autolinking.js");
 
 describe("vendor/rn-spm provenance", () => {
   provenance("the cached tarball is react-native 0.88.0", () => {
@@ -169,6 +170,27 @@ describe("vendor/rn-spm dependencies and edits", () => {
       if (saved === undefined) delete process.env.RN_SPM_EXPO_PLUGIN;
       else process.env.RN_SPM_EXPO_PLUGIN = saved;
     }
+  });
+
+  it("E6 stops autolinking's header-search-path read on a podspec reader failure", () => {
+    // A `ruby` that passes the reader's probe and then writes no model: the shim run fails without a real Ruby.
+    const bin = mkTmp("vendor-e6-bin-");
+    writeFileSync(path.join(bin, "ruby"), `#!/bin/sh\necho '{"ruby":"3.3.8","floor":"2.7.0","usable":true}'\n`);
+    chmodSync(path.join(bin, "ruby"), 0o755);
+    const lib = mkTmp("vendor-e6-lib-");
+    const podspecPath = path.join(lib, "Lib.podspec");
+    writeFileSync(podspecPath, 'Pod::Spec.new do |s|\n  s.name = "Lib"\nend\n');
+    vi.stubEnv("PATH", bin);
+    vi.stubEnv("RN_XTOOL_PODSPEC_READER", undefined);
+    const dep = { name: "lib", root: lib, swiftName: "Lib", platforms: { ios: { podspecPath, sourceDir: lib } } };
+    let e: any;
+    try {
+      autolinking().autolinkingDepToSpmTarget(dep.name, dep, path.join(lib, "out"), new Map());
+    } catch (err) {
+      e = err;
+    }
+    expect(podspec().isPodspecReadError(e)).toBe(true);
+    expect(e.message.startsWith(`${podspecPath}: ruby exited with`)).toBe(true);
   });
 
   it("E4 keeps a pre-headers-spec slot only when asked", () => {
