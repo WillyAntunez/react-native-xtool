@@ -24,7 +24,7 @@ export interface ResolvedInclude {
   certain: boolean;
   /** The path that answered; absent when no folder did, and for a generated header. */
   found?: string;
-  /** The folders looked in, in order, up to the one that answered; empty for a generated header. */
+  /** The folders looked in, in order, up to the one that answered; empty for a generated header or an absolute spelling. */
   searched: string[];
   /** Xcode's generated Swift header (`*-Swift.h`): the build writes it, so it is never looked up (row 36). */
   generated: boolean;
@@ -34,12 +34,14 @@ const isGenerated = (spelling: string): boolean => path.posix.basename(spelling)
 
 /**
  * Resolves the includes of every file in `scope`: a quote include in the including file's copy folder, then in
- * `includeDirs` in order; an angle include in `includeDirs` in order. `__has_include` asks the same lookup: true when
- * it finds the header, unknown otherwise (the header may come from a folder the scope lacks, so its branch stays
- * uncertain).
+ * `includeDirs` in order; an angle include in `includeDirs` in order; an absolute spelling as it is. `__has_include`
+ * asks the same lookup: true when it finds the header, unknown otherwise (the header may come from a folder the scope
+ * lacks, so its branch stays uncertain).
  */
 export function resolveIncludes(scope: IncludeScope): ResolvedInclude[] {
   const lookup = (from: string, spelling: string, angle: boolean): { found?: string; searched: string[] } => {
+    // Clang opens an absolute spelling as it is, in no folder.
+    if (path.isAbsolute(spelling)) return scope.exists(spelling) ? { found: spelling, searched: [] } : { searched: [] };
     const searched: string[] = [];
     for (const dir of angle ? scope.includeDirs : [path.dirname(from), ...scope.includeDirs]) {
       searched.push(dir);

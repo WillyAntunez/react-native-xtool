@@ -139,4 +139,19 @@ describe("resolveIncludes", () => {
       ["Gone.h", 7, false, undefined],
     ]);
   });
+
+  it("opens an absolute include spelling as is", async () => {
+    const { root, ios, sources, at } = await project({ "Vendor/Z.h": "// z\n" });
+    const z = join(ios, "Vendor", "Z.h");
+    const gone = join(root, "Gone.h");
+    const text = [`#import "${z}"`, `#import "${gone}"`, `#if __has_include("${z}")`, `#import "Taken.h"`, `#endif`].join("\n");
+    await mkdir(join(ios, "App"), { recursive: true });
+    await writeFile(join(ios, "App", "X.m"), text);
+    const scope = copyScope(bareOf({ cSources: [at("App/X.m")] }), ios, join(ios, "App"), sources, [join(sources, "include")]);
+    expect(resolveIncludes(scope).map((r) => [r.spelling, r.certain, r.found, r.searched])).toEqual([
+      [z, true, z, []],
+      [gone, true, undefined, []],
+      ["Taken.h", true, undefined, [sources, join(sources, "include")]],
+    ]);
+  });
 });
