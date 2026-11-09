@@ -7,7 +7,7 @@ SwiftPM pipeline.
 [![npm](https://img.shields.io/npm/v/react-native-xtool/alpha?label=npm%20%40alpha)](https://www.npmjs.com/package/react-native-xtool)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-**Status:** alpha, [`react-native-xtool@0.1.0-alpha.7` on npm](https://www.npmjs.com/package/react-native-xtool) under the
+**Status:** alpha, [`react-native-xtool@0.1.0-alpha.8` on npm](https://www.npmjs.com/package/react-native-xtool) under the
 `alpha` tag. Verified end to end on a physical iPhone on 2026-11-04 and 2026-11-05: the first launch without Reload,
 the dev client and the app icon; bare React Native 0.85; react-native-vision-camera, react-native-video,
 react-native-device-info and @react-native-community/netinfo, with react-native-app-auth linked and an entitlements

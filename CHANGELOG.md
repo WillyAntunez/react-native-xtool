@@ -5,6 +5,8 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 
 ## [Unreleased]
 
+## [0.1.0-alpha.8] - 2026-11-09
+
 ### Upgrading from 0.1.0-alpha.7
 - Install Ruby 2.7 or newer (`sudo apt install ruby`) before your first build with this release, so rn-xtool reads
   podspecs as CocoaPods does; `rn-xtool doctor` shows the reader this machine uses. Without Ruby, `rn-spm` reads them
@@ -26,10 +28,10 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   Native's podspec helpers, the way CocoaPods runs it on a Mac: `install_modules_dependencies`, `defined?` and
   `respond_to?` answer as under React Native's Podfile, and a library's own Ruby and `node` scripts run. So
   react-native-gesture-handler 3.3.0 gets `RNGH_USE_WORKLETS=1` beside react-native-worklets 0.8 or later, and
-  react-native-webview 14.0.1 takes its `install_modules_dependencies` branch. Every podspec runs with the
-  interpreter of the first `ruby` on `PATH`, by its absolute path, so a version manager's `ruby` shim cannot pick
-  another one per folder, for at most 120 s. Without a usable Ruby, the reduced reader of earlier releases reads them, and
-  `rn-spm` prints one `⚠` line saying why. See [how-it-works.md](docs/how-it-works.md#cocoapods-only-libraries).
+  react-native-webview 14.0.1 takes its `install_modules_dependencies` branch. Every podspec runs for at most 120 s,
+  with the interpreter of the first `ruby` on `PATH`, by its absolute path, so a version manager's `ruby` shim cannot
+  pick another one per folder. Without a usable Ruby, the reduced reader of earlier releases reads them, and `rn-spm`
+  prints one `⚠` line saying why. See [how-it-works.md](docs/how-it-works.md#cocoapods-only-libraries).
 - `pod ipc spec` is no longer run, so a machine with CocoaPods reads a podspec exactly as any machine with Ruby, instead
   of with React Native's helpers stripped (react-native-webview, `@react-native-async-storage/async-storage`,
   react-native-keychain and react-native-video took their old-architecture branch there).
@@ -607,7 +609,8 @@ First public release, as `react-native-xtool` (command `rn-xtool`).
 - No Xcode tools on Linux: asset catalogs, storyboards and Metal shaders are skipped; library resource bundles and
   vendored xcframeworks are not supported yet.
 
-[Unreleased]: https://github.com/WillyAntunez/react-native-xtool/compare/v0.1.0-alpha.7...HEAD
+[Unreleased]: https://github.com/WillyAntunez/react-native-xtool/compare/v0.1.0-alpha.8...HEAD
+[0.1.0-alpha.8]: https://github.com/WillyAntunez/react-native-xtool/compare/v0.1.0-alpha.7...v0.1.0-alpha.8
 [0.1.0-alpha.7]: https://github.com/WillyAntunez/react-native-xtool/compare/v0.1.0-alpha.6...v0.1.0-alpha.7
 [0.1.0-alpha.6]: https://github.com/WillyAntunez/react-native-xtool/compare/v0.1.0-alpha.5...v0.1.0-alpha.6
 [0.1.0-alpha.5]: https://github.com/WillyAntunez/react-native-xtool/compare/v0.1.0-alpha.4...v0.1.0-alpha.5
