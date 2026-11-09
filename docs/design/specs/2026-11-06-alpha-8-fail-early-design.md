@@ -897,3 +897,27 @@ R1–R8 and R10, the sweep's set by R11 (source and date in F1), and log retenti
 - The Objective-C fixture's contents (written for rn-xtool from React Native's pre-0.77 template, MIT) and how the drift
   watch overlays it on the CLI's project.
 - The wording of the stops and lines not quoted above, and of the docs sections.
+
+## Amendments (2026-11-09)
+
+Recorded after the final review of plan 1. The sections above keep their text; where they differ, these rule.
+
+- **A.2, the timeout: 30 s → 120 s.** rn-xtool gives each podspec 120 s. `@shopify/react-native-skia`'s podspec
+  copies its prebuilt frameworks (hundreds of MB) into the library while it is read: on a slow disk, 30 s can stop a
+  working app (an anti-goal), while a podspec that hangs costs 120 s once. Row 8's stop reads `did not finish in
+  120 s`.
+- **A.2, the interpreter.** `ruby <shim> --probe` also prints the absolute path of the interpreter that ran it
+  (`RbConfig.ruby`), and every podspec runs with that path, not with `ruby` from `PATH`: a version manager's `ruby`
+  shim (rbenv, asdf, mise) cannot pick another Ruby from a `.ruby-version` in a library's folder.
+- **A.3, React Native's values.** `min_ios_version_supported` and `get_folly_config` answer constants held in the
+  shim; the shim does not load the installed React Native's `helpers.rb`. A drift test in `tests/podspecShim.test.ts`
+  checks the constants against `scripts/cocoapods` of every cached React Native line (`RN_LINES`: 0.85.0, 0.86.3,
+  0.87.1, 0.88.0 and 0.88.1).
+- **F.1 and R11, the heavy tier.** skia's three prebuilt packages (about 530 MB) are an optional heavy tier of
+  `tests/tarballs.json`: `node scripts/fetch-test-tarballs.mjs` skips them unless asked (`--heavy` or
+  `RN_XTOOL_FETCH_HEAVY=1`), and the sweep skips skia with a named reason when they are missing. CI does not fetch
+  them (the owner's decision), so skia's golden is checked where the tier is fetched.
+- **Rows 7 and 9, worklets' stop.** Worklets' own message (`[Worklets] Unable to recognize your react-native
+  version…`) appears only when a `react-native` package is installed beside it. Without one, its
+  `scripts/worklets_utils.rb:2` fails first, with Ruby's `no implicit conversion of nil into String`; either way the
+  read stops as `raised`, with the podspec's path.

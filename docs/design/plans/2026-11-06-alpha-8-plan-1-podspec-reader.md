@@ -39,6 +39,12 @@ that `@{u}` is `origin/feature/alpha-8-podspec-reader`.
 - The podspec's environment: `RCT_NEW_ARCH_ENABLED='1'`, `RCT_HERMES_V1_ENABLED='1'` (`RN_POD_ENV`,
   `read-podspec.js:230`), every other variable unset; the child gets `PATH`, `HOME`, `LANG` and those two only.
 - One Ruby process per podspec, working directory the podspec's folder, 30 s timeout.
+- Amended 2026-11-09 (the spec's "Amendments (2026-11-09)" rules): the timeout is 120 s, as skia's podspec copies
+  hundreds of MB while it is read; the probe prints the interpreter's absolute path (`RbConfig.ruby`) and every podspec
+  runs with it; `min_ios_version_supported` and the folly config are constants in the shim, with a drift test over the
+  cached React Native lines (`RN_LINES`); the heavy tier (skia's prebuilt packages) is optional and not fetched in CI;
+  worklets' own stop text appears only with `react-native` installed beside it (otherwise `worklets_utils.rb:2` fails
+  first).
 - The escape is exactly `RN_XTOOL_PODSPEC_READER=reduced`; it prints a `⚠` line naming itself and `doctor --report`
   records it (R2).
 - `ENV` names a podspec read go to the reads file and `doctor --report`, never to the terminal (R4).
