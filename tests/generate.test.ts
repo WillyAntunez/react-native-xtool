@@ -6,6 +6,7 @@ import { troubleshootingUrl } from "../src/docs.js";
 import { renderPackageSwift } from "../src/generate/packageSwift.js";
 import { renderXtoolYml } from "../src/generate/xtoolYml.js";
 import { devSupportTemplatesDir, sceneDelegateClassNames, writeIosXtool } from "../src/generate/iosXtool.js";
+import { copyBareTarget } from "../src/generate/bareSources.js";
 import { expoClangImporterInputs, type ClangImporterInputs } from "../src/generate/expoImporter.js";
 import { IMPORTER_MARKER, scaffoldedImporterPaths } from "../src/generate/scaffoldImporter.js";
 import { PODSPEC_FIXTURES, VENDORED_RN_SPM, scaffoldLibraries } from "./support/rnScaffold.js";
@@ -1035,6 +1036,29 @@ describe("writeIosXtool", () => {
     expect(await readFile(join(paths.sources, "AppDelegate.h"), "utf8")).toBe("@interface AppDelegate : NSObject\n@end\n");
     expect(await readFile(join(paths.sources, "include", "AppDelegate.h"), "utf8")).toBe('#import "../AppDelegate.h"\n');
     expect(await readFile(join(paths.sources, "AppMain.m"), "utf8")).toContain('#import "AppDelegate.h"');
+  });
+
+  it("records where each copied file came from", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xt7-origins-"));
+    tmps.push(root);
+    const ios = join(root, "ios");
+    const sources = join(root, "ios-xtool", "Sources", "App");
+    for (const rel of ["App/main.m", "App/AppDelegate.swift", "Shared/Theme.h"]) {
+      await mkdir(join(ios, rel, ".."), { recursive: true });
+      await writeFile(join(ios, rel), "// code\n");
+    }
+    const at = (relPath: string) => ({ absPath: join(ios, relPath), relPath });
+    const bare = {
+      swiftSources: [at("App/AppDelegate.swift")], cSources: [at("App/main.m")], headers: [at("Shared/Theme.h")],
+      resources: [], skippedResources: [], defines: [], headerSearchPaths: [], ignoredSettings: [],
+      mixed: true, productModuleName: "App",
+    };
+    const copied = await copyBareTarget(bare, ios, join(ios, "App"), sources, join(root, "ios-xtool", "Resources"), () => {});
+    expect(copied.origins).toEqual({
+      [join(sources, "AppDelegate.swift")]: join(ios, "App", "AppDelegate.swift"),
+      [join(sources, "AppMain.m")]: join(ios, "App", "main.m"),
+      [join(sources, "Shared", "Theme.h")]: join(ios, "Shared", "Theme.h"),
+    });
   });
 
   it("skips a header the project references but that does not exist, saying so", async () => {
