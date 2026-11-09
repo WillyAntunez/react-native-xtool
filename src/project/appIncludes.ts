@@ -8,7 +8,6 @@ import path from "node:path";
 import { bareCopyLayout } from "../generate/bareSources.js";
 import { definesOf, scanIncludes } from "./includeScan.js";
 import type { BareTargetContent } from "./pbxproj.js";
-import { dependencyDirs, packageDir } from "./podspecs.js";
 
 export interface IncludeScope {
   /** `path`: where the file sits in the copy; `source`: where its text is read; `display`: how messages name it. */
@@ -74,33 +73,33 @@ export function resolveIncludes(scope: IncludeScope): ResolvedInclude[] {
 
 /** The copy's folder of header forwards (`Sources/App/include`), as `copyBareTarget` writes it. */
 const INCLUDE_DIR = "include";
-const HEADER = /\.(h|hpp)$/i;
+/** Folders of ios/ that hold no app files: CocoaPods', build output, and rn-xtool's own. */
+const NOT_APP_DIRS = new Set(["Pods", "build", "DerivedData", "ios-xtool"]);
 
 /**
- * Base name → the header files (`.h`, `.hpp`) under the installed `react-native` and each of the project's installed
- * `dependencies`. A dependency's own `node_modules` and its dot folders are not walked; symbolic links to folders are
- * not followed.
+ * Lowercased file name → the files of that name under `iosDir`, sorted by path. Not walked: the top-level folders of
+ * `NOT_APP_DIRS`, dot folders and `node_modules`; symbolic links to folders are not followed.
  */
-export function dependencyHeaderIndex(root: string): Map<string, string[]> {
+function iosFileIndex(iosDir: string): Map<string, string[]> {
   const index = new Map<string, string[]>();
-  const walk = (dir: string): void => {
+  const walk = (dir: string, top: boolean): void => {
     let entries: Dirent[];
     try {
-      entries = readdirSync(dir, { withFileTypes: true });
+      entries = readdirSync(dir, { withFileTypes: true }).sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0));
     } catch {
       return;
     }
     for (const e of entries) {
       const p = path.join(dir, e.name);
       if (e.isDirectory()) {
-        if (e.name !== "node_modules" && !e.name.startsWith(".")) walk(p);
-      } else if (HEADER.test(e.name)) {
-        index.set(e.name, [...(index.get(e.name) ?? []), p]);
+        if (!e.name.startsWith(".") && e.name !== "node_modules" && !(top && NOT_APP_DIRS.has(e.name))) walk(p, false);
+      } else {
+        const key = e.name.toLowerCase();
+        index.set(key, [...(index.get(key) ?? []), p]);
       }
     }
   };
-  const rn = packageDir(root, "react-native");
-  for (const dir of new Set([...(rn === undefined ? [] : [rn]), ...dependencyDirs(root).map((d) => d.dir)])) walk(dir);
+  walk(iosDir, true);
   return index;
 }
 
@@ -139,6 +138,8 @@ export interface Pass1Input {
   headerSearchPaths: string[];
   /** The target's `GCC_PREPROCESSOR_DEFINITIONS` entries. */
   defines: string[];
+  /** Base names of the headers the app target references, on disk or not (and its bridging header's). */
+  appHeaders: string[];
   /** The project uses binary pods, whose headers pass 1 cannot see. */
   binaryPods: boolean;
 }
@@ -161,10 +162,10 @@ function orList(items: readonly string[]): string {
  * Pass 1 of B1: the includes of `files` resolved in the app's copy as the generated App target compiles it, before
  * the copy exists. The include folders are `<sources>/include` (the forwards) then the header search paths; under
  * `sources` only the copy's planned files and forwards exist, elsewhere the disk answers. Only a certain include
- * counts (R6): resolved → `checked`; an angle miss, and a quote miss whose base name an installed dependency's header
- * (`react-native` or a `dependencies` entry, any folder) carries or that binary pods may provide → `pending`; any
- * other quote miss → `missing`. Uncertain includes and
- * Xcode's generated Swift headers count nowhere.
+ * counts (R6): resolved → `checked`; unresolved, an angle include → `pending`, and a quote include → `missing` only
+ * with app-own evidence (its base name is one of `appHeaders`, or a file of that name, ignoring case, is under ios/)
+ * and without binary pods, else `pending`: clang falls back to the angle and system folders, so the compile decides
+ * (an SDK, libc or library header). Uncertain includes and Xcode's generated Swift headers count nowhere.
  */
 export function appIncludesPass1(i: Pass1Input): Pass1Result {
   const include = path.join(i.sources, INCLUDE_DIR);
@@ -183,35 +184,26 @@ export function appIncludesPass1(i: Pass1Input): Pass1Result {
     defines: definesOf(i.defines),
   });
 
-  // By base name only: the build may find the header in another layout than the source tree's (React Native's staged
-  // `React/` headers for `React/Base/RCTBridgeModule.h`, a pod's `header_dir`), so any header of that name defers.
-  let index: Map<string, string[]> | undefined;
-  const dependencyProvides = (spelling: string): boolean => {
-    index ??= dependencyHeaderIndex(i.root);
-    return index.has(path.posix.basename(spelling));
+  let iosFiles: Map<string, string[]> | undefined;
+  /** The files under ios/ named `base`, ignoring case (the walk runs once, at the first quote miss). */
+  const onDisk = (base: string): string[] => (iosFiles ??= iosFileIndex(path.join(i.root, "ios"))).get(base.toLowerCase()) ?? [];
+  const appHeaders = new Set(i.appHeaders);
+  const appOwn = (spelling: string): boolean => {
+    const base = path.posix.basename(spelling);
+    return appHeaders.has(base) || onDisk(base).length > 0;
   };
 
-  /** A file whose path matches `p` but for case: in the copy, or on disk outside it. */
-  const caseTwin = (p: string): string | undefined => {
-    const lower = p.toLowerCase();
-    for (const [place, display] of copy) if (place.toLowerCase() === lower) return display;
-    if (inCopy(p)) return undefined;
-    let at = path.parse(p).root;
-    for (const part of path.relative(at, p).split(path.sep)) {
-      let names: string[];
-      try {
-        names = readdirSync(at);
-      } catch {
-        return undefined;
-      }
-      const name = names.find((n) => n.toLowerCase() === part.toLowerCase());
-      if (name === undefined) return undefined;
-      at = path.join(at, name);
-    }
-    return fromRoot(i.root, at);
-  };
-
+  const listed = new Set(i.files.map((f) => f.source));
   const byDisplay = new Map(i.files.map((f) => [f.display, f]));
+  /** What ios/ holds of that name: a file the target does not list, else one whose name differs only in case. */
+  const hint = (spelling: string): string => {
+    const base = path.posix.basename(spelling);
+    const files = onDisk(base);
+    const unlisted = files.find((f) => path.basename(f) === base && !listed.has(f));
+    if (unlisted !== undefined) return `; ${fromRoot(i.root, unlisted)} exists but the app target does not list it (add it to the target)`;
+    const twin = files.find((f) => path.basename(f) !== base);
+    return twin === undefined ? "" : `; ${fromRoot(i.root, twin)} differs only in case (file names are case-sensitive on Linux)`;
+  };
   const missingLine = (r: ResolvedInclude): string => {
     const head = `${r.file}:${r.line} imports "${r.spelling}"`;
     if (path.isAbsolute(r.spelling)) return `${head}, which does not exist`;
@@ -221,16 +213,14 @@ export function appIncludesPass1(i: Pass1Input): Pass1Result {
       "the app target's headers",
       ...i.headerSearchPaths.map((d) => fromRoot(i.root, d)),
     ];
-    const twin = r.searched.map((d) => caseTwin(path.join(d, r.spelling))).find((t) => t !== undefined);
-    const suffix = twin === undefined ? "" : `; ${twin} differs only in case (file names are case-sensitive on Linux)`;
-    return `${head}, which is not in ${orList(folders)}${suffix}`;
+    return `${head}, which is not in ${orList(folders)}${hint(r.spelling)}`;
   };
 
   const out: Pass1Result = { missing: [], pending: 0, checked: 0 };
   for (const r of results) {
     if (r.generated || !r.certain) continue;
     if (r.found !== undefined) out.checked++;
-    else if (r.angle || i.binaryPods || dependencyProvides(r.spelling)) out.pending++;
+    else if (r.angle || i.binaryPods || !appOwn(r.spelling)) out.pending++;
     else out.missing.push(missingLine(r));
   }
   return out;
