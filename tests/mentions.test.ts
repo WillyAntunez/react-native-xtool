@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -9,16 +9,14 @@ import { tool } from "./support/tools.js";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SCRIPT = path.join(ROOT, "scripts", "check-mentions.mjs");
 
-/** Every tracked Markdown file, and the local PR and notes files under `.superpowers/` when that folder exists. */
+/**
+ * Every tracked Markdown file. A pull request's description is checked by the Mentions workflow, and a local draft by
+ * `npm run check:mentions -- <file>` before it is used (docs/RELEASING.md).
+ */
 function markdownFiles(): string[] {
   const r = tool("git", ["ls-files", "*.md"], { cwd: ROOT });
   expect(r.status, r.stderr).toBe(0);
-  const tracked = r.stdout.split("\n").filter((f) => f !== "");
-  const local = path.join(ROOT, ".superpowers");
-  const notes = existsSync(local)
-    ? readdirSync(local).filter((f) => f.endsWith(".md")).map((f) => path.join(".superpowers", f))
-    : [];
-  return [...tracked, ...notes];
+  return r.stdout.split("\n").filter((f) => f !== "");
 }
 
 describe("mentions", () => {
@@ -46,7 +44,7 @@ describe("mentions", () => {
     expect(mentions("~~~ `x`\n@y\n~~~\n")).toEqual([]);
   });
 
-  it("finds none in the tracked markdown or the local PR and notes files", () => {
+  it("finds none in the tracked markdown", () => {
     const hits = markdownFiles().flatMap((f) =>
       mentions(readFileSync(path.join(ROOT, f), "utf8")).map((m) => `${f}:${m.line}: @${m.word}`),
     );
