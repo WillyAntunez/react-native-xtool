@@ -17,9 +17,12 @@ const FIXTURES = path.join(import.meta.dirname, "fixtures", "precheck", "graph")
 const FIXTURE_ROOT = "/home/me/app";
 
 let t = "";
-beforeAll(() => {
+/** The fixtures' graph as readPackageGraph reads it. */
+let graph: { root: DumpedPackage; packages: DumpedPackage[] };
+beforeAll(async () => {
   t = mkdtempSync(path.join(tmpdir(), "precheck-graph-"));
   makeTree(t);
+  graph = await readPackageGraph(path.join(t, "ios-xtool"), path.join(t, "scratch"), fakeSwift(t).run);
 });
 afterAll(() => rmSync(t, { recursive: true, force: true }));
 
@@ -66,6 +69,8 @@ function makeTree(root: string): void {
   write(path.join(lib, "public/RNLib.h"));
   write(path.join(lib, "swift/RNLib.swift"));
   write(path.join(root, "node_modules/unreached-lib/ios/include/UnreachedLib.h"));
+  write(path.join(root, "alias/a/Sources/App/AppDelegate.swift"));
+  write(path.join(root, "alias/b/ios/Sources/BarLib/include/BarLib.h"));
 }
 
 /** Each fixture package's folder (as show-dependencies names it) → its dump-package output. */
@@ -78,11 +83,11 @@ const DUMPS: Record<string, string> = {
   "node_modules/unreached-lib": "dump-UnreachedLib.json",
 };
 
-/** The graph readPackageGraph gives for the fixtures under `root`. */
-function fixtureGraph(root: string): { root: DumpedPackage; packages: DumpedPackage[] } {
-  const load = (rel: string): DumpedPackage => ({ ...JSON.parse(fixture(DUMPS[rel]!, root)), path: path.join(root, rel) });
-  return { root: load("ios-xtool"), packages: Object.keys(DUMPS).slice(1).map(load) };
-}
+/** The alias fixtures: the root names its dependency `Foo`, whose manifest is `Bar`, in a folder named `ios`. */
+const ALIAS_DUMPS: Record<string, string> = {
+  "alias/a": "alias/dump-a.json",
+  "alias/b/ios": "alias/dump-b.json",
+};
 
 interface Call {
   args: string[];
@@ -91,7 +96,12 @@ interface Call {
 }
 
 /** A SwiftRunner over the fixtures; `answer` overrides a command's result. */
-function fakeSwift(root: string, answer: (args: string[]) => { code: number; stdout: string; stderr: string } | undefined = () => undefined) {
+function fakeSwift(
+  root: string,
+  answer: (args: string[]) => { code: number; stdout: string; stderr: string } | undefined = () => undefined,
+  dumps: Record<string, string> = DUMPS,
+  shown = "show-dependencies.json",
+) {
   const calls: Call[] = [];
   let inFlight = 0;
   let maxInFlight = 0;
@@ -103,10 +113,10 @@ function fakeSwift(root: string, answer: (args: string[]) => { code: number; std
     inFlight--;
     const given = answer(args);
     if (given) return given;
-    if (args[1] === "show-dependencies") return { code: 0, stdout: fixture("show-dependencies.json", root), stderr: "" };
+    if (args[1] === "show-dependencies") return { code: 0, stdout: fixture(shown, root), stderr: "" };
     if (args[1] === "dump-package") {
       const rel = path.relative(root, args[args.indexOf("--package-path") + 1]!);
-      return { code: 0, stdout: fixture(DUMPS[rel]!, root), stderr: "" };
+      return { code: 0, stdout: fixture(dumps[rel]!, root), stderr: "" };
     }
     throw new Error(`unexpected swift ${args.join(" ")}`);
   };
@@ -153,7 +163,7 @@ describe("precheckGraph", () => {
   });
 
   it("collects the header folders reachable from App", () => {
-    const g = graphHeaders(fixtureGraph(t));
+    const g = graphHeaders(graph);
     const xcf = path.join(t, "ios/build/xcframeworks");
     const gen = path.join(t, "ios/build/generated/ios");
     expect(g.headerDirs).toEqual([
@@ -174,7 +184,7 @@ describe("precheckGraph", () => {
   });
 
   it("synthesizes a module map as SwiftPM does", () => {
-    const g = graphHeaders(fixtureGraph(t));
+    const g = graphHeaders(graph);
     const gen = path.join(t, "ios/build/generated/ios");
     const xcf = path.join(t, "ios/build/xcframeworks");
     expect(g.synthesized).toEqual([
@@ -198,7 +208,7 @@ describe("precheckGraph", () => {
     write(path.join(lib, "Sources/my-lib/include/my_lib.h"));
     const app = { name: "App", type: "regular", dependencies: [{ byName: ["my-lib", null] }] };
     const own = graphHeaders({
-      root: { name: "C99", path: lib, products: [], targets: [app, { name: "my-lib", type: "regular", dependencies: [] }] },
+      root: { name: "C99", path: lib, dependencies: [], products: [], targets: [app, { name: "my-lib", type: "regular", dependencies: [] }] },
       packages: [],
     });
     expect(own.synthesized).toEqual([
@@ -207,7 +217,7 @@ describe("precheckGraph", () => {
   });
 
   it("lists the graph's targets and modules", () => {
-    const g = graphHeaders(fixtureGraph(t));
+    const g = graphHeaders(graph);
     // Target names and product names: an angle include's first component is usually a product's (`<Autolinked/…>`).
     expect(g.targets).toEqual([
       "App",
@@ -255,7 +265,13 @@ describe("precheckGraph", () => {
     );
     for (const c of dumps) expect(c).toMatchObject({ cwd: ios, env: devEnv(ios) });
     expect(swift.maxInFlight()).toBe(2);
-    expect(graph).toEqual(fixtureGraphShape(fixtureGraph(t)));
+    const read = await readPackageGraph(ios, scratch, fakeSwift(t).run);
+    expect([read.root, ...read.packages].map((p) => [p.name, p.path])).toEqual(
+      ["AppXtool", "ReactNative", "React-GeneratedCode", "Autolinked", "RNLib", "UnreachedLib"].map((name, n) => [name, path.join(t, Object.keys(DUMPS)[n]!)]),
+    );
+    // The package-level dependencies, as the manifest names them: the alias SwiftPM resolves `package:` against.
+    expect(read.root.dependencies[0]).toEqual({ identity: "xcframeworks", name: "ReactNative", path: path.join(t, "ios/build/xcframeworks") });
+    expect(read.packages[2]!.dependencies).toEqual([{ identity: "rn-lib", path: path.join(t, "node_modules/rn-lib") }]);
 
     const broken = fakeSwift(t, (args) =>
       args.includes(path.join(t, "node_modules/rn-lib"))
@@ -269,21 +285,27 @@ describe("precheckGraph", () => {
         "error: Invalid manifest (compiled with: …)\nPackage.swift:3:1: error: cannot find 'Pakage' in scope",
     );
   });
-});
 
-/** The fields readPackageGraph keeps of a dump-package output. */
-function fixtureGraphShape(g: { root: DumpedPackage; packages: DumpedPackage[] }) {
-  const keep = (p: DumpedPackage): DumpedPackage => ({
-    name: p.name,
-    path: p.path,
-    products: p.products.map(({ name, targets }) => ({ name, targets })),
-    targets: p.targets.map(({ name, type, path, publicHeadersPath, dependencies }) => ({
-      name,
-      type,
-      ...(path != null ? { path } : {}),
-      ...(publicHeadersPath != null ? { publicHeadersPath } : {}),
-      dependencies,
-    })),
+  it("resolves a product's package through the name the depending manifest gives it", async () => {
+    const swift = fakeSwift(t, () => undefined, ALIAS_DUMPS, "alias/show-dependencies.json");
+    const aliased = await readPackageGraph(path.join(t, "alias/a"), path.join(t, "alias-scratch"), swift.run);
+    const g = graphHeaders(aliased);
+    expect(g.headerDirs).toEqual([path.join(t, "alias/b/ios/Sources/BarLib/include")]);
+    expect(g.unresolved).toEqual([]);
   });
-  return { root: keep(g.root), packages: g.packages.map(keep) };
-}
+
+  it("lists the references it cannot place, without stopping", () => {
+    const dir = path.join(t, "unplaced");
+    const app = {
+      name: "App",
+      type: "regular",
+      dependencies: [{ product: ["Gone", "Missing", null, null] }, { byName: ["Nowhere", null] }, { product: ["NoSuch", "Present", null, null] }],
+    };
+    const g = graphHeaders({
+      root: { name: "Root", path: dir, dependencies: [{ identity: "present", path: path.join(dir, "present") }], products: [], targets: [app] },
+      packages: [{ name: "Present", path: path.join(dir, "present"), dependencies: [], products: [], targets: [] }],
+    });
+    expect(g.unresolved).toEqual(["Gone of Missing", "Nowhere", "NoSuch of Present"]);
+    expect(g.headerDirs).toEqual([]);
+  });
+});

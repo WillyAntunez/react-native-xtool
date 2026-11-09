@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import path from "node:path";
 import { devEnv } from "../tools/xtool.js";
@@ -15,6 +15,11 @@ export type SwiftRunner = (
 export interface DumpedPackage {
   name: string;
   path: string;
+  /**
+   * The packages the manifest depends on: SwiftPM's identity, the name the manifest gives it
+   * (`nameForTargetDependencyResolutionOnly`, what a `package:` reference names) and its folder when it has one.
+   */
+  dependencies: { identity: string; name?: string; path?: string }[];
   products: { name: string; targets: string[] }[];
   targets: { name: string; type: string; path?: string | null; publicHeadersPath?: string | null; dependencies: unknown[] }[];
 }
@@ -36,6 +41,8 @@ export interface PrecheckGraph {
   targets: string[];
   /** Every module the module maps declare, then the synthesized ones. */
   modules: string[];
+  /** The references the walk could not place (`<product> of <package>`, or a by-name reference), each once. */
+  unresolved: string[];
 }
 
 const MANIFEST = "ios-xtool/Package.swift";
@@ -98,14 +105,31 @@ function listedPackages(tree: unknown): ListedPackage[] {
   return [...seen.values()];
 }
 
+/**
+ * One package dependency of a dump-package output (`{ fileSystem: [..] }`, `{ sourceControl: [..] }`, `{ registry: [..] }`):
+ * its identity, the manifest's name for it, and its folder (a file-system path, or a local source-control location).
+ */
+function packageDependency(raw: unknown): DumpedPackage["dependencies"][number] | undefined {
+  const kinds = raw !== null && typeof raw === "object" ? Object.values(raw as Record<string, unknown>) : [];
+  const entry = (Array.isArray(kinds[0]) ? kinds[0][0] : undefined) as
+    | { identity?: unknown; nameForTargetDependencyResolutionOnly?: unknown; path?: unknown; location?: { local?: unknown } }
+    | undefined;
+  if (typeof entry?.identity !== "string") return undefined;
+  const name = entry.nameForTargetDependencyResolutionOnly;
+  const local = Array.isArray(entry.location?.local) ? entry.location.local[0] : undefined;
+  const dir = typeof entry.path === "string" ? entry.path : typeof local === "string" ? local : undefined;
+  return { identity: entry.identity, ...(typeof name === "string" ? { name } : {}), ...(dir !== undefined ? { path: dir } : {}) };
+}
+
 /** The fields the precheck reads of one dump-package output; undefined when it is not one. */
 function dumpedPackage(json: unknown, dir: string): DumpedPackage | undefined {
-  const raw = json as { name?: unknown; products?: unknown; targets?: unknown } | undefined;
+  const raw = json as { name?: unknown; dependencies?: unknown; products?: unknown; targets?: unknown } | undefined;
   if (typeof raw?.name !== "string" || !Array.isArray(raw.targets)) return undefined;
   const products = Array.isArray(raw.products) ? (raw.products as { name?: unknown; targets?: unknown }[]) : [];
   return {
     name: raw.name,
     path: dir,
+    dependencies: (Array.isArray(raw.dependencies) ? raw.dependencies : []).flatMap((d) => packageDependency(d) ?? []),
     products: products
       .filter((p) => typeof p?.name === "string")
       .map((p) => ({ name: p.name as string, targets: Array.isArray(p.targets) ? p.targets.filter((n): n is string => typeof n === "string") : [] })),
@@ -212,22 +236,46 @@ function dependency(raw: unknown): Dependency | undefined {
   return byName !== undefined ? { kind: "byName", name: byName } : undefined;
 }
 
+const realPath = (p: string): string => {
+  try {
+    return realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+};
+
 /**
  * The header folders, module maps and module names of the targets the root's `App` target reaches through product,
  * target and by-name dependencies, in dependency order (each target before the ones it depends on, a target's
- * dependencies in the manifest's order). A product's package is the one whose name, or whose folder's lower-cased
- * name, equals the reference.
+ * dependencies in the manifest's order). A reference to package `X` resolves as SwiftPM resolves it: against the
+ * depending manifest's own dependencies, the one whose name or identity is `X` (case ignored), found among the dumped
+ * packages by its folder (real paths), else by identity; the package named `X`, or whose folder's lower-cased name is
+ * `x`, is the last fallback. A by-name reference that is not a target of its package goes the same way. A reference
+ * still unplaced is listed in `unresolved` (SwiftPM planned the package, so it never stops the precheck).
  */
 export function graphHeaders(graph: Graph): PrecheckGraph {
   const all = [graph.root, ...graph.packages];
-  const packageOf = (ref: string): DumpedPackage | undefined =>
-    all.find((p) => p.name === ref) ?? all.find((p) => path.basename(p.path).toLowerCase() === ref.toLowerCase());
-  const out: PrecheckGraph = { headerDirs: [], moduleMaps: [], synthesized: [], targets: [], modules: [] };
+  const real = new Map(all.map((p) => [p, realPath(p.path)]));
+  const identity = (p: DumpedPackage) => path.basename(p.path).toLowerCase();
+  const packageOf = (from: DumpedPackage, ref: string): DumpedPackage | undefined => {
+    const r = ref.toLowerCase();
+    const dep = from.dependencies.find((d) => d.name?.toLowerCase() === r) ?? from.dependencies.find((d) => d.identity.toLowerCase() === r);
+    if (dep !== undefined) {
+      const dir = dep.path !== undefined ? realPath(dep.path) : undefined;
+      const found = all.find((p) => real.get(p) === dir) ?? all.find((p) => identity(p) === dep.identity.toLowerCase());
+      if (found !== undefined) return found;
+    }
+    return all.find((p) => p.name === ref) ?? all.find((p) => identity(p) === r);
+  };
+  const out: PrecheckGraph = { headerDirs: [], moduleMaps: [], synthesized: [], targets: [], modules: [], unresolved: [] };
   const seen = new Set<Target>();
 
-  const visitProduct = (pkg: DumpedPackage, productName: string) => {
-    const product = pkg.products.find((p) => p.name === productName);
-    if (product === undefined) throw new PrecheckError(`precheck — the package ${pkg.name} (${pkg.path}) has no product ${productName}`);
+  const visitProduct = (pkg: DumpedPackage | undefined, productName: string, unplaced: string) => {
+    const product = pkg?.products.find((p) => p.name === productName);
+    if (pkg === undefined || product === undefined) {
+      out.unresolved.push(unplaced);
+      return;
+    }
     for (const name of product.targets) {
       const target = pkg.targets.find((t) => t.name === name);
       if (target !== undefined) visit(pkg, target);
@@ -244,12 +292,11 @@ export function graphHeaders(graph: Graph): PrecheckGraph {
       if (local !== undefined) {
         visit(pkg, local);
       } else if (d.kind === "product") {
-        const owner = packageOf(d.package);
-        if (owner === undefined) throw new PrecheckError(`precheck — ${target.name} depends on ${d.name} of ${d.package}, a package SwiftPM did not list`);
-        visitProduct(owner, d.name);
-      } else if (d.kind === "byName") {
-        const owner = all.find((p) => p !== pkg && p.products.some((q) => q.name === d.name));
-        if (owner !== undefined) visitProduct(owner, d.name);
+        visitProduct(packageOf(pkg, d.package), d.name, `${d.name} of ${d.package}`);
+      } else {
+        const named = packageOf(pkg, d.name);
+        const owner = named?.products.some((q) => q.name === d.name) ? named : all.find((p) => p !== pkg && p.products.some((q) => q.name === d.name));
+        visitProduct(owner, d.name, d.name);
       }
     }
   };
@@ -284,6 +331,7 @@ export function graphHeaders(graph: Graph): PrecheckGraph {
   if (appTarget !== undefined) visit(graph.root, appTarget);
   out.targets = [...new Set(all.flatMap((p) => [...p.targets.map((t) => t.name), ...p.products.map((q) => q.name)]))];
   out.modules = [...new Set([...out.modules, ...out.synthesized.map((s) => s.module)])];
+  out.unresolved = [...new Set(out.unresolved)];
   return out;
 }
 
