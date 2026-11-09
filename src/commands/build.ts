@@ -37,6 +37,7 @@ import {
   type EarlyFailure,
   type LibraryCheckOptions,
 } from "../project/earlyChecks.js";
+import { appTargetCheck } from "../project/appIncludes.js";
 import { entitlementLines, readEntitlements, type AppEntitlements } from "../project/entitlements.js";
 import { mergedPodTable, type PodBinary, type PodTable } from "../project/podTable.js";
 import {
@@ -228,6 +229,8 @@ export interface BuildDeps {
   codegenClasses: (root: string, appBundle: string) => Promise<string[]>;
   /** The app's CODE_SIGN_ENTITLEMENTS file (Debug); throws an EntitlementsError when xtool could not sign with it. */
   readEntitlements: (project: ProjectInfo, iosDir: string) => AppEntitlements | undefined;
+  /** B1 pass 1: the app's own includes that resolve nowhere, and the xcconfig warnings (bare before any step, Expo after prebuild). */
+  appTargetCheck: typeof appTargetCheck;
   log: (s: string) => void;
 }
 
@@ -275,6 +278,7 @@ const realDeps: BuildDeps = {
     return emptyTargetsOf(table, [...scaffoldedPods(root, table, opts).values()].flat());
   },
   readEntitlements,
+  appTargetCheck,
   log: (s) => console.log(s),
 };
 
@@ -430,6 +434,19 @@ export async function build(
     pods: podRoots.length > 0,
   });
   const planned = (name: string): boolean => steps.includes(name);
+  // B1 pass 1, which no flag skips: an app-own include that resolves nowhere stops the build in seconds, not in
+  // xtool-build. Bare: before any step; Expo: once prebuild wrote ios/.
+  const checkAppTarget = (): void => {
+    const check = d.appTargetCheck({ root: paths.root, project, binaryPods: podRoots.length > 0 });
+    for (const line of check.warnings) d.log(line);
+    for (const error of check.errors) d.log(`✖ ${error}`);
+    if (check.errors.length > 0) {
+      throw new Error(
+        `${check.errors.length} include(s) of the app's own sources resolve nowhere (listed above): the build would stop compiling them`,
+      );
+    }
+  };
+  if (project.kind === "bare") checkAppTarget();
 
   // Before anything changes in the project: an unreachable host, a changed file or a short disk stops here.
   const table = mergedPodTable(config.pods);
@@ -463,6 +480,7 @@ export async function build(
   // cannot sign at all.
   const entitlements = d.readEntitlements(project, paths.ios);
   if (entitlements !== undefined) for (const line of entitlementLines(entitlements, project.bundleIdentifier)) d.log(line);
+  if (project.kind === "expo") checkAppTarget();
   // The app config icon this prebuild turned into the icon set; without a prebuild, the last one's record stays.
   // With no record (the user ran expo prebuild, or the state predates it), the current icon is recorded silently,
   // so a later change warns.

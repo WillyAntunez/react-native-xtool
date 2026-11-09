@@ -179,6 +179,7 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
     },
     codegenClasses: async () => [],
     emptyTargets: over.emptyTargets ?? (() => []),
+    appTargetCheck: () => ({ errors: [], warnings: [], pending: 0, checked: 0 }),
     log: (s) => logs.push(s),
   };
   return { root, calls, logs, deps, writeIosXtool };
@@ -1178,6 +1179,53 @@ describe("build", () => {
     );
     expect(t.calls).toEqual([]);
   });
+  it("stops a bare build on an app-own include before any step", async () => {
+    const error = 'ios/main.m:9 imports "AppDelegate.h", which is not in ios or the app target\'s headers';
+    const xcconfig = "⚠ ios/Config/App.xcconfig sets HEADER_SEARCH_PATHS for the app target; rn-xtool does not read xcconfig files";
+    for (const binaryPods of [false, true]) {
+      const t = setup({ hasIos: true, project: { kind: "bare" } });
+      const seen: unknown[] = [];
+      const pod = { library: "lib", libraryVersion: "1.0.0", dependency: "Pod", requirements: [] };
+      await expect(
+        build(t.root, { clean: true }, {
+          ...t.deps,
+          binaryPodCandidates: () => (binaryPods ? [pod] : []),
+          appTargetCheck: (input) => {
+            seen.push(input);
+            return { errors: [error], warnings: [xcconfig], pending: 4, checked: 0 };
+          },
+        }),
+      ).rejects.toThrow(
+        "1 include(s) of the app's own sources resolve nowhere (listed above): the build would stop compiling them",
+      );
+      expect(seen).toEqual([{ root: t.root, project: expect.objectContaining({ kind: "bare" }), binaryPods }]);
+      expect(t.calls).toEqual([]);
+      expect(t.logs.some((l) => l.startsWith("▸ "))).toBe(false);
+      expect(t.logs.slice(-2)).toEqual([xcconfig, `✖ ${error}`]);
+    }
+  });
+
+  it("checks an Expo app's bridging header after prebuild", async () => {
+    const t = setup();
+    const seen: string[][] = [];
+    await build(t.root, {}, {
+      ...t.deps,
+      appTargetCheck: () => {
+        seen.push([...t.calls]);
+        return { errors: [], warnings: ["⚠ w"], pending: 1, checked: 0 };
+      },
+    });
+    expect(seen).toEqual([["prebuild"]]);
+    expect(t.logs.indexOf("⚠ w")).toBeGreaterThan(t.logs.indexOf("✔ prebuild (0.0s)"));
+    expect(t.logs.indexOf("⚠ w")).toBeLessThan(t.logs.indexOf("▸ patches"));
+    const u = setup();
+    await expect(
+      build(u.root, {}, { ...u.deps, appTargetCheck: () => ({ errors: ["e1", "e2"], warnings: [], pending: 0, checked: 0 }) }),
+    ).rejects.toThrow("2 include(s) of the app's own sources resolve nowhere (listed above)");
+    expect(u.calls).toEqual(["prebuild"]);
+    expect(u.logs.slice(-2)).toEqual(["✖ e1", "✖ e2"]);
+  });
+
   it("cleans ios/build and ios-xtool instead of prebuilding a bare project", async () => {
     const t = setup({ hasIos: true, project: { kind: "bare" } });
     await build(t.root, { clean: true }, t.deps);

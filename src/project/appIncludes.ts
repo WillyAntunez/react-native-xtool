@@ -6,8 +6,19 @@
 import { existsSync, readdirSync, readFileSync, type Dirent } from "node:fs";
 import path from "node:path";
 import { bareCopyLayout } from "../generate/bareSources.js";
+import { expoBridgingHeaderPath } from "../generate/iosXtool.js";
+import { projectPaths } from "../paths.js";
 import { definesOf, scanIncludes } from "./includeScan.js";
-import type { BareTargetContent } from "./pbxproj.js";
+import {
+  AmbiguousProjectError,
+  appXcconfigWarnings,
+  openPbxproj,
+  readTargetContent,
+  resolveSetting,
+  type BareTargetContent,
+  type Pbxproj,
+} from "./pbxproj.js";
+import type { ProjectInfo, ProjectKind } from "./types.js";
 
 export interface IncludeScope {
   /** `path`: where the file sits in the copy; `source`: where its text is read; `display`: how messages name it. */
@@ -224,4 +235,141 @@ export function appIncludesPass1(i: Pass1Input): Pass1Result {
     else out.missing.push(missingLine(r));
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Pass 1 in `doctor --project` and at the start of `build`.
+
+export interface AppTargetCheck {
+  /** Pass 1's `missing` lines, without the `✖ ` mark. */
+  errors: string[];
+  /** `appXcconfigWarnings`' lines, with their `⚠ ` mark. */
+  warnings: string[];
+  pending: number;
+  checked: number;
+}
+
+type AppTargetProject = Pick<ProjectInfo, "kind" | "bare" | "iosTargetDir">;
+
+/** Pass 1 over the app target of `project`, then the xcconfig warnings of the project `pbx` opens (none: undefined). */
+function checkAppTarget(
+  root: string,
+  project: AppTargetProject,
+  binaryPods: boolean,
+  pbx: () => Pbxproj | undefined,
+): AppTargetCheck {
+  const iosDir = path.join(root, "ios");
+  const sources = projectPaths(root).sources;
+  let input: Pass1Input | undefined;
+  if (project.kind === "bare" && project.bare !== undefined) {
+    const bare = project.bare;
+    input = {
+      root,
+      files: bareScope(bare, iosDir, project.iosTargetDir, sources, root),
+      forwards: bareCopyLayout(bare, iosDir, project.iosTargetDir).forwards,
+      sources,
+      headerSearchPaths: bare.headerSearchPaths,
+      defines: bare.defines,
+      appHeaders: [...bare.headers, ...(bare.bridgingHeader ? [bare.bridgingHeader] : [])].map((h) => path.basename(h.relPath)),
+      binaryPods,
+    };
+  } else if (project.kind === "expo") {
+    // generate copies the bridging header alone, to Sources/App/<base name>; nothing else of ios/ is compiled.
+    const header = expoBridgingHeaderPath(iosDir);
+    if (header !== undefined) {
+      const base = path.basename(header);
+      input = {
+        root,
+        files: [{ path: path.join(sources, base), source: header, display: fromRoot(root, header) }],
+        forwards: new Map(),
+        sources,
+        headerSearchPaths: [],
+        defines: [],
+        appHeaders: [base],
+        binaryPods,
+      };
+    }
+  }
+  const pass = input === undefined ? { missing: [], pending: 0, checked: 0 } : appIncludesPass1(input);
+  const opened = pbx();
+  return {
+    errors: pass.missing,
+    warnings: opened === undefined ? [] : appXcconfigWarnings(opened, root),
+    pending: pass.pending,
+    checked: pass.checked,
+  };
+}
+
+/**
+ * The Expo app's Xcode project, once expo prebuild wrote it; undefined without one, and when ios/ holds several
+ * (generate warns about that).
+ */
+function expoPbxproj(iosDir: string): Pbxproj | undefined {
+  try {
+    if (!readdirSync(iosDir).some((n) => n.endsWith(".xcodeproj"))) return undefined;
+  } catch {
+    return undefined;
+  }
+  try {
+    return openPbxproj(iosDir);
+  } catch (e) {
+    if (e instanceof AmbiguousProjectError) return undefined;
+    throw e;
+  }
+}
+
+/**
+ * Pass 1 of B1 over the app target as `generate` will copy it, with `appXcconfigWarnings`: on bare, the target's
+ * C-family sources, headers and bridging header; on Expo, the prebuild's bridging header alone (no forwards, no search
+ * paths), all empty before expo prebuild. File-system reads only. `binaryPods`: `binaryPodCandidates` finds any.
+ */
+export function appTargetCheck(input: { root: string; project: AppTargetProject; binaryPods: boolean }): AppTargetCheck {
+  const iosDir = path.join(input.root, "ios");
+  const pbx = () => (input.project.kind === "bare" ? openPbxproj(iosDir) : expoPbxproj(iosDir));
+  return checkAppTarget(input.root, input.project, input.binaryPods, pbx);
+}
+
+/**
+ * `doctor --project`'s app-target lines, in order: `✖ app-includes — <error>` per error, `⚠ app-target — <warning>`
+ * per warning, `ℹ app-includes — …: checked at build` with pending includes, and `✔ app-includes — …` without errors
+ * when an include was checked. A bare project whose pbxproj, app target or INFOPLIST_FILE cannot be read, as
+ * `readProject` reads them, gives no line: the project line reports it. A throw of the check itself (a file the copy
+ * refuses, an Expo bridging header that is missing) is an error line: the build stops on it too.
+ */
+export function appTargetLines(root: string, kind: ProjectKind | undefined, opts: { binaryPods: boolean }): string[] {
+  const iosDir = path.join(root, "ios");
+  let run: () => AppTargetCheck;
+  if (kind === "bare") {
+    let pbx: Pbxproj;
+    let project: AppTargetProject;
+    try {
+      pbx = openPbxproj(iosDir);
+      const infoPlist = resolveSetting(pbx, "INFOPLIST_FILE");
+      if (!infoPlist) return [];
+      project = { kind, bare: readTargetContent(pbx, iosDir), iosTargetDir: path.dirname(path.resolve(iosDir, infoPlist)) };
+    } catch {
+      return [];
+    }
+    run = () => checkAppTarget(root, project, opts.binaryPods, () => pbx);
+  } else if (kind === "expo") {
+    // The Expo check reads only the bridging header: the target folder plays no part.
+    run = () => appTargetCheck({ root, project: { kind, iosTargetDir: iosDir }, binaryPods: opts.binaryPods });
+  } else {
+    return [];
+  }
+  let check: AppTargetCheck;
+  try {
+    check = run();
+  } catch (e) {
+    return [`✖ app-includes — ${e instanceof Error ? e.message : String(e)}`];
+  }
+  const n = check.pending;
+  return [
+    ...check.errors.map((e) => `✖ app-includes — ${e}`),
+    ...check.warnings.map((w) => `⚠ app-target — ${w.replace(/^⚠ /, "")}`),
+    ...(n > 0 ? [`ℹ app-includes — ${n} includes into React Native's or the libraries' headers: checked at build`] : []),
+    ...(check.errors.length === 0 && check.checked > 0
+      ? [`✔ app-includes — ${check.checked} includes of the app's own sources resolve`]
+      : []),
+  ];
 }

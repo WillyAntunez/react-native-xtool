@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { copyFile, cp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import * as plist from "plist";
@@ -159,14 +159,13 @@ function hasDeclarations(text: string): boolean {
 }
 
 /**
- * The Expo prebuild's bridging header (`SWIFT_OBJC_BRIDGING_HEADER` of the app target, Debug, relative to ios/),
- * copied into Sources/App for Swift when it holds more than comments: a config plugin adds imports to it
- * (react-native-app-auth's `RNAppAuthAuthorizationFlowManager.h`). The prebuild's default holds only a comment and is
- * not passed, so such an app's manifest stays as it was. Undefined without an Xcode project or the setting, and with a
- * ⚠ line when ios/ holds several Xcode projects or application targets; a setting naming a missing file, or one that
- * cannot be resolved, throws naming the setting.
+ * The Expo prebuild's bridging header (`SWIFT_OBJC_BRIDGING_HEADER` of the app target, Debug, relative to ios/), when it
+ * holds more than comments: a config plugin adds imports to it (react-native-app-auth's
+ * `RNAppAuthAuthorizationFlowManager.h`). The prebuild's default holds only a comment. Undefined without an Xcode
+ * project, the setting or declarations, and when ios/ holds several Xcode projects or application targets (with a ⚠
+ * line through `log`); a setting naming a missing file, or one that cannot be resolved, throws naming the setting.
  */
-async function expoBridgingHeader(iosDir: string, sourcesDir: string, log: (s: string) => void): Promise<string | undefined> {
+export function expoBridgingHeaderPath(iosDir: string, log?: (s: string) => void): string | undefined {
   let projects: string[];
   try {
     projects = readdirSync(iosDir).filter((n) => n.endsWith(".xcodeproj")).sort();
@@ -181,7 +180,7 @@ async function expoBridgingHeader(iosDir: string, sourcesDir: string, log: (s: s
     p = openPbxproj(iosDir);
   } catch (e) {
     if (e instanceof AmbiguousProjectError) {
-      log(`⚠ ${e.what}; rn-xtool reads no bridging header or entitlements from it`);
+      log?.(`⚠ ${e.what}; rn-xtool reads no bridging header or entitlements from it`);
       return undefined;
     }
     throw unreadable(`ios/${projects[0]}`, e);
@@ -193,16 +192,26 @@ async function expoBridgingHeader(iosDir: string, sourcesDir: string, log: (s: s
     throw unreadable(`ios/${p.projectName}.xcodeproj`, e);
   }
   if (!rel) return undefined;
-  const text = await readOptional(resolve(iosDir, rel));
-  if (text === undefined) {
+  const file = resolve(iosDir, rel);
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
     throw new Error(
       `SWIFT_OBJC_BRIDGING_HEADER in ios/${p.projectName}.xcodeproj names ${rel}, which does not exist. ` +
         "Run rn-xtool build --clean to run expo prebuild again.",
     );
   }
-  if (!hasDeclarations(text)) return undefined;
-  const copy = join(sourcesDir, basename(rel));
-  await writeFile(copy, text);
+  return hasDeclarations(text) ? file : undefined;
+}
+
+/** `expoBridgingHeaderPath`'s header, copied into Sources/App for Swift; the prebuild's default is not passed. */
+async function expoBridgingHeader(iosDir: string, sourcesDir: string, log: (s: string) => void): Promise<string | undefined> {
+  const header = expoBridgingHeaderPath(iosDir, log);
+  if (header === undefined) return undefined;
+  const copy = join(sourcesDir, basename(header));
+  await writeFile(copy, await readFile(header, "utf8"));
   return copy;
 }
 

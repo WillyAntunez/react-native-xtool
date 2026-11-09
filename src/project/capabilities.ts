@@ -14,13 +14,14 @@ import { PodsNetworkError, type CdnOptions } from "../pods/cdn.js";
 import { cachedArchive, headSize } from "../pods/fetch.js";
 import { formatSize } from "../pods/format.js";
 import { PODS_LOCK, lockedVersions, readPodsLock, unusedLockEntries, type PodsLock } from "../pods/lock.js";
-import { SourcePodError, resolveBinaryPods } from "../pods/resolve.js";
+import { SourcePodError, resolveBinaryPods, type PodRoot } from "../pods/resolve.js";
 import { parseRequirements, satisfiesAll } from "../pods/versions.js";
 import { buildsEveryResourceBundle } from "../pipeline/scaffoldResources.js";
 import { rawSlotComplete, rnArtifactsCacheRoot, type Flavor } from "../pipeline/rnArtifactsStep.js";
 import { orphanPatchLine, orphanPatches, scaffoldPinWarnings } from "../pipeline/patches.js";
 import { resolveRnDir, vendoredScriptsRoot } from "../pipeline/rnSpm.js";
 import { bareLines, compareVersions, expoPluginFor, releaseLine, rnLineStatus } from "../versions.js";
+import { appTargetLines } from "./appIncludes.js";
 import { DetectError, detectProjectKind } from "./detect.js";
 import {
   allowKnownLimits,
@@ -275,6 +276,11 @@ export interface Capabilities {
    * found, the lock entries no library needs, and unzip; [] without binary pods. detectCapabilities always sets it.
    */
   binaryPods?: string[];
+  /**
+   * The app target's lines (`appTargetLines`: `✖`/`ℹ`/`✔ app-includes — …`, `⚠ app-target — …`); [] when the project
+   * cannot be read. detectCapabilities always sets it.
+   */
+  appTarget?: string[];
 }
 
 /** The SwiftPM settings reader the build's plugin discovery uses (vendor/rn-spm/spm/swiftpm-config.js). */
@@ -361,8 +367,9 @@ export async function detectCapabilities(projectRoot: string, opts: ProbeOptions
   const podTable = mergedPodTable(config.pods);
   const allowed = config.knownLimits?.allow ?? [];
   const limits = allowKnownLimits(earlyFailures(root, libraryChecks), allowed);
+  const podRoots = binaryPodCandidates(root, libraryChecks);
   // Started now, so its probe runs alongside the rn-artifacts probe, within the same budget.
-  const binaryPods = binaryPodsLines(root, libraryChecks, podTable, opts, { allowed, limits });
+  const binaryPods = binaryPodsLines(root, podRoots, podTable, opts, { allowed, limits });
   const caps: Capabilities = {
     podspecs: podspecFeatures(root),
     excluded: excludeLines(root, config.exclude ?? [], { kind, file: configFileOf(config, "exclude") }),
@@ -370,6 +377,7 @@ export async function detectCapabilities(projectRoot: string, opts: ProbeOptions
     podPins: podPinWarnings(root, podTable, libraryChecks),
     orphanPatches: orphanPatches(root).map(orphanPatchLine),
     scaffoldPins: scaffoldPinWarnings(root, podTable, config.exclude, kind),
+    appTarget: appTargetLines(root, kind, { binaryPods: podRoots.length > 0 }),
   };
   if (kind !== undefined) caps.kind = kind;
   const entitlements = entitlementsCapability(root, kind);
@@ -452,12 +460,11 @@ function neededLine(pods: readonly NeededPod[], libs: readonly string[]): string
  */
 async function binaryPodsLines(
   root: string,
-  checks: LibraryCheckOptions,
+  roots: readonly PodRoot[],
   table: PodTable,
   opts: ProbeOptions,
   known: { allowed: readonly string[]; limits: readonly EarlyFailure[] },
 ): Promise<string[]> {
-  const roots = binaryPodCandidates(root, checks);
   let lock: PodsLock;
   try {
     lock = readPodsLock(root);
