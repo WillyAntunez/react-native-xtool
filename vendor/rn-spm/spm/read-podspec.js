@@ -69,8 +69,10 @@ const RUBY_PROBE_TIMEOUT_MS = 10000;
 // (react-native-skia's copies hundreds of MB), and a slow disk needs the
 // time. A podspec that hangs costs this once.
 const PODSPEC_TIMEOUT_MS = 120000;
-// What a read that stopped on a gap of the shim, or a podspec that did not
-// finish, says to do next. A podspec's own `raise` keeps the shim's message.
+// What a read that stopped on a gap of the shim, a podspec that did not
+// finish, a Ruby that ended without a model (`exit`) or a name `ENV.fetch`
+// did not find says to do next. A podspec's own `raise` keeps the shim's
+// message.
 const PODSPEC_READ_REMEDY =
   'Set RN_XTOOL_PODSPEC_READER=reduced to read it with the reduced reader ' +
   'for one run, and report it with rn-xtool doctor --report.';
@@ -117,6 +119,26 @@ function podspecChildEnv(
     if (value != null) child[name] = value;
   }
   return {...child, ...RN_POD_ENV};
+}
+
+// `message`, then the escape.
+function withRemedy(message /*: string */) /*: string */ {
+  return `${message.replace(/\.$/, '')}. ${PODSPEC_READ_REMEDY}`;
+}
+
+// Whether the shim's `raised` message for `podspec` is Ruby's KeyError of a
+// name `ENV.fetch` did not find: `<where>: key not found: "<name>"`, where
+// `<where>` is `<podspec>`, `<podspec>:<line>` or `<podspec> (<file>:<line>)`.
+function isEnvKeyError(
+  podspec /*: string */,
+  message /*: string */,
+) /*: boolean */ {
+  return (
+    message.startsWith(podspec) &&
+    /^(?::\d+| \([^)]*:\d+\))?: key not found: "/.test(
+      message.slice(podspec.length),
+    )
+  );
 }
 
 function nonEmptyLines(text /*: ?string */) /*: Array<string> */ {
@@ -297,12 +319,14 @@ function runPodspecShim(
     const error = result.error;
     if (error != null && result.status == null && result.signal == null) {
       throw new PodspecReadError(
-        `${podspec}: ruby could not run (${error.message})`,
+        withRemedy(`${podspec}: ruby could not run (${error.message})`),
         'exit',
       );
     }
     throw new PodspecReadError(
-      `${podspec}: ruby exited with ${howRubyEnded(result)}${lastStderr}`,
+      withRemedy(
+        `${podspec}: ruby exited with ${howRubyEnded(result)}${lastStderr}`,
+      ),
       'exit',
     );
   }
@@ -311,7 +335,7 @@ function runPodspecShim(
     model = JSON.parse(written);
   } catch (e) {
     throw new PodspecReadError(
-      `${podspec}: the podspec reader wrote no JSON (${e.message})`,
+      withRemedy(`${podspec}: the podspec reader wrote no JSON (${e.message})`),
       'exit',
     );
   }
@@ -319,15 +343,18 @@ function runPodspecShim(
     const kind = String(model.error.kind);
     const message = String(model.error.message);
     throw new PodspecReadError(
-      SHIM_GAP_KINDS.includes(kind)
-        ? `${message}. ${PODSPEC_READ_REMEDY}`
+      SHIM_GAP_KINDS.includes(kind) ||
+      (kind === 'raised' && isEnvKeyError(podspec, message))
+        ? withRemedy(message)
         : message,
       kind,
     );
   }
   if (result.status !== 0) {
     throw new PodspecReadError(
-      `${podspec}: ruby exited with ${howRubyEnded(result)}${lastStderr}`,
+      withRemedy(
+        `${podspec}: ruby exited with ${howRubyEnded(result)}${lastStderr}`,
+      ),
       'exit',
     );
   }
@@ -2878,14 +2905,18 @@ function readPodspecWith(
   } catch (e) {
     // The reader's own plumbing (a temp folder, a file it cannot read) stops
     // the run like a podspec Ruby cannot read: the autolinking callers
-    // rethrow only a PodspecReadError.
-    const error = isPodspecReadError(e)
-      ? e
-      : new PodspecReadError(
-          `${path.resolve(podspecPath)}: rn-xtool could not run the podspec ` +
-            `reader: ${e instanceof Error ? e.message : String(e)}`,
-          'exit',
-        );
+    // rethrow only a PodspecReadError. The escape is offered when it changes
+    // the reader.
+    let error = e;
+    if (!isPodspecReadError(e)) {
+      const message =
+        `${path.resolve(podspecPath)}: rn-xtool could not run the podspec ` +
+        `reader: ${e instanceof Error ? e.message : String(e)}`;
+      error = new PodspecReadError(
+        choice.reader === 'ruby' ? withRemedy(message) : message,
+        'exit',
+      );
+    }
     recordPodspecRead(podspecPath, choice, used, error);
     throw error;
   }

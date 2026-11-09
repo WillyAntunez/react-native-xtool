@@ -927,7 +927,9 @@ rn-xtool doctor --report.` A podspec's own `raise`, `abort`, `exit` or syntax er
 and a Ruby that ends without a model says `ruby exited with <code or signal>` with its last stderr line. A failure
 of the reader's own (no temp folder for the shim's out file, a podspec it cannot read) stops the read the same way,
 as `<podspec>: rn-xtool could not run the podspec reader: <error>` (kind `exit`), so the autolinking callers stop on it
-too. Without a
+too. An `exit` stop ends with the same sentence when the escape changes the reader (a Ruby read), and so does a
+`raised` stop that is Ruby's `key not found: "<NAME>"` from `ENV.fetch` (a name the fixed environment does not
+give). Without a
 usable Ruby (none, older than 2.7, no `json`, the shim missing), or with `RN_XTOOL_PODSPEC_READER=reduced`, fix 28's
 evaluator reads the podspec as before, and `podspecReader()` says why; another value of the variable is named in a
 warning and ignored. `name`, `module_name` and `version` stay the literal readings under both readers.

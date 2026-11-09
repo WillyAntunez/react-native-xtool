@@ -1040,11 +1040,17 @@ with the reduced reader; sudo apt install ruby`).
     not have, often a typo);
   - `<podspec>: cannot load such file -- <name>; rn-xtool's podspec reader stubs only colored2` (a `require` of a gem);
   - `<podspec>: the podspec does not evaluate to a Pod::Spec`;
-  - `<podspec> did not finish in 120 s.`
+  - `<podspec> did not finish in 120 s.`;
+  - `<podspec>: ruby exited with <code or signal>: <its last error line>` or `<podspec>: ruby could not run (<error>)`
+    (Ruby ended without a result: out of memory, killed, or the interpreter the probe found is gone);
+  - `<podspec>: rn-xtool could not run the podspec reader: <error>` (rn-xtool itself could not run the read, for
+    example no writable temp folder: check `TMPDIR` and the disk space);
+  - `<podspec>:<line>: key not found: "<NAME>"` (the podspec reads an environment variable with `ENV.fetch`, and
+    rn-xtool gives podspecs only `PATH`, `HOME`, `LANG`, `RCT_NEW_ARCH_ENABLED` and `RCT_HERMES_V1_ENABLED`).
 
   When the failing line is in another of the library's files, `<podspec>:<line>` reads `<podspec> (<file>:<line>)`;
-  when Ruby keeps no line, it is `<podspec>` alone. A podspec that raises an error of its own (`raise`, `abort`) stops
-  with its message after `<podspec>:<line>: ` (or `<podspec>: `), without the last sentence.
+  when Ruby keeps no line, it is `<podspec>` alone. A podspec that raises another error of its own (`raise`, `abort`)
+  stops with its message after `<podspec>:<line>: ` (or `<podspec>: `), without the last sentence.
   To build for one run, set the escape on the command: `RN_XTOOL_PODSPEC_READER=reduced rn-xtool build`. `rn-spm` then
   prints the `⚠ RN_XTOOL_PODSPEC_READER=reduced is set` line, and `doctor --report` records the reduced reader.
 - **To report a podspec the reader cannot read:** run `rn-xtool doctor --report` in the project folder after the

@@ -191,8 +191,23 @@ describe("the reader's own failures", () => {
     expect(e.kind).toBe("exit");
     expect(e.message.startsWith(`${podspec}: rn-xtool could not run the podspec reader: ENOENT`)).toBe(true);
     expect(e.message).toContain(gone);
+    expect(e.message.endsWith(`. ${REMEDY}`)).toBe(true);
     const line = JSON.parse(readFileSync(reads, "utf8").trim().split("\n").pop()!);
     expect(line).toMatchObject({ podspec, reader: "ruby", ok: false, error: e.message });
+  });
+});
+
+describe("the reduced reader's own failures", () => {
+  it("stop the read without the escape's advice", () => {
+    vi.stubEnv("RN_XTOOL_PODSPEC_READER", "reduced");
+    vi.stubEnv("RN_SPM_PODSPEC_READS", undefined);
+    const podspec = library(spec());
+    chmodSync(podspec, 0o000);
+    const e = thrown(() => readPodspec(podspec));
+    chmodSync(podspec, 0o644);
+    expect(isPodspecReadError(e)).toBe(true);
+    expect(e.kind).toBe("exit");
+    expect(e.message).toBe(`${podspec}: rn-xtool could not run the podspec reader: EACCES: permission denied, open '${podspec}'`);
   });
 });
 
@@ -216,7 +231,7 @@ describe("running the podspec shim without Ruby", () => {
     const e = thrown(() => runPodspecShim(podspec));
     expect(isPodspecReadError(e)).toBe(true);
     expect(e.kind).toBe("exit");
-    expect(e.message).toBe(`${podspec}: ruby could not run (spawnSync ruby ENOENT)`);
+    expect(e.message).toBe(`${podspec}: ruby could not run (spawnSync ruby ENOENT). ${REMEDY}`);
   });
 });
 
@@ -275,11 +290,22 @@ describe.skipIf(needsRuby !== "")(`running the podspec shim${needsRuby}`, () => 
     expect(r.message).toBe(shimMessage(raised));
   });
 
+  it("ends a missing ENV.fetch name with how to go on", () => {
+    const fetch = library(spec(' s.summary = ENV.fetch("RN_XTOOL_TEST_UNSET")'));
+    const e = thrown(() => runPodspecShim(fetch));
+    expect(e.kind).toBe("raised");
+    expect(shimMessage(fetch)).toBe(`${fetch}:3: key not found: "RN_XTOOL_TEST_UNSET"`);
+    expect(e.message).toBe(`${shimMessage(fetch)}. ${REMEDY}`);
+    // The podspec's own message that merely mentions it keeps Ruby's message.
+    const own = library(spec(' raise "the build says key not found: \\"X\\""'));
+    expect(thrown(() => runPodspecShim(own)).message).toBe(shimMessage(own));
+  });
+
   it("says how ruby ended when the shim wrote nothing", () => {
     const podspec = library(spec(" exit! 3"));
     const e = thrown(() => runPodspecShim(podspec));
     expect(isPodspecReadError(e)).toBe(true);
-    expect(e.message).toBe(`${podspec}: ruby exited with 3`);
+    expect(e.message).toBe(`${podspec}: ruby exited with 3. ${REMEDY}`);
   });
 
   it("removes its temp out folder", () => {

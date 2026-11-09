@@ -190,7 +190,7 @@
  
 --- a/spm/read-podspec.js
 +++ b/spm/read-podspec.js
-@@ -2925,9 +2925,15 @@
+@@ -2956,9 +2956,15 @@
  
  // The installed React Native's version as the macros libraries derive from it.
  function readRnVersionMacros() /*: {[string]: number} */ {
