@@ -1,12 +1,19 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { bareCopyLayout } from "../src/generate/bareSources.js";
-import { resolveIncludes, type IncludeScope } from "../src/project/appIncludes.js";
+import {
+  appIncludesPass1,
+  bareScope,
+  resolveIncludes,
+  type IncludeScope,
+  type Pass1Result,
+} from "../src/project/appIncludes.js";
 import { definesOf } from "../src/project/includeScan.js";
-import type { BareTargetContent, TargetFile } from "../src/project/index.js";
+import { readProject, type BareTargetContent, type TargetFile } from "../src/project/index.js";
+import { objcApp } from "./support/objcApp.js";
 
 const tmps: string[] = [];
 afterEach(async () => {
@@ -152,6 +159,117 @@ describe("resolveIncludes", () => {
       [z, true, z, []],
       [gone, true, undefined, []],
       ["Taken.h", true, undefined, [sources, join(sources, "include")]],
+    ]);
+  });
+});
+
+/** Pass 1 over the project at `root` as `doctor --project` and `build` read it; the copy goes to ios-xtool/Sources/App. */
+async function pass1(root: string, o: { binaryPods?: boolean } = {}): Promise<Pass1Result> {
+  const project = await readProject(root);
+  const ios = join(root, "ios");
+  const sources = join(root, "ios-xtool", "Sources", "App");
+  const bare = project.bare!;
+  return appIncludesPass1({
+    root,
+    files: bareScope(bare, ios, project.iosTargetDir, sources, root),
+    forwards: bareCopyLayout(bare, ios, project.iosTargetDir).forwards,
+    sources,
+    headerSearchPaths: bare.headerSearchPaths,
+    defines: bare.defines,
+    binaryPods: o.binaryPods ?? false,
+  });
+}
+
+/** Rewrites a file of the project at `root` (`rel` from the root). */
+function edit(root: string, rel: string, change: (text: string) => string): void {
+  const file = join(root, rel);
+  const before = readFileSync(file, "utf8");
+  const after = change(before);
+  expect(after).not.toBe(before);
+  writeFileSync(file, after);
+}
+
+/** Adds `lines` to the template's AppDelegate.mm after its React import (line 9), so they start at line 10. */
+const addToAppDelegate = (root: string, lines: string) =>
+  edit(root, "ios/ObjcApp/AppDelegate.mm", (t) => t.replace("#import <React/RCTBundleURLProvider.h>\n", `$&${lines}`));
+
+describe("appIncludesPass1", () => {
+  it("passes the Objective-C template in both layouts", async () => {
+    // Pending: the certain angle includes, per including file — AppDelegate.mm <React/RCTBundleURLProvider.h>, main.m
+    // <UIKit/UIKit.h>, AppDelegate.h <RCTAppDelegate.h> and <UIKit/UIKit.h>. Checked: "AppDelegate.h" from main.m and
+    // from AppDelegate.mm.
+    for (const layout of ["template", "root-group"] as const) {
+      expect(await pass1(objcApp(layout))).toEqual({ missing: [], pending: 4, checked: 2 });
+    }
+  });
+
+  it("stops on an app-own quote include that resolves nowhere (F2)", async () => {
+    const root = objcApp("root-group");
+    rmSync(join(root, "ios", "AppDelegate.h"));
+    // A copy left by an earlier build changes nothing: the build writes Sources/App afresh.
+    mkdirSync(join(root, "ios-xtool", "Sources", "App"), { recursive: true });
+    writeFileSync(join(root, "ios-xtool", "Sources", "App", "AppDelegate.h"), "// stale\n");
+    expect(await pass1(root)).toEqual({
+      missing: [
+        `ios/AppDelegate.mm:7 imports "AppDelegate.h", which is not in ios or the app target's headers`,
+        `ios/main.m:9 imports "AppDelegate.h", which is not in ios or the app target's headers`,
+      ],
+      pending: 2,
+      checked: 0,
+    });
+  });
+
+  it("leaves a quote include a dependency provides to the build", async () => {
+    const root = objcApp("template");
+    addToAppDelegate(root, '#import "RNCAsyncStorage.h"\n');
+    edit(root, "package.json", (t) => t.replace('"react": "19.3.0",', '"react": "19.3.0",\n    "x": "1.0.0",'));
+    const x = join(root, "node_modules", "x");
+    mkdirSync(join(x, "node_modules", "y"), { recursive: true });
+    mkdirSync(join(x, ".build"), { recursive: true });
+    writeFileSync(join(x, "package.json"), JSON.stringify({ name: "x", version: "1.0.0" }));
+    // A copy in a nested node_modules or a dot folder is not the dependency's header.
+    writeFileSync(join(x, "node_modules", "y", "RNCAsyncStorage.h"), "// nested\n");
+    writeFileSync(join(x, ".build", "RNCAsyncStorage.h"), "// build output\n");
+    const line = `ios/ObjcApp/AppDelegate.mm:10 imports "RNCAsyncStorage.h", which is not in ios/ObjcApp or the app target's headers`;
+    expect(await pass1(root)).toEqual({ missing: [line], pending: 4, checked: 2 });
+    mkdirSync(join(x, "ios"));
+    writeFileSync(join(x, "ios", "RNCAsyncStorage.h"), "// the library's header\n");
+    expect(await pass1(root)).toEqual({ missing: [], pending: 5, checked: 2 });
+  });
+
+  it("leaves quote misses to the build when the project has binary pods", async () => {
+    const root = objcApp("template");
+    addToAppDelegate(root, '#import "RNCAsyncStorage.h"\n');
+    expect(await pass1(root, { binaryPods: true })).toEqual({ missing: [], pending: 5, checked: 2 });
+  });
+
+  it("never errors on an uncertain include", async () => {
+    const root = objcApp("template");
+    addToAppDelegate(root, '#ifdef FB_SONARKIT_ENABLED\n#import "FlipperKit.h"\n#endif\n');
+    expect(await pass1(root)).toEqual({ missing: [], pending: 4, checked: 2 });
+  });
+
+  it("names a header that differs only in case", async () => {
+    const root = objcApp("template");
+    edit(root, "ios/ObjcApp/AppDelegate.mm", (t) => t.replace('#import "AppDelegate.h"', '#import "appdelegate.h"'));
+    expect((await pass1(root)).missing).toEqual([
+      `ios/ObjcApp/AppDelegate.mm:7 imports "appdelegate.h", which is not in ios/ObjcApp or the app target's headers; ` +
+        "ios/ObjcApp/AppDelegate.h differs only in case (file names are case-sensitive on Linux)",
+    ]);
+  });
+
+  it("lists a search path with spaces whole", async () => {
+    const root = objcApp("template");
+    edit(root, "ios/ObjcApp.xcodeproj/project.pbxproj", (t) =>
+      t.replace(
+        "\t\t\t\tINFOPLIST_FILE = ObjcApp/Info.plist;\n",
+        '\t\t\t\tHEADER_SEARCH_PATHS = (\n\t\t\t\t\t"$(inherited)",\n\t\t\t\t\t"$(SRCROOT)/Vendor Kit",\n\t\t\t\t);\n$&',
+      ),
+    );
+    mkdirSync(join(root, "ios", "Vendor Kit"));
+    addToAppDelegate(root, '#import "VendorKit.h"\n');
+    expect((await pass1(root)).missing).toEqual([
+      `ios/ObjcApp/AppDelegate.mm:10 imports "VendorKit.h", which is not in ios/ObjcApp, the app target's headers or ios/Vendor Kit`,
     ]);
   });
 });
