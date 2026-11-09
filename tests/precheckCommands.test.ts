@@ -160,6 +160,24 @@ describe("the precheck's command lines", () => {
     expect(args.slice(-2)).toEqual(["/p/a/AppDelegate.swift", "/p/a/View.swift"]);
   });
 
+  it("defines what Swift Build defines for a package target in Debug", () => {
+    const xcc = (args: string[]) => after(args, "-Xcc").filter((a) => a.startsWith("-D"));
+    const importer = ["-DSWIFT_PACKAGE", "-DDEBUG=1", "-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG"];
+    // Task 13's second false stop: React Native's headers hide RCTDevMenuConfiguration's initializer without DEBUG=1.
+    const swiftOnly = swiftcArgs(inputs({ mixed: false, bridgingHeader: undefined }), ["/p/a/A.swift"]);
+    expect(xcc(swiftOnly)).toEqual(importer);
+    for (const d of ["-DSWIFT_PACKAGE", "-DDEBUG", "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE", "-DXcode"]) expect(swiftOnly).toContain(d);
+    // A mixed target's cSettings give Swift Build the App's own macros; its bridging header gives them again.
+    expect(xcc(swiftcArgs(inputs(), ["/p/a/A.swift"]))).toEqual([...importer, "-DCOCOAPODS=1", "-DCOCOAPODS=1"]);
+
+    const clang = ["-DSWIFT_PACKAGE", "-DDEBUG=1", "-DOBJC_OLD_DISPATCH_PROTOTYPES=1", "-DXcode"];
+    const defines = (args: string[]) => args.filter((a) => a.startsWith("-D"));
+    expect(defines(clangArgs(inputs(), "/p/a/x.m"))).toEqual([...clang, "-DCOCOAPODS=1"]);
+    expect(defines(clangArgs(inputs(), "/p/a/x.mm"))).toEqual([...clang, "-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG", "-DCOCOAPODS=1"]);
+    // A Swift-only target's bridging header gets what the importer gets.
+    expect(defines(clangArgs(inputs({ mixed: false }), "/p/a/B.h"))).toEqual([...importer, "-DCOCOAPODS=1"]);
+  });
+
   it("gives a Swift-only target's bridging header what Swift gives it", () => {
     const i = inputs({ mixed: false });
     const args = clangArgs(i, "/p/app/ios-xtool/Sources/App/App-Bridging-Header.h");
@@ -338,6 +356,17 @@ describe.skipIf(!HAS_IOS_TOOLS)(
           const library = tool(tc.swiftc, swiftcArgs(i(false), [main]), { env: toolEnv(), timeout: SWIFT_TIMEOUT_MS });
           expect(library.stderr).toBe("");
           expect(library.status).toBe(0);
+
+          // A bridging header's debug-only declaration, as React Native's headers keep theirs under DEBUG.
+          const bridging = path.join(t, "Bridging.h");
+          writeFileSync(bridging, "#if DEBUG\nstatic inline int precheckDebugOnly(void) { return 1; }\n#endif\n");
+          const debug = path.join(t, "Debug.swift");
+          writeFileSync(debug, "func debugOnly() -> Int32 { precheckDebugOnly() }\n");
+          const withBridging: PrecheckInputs = { ...i(false), app: { ...i(false).app } };
+          withBridging.app.pkg = { ...withBridging.app.pkg, app: { ...withBridging.app.pkg.app, bridgingHeader: bridging } };
+          const debugCheck = tool(tc.swiftc, swiftcArgs(withBridging, [debug]), { env: toolEnv(), timeout: SWIFT_TIMEOUT_MS });
+          expect(debugCheck.stderr).toBe("");
+          expect(debugCheck.status).toBe(0);
 
           const objc = path.join(t, "B.m");
           writeFileSync(objc, "#import <Foundation/Foundation.h>\n");

@@ -177,6 +177,17 @@ function languageOf(file: string): Language {
   return language;
 }
 
+/**
+ * What Swift Build defines for a package target in a Debug build, besides the manifest's own settings: Swift's
+ * conditions, its clang importer's macros, and a C-family file's macros (C++ adds libc++'s hardening mode).
+ */
+const SWIFT_BUILD_DEFINES = {
+  swift: ["SWIFT_PACKAGE", "DEBUG", "SWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE", "Xcode"],
+  importer: ["SWIFT_PACKAGE", "DEBUG=1", "_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG"],
+  clang: ["SWIFT_PACKAGE", "DEBUG=1", "OBJC_OLD_DISPATCH_PROTOTYPES=1", "Xcode"],
+  cxx: ["_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG"],
+};
+
 /** What `appSwiftArgs` gives Swift's clang importer: its `-F <folder>` pairs and the values after each `-Xcc`. */
 function importerArgs(args: string[]): string[] {
   return args.flatMap((a, n) => {
@@ -189,7 +200,7 @@ function importerArgs(args: string[]): string[] {
 /**
  * `clang -fsyntax-only` of one C-family file, as Swift Build compiles it in the App target. A target without C-family
  * sources has no `appClangArgs`: its one C-family file, the bridging header, gets what Swift's clang importer gets
- * (the `-F` frameworks and the `-Xcc` values).
+ * (Swift Build's importer macros, the `-F` frameworks and the `-Xcc` values).
  */
 export function clangArgs(i: PrecheckInputs, file: string): string[] {
   const language = languageOf(file);
@@ -197,6 +208,7 @@ export function clangArgs(i: PrecheckInputs, file: string): string[] {
   const cxx = language === "c++" || language === "objective-c++";
   const { app, expo } = i.app.pkg;
   const target = app.mixed ? appClangArgs(app, expo, cxx) : importerArgs(appSwiftArgs(app, expo));
+  const defines = app.mixed ? [...SWIFT_BUILD_DEFINES.clang, ...(cxx ? SWIFT_BUILD_DEFINES.cxx : [])] : SWIFT_BUILD_DEFINES.importer;
   return [
     "-fsyntax-only",
     "-x",
@@ -209,7 +221,7 @@ export function clangArgs(i: PrecheckInputs, file: string): string[] {
     "-fmodules",
     // With C++ modules off the cache is unused, and clang warns about the flag.
     ...(cxx ? ["-fno-cxx-modules"] : [`-fmodules-cache-path=${i.moduleCache}`]),
-    "-DDEBUG=1",
+    ...defines.map((d) => `-D${d}`),
     ...withPrecheckHeaders(i, target),
     ...i.graph.headerDirs.flatMap((d) => ["-I", d]),
     ...moduleMaps(i).map((m) => `-fmodule-map-file=${m}`),
@@ -220,7 +232,9 @@ export function clangArgs(i: PrecheckInputs, file: string): string[] {
 /**
  * `swiftc -typecheck` of the App's Swift files, writing `App-Swift.h` to the precheck's header folder. App is a library
  * target (the precheck refuses an executable one), which Swift Build compiles with `-parse-as-library`: without it a
- * one-file module's file is its main file, where an `@main` type is an error.
+ * one-file module's file is its main file, where an `@main` type is an error. The clang importer gets Swift Build's
+ * macros (`DEBUG=1`: React Native's headers hide their debug API without it) and, in a mixed target, the App's own,
+ * which the manifest's `cSettings` give Swift Build; a Swift-only target has them only with its bridging header.
  */
 export function swiftcArgs(i: PrecheckInputs, files: string[]): string[] {
   const { app, expo } = i.app.pkg;
@@ -243,6 +257,8 @@ export function swiftcArgs(i: PrecheckInputs, files: string[]): string[] {
     "-emit-objc-header-path",
     path.join(swiftHeaders(i), "App-Swift.h"),
     ...i.toolchain.swiftExtra,
+    ...SWIFT_BUILD_DEFINES.swift.map((d) => `-D${d}`),
+    ...[...new Set([...SWIFT_BUILD_DEFINES.importer, ...(app.mixed ? app.defines : [])])].flatMap((d) => ["-Xcc", `-D${d}`]),
     ...withPrecheckHeaders(i, appSwiftArgs(app, expo)),
     ...i.graph.headerDirs.flatMap((d) => ["-I", d, "-Xcc", `-I${d}`]),
     ...moduleMaps(i).flatMap((m) => ["-Xcc", `-fmodule-map-file=${m}`]),
