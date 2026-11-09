@@ -208,6 +208,7 @@ describe("precheckGraph", () => {
 
   it("lists the graph's targets and modules", () => {
     const g = graphHeaders(fixtureGraph(t));
+    // Target names and product names: an angle include's first component is usually a product's (`<Autolinked/…>`).
     expect(g.targets).toEqual([
       "App",
       "RNXtoolDevSupport",
@@ -218,6 +219,7 @@ describe("precheckGraph", () => {
       "ReactAppDependencyProvider",
       "ReactAppHeaders",
       "AutolinkedAggregate",
+      "Autolinked",
       "RNLib",
       "RNLibSwift",
       "UnreachedLib",

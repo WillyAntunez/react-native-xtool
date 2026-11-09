@@ -29,7 +29,10 @@ export interface PrecheckGraph {
   moduleMaps: string[];
   /** The module maps SwiftPM synthesizes for those folders (written by the precheck). */
   synthesized: { module: string; text: string }[];
-  /** Every target name of every package in the graph. */
+  /**
+   * Every target name and every product name of every package in the graph (per package: its targets, then its
+   * products), each once: the names that could provide an angle include's first path component (row 37).
+   */
   targets: string[];
   /** Every module the module maps declare, then the synthesized ones. */
   modules: string[];
@@ -279,7 +282,7 @@ export function graphHeaders(graph: Graph): PrecheckGraph {
 
   const appTarget = graph.root.targets.find((t) => t.name === "App");
   if (appTarget !== undefined) visit(graph.root, appTarget);
-  out.targets = [...new Set(all.flatMap((p) => p.targets.map((t) => t.name)))];
+  out.targets = [...new Set(all.flatMap((p) => [...p.targets.map((t) => t.name), ...p.products.map((q) => q.name)]))];
   out.modules = [...new Set([...out.modules, ...out.synthesized.map((s) => s.module)])];
   return out;
 }
