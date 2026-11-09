@@ -18,7 +18,7 @@ export interface PrecheckToolchain {
   sdk: string;
   /** The triple's `swiftResourcesPath`: Swift's `-resource-dir` (SwiftShims and the runtime's modules), as SwiftPM passes it. */
   swiftResources: string;
-  /** The triple's `includeSearchPaths` (XCTest's folder), each Swift's `-I` as SwiftPM passes them. */
+  /** The triple's `includeSearchPaths` (XCTest's folder), each Swift's `-Isystem` as Swift Build passes them. */
   swiftIncludes: string[];
   /** The Swift options of the bundle's toolsets for arm64-apple-ios, without `-use-ld=…` (nothing is linked). */
   swiftExtra: string[];
@@ -301,7 +301,20 @@ export function swiftcArgs(i: PrecheckInputs, files: string[], unwritten: Readon
     i.toolchain.sdk,
     "-resource-dir",
     i.toolchain.swiftResources,
-    ...i.toolchain.swiftIncludes.flatMap((d) => ["-I", d]),
+    // The importer's clang headers, as Swift Build names them: the Swift resources' own.
+    "-Xcc",
+    "-resource-dir",
+    "-Xcc",
+    path.join(i.toolchain.swiftResources, "clang"),
+    ...i.toolchain.swiftIncludes.flatMap((d) => ["-Isystem", d]),
+    // The platform's and the SDK's developer frameworks (XCTest's), as Swift Build passes them.
+    "-F",
+    path.join(i.toolchain.sdk, "..", "..", "Library", "Frameworks"),
+    "-F",
+    path.join(i.toolchain.sdk, "Developer", "Library", "Frameworks"),
+    // Swift Build's Debug feature: `@DebugDescription` expands.
+    "-enable-experimental-feature",
+    "DebugDescriptionMacro",
     "-swift-version",
     "5",
     "-module-cache-path",
@@ -312,7 +325,8 @@ export function swiftcArgs(i: PrecheckInputs, files: string[], unwritten: Readon
     ...SWIFT_BUILD_DEFINES.swift.map((d) => `-D${d}`),
     ...[...new Set([...SWIFT_BUILD_DEFINES.importer, ...(app.mixed ? app.defines : [])])].flatMap((d) => ["-Xcc", `-D${d}`]),
     ...withPrecheckHeaders(i, withoutMaps(appSwiftArgs(app, expo), maps.shadowed)),
-    ...i.graph.headerDirs.filter((d) => !maps.folders.has(d)).flatMap((d) => ["-I", d, "-Xcc", `-I${d}`]),
+    // The importer's only: Swift Build gives Swift no search path for a clang target's headers.
+    ...i.graph.headerDirs.filter((d) => !maps.folders.has(d)).flatMap((d) => ["-Xcc", `-I${d}`]),
     ...maps.maps.flatMap((m) => ["-Xcc", `-fmodule-map-file=${m}`]),
     ...files,
   ];

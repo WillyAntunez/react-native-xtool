@@ -137,7 +137,8 @@ describe("the precheck's command lines", () => {
     expect(clang).toContain("-fmodule-map-file=/p/pkgs/React/include/module.modulemap");
     expect(clang).toContain(`-fmodule-map-file=${synthesized}`);
     const swiftc = swiftcArgs(i, ["/p/a/AppDelegate.swift"]);
-    expect(after(swiftc, "-I")).toContain("/p/pkgs/React/include");
+    // Swift Build gives the importer a clang target's headers, and Swift no search path for them.
+    expect(after(swiftc, "-I")).not.toContain("/p/pkgs/React/include");
     expect(after(swiftc, "-Xcc")).toContain("-I/p/pkgs/React/include");
     expect(after(swiftc, "-Xcc")).toContain(`-fmodule-map-file=${synthesized}`);
   });
@@ -187,7 +188,18 @@ describe("the precheck's command lines", () => {
     expect(after(args, "-target")).toEqual(["arm64-apple-ios16.4"]);
     expect(after(args, "-sdk")).toEqual(["/t/sdk/iPhoneOS.sdk"]);
     const sdk = args.indexOf("-sdk");
-    expect(args.slice(sdk + 2, sdk + 6)).toEqual(["-resource-dir", "/t/sdk/swift", "-I", "/t/sdk/Platform Lib"]);
+    expect(args.slice(sdk + 2, sdk + 10)).toEqual([
+      "-resource-dir",
+      "/t/sdk/swift",
+      "-Xcc",
+      "-resource-dir",
+      "-Xcc",
+      "/t/sdk/swift/clang",
+      "-Isystem",
+      "/t/sdk/Platform Lib",
+    ]);
+    expect(after(args, "-F")).toEqual(["/t/Library/Frameworks", "/t/sdk/iPhoneOS.sdk/Developer/Library/Frameworks"]);
+    expect(after(args, "-enable-experimental-feature")).toEqual(["DebugDescriptionMacro"]);
     expect(after(args, "-swift-version")).toEqual(["5"]);
     expect(after(args, "-module-cache-path")).toEqual([CACHE]);
     expect(after(args, "-import-objc-header")).toEqual(["/p/app/ios-xtool/Sources/App/App-Bridging-Header.h"]);
