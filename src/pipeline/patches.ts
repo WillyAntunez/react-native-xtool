@@ -3,6 +3,7 @@ import { copyFile, mkdir, readFile, realpath, rm, symlink } from "node:fs/promis
 import { createRequire } from "node:module";
 import path from "node:path";
 import { execa } from "execa";
+import { troubleshootingUrl } from "../docs.js";
 import { projectPaths } from "../paths.js";
 import {
   compareVersions,
@@ -16,7 +17,7 @@ import { scaffoldedPods } from "../project/earlyChecks.js";
 import type { PodSource, PodTable } from "../project/podTable.js";
 import type { ProjectKind } from "../project/types.js";
 import { packageRoot, toolEnv } from "../tools/exec.js";
-import { podspecReaderHere, type PodspecReaderChoice } from "../tools/podspecReader.js";
+import { installingRubyHelps, podspecReaderHere, type PodspecReaderChoice } from "../tools/podspecReader.js";
 import { outside, packagesWithManifest } from "./manifests.js";
 
 /** The patch-package pinned in this CLI's own dependencies, not whatever npx would fetch. */
@@ -504,13 +505,18 @@ function scaffoldPatchFindings(
       }
       // Advice to keep the patch, so its pins are still compared below.
       if (written === "ruby" && reader.reader === "reduced") {
-        // A forced reader was chosen on purpose, and Ruby may be installed: no apt advice (as rubyCheck).
-        const before = reader.forced ? "unset RN_XTOOL_PODSPEC_READER" : "install Ruby (sudo apt install ruby)";
+        // A forced reader was chosen on purpose, and Ruby may be installed: no apt advice (as rubyCheck). The apt
+        // advice only when installing Ruby fixes the reason; any other reason points to the troubleshooting page.
+        const advice = reader.forced
+          ? "keep the patch, and unset RN_XTOOL_PODSPEC_READER"
+          : installingRubyHelps(reader.why)
+            ? "keep the patch, and install Ruby (sudo apt install ruby)"
+            : `keep the patch; see ${troubleshootingUrl("podspec-reader")}`;
         findings.push({
           kind: "reader",
           line:
             `⚠ patches/${name} was written by the Ruby podspec reader, and this machine reads podspecs with the reduced one ` +
-            `(${reader.why}): keep the patch, and ${before} before you regenerate it`,
+            `(${reader.why}): ${advice} before you regenerate it`,
         });
       }
     }

@@ -1009,7 +1009,9 @@ between podspecs.
   (<why>): keep the patch, and install Ruby (sudo apt install ruby) before you regenerate it":** the opposite case.
   The patch is the better reading, so keep it; a scaffold regenerated here would be the reduced reader's. With
   `RN_XTOOL_PODSPEC_READER=reduced` set, the line ends `keep the patch, and unset RN_XTOOL_PODSPEC_READER before you
-  regenerate it`.
+  regenerate it`. When installing Ruby would not help (`ruby cannot load json`, `ruby could not run the podspec
+  reader (<detail>)`, the shim missing), it ends `keep the patch; see <link to this section> before you regenerate
+  it`: fix the reason as the first entry of this section says.
 - **"⚠ RN_XTOOL_PODSPEC_READER=reduced is set, so rn-xtool read the podspecs with its reduced reader, which evaluates
   a subset of Ruby; unset it to read them as CocoaPods does.":** the variable is set in the environment of the build,
   so the reduced reader read every podspec, Ruby or not. Unset it (`unset RN_XTOOL_PODSPEC_READER`) once the podspec

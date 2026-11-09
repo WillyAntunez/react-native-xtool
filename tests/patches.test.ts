@@ -936,6 +936,22 @@ describe("scaffold patches from another React Native version", () => {
     ]);
   });
 
+  it("points to the troubleshooting page when installing Ruby does not help", async () => {
+    const root = await svgApp(scaffoldPatch("0.88.1", SCAFFOLD_REVISION, "ruby"));
+    const why = "ruby could not run the podspec reader (rbenv: version '3.1.2' is not installed)";
+    const broken: PodspecReaderChoice = { reader: "reduced", why, forced: false, warning: null };
+    expect(scaffoldPatchWarnings(root, undefined, [], undefined, broken)).toEqual([
+      `⚠ patches/${SVG} was written by the Ruby podspec reader, and this machine reads podspecs with the reduced one ` +
+        `(${why}): keep the patch; see ` +
+        "https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/troubleshooting.md#podspec-reader before you " +
+        "regenerate it",
+    ]);
+    const old: PodspecReaderChoice = { reader: "reduced", why: "ruby 2.5.1 is older than 2.7.0", forced: false, warning: null };
+    expect(scaffoldPatchWarnings(root, undefined, [], undefined, old)[0]).toMatch(
+      /\(ruby 2\.5\.1 is older than 2\.7\.0\): keep the patch, and install Ruby \(sudo apt install ruby\) before you regenerate it$/,
+    );
+  });
+
   it("asks to unset the variable when the reduced reader is forced", async () => {
     const root = await svgApp(scaffoldPatch("0.88.1", SCAFFOLD_REVISION, "ruby"));
     const forced: PodspecReaderChoice = {
