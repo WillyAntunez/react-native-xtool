@@ -24,8 +24,10 @@ export const SWEEP_GOLDENS = path.join(ROOT, "tests", "fixtures", "podspec-sweep
 /**
  * An entry of `tests/podspec-sweep.json`: a library, the React Native it is read against, and the packages it needs. A
  * library and a React Native together name the entry: the same library may be read against several React Natives.
+ * `variant` names an entry that reads the same library against the same React Native with other packages beside it
+ * (gesture-handler with worklets installed), and is part of its name and golden folder.
  */
-export type SweepEntry = { spec: string; rn: string; with?: string[] };
+export type SweepEntry = { spec: string; rn: string; with?: string[]; variant?: string };
 export const SWEEP = JSON.parse(readFileSync(path.join(ROOT, "tests", "podspec-sweep.json"), "utf8")) as SweepEntry[];
 
 const req = createRequire(path.join(VENDORED_RN_SPM, "read-podspec.js"));
@@ -95,7 +97,8 @@ const nameOf = (spec: string) => spec.slice(0, spec.lastIndexOf("@"));
 const versionOf = (spec: string) => spec.slice(spec.lastIndexOf("@") + 1);
 const tarballsOf = (entry: SweepEntry) => [entry.spec, entry.rn, ...(entry.with ?? [])];
 /** The entry's name in titles and messages: `<spec> on <rn>`. */
-export const entryName = (entry: SweepEntry) => `${entry.spec} on ${entry.rn}`;
+export const entryName = (entry: SweepEntry) =>
+  `${entry.spec} on ${entry.rn}${entry.variant === undefined ? "" : ` (${entry.variant})`}`;
 /** Whether the entry needs a heavy tarball (`tests/tarballs.json`): fetched on request, and slow to read. */
 export const isHeavyEntry = (entry: SweepEntry): boolean => tarballsOf(entry).some(isHeavy);
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -136,10 +139,13 @@ export function sweepProject(entry: SweepEntry): { root: string; podspecs: strin
 
 /**
  * The entry's golden folder, `<spec>@rn-<React Native's version>` with a scoped name's `/` as `+` (the last `@` starts
- * React Native's version), and a podspec's golden file in it.
+ * React Native's version) and `+<variant>` for a variant, and a podspec's golden file in it.
  */
 const goldenDir = (entry: SweepEntry) =>
-  path.join(SWEEP_GOLDENS, `${entry.spec.replaceAll("/", "+")}@rn-${versionOf(entry.rn)}`);
+  path.join(
+    SWEEP_GOLDENS,
+    `${entry.spec.replaceAll("/", "+")}@rn-${versionOf(entry.rn)}${entry.variant === undefined ? "" : `+${entry.variant}`}`,
+  );
 const goldenFile = (entry: SweepEntry, podspec: string) => path.join(goldenDir(entry), `${podspec.replaceAll("/", "__")}.json`);
 /** The podspecs the entry's goldens are for. */
 function goldenPodspecs(entry: SweepEntry): string[] {

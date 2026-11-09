@@ -40,6 +40,7 @@
   { "spec": "react-native-gesture-handler@3.3.0", "rn": "react-native@0.86.3" },
   { "spec": "react-native-gesture-handler@3.3.0", "rn": "react-native@0.87.1" },
   { "spec": "react-native-gesture-handler@3.3.0", "rn": "react-native@0.88.1" },
+  { "spec": "react-native-gesture-handler@3.3.0", "rn": "react-native@0.88.1", "with": ["react-native-worklets@0.13.1"], "variant": "with-worklets" },
   { "spec": "react-native-gesture-handler@3.4.0", "rn": "react-native@0.88.1" },
   { "spec": "react-native-gesture-handler@3.5.0", "rn": "react-native@0.88.1" },
   { "spec": "react-native-get-random-values@2.1.0", "rn": "react-native@0.88.1" },

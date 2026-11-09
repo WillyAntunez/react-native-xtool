@@ -71,6 +71,14 @@ describe("the sweep's guards", () => {
     expect(orphans).toContain("react-native-unpinned@0.0.1@rn-0.86.3/ (no goldens)");
   });
 
+  it("gives a variant of an entry its own name and golden folder", () => {
+    const variant: SweepEntry = { ...unpinned, with: ["react-native-worklets@0.13.1"], variant: "with-worklets" };
+    expect(entryName(variant)).toBe("react-native-unpinned@0.0.1 on react-native@0.88.1 (with-worklets)");
+    const orphans = orphanGoldens([unpinned, variant], false);
+    expect(orphans).toContain("react-native-unpinned@0.0.1@rn-0.88.1/ (no goldens)");
+    expect(orphans).toContain("react-native-unpinned@0.0.1@rn-0.88.1+with-worklets/ (no goldens)");
+  });
+
   // A library that needs a heavy tarball, with a cache folder that holds nothing.
   const heavy = MANIFEST.find((e) => e.heavy)!;
   const needsHeavy: SweepEntry = { spec: "react-native-unpinned@0.0.1", rn: "react-native@0.88.1", with: [heavy.spec] };
