@@ -15,7 +15,7 @@ import {
 } from "../src/pipeline/precheckCommands.js";
 import type { PrecheckGraph } from "../src/pipeline/precheckGraph.js";
 import { toolEnv } from "../src/tools/exec.js";
-import { tool } from "./support/tools.js";
+import { SWIFT_TEST_TIMEOUT_MS, SWIFT_TIMEOUT_MS, tool } from "./support/tools.js";
 
 const HEADERS = "/p/app/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos";
 const DIR = "/p/app/ios-xtool/.precheck";
@@ -49,6 +49,8 @@ function inputs(app: Partial<AppTargetInputs> = {}, expo?: ExpoPackageInputs): P
       clang: "/t/bin/clang",
       swiftc: "/t/bin/swiftc",
       sdk: "/t/sdk/iPhoneOS.sdk",
+      swiftResources: "/t/sdk/swift",
+      swiftIncludes: ["/t/sdk/Platform Lib"],
       swiftExtra: ["-Xfrontend", "-enable-cross-import-overlays"],
       versions: "v",
     },
@@ -69,7 +71,8 @@ describe("the precheck's command lines", () => {
     expect(after(mm, "-x")).toEqual(["objective-c++"]);
     expect(after(mm, "-target")).toEqual(["arm64-apple-ios16.4"]);
     expect(after(mm, "-isysroot")).toEqual(["/t/sdk/iPhoneOS.sdk"]);
-    expect(mm).toContain(`-fmodules-cache-path=${CACHE}`);
+    // -fno-cxx-modules leaves the module cache unused: clang warns about the flag.
+    expect(mm.some((a) => a.startsWith("-fmodules-cache-path="))).toBe(false);
     expect(mm.at(-1)).toBe("/p/app/ios-xtool/Sources/App/AppDelegate.mm");
 
     const m = clangArgs(inputs(), "/p/app/ios-xtool/Sources/App/main.m");
@@ -78,12 +81,14 @@ describe("the precheck's command lines", () => {
     expect(m).toContain("-fmodules");
     expect(m.some((a) => a.startsWith("-std="))).toBe(false);
     expect(m).not.toContain("-fno-cxx-modules");
+    expect(m).toContain(`-fmodules-cache-path=${CACHE}`);
 
     const cpp = clangArgs(inputs(), "/p/app/ios-xtool/Sources/App/x.cpp");
     expect(after(cpp, "-x")).toEqual(["c++"]);
     expect(cpp).not.toContain("-fobjc-arc");
     expect(cpp).toContain("-fno-cxx-modules");
     expect(cpp).toContain("-std=c++20");
+    expect(cpp.some((a) => a.startsWith("-fmodules-cache-path="))).toBe(false);
     expect(after(clangArgs(inputs(), "/p/a/x.c"), "-x")).toEqual(["c"]);
     expect(after(clangArgs(inputs(), "/p/a/x.h"), "-x")).toEqual(["objective-c"]);
   });
@@ -143,6 +148,8 @@ describe("the precheck's command lines", () => {
     expect(after(args, "-module-name")).toEqual(["App"]);
     expect(after(args, "-target")).toEqual(["arm64-apple-ios16.4"]);
     expect(after(args, "-sdk")).toEqual(["/t/sdk/iPhoneOS.sdk"]);
+    const sdk = args.indexOf("-sdk");
+    expect(args.slice(sdk + 2, sdk + 6)).toEqual(["-resource-dir", "/t/sdk/swift", "-I", "/t/sdk/Platform Lib"]);
     expect(after(args, "-swift-version")).toEqual(["5"]);
     expect(after(args, "-module-cache-path")).toEqual([CACHE]);
     expect(after(args, "-import-objc-header")).toEqual(["/p/app/ios-xtool/Sources/App/App-Bridging-Header.h"]);
@@ -159,6 +166,14 @@ describe("the precheck's command lines", () => {
     expect(args).toContain("-DCOCOAPODS=1");
     expect(args).not.toContain("-Xcc");
     expect(args).not.toContain("-import-objc-header");
+  });
+
+  it("gives an Expo Swift-only target's bridging header the compile-interfaces frameworks", () => {
+    const expo: ExpoPackageInputs = { compileInterfacesDir: "/p/app/ios-xtool/.expo/My Interfaces", jsiHeaders: false };
+    const args = clangArgs(inputs({ mixed: false }, expo), "/p/app/ios-xtool/Sources/App/App-Bridging-Header.h");
+    expect(after(args, "-F")).toEqual(["/p/app/ios-xtool/.expo/My Interfaces"]);
+    expect(args).toContain("-DCOCOAPODS=1");
+    expect(args).not.toContain("-Xcc");
   });
 
   it("keeps a folder with spaces one argument", () => {
@@ -192,7 +207,13 @@ describe("precheckToolchain", () => {
     const bundle = sdkBundle();
     mkdirSync(path.join(bundle, "toolset"), { recursive: true });
     if (makeSdk) mkdirSync(path.join(bundle, sdkRoot), { recursive: true });
-    const triple = (root: string) => ({ sdkRootPath: root, toolsetPaths: ["toolset.json"] });
+    if (makeSdk) mkdirSync(path.join(bundle, "Toolchain/usr/lib/swift"), { recursive: true });
+    const triple = (root: string) => ({
+      sdkRootPath: root,
+      toolsetPaths: ["toolset.json"],
+      swiftResourcesPath: "Toolchain/usr/lib/swift",
+      includeSearchPaths: ["Platforms/iPhoneOS.platform/usr/lib"],
+    });
     writeFileSync(
       path.join(bundle, "swift-sdk.json"),
       JSON.stringify({
@@ -241,6 +262,15 @@ describe("precheckToolchain", () => {
     );
   });
 
+  it("names missing Swift resources", async () => {
+    const { env, bundle } = fakeSetup("x.sdk", true);
+    const resources = path.join(bundle, "Toolchain/usr/lib/swift");
+    rmSync(resources, { recursive: true });
+    await expect(precheckToolchain(env)).rejects.toThrow(
+      `precheck — the Swift resources were not found in the Darwin SDK (${resources}); run rn-xtool setup --xcode-xip <path>`,
+    );
+  });
+
   it("reads the SDK, the toolset's Swift options and the versions", async () => {
     const { env, bundle } = fakeSetup("Platforms/iPhoneOS.platform/SDKs/iPhoneOS27.1.sdk", true);
     const tc = await precheckToolchain(env);
@@ -248,6 +278,8 @@ describe("precheckToolchain", () => {
     expect(tc.swiftc).toBe(path.join(env.PATH!, "swiftc"));
     expect(tc.sdk).toBe(path.join(bundle, "Platforms/iPhoneOS.platform/SDKs/iPhoneOS27.1.sdk"));
     expect(tc.swiftExtra).toEqual(["-Xfrontend", "-enable-cross-import-overlays"]);
+    expect(tc.swiftResources).toBe(path.join(bundle, "Toolchain/usr/lib/swift"));
+    expect(tc.swiftIncludes).toEqual([path.join(bundle, "Platforms/iPhoneOS.platform/usr/lib")]);
     expect(tc.versions).toBe("fake clang 1.0\nfake swiftc 1.0\nepoch=4,darwinTools=1.1.0");
   });
 });
@@ -267,5 +299,47 @@ describe.skipIf(!HAS_IOS_TOOLS)(
       expect(tc.versions).toMatch(/clang version/);
       expect(tc.versions).toMatch(/Swift version/);
     });
+
+    it(
+      "typechecks Swift and compiles Objective-C against the iPhoneOS SDK",
+      async () => {
+        const tc = await precheckToolchain();
+        const t = mkdtempSync(path.join(tmpdir(), "precheck-real-"));
+        try {
+          const dir = path.join(t, ".precheck");
+          const i = (mixed: boolean): PrecheckInputs => ({
+            ...inputs(),
+            app: {
+              pkg: {
+                iosDir: path.join(t, "ios"),
+                frameworks: [],
+                iosMin: "16.4",
+                app: { mixed, defines: [], headerSearchPaths: [], swiftHeadersDir: path.join(t, "build-headers") },
+              },
+              origins: {},
+            },
+            graph: { headerDirs: [], moduleMaps: [], synthesized: [], targets: [], modules: [], unresolved: [] },
+            toolchain: tc,
+            dir,
+            moduleCache: path.join(dir, "ModuleCache", moduleCacheKey("0.88.1", tc.versions)),
+          });
+          const swift = path.join(t, "A.swift");
+          writeFileSync(swift, "import Foundation\n");
+          const typecheck = tool(tc.swiftc, swiftcArgs(i(false), [swift]), { env: toolEnv(), timeout: SWIFT_TIMEOUT_MS });
+          expect(typecheck.stderr).toBe("");
+          expect(typecheck.status).toBe(0);
+          expect(existsSync(path.join(dir, "swift-headers", "App-Swift.h"))).toBe(true);
+
+          const objc = path.join(t, "B.m");
+          writeFileSync(objc, "#import <Foundation/Foundation.h>\n");
+          const compile = tool(tc.clang, clangArgs(i(true), objc), { env: toolEnv(), timeout: SWIFT_TIMEOUT_MS });
+          expect(compile.stderr).toBe("");
+          expect(compile.status).toBe(0);
+        } finally {
+          rmSync(t, { recursive: true, force: true });
+        }
+      },
+      SWIFT_TEST_TIMEOUT_MS,
+    );
   },
 );

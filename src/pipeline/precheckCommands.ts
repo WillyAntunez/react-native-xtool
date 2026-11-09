@@ -16,6 +16,10 @@ export interface PrecheckToolchain {
   swiftc: string;
   /** The iPhoneOS SDK root of the Darwin SDK bundle. */
   sdk: string;
+  /** The triple's `swiftResourcesPath`: Swift's `-resource-dir` (SwiftShims and the runtime's modules), as SwiftPM passes it. */
+  swiftResources: string;
+  /** The triple's `includeSearchPaths` (XCTest's folder), each Swift's `-I` as SwiftPM passes them. */
+  swiftIncludes: string[];
   /** The Swift options of the bundle's toolsets for arm64-apple-ios, without `-use-ld=…` (nothing is linked). */
   swiftExtra: string[];
   /** `clang --version`, `swiftc --version` and `darwin-sdk-version.txt`: what the module cache depends on. */
@@ -73,11 +77,19 @@ export async function precheckToolchain(env: NodeJS.ProcessEnv = toolEnv()): Pro
   const sdkJson = path.join(bundle, "swift-sdk.json");
   const notFound = (where: string) =>
     new PrecheckError(`precheck — the iPhoneOS SDK was not found in the Darwin SDK (${where}); run rn-xtool setup --xcode-xip <path>`);
-  const triple = (readJson(sdkJson) as { targetTriples?: Record<string, { sdkRootPath?: unknown; toolsetPaths?: unknown }> } | undefined)
-    ?.targetTriples?.[IOS_TRIPLE];
+  type Triple = { sdkRootPath?: unknown; toolsetPaths?: unknown; swiftResourcesPath?: unknown; includeSearchPaths?: unknown };
+  const triple = (readJson(sdkJson) as { targetTriples?: Record<string, Triple> } | undefined)?.targetTriples?.[IOS_TRIPLE];
   if (typeof triple?.sdkRootPath !== "string") throw notFound(sdkJson);
   const sdk = path.resolve(bundle, triple.sdkRootPath);
   if (!existsSync(sdk)) throw notFound(sdk);
+  // Unnamed: the path given is swift-sdk.json's, as for the SDK.
+  const swiftResources = typeof triple.swiftResourcesPath === "string" ? path.resolve(bundle, triple.swiftResourcesPath) : undefined;
+  if (swiftResources === undefined || !existsSync(swiftResources)) {
+    throw new PrecheckError(
+      `precheck — the Swift resources were not found in the Darwin SDK (${swiftResources ?? sdkJson}); run rn-xtool setup --xcode-xip <path>`,
+    );
+  }
+  const swiftIncludes = strings(triple.includeSearchPaths).map((p) => path.resolve(bundle, p));
 
   const swiftExtra = strings(triple.toolsetPaths)
     .flatMap((toolset) => {
@@ -93,7 +105,7 @@ export async function precheckToolchain(env: NodeJS.ProcessEnv = toolEnv()): Pro
     // an older bundle without it: the compilers' versions still key the cache
   }
   const versions = [await versionText(clang, env), await versionText(swiftc, env), sdkVersion].join("\n");
-  return { clang, swiftc, sdk, swiftExtra, versions };
+  return { clang, swiftc, sdk, swiftResources, swiftIncludes, swiftExtra, versions };
 }
 
 /** `rn<rnVersion>-<the first 12 hex digits of sha256(versions)>`: the module cache's folder under `<dir>/ModuleCache`. */
@@ -165,21 +177,26 @@ function languageOf(file: string): Language {
   return language;
 }
 
-/** The values `appSwiftArgs` passes to Swift's clang importer (each after `-Xcc`). */
-function xccValues(args: string[]): string[] {
-  return args.flatMap((a, n) => (n > 0 && args[n - 1] === "-Xcc" ? [a] : []));
+/** What `appSwiftArgs` gives Swift's clang importer: its `-F <folder>` pairs and the values after each `-Xcc`. */
+function importerArgs(args: string[]): string[] {
+  return args.flatMap((a, n) => {
+    if (n === 0) return [];
+    if (args[n - 1] === "-F") return ["-F", a];
+    return args[n - 1] === "-Xcc" ? [a] : [];
+  });
 }
 
 /**
  * `clang -fsyntax-only` of one C-family file, as Swift Build compiles it in the App target. A target without C-family
- * sources has no `appClangArgs`: its one C-family file, the bridging header, gets what Swift's clang importer gets.
+ * sources has no `appClangArgs`: its one C-family file, the bridging header, gets what Swift's clang importer gets
+ * (the `-F` frameworks and the `-Xcc` values).
  */
 export function clangArgs(i: PrecheckInputs, file: string): string[] {
   const language = languageOf(file);
   const objc = language === "objective-c" || language === "objective-c++";
   const cxx = language === "c++" || language === "objective-c++";
   const { app, expo } = i.app.pkg;
-  const target = app.mixed ? appClangArgs(app, expo, cxx) : xccValues(appSwiftArgs(app, expo));
+  const target = app.mixed ? appClangArgs(app, expo, cxx) : importerArgs(appSwiftArgs(app, expo));
   return [
     "-fsyntax-only",
     "-x",
@@ -190,8 +207,8 @@ export function clangArgs(i: PrecheckInputs, file: string): string[] {
     i.toolchain.sdk,
     ...(objc ? ["-fobjc-arc"] : []),
     "-fmodules",
-    ...(cxx ? ["-fno-cxx-modules"] : []),
-    `-fmodules-cache-path=${i.moduleCache}`,
+    // With C++ modules off the cache is unused, and clang warns about the flag.
+    ...(cxx ? ["-fno-cxx-modules"] : [`-fmodules-cache-path=${i.moduleCache}`]),
     "-DDEBUG=1",
     ...withPrecheckHeaders(i, target),
     ...i.graph.headerDirs.flatMap((d) => ["-I", d]),
@@ -211,6 +228,9 @@ export function swiftcArgs(i: PrecheckInputs, files: string[]): string[] {
     TARGET,
     "-sdk",
     i.toolchain.sdk,
+    "-resource-dir",
+    i.toolchain.swiftResources,
+    ...i.toolchain.swiftIncludes.flatMap((d) => ["-I", d]),
     "-swift-version",
     "5",
     "-module-cache-path",
