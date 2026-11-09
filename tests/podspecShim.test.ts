@@ -236,6 +236,12 @@ describe.skipIf(needsRuby !== "")(`the podspec shim${needsRuby}`, () => {
       expect(r.json).toMatchObject({ summary: "[]", description: "false" });
     });
 
+    it("has colored2 loaded before the podspec runs, as CocoaPods does", () => {
+      const r = runShim(spec(' s.summary = "x".yellow', " s.description = require('colored2').to_s"));
+      expect(r.status).toBe(0);
+      expect([r.json.summary, r.json.description]).toEqual(["x", "false"]);
+    });
+
     it("stubs colored2 and refuses other gems", () => {
       const r = runShim(`require 'json'\nrequire 'rubygems'\nrequire 'colored2'\n${spec(' s.summary = "x".yellow')}`);
       expect(r.status).toBe(0);

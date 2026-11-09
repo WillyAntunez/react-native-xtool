@@ -294,9 +294,10 @@ class Object
   end
 end
 
-# `require`: a name on Ruby's own load path loads, `colored2` loads its stub, a file given by its path (Ruby's own, the
-# library's) loads, any other name fails. `require_relative` of the library's own files is Ruby's. What Ruby's own files
-# read of `ENV` (RubyGems' `GEM_*`) is not the podspec's, so it is not recorded.
+# `require`: a name on Ruby's own load path loads, `colored2` is the stub (loaded before the podspec runs, as CocoaPods
+# has loaded colored2), a file given by its path (Ruby's own, the library's) loads, any other name fails.
+# `require_relative` of the library's own files is Ruby's. What Ruby's own files read of `ENV` (RubyGems' `GEM_*`) is
+# not the podspec's, so it is not recorded.
 module RnXtoolShim
   # colored2 (a gem CocoaPods brings): its String colours and effects.
   COLORED2 = %w[
@@ -380,6 +381,7 @@ module RnXtoolShim
   # Writes the model, or the error, to `out`; whether the podspec read. `root` is the app's `ios/` folder.
   def run(podspec, out, root)
     Pod::Config.instance = Pod::Config.new(root)
+    load_colored2
     spec = Pod._eval_podspec(File.read(podspec, encoding: 'UTF-8'), podspec)
     unless spec.is_a?(Pod::Specification)
       write(out, 'error' => { 'kind' => 'not-a-spec', 'message' => "#{podspec}: the podspec does not evaluate to a Pod::Spec" })

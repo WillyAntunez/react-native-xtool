@@ -910,10 +910,11 @@ React Native's Podfile, and `use_expo_modules!` is not defined. Expo's `Packages
 `Pod::Config.instance` gives the app's `ios` folder as `installation_root` and `project_root` (`RN_SPM_APP_IOS_DIR`
 when set, else the podspec's path cut before its first `/node_modules/` plus `/ios`, else the podspec's folder), that
 folder's `Pods` as `project_pods_root`, and no `@podfile`. `Pod::VERSION` is `1.16.2`. `require` loads a name on
-Ruby's own load path, the library's files by path, and a stub of `colored2`; `require_relative`, backticks, `system`,
-`raise` and `abort` are real Ruby, so a library's own scripts run as under CocoaPods (worklets finds React Native, and
-gesture-handler finds worklets, with `node`). Every `ENV` name the podspec reads is recorded; other environment
-variables and globals are unset. React Native's other helpers stay undefined, and a call to one fails as `method`.
+Ruby's own load path, the library's files by path, and a stub of `colored2`, loaded before the podspec runs as CocoaPods
+has colored2 loaded; `require_relative`, backticks, `system`, `raise` and `abort` are real Ruby, so a library's own
+scripts run as under CocoaPods (worklets finds React Native, and gesture-handler finds worklets, with `node`). Every
+`ENV` name the podspec reads is recorded; other environment variables and globals are unset. React Native's other
+helpers stay undefined, and a call to one fails as `method`.
 
 A podspec Ruby cannot read stops the read with a `PodspecReadError`; nothing falls back. A gap of the shim names where
 it stopped (`<podspec>:<line>`, or `<podspec> (<file>:<line>)` in another of the library's files): `method` (the
