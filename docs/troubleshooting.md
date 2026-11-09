@@ -973,6 +973,129 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   read-only, often after `sudo npm install`. Make it writable (reinstall without `sudo`), or apply the portable
   manifest yourself.
 
+### Precheck
+
+`build` checks the app target's own sources twice before `xtool-build` compiles them. Pass 1 runs before the `patches`
+step (on Expo, once `expo prebuild` has written `ios/`), and in `doctor --project`, with file reads only: it resolves
+the `#import` and `#include` lines of the app target's C-family sources, headers and bridging header (on Expo, the
+bridging header alone) as the generated App target compiles them. No flag skips it. The `precheck` step, between
+`generate` and `xtool-build`, has SwiftPM plan the generated package, reads the header folders and module maps of its
+dependency graph, resolves the includes again with the App target's full include list (pass 2), and runs
+`swiftc -typecheck` over the Swift files and `clang -fsyntax-only` over each C-family file with the generated
+manifest's flags. Every command line and all compiler output go to `ios-xtool/.precheck/precheck.log`, which each
+precheck writes anew. clang's module cache is `ios-xtool/.precheck/ModuleCache`, kept for one React Native version and
+toolchain at a time; `build --clean` (and `run --clean`) empties it. The first precheck of a project, and the first
+after the cache is emptied, is slower than the next ones while clang builds React Native's modules into the cache; the
+compilers run at low priority (`nice`), as many at a time as the machine has cores.
+
+- **"✖ ios/<Target>/AppDelegate.mm:3 imports "AppDelegate.h", which is not in ios/<Target>, the app target's headers
+  or <header search paths>"**, followed by "✖ <n> include(s) of the app's own sources resolve nowhere (listed above):
+  the build would stop compiling them": pass 1 found a quote include of one of the app's own headers (a header the
+  app target references, or a file of that name anywhere under `ios/`, case ignored) in none of the folders clang
+  searches, in the order the line names them: the including file's folder, the app target's headers (the forwards in
+  `Sources/App/include`) and `HEADER_SEARCH_PATHS`. `doctor --project` prints the same line as `✖ app-includes — …`
+  and exits non-zero. The line ends with what `ios/` holds of that name:
+  - `; <path> differs only in case (file names are case-sensitive on Linux)`: a Mac finds the file, Linux does not.
+    Rename the file, or change the include, so both spell the name the same way.
+  - `; <path> exists but the app target does not list it (add it to the target)`: rn-xtool copies only the files the
+    Xcode project references. Add the header to the Xcode project; any group outside `Pods/` works
+    ([Sources](bare-react-native.md#sources)).
+  - `; <path> exists, but rn-xtool copies only the bridging header of an Expo app`: on Expo, the bridging header is
+    the one file of `ios/` the App target compiles, so a header beside it is not there. Move what the bridging header
+    needs from that header into the bridging header itself.
+  - nothing: no file of that name is under `ios/` (outside `Pods/`, `build/`, `DerivedData/` and `ios-xtool/`). Restore
+    the header, or fix the include.
+
+  An absolute spelling that does not exist reads `<file>:<line> imports "<spelling>", which does not exist`. Pass 1
+  stops on these only. An angle include (`#import <React/RCTBridge.h>`), a quote include of a header that is not the
+  app's (the SDK's, a library's) and every miss in a project with CocoaPods binaries are left to the `precheck` step;
+  `doctor --project` counts them in `ℹ app-includes — <n> includes into React Native's or the libraries' headers:
+  checked at build`.
+- **"⚠ <file> sets <settings> for the app target; rn-xtool does not read xcconfig files"** (`⚠ app-target — …` in
+  `doctor --project`): the Debug configuration of the app target or of the project is based on an `.xcconfig`, other
+  than CocoaPods' `Pods-*.xcconfig`, that sets, itself or through its `#include` lines, one of the settings rn-xtool
+  reads from the pbxproj: `HEADER_SEARCH_PATHS`, `GCC_PREPROCESSOR_DEFINITIONS`, `CLANG_CXX_LANGUAGE_STANDARD`,
+  `SWIFT_OBJC_BRIDGING_HEADER`, `PRODUCT_MODULE_NAME`, `CODE_SIGN_ENTITLEMENTS` and `INFOPLIST_FILE`. The build goes on
+  with the pbxproj's values only, so a header found only through the xcconfig's search paths is missing for pass 1,
+  the precheck and `xtool-build` alike. Set the values the app needs in the target's build settings (in Xcode, or in
+  the pbxproj).
+  `⚠ <file> (the app target's base configuration) could not be read; rn-xtool does not read xcconfig files` is the
+  same line for a base configuration, or a file it includes, that is missing or unreadable.
+- **"The app target <name> takes its files from the synchronized folder <folder> (an Xcode 16 folder group); rn-xtool
+  reads only the files a target lists. Convert the folder to a group (Xcode: Convert to Group) so the target lists its
+  files"** (bare React Native): `build` stops before its first step, and `doctor --project` fails its `project` line.
+  A synchronized folder gives the target every file in it without listing them in the pbxproj. Do what the line says:
+  in Xcode, choose Convert to Group on the folder, which lists each file in the target, then build again.
+- **"✖ precheck — <file>:<line> imports <spelling>, which is in none of the App target's <n> include folders (listed in
+  ios-xtool/.precheck/precheck.log)"**: pass 2 looked for the header in the App target's include folders, the SDK,
+  clang's own headers and the frameworks, and found it in none. The include is not behind a condition the precheck
+  cannot evaluate, and its file is one the compile surely reads; an angle include stops only when its first path
+  component names no target of the package. The log lists the folders in order. Fix the include or the header search
+  path, or install the library that ships the header. The other misses are `⚠` lines, and the build goes on;
+  `xtool-build` decides them:
+  - `⚠ precheck — <file>:<line> imports <spelling>, which nothing compiles; checked by xtool-build if it is ever
+    included`: the include is in a header of the app that no compiled file includes.
+  - `⚠ precheck — <file>:<line> imports <spelling>, which only a condition the precheck cannot evaluate includes; the
+    compile decides`: the file is reached only through an `#if __has_include(…)`, `#ifdef` or similar branch.
+  - `⚠ precheck — <file>:<line> imports <spelling>, which rn-xtool did not find; <name> is a target of the package, so
+    the compile decides`: an angle include whose first component is a target or product of the package graph
+    (`<React/…>`).
+  - `⚠ precheck — <file>:<line> imports <spelling>, which rn-xtool did not find; the compile decides`: clang's own
+    header folder was not found, so an angle include cannot be judged.
+- **"✖ precheck — <file>:<line>: <message>"**, each followed by its include stack (`In file included from
+  <file>:<line>:` and clang's `While building module '<name>' imported from <file>:<line>:` lines), the first ten,
+  then `… and <n> more`: a compiler error. A file of the app is named by its source in `ios/`, other files relative to
+  the project root. An error in your own file is yours to fix. An error in a React Native or library header has a
+  stack that starts at the app's file that included it, and its cause is usually the app's flags rather than the
+  header: the C++ standard (`CLANG_CXX_LANGUAGE_STANDARD`; React Native's headers need C++20), a define in
+  `GCC_PREPROCESSOR_DEFINITIONS`, or a header search path that makes another file of the same name win. Check those
+  settings in the pbxproj (an `.xcconfig` that sets them prints the `⚠` line above).
+- **"✖ precheck — <files>: compiler exited <code> without a diagnostic rn-xtool could read"**, followed by the
+  compiler's last 20 lines: the compiler failed without an error line rn-xtool reads. Those lines, and the whole
+  output in the log, say why.
+- **"✖ precheck: <n> error(s) in the app's own sources before xtool-build (the first ten are above; all of them in
+  ios-xtool/.precheck/precheck.log). If xtool-build compiles these files, this is a false stop: build with rn-xtool
+  build --skip-precheck and report it with rn-xtool doctor --report"**: the stop after the lines above. Fix the errors
+  and build again. When the errors are not real (Xcode compiles these files, or `xtool-build` does once the step is
+  left out), the stop is false: `rn-xtool build --skip-precheck` builds without the step, then `rn-xtool install` and
+  `rn-xtool start` run the app; `rn-xtool run --skip-precheck` does all three. Every build without the flag runs the
+  precheck again; once the app is installed, `rn-xtool run` skips the build while nothing changed. Report the false
+  stop with the block of `rn-xtool doctor --report` and the stop's lines ([Reporting a problem](#reporting-a-problem)).
+- **"⚠ precheck skipped (--skip-precheck): errors in the app's own sources show in xtool-build"**: printed right after
+  `generate` by a build with `--skip-precheck`, which still runs pass 1. `rn-xtool doctor --report` then reads
+  `precheck: skipped with --skip-precheck (last build)`; after a build that ran the step, stopped or not, it reads
+  `precheck: run (last build)`, and before any build of this release reached `generate`, `precheck: not recorded`.
+- **"ℹ precheck — <file> imports <module>, which SwiftPM builds: checked by xtool-build"**: a Swift file imports a
+  module that exists only once SwiftPM builds it, so `swiftc -typecheck` does not run and the Swift files are left to
+  `xtool-build`. The C-family files are still checked. Nothing to do.
+- **"ℹ precheck — <files> import <header>, which the Swift check did not write: checked by xtool-build"**: these files
+  import a `-Swift.h` header (Xcode's generated Swift header) that the Swift check did not write, because it did not
+  run or the header is another module's, so they are left to `xtool-build`. Nothing to do.
+- **"ℹ precheck — <n> module maps Swift Build writes are not there yet: files that need them are checked by
+  xtool-build"** (or `…: <files> are checked by xtool-build`): on Expo, Swift Build writes the module maps of Expo's
+  Swift importers during `xtool-build`, so the files that `@import` or import those modules are left to it. Nothing
+  to do.
+- **"ℹ precheck — <n> dependencies of App could not be placed (<names>): checked by xtool-build"**: the precheck could
+  not match these dependencies of the App target to a package SwiftPM listed, so their headers are not in its include
+  list and `xtool-build` checks what needs them.
+- **"ℹ precheck — the module cache was stale (<clang's line>); checked again without it"**: clang found a module in the
+  cache out of date, for example after a library changed; the precheck removed the cache and ran once more, at the
+  speed of a first precheck. Nothing to do.
+- **"✖ precheck — clang was not found on the Swift toolchain's PATH; run rn-xtool setup"** (or `swiftc`),
+  **"✖ precheck — the iPhoneOS SDK was not found in the Darwin SDK (<path>); run rn-xtool setup --xcode-xip <path>"**
+  and **"✖ precheck — the Swift resources were not found in the Darwin SDK (<path>); run rn-xtool setup --xcode-xip
+  <path>"**: the toolchain or the Darwin SDK is incomplete. Do what the line says, then check with `rn-xtool doctor`.
+- **"✖ precheck — SwiftPM refused the generated package (ios-xtool/Package.swift):"**, followed by SwiftPM's error
+  lines, and its siblings `SwiftPM gave no plan for the generated package (ios-xtool/Package.swift)`, `SwiftPM's plan
+  of the generated package (ios-xtool/Package.swift) has no App target`, `SwiftPM could not list the dependencies of
+  the generated package (ios-xtool/Package.swift)` and `SwiftPM could not read the package <name> (<path>)`: SwiftPM
+  cannot plan the package `xtool-build` builds. SwiftPM's lines after the first say why; `<path>` is the folder of the
+  package it could not read.
+- **"✖ precheck — SwiftPM plans the App target as an executable target (a file named main); xtool links the app's
+  entry point from the App library"**: a file of the App target is named `main`. See
+  [Sources](bare-react-native.md#sources) for how rn-xtool copies a C-family `main` file and what to do with a
+  `main.swift`.
+
 ### Podspec reader
 
 The `rn-spm` step reads each library's podspec with the system `ruby`, through a shim of CocoaPods' DSL and React
@@ -1502,6 +1625,17 @@ checks, so it also runs on a machine without Swift or xtool. Run it from the pro
   installed; skipped. Delete it if you removed the library.` ([details](#build-and-patches)), and one per pod a
   persisted scaffold pins at another version than the pod table (`patches/<file> pins AppAuth 3.0.0, the config says
   3.1.0; delete it so rn-xtool regenerates it …`) or does not pin although the library's podspec maps it.
+- **app-includes**: pass 1 of the [precheck](#precheck) over the app target's own sources, as `build` runs it before
+  the `patches` step: `✖ app-includes — <file>:<line> imports "<spelling>", which is not in …` for each include of one
+  of the app's own headers that resolves nowhere (the line `build` stops on),
+  `ℹ app-includes — <n> includes into React Native's or the libraries' headers: checked at build` for the includes
+  left to the `precheck` step, and `✔ app-includes — <n> includes of the app's own sources resolve` when there is no
+  ✖ line and an include was checked. On Expo it reads the bridging header alone, and prints nothing before
+  `expo prebuild` wrote `ios/`. A ✖ line also carries an error of the check itself, such as an Expo bridging header
+  that is missing.
+- **app-target**: one ⚠ line per `.xcconfig` that sets a setting rn-xtool reads from the pbxproj, the `build` line
+  without its `⚠`, for example `⚠ app-target — ios/Config/App.xcconfig sets HEADER_SEARCH_PATHS for the app target;
+  rn-xtool does not read xcconfig files` ([details](#precheck)).
 - **known-limits**: the setups rn-xtool refuses before a build ([Unsupported setups](#unsupported-setups)). With none,
   it reads `none of the setups rn-xtool refuses early (CocoaPods-only libraries with prebuilt binaries, vendored C
   sources or CocoaPods pods without a SwiftPM package, pnpm, Yarn PnP, hoisted packages)`. Otherwise there is one ✖ line

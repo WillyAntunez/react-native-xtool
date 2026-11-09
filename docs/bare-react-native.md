@@ -193,16 +193,30 @@ missing bundle identifier.
 
 `patches`, `rn-artifacts` (with the vendored SwiftPM scripts, so 0.85, 0.86 and 0.87, unless `rnArtifactsDir` is set),
 `rn-spm`, `jsi` (only with Expo modules), `app-config` (only when `expo-constants` is installed), `frameworks`,
-`generate` and `xtool-build`. `expo prebuild` never runs, and the `rn-spm` step runs React Native's
+`generate`, `precheck` and `xtool-build`. `expo prebuild` never runs, and the `rn-spm` step runs React Native's
 SwiftPM generation steps without injecting anything into your Xcode project (it writes `ios/build/` only). Your
 `Podfile` and any `pod install` result are ignored.
 
 `build --clean` removes `ios/build` and `ios-xtool` and leaves the rest of `ios/` alone.
 
+Before the first step, `build` resolves the `#import` and `#include` lines of the app target's C-family sources,
+headers and bridging header as the generated App target compiles them, with file reads only (pass 1): a quote
+include of one of the app's own headers that resolves nowhere stops the build seconds after it starts, naming the
+file, the folders searched and, when `ios/` holds one, a file of that name that differs only in case or that the
+target does not list. No flag skips it, and `doctor --project` runs the same check as its `app-includes` line.
+Includes into React Native's or the libraries' headers are left to the `precheck` step: SwiftPM plans the generated
+package, the includes are resolved again with the App target's full include list, `swiftc -typecheck` checks the
+Swift files and `clang -fsyntax-only` each C-family file with the generated manifest's flags, so an error in the app's
+own sources stops the build before `xtool-build`. `build --skip-precheck` leaves that step out. Each line and what to
+do: [troubleshooting.md](troubleshooting.md#precheck).
+
 ## What is read from `project.pbxproj`
 
-The single application target (several application targets or several `.xcodeproj` are an error naming them). From its
-Debug configuration, then the project's:
+The single application target (several application targets or several `.xcodeproj` are an error naming them). A target
+that takes its files from an Xcode 16 synchronized folder is refused, by `build` and `doctor --project`, with `The app
+target <name> takes its files from the synchronized folder <folder> (an Xcode 16 folder group); rn-xtool reads only
+the files a target lists. Convert the folder to a group (Xcode: Convert to Group) so the target lists its files`. From
+its Debug configuration, then the project's:
 
 - `PRODUCT_BUNDLE_IDENTIFIER` (required; bare projects are never written to, so add it in Xcode or the pbxproj if it is
   missing), `PRODUCT_NAME`, `MARKETING_VERSION`, `CURRENT_PROJECT_VERSION` and `INFOPLIST_FILE` (the `Info.plist`
@@ -213,7 +227,12 @@ Debug configuration, then the project's:
   and `$(CONFIGURATION)` (`Debug`), the `:rfc1034identifier` and `:c99extidentifier` modifiers and settings defined in
   the pbxproj itself (for example `$(PRODUCT_NAME)`) are resolved. Any other `$(VAR)` stops the build with `Cannot
   resolve build setting` naming it. Relative paths in `HEADER_SEARCH_PATHS` and the bridging header are relative to
-  `ios/`. `.xcconfig` files are ignored.
+  `ios/`. `.xcconfig` files are not read: when the Debug configuration of the app target or of the project is based
+  on one, other than CocoaPods' `Pods-*.xcconfig`, that sets (itself or through its `#include` lines)
+  `HEADER_SEARCH_PATHS`, `GCC_PREPROCESSOR_DEFINITIONS`, `CLANG_CXX_LANGUAGE_STANDARD`, `SWIFT_OBJC_BRIDGING_HEADER`,
+  `PRODUCT_MODULE_NAME`, `CODE_SIGN_ENTITLEMENTS` or `INFOPLIST_FILE`, `build` prints `⚠ <file> sets <settings> for the
+  app target; rn-xtool does not read xcconfig files` and `doctor --project` the same line as `⚠ app-target — …`. Set
+  those values in the target's build settings ([details](troubleshooting.md#precheck)).
 
 Not carried over: `IPHONEOS_DEPLOYMENT_TARGET` (the generated package always targets iOS 16.4, in Swift 5 language
 mode), capabilities and script phases. When `OTHER_CFLAGS`, `OTHER_LDFLAGS` or `OTHER_SWIFT_FLAGS` hold flags beyond
