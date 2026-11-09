@@ -1,0 +1,363 @@
+{
+  "app": {
+    "pkg": {
+      "iosDir": "/home/me/expo-58-bridging/ios",
+      "frameworks": [
+        {
+          "id": "react",
+          "name": "React",
+          "executable": "React",
+          "searchPath": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/React.xcframework/ios-arm64",
+          "frameworkDir": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/React.xcframework/ios-arm64/React.framework"
+        },
+        {
+          "id": "react-native-dependencies",
+          "name": "ReactNativeDependencies",
+          "executable": "ReactNativeDependencies",
+          "searchPath": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/ReactNativeDependencies.xcframework/ios-arm64",
+          "frameworkDir": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/ReactNativeDependencies.xcframework/ios-arm64/ReactNativeDependencies.framework"
+        },
+        {
+          "id": "hermes",
+          "name": "hermesvm",
+          "executable": "hermesvm",
+          "searchPath": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/hermes-engine.xcframework/ios-arm64",
+          "frameworkDir": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/hermes-engine.xcframework/ios-arm64/hermesvm.framework"
+        },
+        {
+          "id": "expo-file-system",
+          "name": "ExpoFileSystem",
+          "executable": "ExpoFileSystem",
+          "searchPath": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/plugins/expo-file-system.xcframework/ios-arm64",
+          "frameworkDir": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/plugins/expo-file-system.xcframework/ios-arm64/ExpoFileSystem.framework"
+        },
+        {
+          "id": "expo-font",
+          "name": "ExpoFont",
+          "executable": "ExpoFont",
+          "searchPath": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/plugins/expo-font.xcframework/ios-arm64",
+          "frameworkDir": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/plugins/expo-font.xcframework/ios-arm64/ExpoFont.framework"
+        },
+        {
+          "id": "expo-image",
+          "name": "ExpoImage",
+          "executable": "ExpoImage",
+          "searchPath": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/plugins/expo-image.xcframework/ios-arm64",
+          "frameworkDir": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/plugins/expo-image.xcframework/ios-arm64/ExpoImage.framework"
+        },
+        {
+          "id": "expo-libavif",
+          "name": "libavif",
+          "executable": "libavif",
+          "searchPath": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/plugins/expo-libavif.xcframework/ios-arm64",
+          "frameworkDir": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/plugins/expo-libavif.xcframework/ios-arm64/libavif.framework"
+        },
+        {
+          "id": "expo-modules-core",
+          "name": "ExpoModulesCore",
+          "executable": "ExpoModulesCore",
+          "searchPath": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/plugins/expo-modules-core.xcframework/ios-arm64",
+          "frameworkDir": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/plugins/expo-modules-core.xcframework/ios-arm64/ExpoModulesCore.framework"
+        },
+        {
+          "id": "expo-modules-worklets",
+          "name": "ExpoModulesWorklets",
+          "executable": "ExpoModulesWorklets",
+          "searchPath": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/plugins/expo-modules-worklets.xcframework/ios-arm64",
+          "frameworkDir": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/plugins/expo-modules-worklets.xcframework/ios-arm64/ExpoModulesWorklets.framework"
+        },
+        {
+          "id": "expo-sdweb-image",
+          "name": "SDWebImage",
+          "executable": "SDWebImage",
+          "searchPath": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/plugins/expo-sdweb-image.xcframework/ios-arm64",
+          "frameworkDir": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/plugins/expo-sdweb-image.xcframework/ios-arm64/SDWebImage.framework"
+        },
+        {
+          "id": "expo-sdweb-image-avifcoder",
+          "name": "SDWebImageAVIFCoder",
+          "executable": "SDWebImageAVIFCoder",
+          "searchPath": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/plugins/expo-sdweb-image-avifcoder.xcframework/ios-arm64",
+          "frameworkDir": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/plugins/expo-sdweb-image-avifcoder.xcframework/ios-arm64/SDWebImageAVIFCoder.framework"
+        },
+        {
+          "id": "expo-sdweb-image-svgcoder",
+          "name": "SDWebImageSVGCoder",
+          "executable": "SDWebImageSVGCoder",
+          "searchPath": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/plugins/expo-sdweb-image-svgcoder.xcframework/ios-arm64",
+          "frameworkDir": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/plugins/expo-sdweb-image-svgcoder.xcframework/ios-arm64/SDWebImageSVGCoder.framework"
+        },
+        {
+          "id": "expo-sdweb-image-web-pcoder",
+          "name": "SDWebImageWebPCoder",
+          "executable": "SDWebImageWebPCoder",
+          "searchPath": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/plugins/expo-sdweb-image-web-pcoder.xcframework/ios-arm64",
+          "frameworkDir": "/home/me/expo-58-bridging/ios/build/xcframeworks/debug/plugins/expo-sdweb-image-web-pcoder.xcframework/ios-arm64/SDWebImageWebPCoder.framework"
+        },
+        {
+          "id": "expo-modules-jsi",
+          "name": "ExpoModulesJSI",
+          "executable": "ExpoModulesJSI",
+          "searchPath": "/home/me/expo-58-bridging/ios-xtool/jsi-out",
+          "frameworkDir": "/home/me/expo-58-bridging/ios-xtool/jsi-out/ExpoModulesJSI.framework"
+        }
+      ],
+      "iosMin": "16.4",
+      "expo": {
+        "compileInterfacesDir": "/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/compile-interfaces",
+        "clangImporter": {
+          "swiftHeadersDir": "/home/me/expo-58-bridging/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos",
+          "includeDirs": [
+            "/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/ExpoAsset/pod-headers",
+            "/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/ExpoDevice/pod-headers",
+            "/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/ExpoDomWebView/pod-headers",
+            "/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/ExpoGlassEffect/pod-headers",
+            "/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/ExpoKeepAwake/pod-headers",
+            "/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/ExpoLinking/pod-headers",
+            "/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/ExpoRouter/pod-headers",
+            "/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/ExpoSplashScreen/pod-headers",
+            "/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/ExpoStatusBar/pod-headers",
+            "/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/ExpoSymbols/pod-headers",
+            "/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/ExpoSystemUI/pod-headers",
+            "/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/ExpoUI/pod-headers",
+            "/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/ExpoWebBrowser/pod-headers"
+          ],
+          "moduleMaps": [
+            "/home/me/expo-58-bridging/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos/ExpoAsset.modulemap",
+            "/home/me/expo-58-bridging/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos/ExpoDevice.modulemap",
+            "/home/me/expo-58-bridging/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos/ExpoDomWebView.modulemap",
+            "/home/me/expo-58-bridging/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos/ExpoGlassEffect.modulemap",
+            "/home/me/expo-58-bridging/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos/ExpoKeepAwake.modulemap",
+            "/home/me/expo-58-bridging/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos/ExpoLinking.modulemap",
+            "/home/me/expo-58-bridging/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos/ExpoRouter.modulemap",
+            "/home/me/expo-58-bridging/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos/ExpoSplashScreen.modulemap",
+            "/home/me/expo-58-bridging/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos/ExpoStatusBar.modulemap",
+            "/home/me/expo-58-bridging/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos/ExpoSymbols.modulemap",
+            "/home/me/expo-58-bridging/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos/ExpoSystemUI.modulemap",
+            "/home/me/expo-58-bridging/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos/ExpoUI.modulemap",
+            "/home/me/expo-58-bridging/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos/ExpoWebBrowser.modulemap"
+          ]
+        },
+        "jsiHeaders": true
+      },
+      "app": {
+        "mixed": false,
+        "bridgingHeader": "/home/me/expo-58-bridging/ios-xtool/Sources/App/app-Bridging-Header.h",
+        "defines": [],
+        "headerSearchPaths": [],
+        "swiftHeadersDir": "/home/me/expo-58-bridging/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos",
+        "importerPaths": [
+          "/home/me/expo-58-bridging/node_modules/@react-native-masked-view/masked-view/ios",
+          "/home/me/expo-58-bridging/node_modules/@react-native-masked-view/masked-view/.",
+          "/home/me/expo-58-bridging/node_modules/react-native-gesture-handler/apple/Handlers",
+          "/home/me/expo-58-bridging/node_modules/react-native-gesture-handler/apple",
+          "/home/me/expo-58-bridging/node_modules/react-native-gesture-handler/shared/runtime",
+          "/home/me/expo-58-bridging/node_modules/react-native-gesture-handler/shared/shadowNodes/react/renderer/components/rngesturehandler_codegen",
+          "/home/me/expo-58-bridging/node_modules/react-native-gesture-handler/.",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/common/cpp",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/common/cpp/react/renderer/components/rnscreens",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/common/cpp/react/renderer/components/rnscreens/utils",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/cpp",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/ios",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/ios/bridging",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/ios/conversion",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/ios/events",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/ios/helpers/container",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/ios/helpers/image",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/ios/helpers/scroll-view",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/ios/integrations",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/ios/safe-area",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/ios/stubs",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/ios/tabs",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/ios/tabs/bottom-accessory",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/ios/tabs/extensions",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/ios/tabs/host",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/ios/tabs/screen",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/ios/utils",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/ios/utils/extensions",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/.",
+          "/home/me/expo-58-bridging/node_modules/react-native-screens/include"
+        ]
+      },
+      "devSupport": true
+    },
+    "origins": {
+      "/home/me/expo-58-bridging/ios-xtool/Sources/App/AppDelegate.swift": "/home/me/expo-58-bridging/ios/app/AppDelegate.swift",
+      "/home/me/expo-58-bridging/ios-xtool/Sources/App/SceneDelegate.swift": "/home/me/expo-58-bridging/ios/app/SceneDelegate.swift",
+      "/home/me/expo-58-bridging/ios-xtool/Sources/App/app-Bridging-Header.h": "/home/me/expo-58-bridging/ios/app/app-Bridging-Header.h",
+      "/home/me/expo-58-bridging/ios-xtool/Sources/App/ExpoModulesProvider.swift": "/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/ExpoModulesProvider.swift"
+    }
+  },
+  "graph": {
+    "headerDirs": [
+      "/home/me/expo-58-bridging/ios/build/xcframeworks/ReactHeadersTarget/include",
+      "/home/me/expo-58-bridging/ios/build/xcframeworks/ReactNativeHeaders.xcframework/ios-arm64/Headers",
+      "/home/me/expo-58-bridging/ios/build/xcframeworks/ReactNativeDependenciesHeaders.xcframework/ios-arm64/Headers",
+      "/home/me/expo-58-bridging/ios/build/generated/ios/ReactCodegen",
+      "/home/me/expo-58-bridging/ios/build/generated/ios/ReactAppHeaders",
+      "/home/me/expo-58-bridging/ios/build/generated/ios/ReactAppDependencyProvider",
+      "/home/me/expo-58-bridging/ios/build/generated/autolinking/libs/RNCMaskedView/include",
+      "/home/me/expo-58-bridging/ios/build/generated/autolinking/libs/RNGestureHandler/include",
+      "/home/me/expo-58-bridging/ios/build/generated/autolinking/libs/RNWorklets/Common/cpp",
+      "/home/me/expo-58-bridging/ios/build/generated/autolinking/libs/RNReanimated/include",
+      "/home/me/expo-58-bridging/ios/build/generated/autolinking/libs/ReactNativeSafeAreaContext/ios",
+      "/home/me/expo-58-bridging/ios/build/generated/autolinking/libs/RNScreens/ios",
+      "/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/ExpoModulesJSIHeaders/ExpoModulesJSIHeaders.xcframework/ios-arm64/Headers",
+      "/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/expo-log-box/root/ios/ExpoLogBoxObjC/include",
+      "/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/ExpoUI/root/ios",
+      "/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/expo/root/ios/ExpoObjC/include",
+      "/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/expo/root/ios/ExpoLoader/include",
+      "/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/expo-constants/root/ios/EXConstantsObjC/include",
+      "/home/me/expo-58-bridging/ios-xtool/Sources/RNXtoolDevSupport/include"
+    ],
+    "moduleMaps": [
+      "/home/me/expo-58-bridging/ios/build/xcframeworks/ReactHeadersTarget/include/module.modulemap",
+      "/home/me/expo-58-bridging/ios/build/xcframeworks/ReactNativeHeaders.xcframework/ios-arm64/Headers/module.modulemap",
+      "/home/me/expo-58-bridging/ios/build/generated/ios/ReactAppHeaders/module.modulemap",
+      "/home/me/expo-58-bridging/ios/build/generated/autolinking/libs/RNScreens/ios/module.modulemap"
+    ],
+    "synthesized": [
+      {
+        "module": "ReactCodegen",
+        "text": "module ReactCodegen {\n    umbrella \"/home/me/expo-58-bridging/ios/build/generated/ios/ReactCodegen\"\n    export *\n}\n"
+      },
+      {
+        "module": "ReactAppDependencyProvider",
+        "text": "module ReactAppDependencyProvider {\n    umbrella \"/home/me/expo-58-bridging/ios/build/generated/ios/ReactAppDependencyProvider\"\n    export *\n}\n"
+      },
+      {
+        "module": "RNCMaskedView",
+        "text": "module RNCMaskedView {\n    umbrella header \"/home/me/expo-58-bridging/ios/build/generated/autolinking/libs/RNCMaskedView/include/RNCMaskedView/RNCMaskedView.h\"\n    export *\n}\n"
+      },
+      {
+        "module": "RNGestureHandler",
+        "text": "module RNGestureHandler {\n    umbrella header \"/home/me/expo-58-bridging/ios/build/generated/autolinking/libs/RNGestureHandler/include/RNGestureHandler/RNGestureHandler.h\"\n    export *\n}\n"
+      },
+      {
+        "module": "RNWorklets",
+        "text": "module RNWorklets {\n    umbrella \"/home/me/expo-58-bridging/ios/build/generated/autolinking/libs/RNWorklets/Common/cpp\"\n    export *\n}\n"
+      },
+      {
+        "module": "RNReanimated",
+        "text": "module RNReanimated {\n    umbrella \"/home/me/expo-58-bridging/ios/build/generated/autolinking/libs/RNReanimated/include\"\n    export *\n}\n"
+      },
+      {
+        "module": "ReactNativeSafeAreaContext",
+        "text": "module ReactNativeSafeAreaContext {\n    umbrella \"/home/me/expo-58-bridging/ios/build/generated/autolinking/libs/ReactNativeSafeAreaContext/ios\"\n    export *\n}\n"
+      },
+      {
+        "module": "ExpoLogBoxObjC",
+        "text": "module ExpoLogBoxObjC {\n    umbrella \"/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/expo-log-box/root/ios/ExpoLogBoxObjC/include\"\n    export *\n}\n"
+      },
+      {
+        "module": "ExpoUI",
+        "text": "module ExpoUI {\n    umbrella \"/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/ExpoUI/root/ios\"\n    export *\n}\n"
+      },
+      {
+        "module": "ExpoObjC",
+        "text": "module ExpoObjC {\n    umbrella \"/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/expo/root/ios/ExpoObjC/include\"\n    export *\n}\n"
+      },
+      {
+        "module": "ExpoLoader",
+        "text": "module ExpoLoader {\n    umbrella \"/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/expo/root/ios/ExpoLoader/include\"\n    export *\n}\n"
+      },
+      {
+        "module": "EXConstantsObjC",
+        "text": "module EXConstantsObjC {\n    umbrella \"/home/me/expo-58-bridging/ios/build/generated/autolinking/expo/expo-source/expo-constants/root/ios/EXConstantsObjC/include\"\n    export *\n}\n"
+      },
+      {
+        "module": "RNXtoolDevSupport",
+        "text": "module RNXtoolDevSupport {\n    umbrella header \"/home/me/expo-58-bridging/ios-xtool/Sources/RNXtoolDevSupport/include/RNXtoolDevSupport.h\"\n    export *\n}\n"
+      }
+    ],
+    "targets": [
+      "App",
+      "RNXtoolDevSupport",
+      "ReactHeaders",
+      "ReactNativeHeaders",
+      "ReactNativeDependenciesHeaders",
+      "ReactCodegen",
+      "ReactAppDependencyProvider",
+      "ReactAppHeaders",
+      "AutolinkedAggregate",
+      "Autolinked",
+      "RNCMaskedView",
+      "RNGestureHandler",
+      "RNWorklets",
+      "RNReanimated",
+      "ReactNativeSafeAreaContext",
+      "RNScreens",
+      "ExpoDomWebView",
+      "ExpoModulesJSIHeaders",
+      "ExpoModulesJSILink",
+      "ExpoLogBox",
+      "ExpoLogBoxObjC",
+      "ExpoUI",
+      "Expo",
+      "ExpoObjC",
+      "ExpoLoader",
+      "ExpoAsset",
+      "EXConstants",
+      "EXConstantsObjC",
+      "ExpoDevice",
+      "ExpoGlassEffect",
+      "ExpoKeepAwake",
+      "ExpoLinking",
+      "ExpoRouter",
+      "ExpoSplashScreen",
+      "ExpoStatusBar",
+      "ExpoSymbols",
+      "ExpoSystemUI",
+      "ExpoWebBrowser"
+    ],
+    "modules": [
+      "React",
+      "CoreModules",
+      "RCTAnimation",
+      "RCTBlob",
+      "RCTDeprecation",
+      "RCTImage",
+      "RCTSettings",
+      "RCTSwiftUIWrapper",
+      "RCTText",
+      "RCTVibration",
+      "ReactCommon",
+      "React_RCTAppDelegate",
+      "ReactNativeHeaders_react",
+      "reactperflogger",
+      "yoga",
+      "ReactAppHeaders",
+      "RNScreens",
+      "ReactCodegen",
+      "ReactAppDependencyProvider",
+      "RNCMaskedView",
+      "RNGestureHandler",
+      "RNWorklets",
+      "RNReanimated",
+      "ReactNativeSafeAreaContext",
+      "ExpoLogBoxObjC",
+      "ExpoUI",
+      "ExpoObjC",
+      "ExpoLoader",
+      "EXConstantsObjC",
+      "RNXtoolDevSupport"
+    ],
+    "unresolved": []
+  },
+  "toolchain": {
+    "clang": "/home/me/.local/share/swiftly/bin/clang",
+    "swiftc": "/home/me/.local/share/swiftly/bin/swiftc",
+    "sdk": "/home/me/.swiftpm/swift-sdks/darwin.artifactbundle/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS27.1.sdk",
+    "swiftResources": "/home/me/.swiftpm/swift-sdks/darwin.artifactbundle/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift",
+    "swiftIncludes": [
+      "/home/me/.swiftpm/swift-sdks/darwin.artifactbundle/Developer/Platforms/iPhoneOS.platform/Developer/usr/lib"
+    ],
+    "swiftExtra": [
+      "-Xfrontend",
+      "-enable-cross-import-overlays"
+    ],
+    "versions": "clang version 21.0.0 (https://github.com/swiftlang/llvm-project.git 51091bd668a61591b761afe08e2776476e20ff1c)\nTarget: x86_64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /home/me/.local/share/swiftly/toolchains/6.4.1/usr/bin\nSwift version 6.4.1 (swift-6.4.1-RELEASE)\nTarget: x86_64-unknown-linux-gnu\nepoch=4,darwinTools=1.1.0,oam=1.4.1"
+  },
+  "dir": "/home/me/expo-58-bridging/ios-xtool/.precheck",
+  "moduleCache": "/home/me/expo-58-bridging/ios-xtool/.precheck/ModuleCache/rn0.88.1-b534cbed0fc4"
+}
