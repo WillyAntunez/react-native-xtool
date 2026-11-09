@@ -1,0 +1,110 @@
+{
+  "env": [
+    "MMKV_LOG_LEVEL"
+  ],
+  "helpers": [
+    "install_modules_dependencies",
+    "min_ios_version_supported"
+  ],
+  "names": {
+    "reduced": {
+      "headerDir": null,
+      "moduleName": null,
+      "name": "NitroMmkv"
+    },
+    "shim": {
+      "headerDir": null,
+      "moduleName": null,
+      "name": "NitroMmkv"
+    }
+  },
+  "reduced": {
+    "differs": {
+      "dependencies": [
+        "MMKVCore",
+        "React-jsi",
+        "React-callinvoker"
+      ],
+      "privateHeaderFiles": [],
+      "publicHeaderFiles": [],
+      "requiresArc": false,
+      "sourceFiles": [
+        "ios/**/*.{swift}",
+        "ios/**/*.{m,mm}",
+        "cpp/**/*.{hpp,cpp}"
+      ],
+      "warnings": [
+        "Left out of s.pod_target_xcconfig GCC_PREPROCESSOR_DEFINITIONS: `gcc_preprocessor_defs`, which the podspec reader cannot evaluate; CocoaPods passes its value.",
+        "`install_modules_dependencies(s)` detected — dependency wiring may be incomplete without Ruby.",
+        "Env-var or Ruby-config interpolation detected — values may not translate cleanly without Ruby."
+      ]
+    }
+  },
+  "shim": {
+    "compilerFlags": [
+      "-x",
+      "objective-c++"
+    ],
+    "dependencies": [
+      "MMKVCore",
+      "NitroModules",
+      "React-jsi",
+      "React-callinvoker"
+    ],
+    "excludeFiles": [],
+    "frameworks": [],
+    "headerDir": null,
+    "headerDirScopes": [],
+    "headerMappingsDir": null,
+    "headerMappingsDirs": [],
+    "headerSearchPaths": [
+      "${PODS_ROOT}/RCT-Folly"
+    ],
+    "libraries": [],
+    "moduleName": null,
+    "name": "NitroMmkv",
+    "partial": false,
+    "preprocessorDefines": [],
+    "privateHeaderFiles": [
+      "nitrogen/generated/ios/c++/**/*.{h,hpp}",
+      "nitrogen/generated/shared/**/views/**/*"
+    ],
+    "publicHeaderFiles": [
+      "nitrogen/generated/shared/**/*.{h,hpp}",
+      "nitrogen/generated/ios/NitroMmkv-Swift-Cxx-Bridge.hpp"
+    ],
+    "reader": "ruby",
+    "requiresArc": true,
+    "resources": [],
+    "sourceFiles": [
+      "ios/**/*.{swift}",
+      "ios/**/*.{m,mm}",
+      "cpp/**/*.{hpp,cpp}",
+      "nitrogen/generated/shared/**/*.{h,hpp,c,cpp,swift}",
+      "nitrogen/generated/ios/**/*.{h,hpp,c,cpp,mm,swift}"
+    ],
+    "spmDependencies": [],
+    "subspecDependencies": {},
+    "swiftConditions": [],
+    "swiftVersions": [],
+    "unresolvedSources": [],
+    "usesInstallModulesDependencies": true,
+    "version": "",
+    "warnings": [
+      "Dropped Folly define(s) FOLLY_NO_CONFIG, FOLLY_CFG_NO_COROUTINES — the prebuilt React Native headers ship folly-config.h, and defining them without the full CocoaPods set breaks the build."
+    ],
+    "weakFrameworks": []
+  },
+  "tsReaders": {
+    "dependencies": {
+      "onlyShim": [
+        "NitroModules"
+      ],
+      "onlyTs": []
+    },
+    "resourceBundles": {
+      "onlyShim": [],
+      "onlyTs": []
+    }
+  }
+}

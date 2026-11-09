@@ -1,0 +1,110 @@
+{
+  "env": [],
+  "helpers": [
+    "install_modules_dependencies",
+    "min_ios_version_supported"
+  ],
+  "names": {
+    "reduced": {
+      "headerDir": null,
+      "moduleName": null,
+      "name": "NitroModules"
+    },
+    "shim": {
+      "headerDir": null,
+      "moduleName": null,
+      "name": "NitroModules"
+    }
+  },
+  "reduced": {
+    "differs": {
+      "requiresArc": false,
+      "warnings": [
+        "Left out s.pod_target_xcconfig = xcconfig: the podspec reader cannot evaluate it (`xcconfig`, which is set under `(react_native_version < 80)`, a condition the reader cannot evaluate); CocoaPods passes its value.",
+        "`install_modules_dependencies(s)` detected — dependency wiring may be incomplete without Ruby."
+      ]
+    }
+  },
+  "shim": {
+    "compilerFlags": [],
+    "dependencies": [
+      "React-jsi",
+      "React-callinvoker"
+    ],
+    "excludeFiles": [],
+    "frameworks": [],
+    "headerDir": null,
+    "headerDirScopes": [],
+    "headerMappingsDir": null,
+    "headerMappingsDirs": [],
+    "headerSearchPaths": [],
+    "libraries": [],
+    "moduleName": null,
+    "name": "NitroModules",
+    "partial": false,
+    "preprocessorDefines": [],
+    "privateHeaderFiles": [],
+    "publicHeaderFiles": [
+      "cpp/core/core/AnyMap.hpp",
+      "cpp/core/core/ArrayBuffer.hpp",
+      "cpp/core/core/HybridObject.hpp",
+      "cpp/core/core/Null.hpp",
+      "cpp/core/core/Promise.hpp",
+      "cpp/core/entrypoint/HybridNitroModulesProxy.hpp",
+      "cpp/core/entrypoint/InstallNitro.hpp",
+      "cpp/core/registry/HybridObjectRegistry.hpp",
+      "cpp/core/jsi/JSIConverter.hpp",
+      "cpp/core/jsi/JSIHelpers.hpp",
+      "cpp/core/platform/NitroLogger.hpp",
+      "cpp/core/threading/Dispatcher.hpp",
+      "cpp/core/threading/ThreadPool.hpp",
+      "cpp/core/utils/JSCallback.hpp",
+      "cpp/core/utils/FastVectorCopy.hpp",
+      "cpp/core/utils/NitroHash.hpp",
+      "cpp/core/utils/NitroDefines.hpp",
+      "cpp/core/utils/PropNameIDCache.hpp",
+      "cpp/views/CachedProp.hpp",
+      "cpp/views/RawPropsCompat.hpp",
+      "cpp/views/ReactProp.hpp",
+      "cpp/views/ViewComponentDescriptor.hpp",
+      "cpp/views/ViewPropsHolderState.hpp",
+      "apple/core/core/ArrayBufferHolder.hpp",
+      "apple/core/core/PromiseHolder.hpp",
+      "apple/core/utils/AnyMapUtils.hpp",
+      "apple/core/utils/Result.hpp",
+      "apple/core/utils/DateToChronoDate.hpp",
+      "apple/core/utils/RuntimeError.hpp",
+      "apple/core/utils/SwiftClosure.hpp"
+    ],
+    "reader": "ruby",
+    "requiresArc": true,
+    "resources": [],
+    "sourceFiles": [
+      "cpp/**/*.{h,hpp}",
+      "cpp/**/*.{c,cpp}",
+      "apple/**/*.{h,hpp}",
+      "apple/**/*.{c,cpp}",
+      "apple/**/*.{m,mm}",
+      "apple/**/*.swift"
+    ],
+    "spmDependencies": [],
+    "subspecDependencies": {},
+    "swiftConditions": [],
+    "swiftVersions": [],
+    "unresolvedSources": [],
+    "usesInstallModulesDependencies": true,
+    "version": "",
+    "warnings": [],
+    "weakFrameworks": []
+  },
+  "tsReaders": {
+    "dependencies": {
+      "onlyShim": [],
+      "onlyTs": []
+    },
+    "resourceBundles": {
+      "onlyShim": [],
+      "onlyTs": []
+    }
+  }
+}

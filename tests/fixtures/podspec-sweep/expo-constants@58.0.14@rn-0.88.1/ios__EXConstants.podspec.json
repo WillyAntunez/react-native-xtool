@@ -1,0 +1,79 @@
+{
+  "env": [
+    "EXPO_USE_SOURCE",
+    "PROJECT_ROOT"
+  ],
+  "helpers": [],
+  "names": {
+    "reduced": {
+      "headerDir": null,
+      "moduleName": null,
+      "name": "EXConstants"
+    },
+    "shim": {
+      "headerDir": null,
+      "moduleName": null,
+      "name": "EXConstants"
+    }
+  },
+  "reduced": {
+    "differs": {
+      "requiresArc": false,
+      "sourceFiles": [
+        "**/*.h"
+      ],
+      "warnings": [
+        "Env-var or Ruby-config interpolation detected — values may not translate cleanly without Ruby."
+      ]
+    }
+  },
+  "shim": {
+    "compilerFlags": [],
+    "dependencies": [
+      "ExpoModulesCore"
+    ],
+    "excludeFiles": [],
+    "frameworks": [],
+    "headerDir": null,
+    "headerDirScopes": [],
+    "headerMappingsDir": null,
+    "headerMappingsDirs": [],
+    "headerSearchPaths": [],
+    "libraries": [],
+    "moduleName": null,
+    "name": "EXConstants",
+    "partial": false,
+    "preprocessorDefines": [],
+    "privateHeaderFiles": [],
+    "publicHeaderFiles": [],
+    "reader": "ruby",
+    "requiresArc": true,
+    "resources": [],
+    "sourceFiles": [
+      "**/*.{h,m,swift}"
+    ],
+    "spmDependencies": [],
+    "subspecDependencies": {},
+    "swiftConditions": [],
+    "swiftVersions": [
+      "5.9"
+    ],
+    "unresolvedSources": [],
+    "usesInstallModulesDependencies": false,
+    "version": "",
+    "warnings": [
+      "The podspec sets script_phases, which a CocoaPods build applies and rn-xtool's scaffold does not."
+    ],
+    "weakFrameworks": []
+  },
+  "tsReaders": {
+    "dependencies": {
+      "onlyShim": [],
+      "onlyTs": []
+    },
+    "resourceBundles": {
+      "onlyShim": [],
+      "onlyTs": []
+    }
+  }
+}

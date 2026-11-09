@@ -1,0 +1,78 @@
+{
+  "env": [
+    "EXPO_USE_SOURCE"
+  ],
+  "helpers": [],
+  "names": {
+    "reduced": {
+      "headerDir": null,
+      "moduleName": null,
+      "name": "ExpoAdapterGoogleSignIn"
+    },
+    "shim": {
+      "headerDir": null,
+      "moduleName": null,
+      "name": "ExpoAdapterGoogleSignIn"
+    }
+  },
+  "reduced": {
+    "refused": "<project>/node_modules/@react-native-google-signin/google-signin/expo/ios/ExpoAdapterGoogleSignIn.podspec: `s.source_files = \"#{s.name}/**/*.h\"` cannot be evaluated: it uses the unknown identifier `s`; `s.source_files = \"#{s.name}/**/*.{h,m,swift}\"` cannot be evaluated: it uses the unknown identifier `s`. The podspec reader evaluates locals, string interpolation, arrays, ENV['...'], package.json reads, comparisons, ternaries and if/unless blocks; building from the part it could read would leave some of the library's files or settings out of its target. Install Ruby (sudo apt install ruby) so rn-xtool reads the podspec as CocoaPods does, or give the library a Package.swift of its own."
+  },
+  "shim": {
+    "compilerFlags": [],
+    "dependencies": [
+      "ExpoModulesCore",
+      "React-Core",
+      "GoogleSignIn",
+      "GoogleUtilities/Environment",
+      "GoogleUtilities/UserDefaults",
+      "RecaptchaInterop"
+    ],
+    "excludeFiles": [],
+    "frameworks": [],
+    "headerDir": null,
+    "headerDirScopes": [],
+    "headerMappingsDir": null,
+    "headerMappingsDirs": [],
+    "headerSearchPaths": [],
+    "libraries": [],
+    "moduleName": null,
+    "name": "ExpoAdapterGoogleSignIn",
+    "partial": false,
+    "preprocessorDefines": [],
+    "privateHeaderFiles": [],
+    "publicHeaderFiles": [],
+    "reader": "ruby",
+    "requiresArc": true,
+    "resources": [],
+    "sourceFiles": [
+      "ExpoAdapterGoogleSignIn/**/*.{h,m,swift}"
+    ],
+    "spmDependencies": [],
+    "subspecDependencies": {},
+    "swiftConditions": [],
+    "swiftVersions": [
+      "5.4"
+    ],
+    "unresolvedSources": [],
+    "usesInstallModulesDependencies": false,
+    "version": "",
+    "warnings": [],
+    "weakFrameworks": []
+  },
+  "tsReaders": {
+    "dependencies": {
+      "onlyShim": [
+        "GoogleSignIn",
+        "GoogleUtilities/Environment",
+        "GoogleUtilities/UserDefaults",
+        "RecaptchaInterop"
+      ],
+      "onlyTs": []
+    },
+    "resourceBundles": {
+      "onlyShim": [],
+      "onlyTs": []
+    }
+  }
+}

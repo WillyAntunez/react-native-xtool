@@ -1,0 +1,90 @@
+{
+  "env": [
+    "PROJECT_ROOT",
+    "USE_FRAMEWORKS"
+  ],
+  "helpers": [],
+  "names": {
+    "reduced": {
+      "headerDir": "ExpoModulesWorkletsAdapter",
+      "moduleName": null,
+      "name": "ExpoModulesWorkletsAdapter"
+    },
+    "shim": {
+      "headerDir": "ExpoModulesWorkletsAdapter",
+      "moduleName": null,
+      "name": "ExpoModulesWorkletsAdapter"
+    }
+  },
+  "reduced": {
+    "differs": {
+      "headerSearchPaths": [],
+      "requiresArc": false,
+      "warnings": [
+        "Env-var or Ruby-config interpolation detected — values may not translate cleanly without Ruby."
+      ]
+    }
+  },
+  "shim": {
+    "compilerFlags": [],
+    "dependencies": [
+      "ExpoModulesJSI",
+      "ExpoModulesCore",
+      "ExpoModulesWorklets",
+      "RNWorklets"
+    ],
+    "excludeFiles": [],
+    "frameworks": [],
+    "headerDir": "ExpoModulesWorkletsAdapter",
+    "headerDirScopes": [
+      {
+        "headerDir": "ExpoModulesWorkletsAdapter",
+        "headerMappingsDirs": [],
+        "sourceFiles": [
+          "ios/WorkletsAdapter/**/*.{h,m,mm}"
+        ]
+      }
+    ],
+    "headerMappingsDir": null,
+    "headerMappingsDirs": [],
+    "headerSearchPaths": [
+      "$(PODS_ROOT)/../../node_modules/react-native-worklets/apple",
+      "$(PODS_ROOT)/../../node_modules/react-native-worklets/Common/cpp",
+      "$(PODS_ROOT)/Headers/Private/ExpoModulesWorklets"
+    ],
+    "libraries": [],
+    "moduleName": null,
+    "name": "ExpoModulesWorkletsAdapter",
+    "partial": false,
+    "preprocessorDefines": [],
+    "privateHeaderFiles": [],
+    "publicHeaderFiles": [],
+    "reader": "ruby",
+    "requiresArc": true,
+    "resources": [],
+    "sourceFiles": [
+      "ios/WorkletsAdapter/**/*.{h,m,mm}"
+    ],
+    "spmDependencies": [],
+    "subspecDependencies": {},
+    "swiftConditions": [],
+    "swiftVersions": [
+      "6.0"
+    ],
+    "unresolvedSources": [],
+    "usesInstallModulesDependencies": false,
+    "version": "",
+    "warnings": [],
+    "weakFrameworks": []
+  },
+  "tsReaders": {
+    "dependencies": {
+      "onlyShim": [],
+      "onlyTs": []
+    },
+    "resourceBundles": {
+      "onlyShim": [],
+      "onlyTs": []
+    }
+  }
+}

@@ -1,0 +1,87 @@
+{
+  "env": [
+    "EXPO_USE_SOURCE",
+    "RCT_NEW_ARCH_ENABLED"
+  ],
+  "helpers": [
+    "add_dependency"
+  ],
+  "names": {
+    "reduced": {
+      "headerDir": null,
+      "moduleName": null,
+      "name": "ExpoRouter"
+    },
+    "shim": {
+      "headerDir": null,
+      "moduleName": null,
+      "name": "ExpoRouter"
+    }
+  },
+  "reduced": {
+    "differs": {
+      "dependencies": [
+        "ExpoModulesCore"
+      ],
+      "requiresArc": false,
+      "sourceFiles": [
+        "**/*.h"
+      ],
+      "warnings": [
+        "Env-var or Ruby-config interpolation detected — values may not translate cleanly without Ruby."
+      ]
+    }
+  },
+  "shim": {
+    "compilerFlags": [],
+    "dependencies": [
+      "ExpoModulesCore",
+      "RNScreens"
+    ],
+    "excludeFiles": [
+      "Tests/**/*"
+    ],
+    "frameworks": [],
+    "headerDir": null,
+    "headerDirScopes": [],
+    "headerMappingsDir": null,
+    "headerMappingsDirs": [],
+    "headerSearchPaths": [],
+    "libraries": [],
+    "moduleName": null,
+    "name": "ExpoRouter",
+    "partial": false,
+    "preprocessorDefines": [],
+    "privateHeaderFiles": [],
+    "publicHeaderFiles": [],
+    "reader": "ruby",
+    "requiresArc": true,
+    "resources": [],
+    "sourceFiles": [
+      "**/*.{h,m,swift,mm,cpp}"
+    ],
+    "spmDependencies": [],
+    "subspecDependencies": {},
+    "swiftConditions": [],
+    "swiftVersions": [
+      "5.9"
+    ],
+    "unresolvedSources": [],
+    "usesInstallModulesDependencies": false,
+    "version": "",
+    "warnings": [],
+    "weakFrameworks": []
+  },
+  "tsReaders": {
+    "dependencies": {
+      "onlyShim": [
+        "RNScreens"
+      ],
+      "onlyTs": []
+    },
+    "resourceBundles": {
+      "onlyShim": [],
+      "onlyTs": []
+    }
+  }
+}
