@@ -8,6 +8,7 @@ import {
   entryName,
   golden,
   goldenText,
+  isHeavyEntry,
   nameDifferences,
   orphanGoldens,
   podspecsOf,
@@ -26,13 +27,18 @@ import { mkTmp } from "./support/expoSpm.js";
 const CI = process.env.CI === "true";
 const skipReason = (entry: SweepEntry) => sweepSkipReason(entry, CI);
 const skip = (entry: SweepEntry) => skipReason(entry) !== "";
+// A heavy library's read can copy hundreds of MB (skia's podspec copies its prebuilt frameworks into the library):
+// tens of seconds on a slow or busy disk, past the suite's 20 s.
+const timeout = (entry: SweepEntry) => (isHeavyEntry(entry) ? 120_000 : undefined);
 
 describe("the podspec reader sweep", () => {
   for (const entry of SWEEP)
     for (const podspec of podspecsOf(entry))
-      it.skipIf(skip(entry))(`reads ${entryName(entry)} ${podspec} as its golden${skipReason(entry)}`, () => {
-        expect(record(entry, podspec)).toEqual(golden(entry, podspec));
-      });
+      it.skipIf(skip(entry))(
+        `reads ${entryName(entry)} ${podspec} as its golden${skipReason(entry)}`,
+        () => expect(record(entry, podspec)).toEqual(golden(entry, podspec)),
+        timeout(entry),
+      );
 
   it("keeps every library's names under both readers", () => expect(nameDifferences()).toEqual([]));
   it("lists each library once per React Native", () => {
@@ -72,6 +78,10 @@ describe("the sweep's guards", () => {
     expect(sweepSkipReason(needsHeavy, false, empty)).toContain(heavyNeeds);
     expect(sweepSkipReason(needsHeavy, false, empty)).toContain(needs);
     expect(sweepSkipReason(unpinned, true, empty)).toBe("");
+  });
+
+  it("knows a library that needs a heavy tarball", () => {
+    expect([isHeavyEntry(needsHeavy), isHeavyEntry(unpinned)]).toEqual([true, false]);
   });
 
   it("does not report a heavy tarball as missing on CI", () => {

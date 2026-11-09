@@ -61,6 +61,8 @@ const versionOf = (spec: string) => spec.slice(spec.lastIndexOf("@") + 1);
 const tarballsOf = (entry: SweepEntry) => [entry.spec, entry.rn, ...(entry.with ?? [])];
 /** The entry's name in titles and messages: `<spec> on <rn>`. */
 export const entryName = (entry: SweepEntry) => `${entry.spec} on ${entry.rn}`;
+/** Whether the entry needs a heavy tarball (`tests/tarballs.json`): fetched on request, and slow to read. */
+export const isHeavyEntry = (entry: SweepEntry): boolean => tarballsOf(entry).some(isHeavy);
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** `spec`'s tarball extracted into `dir` (only `members` of it when given). */
