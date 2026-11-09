@@ -1,6 +1,9 @@
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { podspecReaderHere } from "../src/tools/podspecReader.js";
-import { SWEEP, golden, nameDifferences, orphanGoldens, podspecsOf, record, type SweepEntry } from "./support/podspecSweep.js";
+import { packageRoot } from "../src/tools/exec.js";
+import { SWEEP, golden, goldenText, nameDifferences, orphanGoldens, podspecsOf, record, type SweepEntry } from "./support/podspecSweep.js";
 import { needsRuby } from "./support/ruby.js";
 import { needsTarball } from "./support/tarballs.js";
 
@@ -27,4 +30,30 @@ describe("the podspec reader sweep", () => {
   it("keeps every library's names under both readers", () => expect(nameDifferences()).toEqual([]));
   it("has a golden for every podspec and no other", () => expect(orphanGoldens()).toEqual([]));
   it.runIf(CI)("runs with Ruby on CI", () => expect(podspecReaderHere().reader).toBe("ruby"));
+});
+
+describe("the sweep's guards", () => {
+  // A library that is pinned nowhere: a mistyped entry of tests/podspec-sweep.json.
+  const unpinned: SweepEntry = { spec: "react-native-unpinned@0.0.1", rn: "react-native@0.88.1" };
+  const needs = " (needs react-native-unpinned@0.0.1 pinned in tests/tarballs.json)";
+
+  it("reports an entry without goldens, and on CI what it needs", () => {
+    expect(orphanGoldens([unpinned], false)).toContain("react-native-unpinned@0.0.1/ (no goldens)");
+    expect(orphanGoldens([unpinned], false)).not.toContain(`react-native-unpinned@0.0.1${needs}`);
+    expect(orphanGoldens([unpinned], true)).toContain(`react-native-unpinned@0.0.1${needs}`);
+  });
+
+  it("refuses to write a gap of the shim as a golden", () => {
+    const gap = { shim: { error: "Foo.podspec: undefined method `bar'", kind: "method" } };
+    expect(() => goldenText(gap)).toThrow("a gap of the shim (method): Foo.podspec: undefined method `bar'");
+    const raised = { shim: { error: "Foo.podspec: the podspec raised", kind: "raised" } };
+    expect(goldenText(raised)).toBe(`${JSON.stringify(raised, null, 2)}\n`);
+  });
+
+  it("refuses to write an absolute path into a golden", () => {
+    for (const dir of [tmpdir(), packageRoot(), "/home/me"]) {
+      expect(() => goldenText({ shim: { warnings: [path.join(dir, "Foo.podspec")] } })).toThrow("the golden would hold the absolute path");
+    }
+    expect(goldenText({ shim: { warnings: ["<project>/node_modules/foo/Foo.podspec"] } })).toContain("<project>");
+  });
 });

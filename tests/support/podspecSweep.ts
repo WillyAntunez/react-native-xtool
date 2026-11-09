@@ -6,7 +6,7 @@
  */
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { afterAll, vi } from "vitest";
@@ -25,10 +25,20 @@ export type SweepEntry = { spec: string; rn: string; with?: string[] };
 export const SWEEP = JSON.parse(readFileSync(path.join(ROOT, "tests", "podspec-sweep.json"), "utf8")) as SweepEntry[];
 
 const req = createRequire(path.join(VENDORED_RN_SPM, "read-podspec.js"));
-const { readPodspec, runPodspecShim, unresolvedSourcesReason } = req("./read-podspec.js");
+const { isPodspecReadError, readPodspec, runPodspecShim, unresolvedSourcesReason } = req("./read-podspec.js");
 const { defaultReadPodspec } = req("./expand-spm-dependencies.js");
 
 const WRITE = process.env.RN_XTOOL_SWEEP_WRITE === "1";
+/**
+ * The error kinds of a read that stopped on a gap of the shim (`SHIM_GAP_KINDS` in the vendored read-podspec.js, read
+ * from its text so the two never drift): such a read is modelled in the shim first, never written as a golden.
+ */
+const SHIM_GAP_KINDS: ReadonlySet<string> = (() => {
+  const source = readFileSync(path.join(VENDORED_RN_SPM, "read-podspec.js"), "utf8");
+  const list = /const SHIM_GAP_KINDS = \[([^\]]*)\]/.exec(source)?.[1];
+  if (list === undefined) throw new Error("vendor/rn-spm/spm/read-podspec.js: SHIM_GAP_KINDS not found");
+  return new Set([...list.matchAll(/'([^']+)'/g)].map((m) => m[1]!));
+})();
 /** Fields that name the reader rather than what it read: they differ by definition. */
 const READER_FIELDS = new Set(["reader", "partial"]);
 
@@ -146,13 +156,14 @@ function names(lib: string, podspec: string): Names | { error: string } {
   }
 }
 
-/** What one read of a podspec gives: its model or error, its names. */
-function readWith(reader: "ruby" | "reduced", lib: string, podspec: string): { model?: any; error?: string; names: unknown } {
+type Read = { model?: any; error?: string; kind?: string | null; names: unknown };
+/** What one read of a podspec gives: its model, or its error and the error's kind (`PodspecReadError`'s); its names. */
+function readWith(reader: "ruby" | "reduced", lib: string, podspec: string): Read {
   vi.stubEnv("RN_XTOOL_PODSPEC_READER", reader === "reduced" ? "reduced" : undefined);
   try {
     return { model: readPodspec(podspec), names: names(lib, podspec) };
   } catch (e) {
-    return { error: message(e), names: names(lib, podspec) };
+    return { error: message(e), kind: isPodspecReadError(e) ? String((e as { kind: unknown }).kind) : null, names: names(lib, podspec) };
   }
 }
 
@@ -173,7 +184,7 @@ function reducedAgainst(shim: { model?: any }, reduced: { model?: any; error?: s
 const records = new Map<string, unknown>();
 /**
  * What the readers read of the entry's `podspec` (relative to the library), in the golden's shape, with the project's
- * root written as `<project>` and keys sorted: Ruby's model, where the reduced reader differs from it, both readers'
+ * root written as `<project>`, rn-xtool's as `<repo>`, and keys sorted: Ruby's model, where the reduced reader differs from it, both readers'
  * names, what the podspec used of its environment and of React Native's helpers, and where the TypeScript readers of
  * `src/` (early checks' dependency lines, the scaffold's resource bundles) disagree with the shim. Made once per run;
  * every environment stub is undone after it.
@@ -194,7 +205,7 @@ export function record(entry: SweepEntry, podspec: string): unknown {
     const text = readFileSync(file, "utf8");
     const used = (k: "env" | "helpers"): string[] => [...new Set<string>(raw?.__rn_xtool__?.[k] ?? [])].sort();
     const golden = {
-      shim: shim.error === undefined ? shim.model : { error: shim.error },
+      shim: shim.error === undefined ? shim.model : { error: shim.error, kind: shim.kind },
       reduced: reducedAgainst(shim, reduced, file),
       names: { shim: shim.names, reduced: reduced.names },
       env: used("env"),
@@ -207,7 +218,7 @@ export function record(entry: SweepEntry, podspec: string): unknown {
               resourceBundles: disagreement(tsBundles(text), shimBundles(raw)),
             },
     };
-    const value = JSON.parse(JSON.stringify(sorted(golden)).replaceAll(root, "<project>"));
+    const value = JSON.parse(JSON.stringify(sorted(golden)).replaceAll(root, "<project>").replaceAll(ROOT, "<repo>"));
     records.set(key, value);
     return value;
   } finally {
@@ -215,12 +226,31 @@ export function record(entry: SweepEntry, podspec: string): unknown {
   }
 }
 
-/** The podspec's golden; with `RN_XTOOL_SWEEP_WRITE=1`, its {@link record} written as the golden first. */
+/**
+ * A record's text as a golden file. Throws for a record that must not become one: a Ruby read that stopped on a gap of
+ * the shim (modelled in the shim first), or text that holds an absolute path (a temp folder, rn-xtool's checkout or a
+ * home folder).
+ */
+export function goldenText(value: unknown): string {
+  const text = `${JSON.stringify(value, null, 2)}\n`;
+  const shim = (value as { shim?: { error?: unknown; kind?: unknown } } | null)?.shim;
+  if (typeof shim?.kind === "string" && SHIM_GAP_KINDS.has(shim.kind)) {
+    throw new Error(`a gap of the shim (${shim.kind}): ${String(shim.error)}; model it in the shim before writing the golden`);
+  }
+  // The folder that holds the home folders, any user's.
+  const homes = `${path.dirname(homedir())}${path.sep}`;
+  const absolute = [tmpdir(), ROOT, homes].find((p) => text.includes(p));
+  if (absolute !== undefined) throw new Error(`the golden would hold the absolute path ${absolute}; normalise it in record()`);
+  return text;
+}
+
+/** The podspec's golden; with `RN_XTOOL_SWEEP_WRITE=1`, its {@link record} written as the golden first ({@link goldenText}). */
 export function golden(entry: SweepEntry, podspec: string): unknown {
   const file = goldenFile(entry, podspec);
   if (WRITE) {
+    const text = goldenText(record(entry, podspec));
     mkdirSync(path.dirname(file), { recursive: true });
-    writeFileSync(file, `${JSON.stringify(record(entry, podspec), null, 2)}\n`);
+    writeFileSync(file, text);
   }
   if (!existsSync(file)) {
     throw new Error(`no golden at ${path.relative(ROOT, file)}; write it with RN_XTOOL_SWEEP_WRITE=1 and review it`);
@@ -239,21 +269,26 @@ export function nameDifferences(): string[] {
 }
 
 /**
- * What the goldens folder holds that no sweep entry's podspec owns (a folder of no entry, a golden of no podspec), and
- * each podspec without a golden, by path under `tests/fixtures/podspec-sweep`. An entry whose tarballs are not here is
- * checked for its folder only.
+ * What the goldens folder holds that no sweep entry's podspec owns (a folder of no entry, a golden of no podspec), each
+ * entry without a goldens folder, and each podspec without a golden, by path under `tests/fixtures/podspec-sweep`. An
+ * entry whose tarballs are not here is checked for its folder only, and on CI (`ci`), which fetched every tarball, it
+ * is listed with what it needs.
  */
-export function orphanGoldens(): string[] {
-  const dirs = new Set(SWEEP.map((entry) => path.basename(goldenDir(entry))));
+export function orphanGoldens(entries: readonly SweepEntry[] = SWEEP, ci = process.env.CI === "true"): string[] {
+  const dirs = new Set(entries.map((entry) => path.basename(goldenDir(entry))));
   const found = existsSync(SWEEP_GOLDENS) ? readdirSync(SWEEP_GOLDENS).sort() : [];
   const strays = found.filter((d) => !dirs.has(d)).map((d) => `${d}/ (no entry)`);
   return [
     ...strays,
-    ...SWEEP.flatMap((entry) => {
+    ...entries.flatMap((entry) => {
+      const missing = tarballsOf(entry).map((spec) => needsTarball(spec)).join("");
+      const needs = ci && missing !== "" ? [`${entry.spec}${missing}`] : [];
+      if (!existsSync(goldenDir(entry))) return [`${path.basename(goldenDir(entry))}/ (no goldens)`, ...needs];
       const podspecs = podspecsOf(entry);
       const goldens = goldenPodspecs(entry);
       const rel = (p: string) => path.relative(SWEEP_GOLDENS, goldenFile(entry, p));
       return [
+        ...needs,
         ...goldens.filter((p) => !podspecs.includes(p)).map((p) => `${rel(p)} (no podspec)`),
         ...podspecs.filter((p) => !goldens.includes(p)).map((p) => `${rel(p)} (no golden)`),
       ];
