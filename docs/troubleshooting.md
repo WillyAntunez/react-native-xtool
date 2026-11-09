@@ -917,7 +917,7 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   releases also search each autolinked library's `rn-spm-pod-headers`, where the scaffold writes the pod table's
   `forwardHeaders`. See
   [Mixed Swift + Objective-C/C++ app target](bare-react-native.md#mixed-swift--objective-cc-app-target).
-- **"use of '@import' when modules are disabled"** (in `rn-spm-pod-headers/AppAuth/AppAuth.h`, compiling an
+- **"use of '`@import`' when modules are disabled"** (in `rn-spm-pod-headers/AppAuth/AppAuth.h`, compiling an
   Objective-C++ file that imports `<AppAuth/AppAuth.h>`, such as a bare app's `AppDelegate.mm`): the scaffold of
   rn-xtool 0.1.0-alpha.6 (scaffolder revision 4) wrote the pod table's `forwardHeaders` as `@import` lines.
   Objective-C++ compiles with `-fmodules -fno-cxx-modules`, Xcode's default, so `@import` is an error there;

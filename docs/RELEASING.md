@@ -41,7 +41,23 @@ git push --follow-tags
 ```
 
 Then create a GitHub release from the tag with the notes (what changed, known limits, tested xtool/Swift/Expo
-versions). Check the result: `npm view react-native-xtool dist-tags` and `npx react-native-xtool@alpha doctor`.
+versions), from a checked file as below. Check the result: `npm view react-native-xtool dist-tags` and
+`npx react-native-xtool@alpha doctor`.
+
+**Pull requests and release notes.** A bare `@name` outside a code span notifies that GitHub user, and in release
+notes lists them as a contributor. Write the text of a pull request and the release notes into files, check each one,
+and give GitHub the checked file:
+
+```sh
+npm run check:mentions -- <file>    # names each bare mention and fails; put it in a code span or drop the @
+gh pr create --body-file <file>
+gh release create <tag> --notes-file <file>
+```
+
+Publish release notes from the checked file only, never typed or pasted into GitHub's release page. CI checks the
+Markdown files in the repo (`tests/mentions.test.ts`), and the Mentions workflow
+(`.github/workflows/mentions.yml`) checks a pull request's description again each time it is opened, edited or
+pushed to.
 
 ## Scaffolder changes
 

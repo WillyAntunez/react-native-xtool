@@ -173,6 +173,48 @@ describe("CI workflow", () => {
   });
 });
 
+describe("Mentions workflow", () => {
+  const FILE = path.join(root, ".github", "workflows", "mentions.yml");
+  const raw = (): string => readFileSync(FILE, "utf8");
+  const wf = (): Workflow => parse(raw()) as Workflow;
+  const all = (): Step[] => Object.values(wf().jobs).flatMap((j) => j.steps);
+
+  it("runs on every change to a pull request's description or commits", () => {
+    expect(wf().on).toEqual({ pull_request: { types: ["opened", "edited", "reopened", "synchronize"] } });
+    expect(raw()).not.toMatch(/schedule|pull_request_target|workflow_run|workflow_dispatch|push:/);
+  });
+
+  it("reads the repository only", () => {
+    expect(wf().permissions).toEqual({ contents: "read" });
+    expect(raw().match(/permissions:/g)).toHaveLength(1);
+    const checkouts = all().filter((s) => s.uses?.startsWith("actions/checkout"));
+    expect(checkouts.map((c) => c.with?.["persist-credentials"])).toEqual([false]);
+    expect(raw()).not.toMatch(/secrets\.|GH_TOKEN|\btoken\b/i);
+  });
+
+  it("passes the description through an environment variable, never as an expression in run text", () => {
+    // An expression in run text is pasted into the script before the shell runs it: a description could run commands.
+    expect(raw().split("\n").filter((l) => l.includes("${{")).map((l) => l.trim())).toEqual([
+      "BODY: ${{ github.event.pull_request.body }}",
+    ]);
+    const write = all().find((s) => s.run?.includes("$BODY")) as Step & { env?: Record<string, string> };
+    expect(write.env).toEqual({ BODY: "${{ github.event.pull_request.body }}" });
+  });
+
+  it("writes the description to a file and checks it, in that order, and lets no failure pass", () => {
+    const [job, ...more] = Object.values(wf().jobs) as (Job & { "continue-on-error"?: unknown })[];
+    expect(more).toEqual([]);
+    expect(job!["runs-on"]).toBe("ubuntu-latest");
+    expect(job!["timeout-minutes"]).toBe(5);
+    expect(job!.steps.flatMap((s) => (s.uses ? [s.uses] : []))).toEqual(["actions/checkout@v7", "actions/setup-node@v7"]);
+    expect(job!.steps.flatMap((s) => (s.run !== undefined ? [s.run.trim()] : []))).toEqual([
+      `printf '%s' "$BODY" > "$RUNNER_TEMP/body.md"`,
+      'node scripts/check-mentions.mjs "$RUNNER_TEMP/body.md"',
+    ]);
+    expect(raw()).not.toMatch(/continue-on-error/);
+  });
+});
+
 describe("the private scan in CI (no .scan-private.local)", () => {
   /** A git repo holding the scan script and one tracked file, with no local patterns file. */
   function repo(content: string): string {

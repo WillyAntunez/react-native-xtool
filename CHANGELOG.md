@@ -99,7 +99,7 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   the project's `CLANG_CXX_LANGUAGE_STANDARD` (C++20 when unset), instead of clang's default, which stopped on React
   Native's C++20 headers with "unknown type name 'Hashable'" in `react/utils/hash_combine.h`.
 - An Objective-C++ file that imports a pod table forward (a bare app's `AppDelegate.mm` with
-  `#import <AppAuth/AppAuth.h>`) compiles, instead of stopping with "use of '@import' when modules are disabled": the
+  `#import <AppAuth/AppAuth.h>`) compiles, instead of stopping with "use of '`@import`' when modules are disabled": the
   scaffold's forwarder `#import`s the pod's public headers instead of `@import`ing its modules.
 - A library that was also built for Android gets its scaffold persisted, instead of "⚠ Did not persist <library>'s
   scaffold: the patch would contain a binary file (node_modules/<library>/android/build/…/BuildConfig.dex)" and a new

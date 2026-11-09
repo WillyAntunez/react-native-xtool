@@ -53,7 +53,8 @@
     "prepare": "npm run build",
     "test": "vitest run",
     "lint": "tsc --noEmit",
-    "scan:private": "bash scripts/scan-private.sh"
+    "scan:private": "bash scripts/scan-private.sh",
+    "check:mentions": "node scripts/check-mentions.mjs"
   },
   "dependencies": {
     "@expo/config": "^58.0.7",
