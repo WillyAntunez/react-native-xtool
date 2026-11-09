@@ -74,6 +74,7 @@ describe("the precheck's command lines", () => {
     // -fno-cxx-modules leaves the module cache unused: clang warns about the flag.
     expect(mm.some((a) => a.startsWith("-fmodules-cache-path="))).toBe(false);
     expect(mm.at(-1)).toBe("/p/app/ios-xtool/Sources/App/AppDelegate.mm");
+    expect(mm).toContain("-fmodule-name=App");
 
     const m = clangArgs(inputs(), "/p/app/ios-xtool/Sources/App/main.m");
     expect(after(m, "-x")).toEqual(["objective-c"]);
@@ -234,6 +235,8 @@ describe("the precheck's command lines", () => {
     expect(args).toContain("-DCOCOAPODS=1");
     expect(args).not.toContain("-Xcc");
     expect(args).not.toContain("-import-objc-header");
+    // Swift's clang importer compiles no file of module App.
+    expect(args.some((a) => a.startsWith("-fmodule-name="))).toBe(false);
   });
 
   it("gives an Expo Swift-only target's bridging header the compile-interfaces frameworks", () => {

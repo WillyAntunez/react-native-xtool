@@ -270,6 +270,8 @@ export function clangArgs(i: PrecheckInputs, file: string, unwritten: ReadonlySe
     i.toolchain.sdk,
     ...(objc ? ["-fobjc-arc"] : []),
     "-fmodules",
+    // A file of the App target, as Swift Build compiles one; the bridging header is the importer's, which has none.
+    ...(app.mixed ? ["-fmodule-name=App"] : []),
     // With C++ modules off the cache is unused, and clang warns about the flag.
     ...(cxx ? ["-fno-cxx-modules"] : [`-fmodules-cache-path=${i.moduleCache}`]),
     ...defines.map((d) => `-D${d}`),
