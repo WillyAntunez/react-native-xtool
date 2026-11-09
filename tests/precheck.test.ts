@@ -458,6 +458,19 @@ describe("runPrecheck", () => {
     expect(h.calls.filter((c) => c.startsWith("clang"))).toEqual(["clang Native.m"]);
   });
 
+  it("does not stop on a header only an uncertain condition includes", async () => {
+    const { paths, app } = handApp({
+      "Native.m": '#if __has_include(<Missing/Missing.h>)\n#import "Opt.h"\n#endif\n#import <UIKit/UIKit.h>\n',
+      "Opt.h": "#import <Missing/Missing.h>\n",
+    });
+    const h = harness(paths, app);
+    await h.run();
+    expect(h.logs).toEqual([
+      "⚠ precheck — ios/App/Opt.h:1 imports Missing/Missing.h, which only a condition the precheck cannot evaluate includes; the compile decides",
+    ]);
+    expect(h.calls.filter((c) => c.startsWith("clang"))).toEqual(["clang Native.m"]);
+  });
+
   it("names a compiler that fails without a diagnostic", async () => {
     const { paths, app } = handApp({ "Native.m": "#import <UIKit/UIKit.h>\n" });
     const lines = Array.from({ length: 25 }, (_, n) => `line ${n + 1}`);

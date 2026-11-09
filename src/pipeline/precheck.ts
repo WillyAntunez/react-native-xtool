@@ -328,7 +328,7 @@ function compileRoots(r: Run): string[] {
 
 /**
  * B1 pass 2 over the copied files (Swift's aside) with the App target's include folders and defines. A certain miss
- * the system folders do not answer either, in a file the compile reaches, is an error when it is a quote include, or
+ * the system folders do not answer either, in a file the compile reaches through certain includes, is an error when it is a quote include, or
  * an angle include whose first path component is no target of the graph (and clang's own headers were found); the
  * errors stop the step before any compile. Any other certain miss is a `⚠`.
  */
@@ -353,12 +353,14 @@ function pass2(r: Run, inputs: PrecheckInputs): Includes {
     if (path.isAbsolute(spelling)) return existsSync(spelling) ? spelling : undefined;
     return (angle ? includeDirs : [path.dirname(from), ...includeDirs]).map((d) => path.join(d, spelling)).find((p) => existsSync(p));
   };
-  const reached = (file: string): string[] => {
+  /** With `certain`, only the includes clang surely opens are followed. */
+  const reach = (file: string, certain: boolean): string[] => {
     const seen = new Set<string>();
     const visit = (f: string): void => {
       if (seen.has(f)) return;
       seen.add(f);
       for (const inc of of(f)) {
+        if (certain && !inc.certain) continue;
         const found = inc.generated ? lookup(f, inc.spelling, inc.angle) : inc.found;
         if (found !== undefined && within(r.paths.sources, found)) visit(found);
       }
@@ -366,8 +368,12 @@ function pass2(r: Run, inputs: PrecheckInputs): Includes {
     visit(file);
     return [...seen];
   };
+  const reached = (file: string): string[] => reach(file, false);
 
-  const compiled = new Set(compileRoots(r).flatMap(reached));
+  // Errors only where clang surely reads the file: a header reached only through an uncertain include may never be.
+  const roots = compileRoots(r);
+  const compiled = new Set(roots.flatMap(reached));
+  const surely = new Set(roots.flatMap((f) => reach(f, true)));
   const system = systemHeaders(inputs);
   const targets = new Set(inputs.graph.targets);
   let errors = 0;
@@ -377,6 +383,8 @@ function pass2(r: Run, inputs: PrecheckInputs): Includes {
     const first = inc.spelling.split("/")[0]!;
     if (!compiled.has(inc.file)) {
       r.show(`⚠ precheck — ${at}, which nothing compiles; checked by xtool-build if it is ever included`);
+    } else if (!surely.has(inc.file)) {
+      r.show(`⚠ precheck — ${at}, which only a condition the precheck cannot evaluate includes; the compile decides`);
     } else if (inc.angle && targets.has(first)) {
       r.show(`⚠ precheck — ${at}, which rn-xtool did not find; ${first} is a target of the package, so the compile decides`);
     } else if (inc.angle && !system.resource) {
