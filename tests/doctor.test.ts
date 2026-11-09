@@ -94,6 +94,8 @@ const good: DoctorProbes = {
 const statusOf = (r: { checks: { name: string; status: string }[] }, name: string) =>
   r.checks.find((c) => c.name === name)?.status;
 
+const PODSPEC_READER_LINK = "https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/troubleshooting.md#podspec-reader";
+
 describe("renderReport", () => {
   it("marks ok, fail and warn with distinct symbols", () => {
     const out = renderReport([
@@ -561,6 +563,22 @@ describe("ruby check", () => {
       status: "warn",
       detail: "ruby 2.5.1 is older than 2.7.0 — podspecs are read with the reduced reader; sudo apt install ruby",
     });
+  });
+
+  it("points to the troubleshooting page when installing Ruby does not help", async () => {
+    for (const why of [
+      "ruby cannot load json",
+      "ruby could not run the podspec reader (rbenv: version '3.1.2' is not installed)",
+      "the podspec reader's Ruby shim is missing from /x/read-podspec-shim.rb",
+    ]) {
+      const r = await doctorWithProbes({ ...good, podspecReader: () => ({ ...reduced, why }) });
+      expect(r.checks[1]).toEqual({
+        name: "ruby",
+        status: "warn",
+        detail: `${why} — podspecs are read with the reduced reader; see ${PODSPEC_READER_LINK}`,
+      });
+      expect(r.ok).toBe(true);
+    }
   });
 
   it("names the forced reduced reader", async () => {

@@ -6,6 +6,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { troubleshootingUrl } from "../docs.js";
+import { installingRubyHelps } from "../tools/podspecReader.js";
 
 export interface PodspecRead {
   /** The podspec's absolute path. */
@@ -86,11 +87,13 @@ export function readerLines(reads: PodspecRead[]): string[] {
   const reduced = reads.find((r) => r.reader === "reduced");
   if (reduced !== undefined) {
     const see = `See ${troubleshootingUrl("podspec-reader")}`;
+    const why = reduced.why ?? "Ruby was not used";
     lines.push(
       reduced.forced
         ? `⚠ RN_XTOOL_PODSPEC_READER=reduced is set, ${REDUCED}; unset it to read them as CocoaPods does. ${see}`
-        : `⚠ ${reduced.why ?? "Ruby was not used"}, ${REDUCED}; install Ruby (sudo apt install ruby) to read them as ` +
-            `CocoaPods does. ${see}`,
+        : installingRubyHelps(why)
+          ? `⚠ ${why}, ${REDUCED}; install Ruby (sudo apt install ruby) to read them as CocoaPods does. ${see}`
+          : `⚠ ${why}, ${REDUCED}. ${see}`,
     );
   }
   return lines;

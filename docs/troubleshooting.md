@@ -979,15 +979,26 @@ The `rn-spm` step reads each library's podspec with the system `ruby`, through a
 Native's podspec helpers, so a podspec gives the same fields it gives under CocoaPods. Without a usable Ruby, it reads
 them with its reduced reader, written in JavaScript, which evaluates the subset of Ruby podspecs use for their fields.
 `rn-xtool doctor` names the reader this machine uses (`✔ ruby — 3.3.8`, or `⚠ ruby — not found — podspecs are read
-with the reduced reader; sudo apt install ruby`).
+with the reduced reader; sudo apt install ruby`). The Ruby is the first `ruby` on `PATH`, asked once per run where it
+lives; every podspec then runs with that interpreter, so a version manager (rbenv, asdf, mise) cannot switch Ruby
+between podspecs.
 
 - **"⚠ Ruby was not found, so rn-xtool read the podspecs with its reduced reader, which evaluates a subset of Ruby;
   install Ruby (sudo apt install ruby) to read them as CocoaPods does.":** `rn-spm` prints this once, after its runs,
-  when the reduced reader read a podspec. The first words say why: `Ruby was not found`, `ruby 2.6.10 is older than
-  2.7.0`, `ruby cannot load json`, `ruby could not run the podspec reader (<detail>)`, or `the podspec reader's Ruby
-  shim is missing from <path>`. The build goes on with the reduced reader. Install Ruby 2.7 or newer (`sudo apt
-  install ruby`), check it with `rn-xtool doctor`, and build again. When the shim is missing, reinstall the package
-  whose folder `<path>` names (rn-xtool, or an installed React Native 0.88), then build again.
+  when the reduced reader read a podspec. The build goes on with the reduced reader. The first words say why, and
+  `rn-xtool doctor` and `rn-xtool setup` give the same reason:
+  - `Ruby was not found`, or `ruby <version> is older than 2.7.0`: the line ends with the install advice. Install Ruby
+    2.7 or newer (`sudo apt install ruby`), check it with `rn-xtool doctor`, and build again.
+  - `ruby cannot load json`: the line ends with a link to this section instead. The Ruby on `PATH` is built without
+    its standard library's `json`; install the distribution's Ruby (`sudo apt install ruby`) or rebuild that Ruby
+    with its default gems, then check it with `rn-xtool doctor`.
+  - `ruby could not run the podspec reader (<detail>)`: the line ends with a link to this section. The `ruby` on
+    `PATH` did not answer, often a version manager's shim that failed. Run `ruby --version` in the project folder:
+    when it fails there, the detail says why, for example a `.ruby-version` (in the project or a folder above it)
+    that selects a Ruby the version manager has not installed. Install that version, or change the `.ruby-version`,
+    and run `rn-xtool doctor` in the project folder again.
+  - `the podspec reader's Ruby shim is missing from <path>`: the line ends with a link to this section. Reinstall the
+    package whose folder `<path>` names (rn-xtool, or an installed React Native 0.88), then build again.
 - **"⚠ patches/<name> was written by the reduced podspec reader; Ruby is available here: delete it so rn-xtool
   regenerates it (also remove node_modules/<package> and reinstall: that copy still has the old Package.swift)":** the
   `patches` step found a scaffold the reduced reader persisted, for example by a teammate without Ruby, on a machine

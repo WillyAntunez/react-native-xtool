@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import path from "node:path";
 import type { DoctorCheck } from "../commands/doctor.js";
+import { troubleshootingUrl } from "../docs.js";
 import { packageRoot } from "./exec.js";
 
 /** Which reader the vendored scaffolder reads podspecs with (`podspecReader` in vendor/rn-spm/spm/read-podspec.js). */
@@ -18,12 +19,24 @@ export function podspecReaderHere(env: NodeJS.ProcessEnv = process.env): Podspec
 
 const REDUCED = "podspecs are read with the reduced reader";
 
+/**
+ * Whether installing the distribution's Ruby fixes why the reduced reader reads: no Ruby, or one older than the
+ * shim's floor. Any other reason (no `json`, a Ruby that cannot run the shim, the shim missing) needs the
+ * troubleshooting page instead.
+ */
+export function installingRubyHelps(why: string): boolean {
+  return why === "Ruby was not found" || /^ruby \S+ is older than \S+$/.test(why);
+}
+
 /** doctor's `ruby` check: a reader other than Ruby, or a Ruby with a warning, is a warning, never a failure. */
 export function rubyCheck(c: PodspecReaderChoice): Omit<DoctorCheck, "name"> {
   if (c.reader === "ruby") {
     return c.warning ? { status: "warn", detail: `${c.ruby}; ${c.warning}` } : { status: "ok", detail: c.ruby };
   }
   if (c.forced) return { status: "warn", detail: `${c.why} — ${REDUCED}` };
+  if (!installingRubyHelps(c.why)) {
+    return { status: "warn", detail: `${c.why} — ${REDUCED}; see ${troubleshootingUrl("podspec-reader")}` };
+  }
   const why = c.why === "Ruby was not found" ? "not found" : c.why;
   return { status: "warn", detail: `${why} — ${REDUCED}; sudo apt install ruby` };
 }

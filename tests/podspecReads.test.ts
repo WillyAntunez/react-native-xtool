@@ -58,6 +58,23 @@ describe("readerLines", () => {
     expect(lines[0]!.endsWith(`See ${LINK}`)).toBe(true);
   });
 
+  it("gives the install advice only when installing Ruby helps", () => {
+    const old = read("/a/A.podspec", { reader: "reduced", ruby: undefined, why: "ruby 2.5.1 is older than 2.7.0" });
+    expect(readerLines([old])).toEqual([
+      "⚠ ruby 2.5.1 is older than 2.7.0, so rn-xtool read the podspecs with its reduced reader, which evaluates a subset " +
+        `of Ruby; install Ruby (sudo apt install ruby) to read them as CocoaPods does. See ${LINK}`,
+    ]);
+    for (const why of [
+      "ruby cannot load json",
+      "ruby could not run the podspec reader (rbenv: version '3.1.2' is not installed)",
+      "the podspec reader's Ruby shim is missing from /x/read-podspec-shim.rb",
+    ]) {
+      expect(readerLines([read("/a/A.podspec", { reader: "reduced", ruby: undefined, why })])).toEqual([
+        `⚠ ${why}, so rn-xtool read the podspecs with its reduced reader, which evaluates a subset of Ruby. See ${LINK}`,
+      ]);
+    }
+  });
+
   it("names the forced reader", () => {
     expect(readerLines([forced("/proj/node_modules/a/A.podspec"), forced("/proj/node_modules/b/B.podspec")])).toEqual([
       "⚠ RN_XTOOL_PODSPEC_READER=reduced is set, so rn-xtool read the podspecs with its reduced reader, which evaluates " +

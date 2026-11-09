@@ -3,10 +3,11 @@ import { accessSync, constants, existsSync } from "node:fs";
 import { mkdir, readFile, rm, stat, statfs } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import { troubleshootingUrl } from "../docs.js";
 import { cacheDir } from "../paths.js";
 import { downloadFile } from "../tools/download.js";
 import { run, toolEnv } from "../tools/exec.js";
-import { podspecReaderHere, type PodspecReaderChoice } from "../tools/podspecReader.js";
+import { installingRubyHelps, podspecReaderHere, type PodspecReaderChoice } from "../tools/podspecReader.js";
 import { authStatus, defaultXtoolPath } from "../tools/xtool.js";
 import { SWIFT_VERSION, XTOOL_SHA256, XTOOL_VERSION } from "../versions.js";
 
@@ -37,7 +38,12 @@ export interface SetupDeps {
 function rubySetupLines(c: PodspecReaderChoice): string[] {
   if (c.reader === "ruby") return c.warning ? [`✔ ruby ${c.ruby}`, `⚠ ${c.warning}`] : [`✔ ruby ${c.ruby}`];
   const reduced = `⚠ ${c.why}: rn-xtool reads podspecs with its reduced reader`;
-  return [c.forced ? reduced : `${reduced}; install Ruby with: sudo apt install ruby`];
+  if (c.forced) return [reduced];
+  return [
+    installingRubyHelps(c.why)
+      ? `${reduced}; install Ruby with: sudo apt install ruby`
+      : `${reduced}. See ${troubleshootingUrl("podspec-reader")}`,
+  ];
 }
 
 export const GB = 1024 ** 3;

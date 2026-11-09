@@ -134,6 +134,28 @@ describe("setup", () => {
     ]);
   });
 
+  it("gives the install advice only when installing Ruby helps", async () => {
+    const lines = async (why: string): Promise<string[]> => {
+      const log = vi.fn();
+      const podspecReader = () => ({ reader: "reduced", why, forced: false, warning: null }) as const;
+      await setup({}, { checkSwiftPackages: noPending, probe: async () => all, podspecReader, log });
+      return log.mock.calls.map((c) => c[0] as string);
+    };
+    expect((await lines("ruby 2.5.1 is older than 2.7.0"))[0]).toBe(
+      "⚠ ruby 2.5.1 is older than 2.7.0: rn-xtool reads podspecs with its reduced reader; install Ruby with: sudo apt install ruby",
+    );
+    for (const why of [
+      "ruby cannot load json",
+      "ruby could not run the podspec reader (rbenv: version '3.1.2' is not installed)",
+      "the podspec reader's Ruby shim is missing from /x/read-podspec-shim.rb",
+    ]) {
+      expect((await lines(why))[0]).toBe(
+        `⚠ ${why}: rn-xtool reads podspecs with its reduced reader. See ` +
+          "https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/troubleshooting.md#podspec-reader",
+      );
+    }
+  });
+
   it("gives no install advice when the reduced reader is forced", async () => {
     const log = vi.fn();
     const forced = () => ({ reader: "reduced", why: "RN_XTOOL_PODSPEC_READER=reduced is set", forced: true, warning: null }) as const;
