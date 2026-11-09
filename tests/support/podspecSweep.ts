@@ -50,9 +50,10 @@ const SHIM_GAP_KINDS = shimGapKinds(readFileSync(path.join(VENDORED_RN_SPM, "rea
 const READER_FIELDS = new Set(["reader", "partial"]);
 
 const tmp: string[] = [];
+// Tens of thousands of files: seconds alone, and past vitest's 10 s hook timeout beside the rest of the suite.
 afterAll(() => {
   for (const d of tmp) rmSync(d, { recursive: true, force: true });
-});
+}, 120_000);
 
 const nameOf = (spec: string) => spec.slice(0, spec.lastIndexOf("@"));
 const versionOf = (spec: string) => spec.slice(spec.lastIndexOf("@") + 1);
