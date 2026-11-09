@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { troubleshootingUrl } from "../src/docs.js";
-import { renderPackageSwift } from "../src/generate/packageSwift.js";
+import { appClangArgs, appSwiftArgs, renderPackageSwift } from "../src/generate/packageSwift.js";
 import { renderXtoolYml } from "../src/generate/xtoolYml.js";
 import { devSupportTemplatesDir, sceneDelegateClassNames, writeIosXtool } from "../src/generate/iosXtool.js";
 import { copyBareTarget } from "../src/generate/bareSources.js";
@@ -363,6 +363,41 @@ describe("renderPackageSwift", () => {
   });
 });
 
+describe("the App target's compiler arguments", () => {
+  const app = {
+    mixed: true, bridgingHeader: "/p/App-Bridging-Header.h", defines: ["FOO=1", "BAR"],
+    headerSearchPaths: ["/p/include", "/p/hsp"], cxxStandard: "gnu++20", swiftHeadersDir: "/h",
+  };
+
+  it("gives the manifest's C and C++ flags as compiler arguments", () => {
+    expect(appClangArgs(app, undefined, true)).toEqual(
+      ["-DFOO=1", "-DBAR", "-I", "/p/include", "-I", "/p/hsp", "-I", app.swiftHeadersDir, "-std=gnu++20"],
+    );
+    expect(appClangArgs(app, undefined, false)).toEqual(
+      ["-DFOO=1", "-DBAR", "-I", "/p/include", "-I", "/p/hsp", "-I", app.swiftHeadersDir],
+    );
+    const clangImporter = { swiftHeadersDir: "/h", includeDirs: ["/e/include"], moduleMaps: ["/h/Expo.modulemap"] };
+    expect(appClangArgs(app, expoInputs({ clangImporter }), false).slice(2)).toEqual([
+      "-I", "/p/include", "-I", "/p/hsp", "-I", "/h", "-I", "/e/include", "-fmodule-map-file=/h/Expo.modulemap", "-F", "/p/ci",
+    ]);
+    expect(appClangArgs({ ...app, mixed: false }, undefined, true)).toEqual([]);
+  });
+
+  it("gives the Swift flags of a Debug build", () => {
+    const bare = appSwiftArgs(app, undefined);
+    expect(bare[0]).toBe("-DDEBUG");
+    const at = bare.indexOf("-import-objc-header");
+    expect(bare.slice(at, at + 4)).toEqual(["-import-objc-header", app.bridgingHeader, "-Xcc", "-I/p/include"]);
+    expect(bare).toContain("-DFOO=1");
+    expect(bare).not.toContain("-DEXPO_CONFIGURATION_DEBUG");
+    const expo = appSwiftArgs({ ...app, importerPaths: ["/i/one"] }, expoInputs());
+    expect(expo).toContain("-DEXPO_CONFIGURATION_DEBUG");
+    expect(expo.some((a) => a.includes("RELEASE"))).toBe(false);
+    expect(expo.slice(2, 4)).toEqual(["-F", "/p/ci"]);
+    expect(expo.slice(-2)).toEqual(["-Xcc", "-I/i/one"]);
+  });
+});
+
 describe("renderXtoolYml", () => {
   it("renders defaults", () => {
     const y = renderXtoolYml({ bundleIdentifier: "com.example.app" });
@@ -595,9 +630,10 @@ describe("writeIosXtool", () => {
     it("passes the Expo prebuild's bridging header to Swift", async () => {
       const header = `${DEFAULT_HEADER}#import "RNAppAuthAuthorizationFlowManager.h"\n`;
       const { paths, ctx } = await libApp(header);
-      await writeIosXtool(ctx);
+      const { origins } = await writeIosXtool(ctx);
       const copy = join(paths.sources, "LibApp-Bridging-Header.h");
       expect(await readFile(copy, "utf8")).toBe(header);
+      expect(origins[copy]).toBe(join(ctx.project.iosTargetDir, "LibApp-Bridging-Header.h"));
       expect(await manifestOf(paths)).toContain(`.unsafeFlags(["-import-objc-header", "${copy}"]),`);
     });
 
@@ -816,6 +852,24 @@ describe("writeIosXtool", () => {
     expect(logs.filter((l) => l.includes("OTHER_CFLAGS"))).toHaveLength(2);
     expect(logs.filter((l) => l.startsWith("ℹ No app icon:"))).toHaveLength(2);
     expect(logs).toHaveLength(6);
+  });
+
+  it("returns the package input and the origins it generated", async () => {
+    const { app, paths, ctx } = await bareProject();
+    const result = await writeIosXtool(ctx);
+    expect(result.pkg.app.headerSearchPaths[0]).toBe(join(paths.sources, "include"));
+    expect(result.pkg.iosDir).toBe(paths.ios);
+    expect(result.origins[join(paths.sources, "AppDelegate.swift")]).toBe(join(app, "AppDelegate.swift"));
+    expect(result.origins[join(paths.sources, "HelloWorld-Bridging-Header.h")]).toBe(join(app, "HelloWorld-Bridging-Header.h"));
+
+    const expo = await expoProject("ios-target");
+    const generated = await writeIosXtool(expo.ctx);
+    expect(generated.origins).toEqual({
+      [join(expo.paths.sources, "AppDelegate.swift")]: join(expo.target, "AppDelegate.swift"),
+      [join(expo.paths.sources, "SceneDelegate.swift")]: join(expo.target, "SceneDelegate.swift"),
+      [join(expo.paths.sources, "ExpoModulesProvider.swift")]: join(expo.paths.expoDir, "ExpoModulesProvider.swift"),
+    });
+    expect(generated.pkg.expo?.compileInterfacesDir).toBe(join(expo.paths.expoDir, "compile-interfaces"));
   });
 
   it("writes a Swift-only bare target with the 6.0 manifest and drops a stale 6.5 one", async () => {

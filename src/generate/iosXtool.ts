@@ -14,7 +14,7 @@ import { APP_ICON_FILE, findAppIcon, type IconRecord } from "./appIcon.js";
 import { podHeaderForwardDirs, reactNativeBareIncludeDirs } from "./bareIncludes.js";
 import { copyBareTarget } from "./bareSources.js";
 import { expoClangImporterInputs } from "./expoImporter.js";
-import { DEV_SUPPORT_TARGET, renderPackageSwift, type AppTargetInputs } from "./packageSwift.js";
+import { DEV_SUPPORT_TARGET, renderPackageSwift, type AppTargetInputs, type PackageSwiftInput } from "./packageSwift.js";
 import { writeEmptyTargetObjects } from "../pods/emptyTargets.js";
 import type { PodsLinks } from "../pods/stage.js";
 import { PodsError } from "../pods/format.js";
@@ -96,6 +96,16 @@ interface AppSources {
   app: AppTargetInputs;
   /** Top-level entries staged in ios-xtool/Resources. */
   resources: string[];
+  /** Each copied code file's copy path → its source path. */
+  origins: Record<string, string>;
+}
+
+/** What `writeIosXtool` generated the App from. */
+export interface GeneratedApp {
+  /** The input handed to `renderPackageSwift`. */
+  pkg: PackageSwiftInput;
+  /** Each file in Sources/App (a copy, or Expo's ExpoModulesProvider.swift link) → its source path. */
+  origins: Record<string, string>;
 }
 
 /** Copies the app's sources into Sources/App (resources into ios-xtool/Resources) and says what the App target compiles. */
@@ -123,15 +133,19 @@ async function writeAppSources(ctx: GenerateContext, headersDir: string, resourc
       cxxStandard: project.bare.cxxStandard,
       swiftHeadersDir: headersDir,
     };
-    return { app, resources: copied.resources };
+    return { app, resources: copied.resources, origins: copied.origins };
   }
-  const appDelegate = await readRequired(join(project.iosTargetDir, "AppDelegate.swift"), "AppDelegate.swift");
+  const origins: Record<string, string> = {};
+  const appDelegatePath = join(project.iosTargetDir, "AppDelegate.swift");
+  const appDelegate = await readRequired(appDelegatePath, "AppDelegate.swift");
   await writeFile(join(paths.sources, "AppDelegate.swift"), appDelegate);
+  origins[join(paths.sources, "AppDelegate.swift")] = appDelegatePath;
   // SDK 58's template adds a SceneDelegate; SDK 57's is AppDelegate-only. It is required only when Info.plist names one.
   const sceneDelegatePath = join(project.iosTargetDir, "SceneDelegate.swift");
   const sceneDelegate = await readOptional(sceneDelegatePath);
   if (sceneDelegate !== undefined) {
     await writeFile(join(paths.sources, "SceneDelegate.swift"), sceneDelegate);
+    origins[join(paths.sources, "SceneDelegate.swift")] = sceneDelegatePath;
   } else {
     const names = sceneDelegateClassNames(await readRequired(project.infoPlistPath, "Info.plist"));
     if (names.length > 0) {
@@ -140,7 +154,9 @@ async function writeAppSources(ctx: GenerateContext, headersDir: string, resourc
       );
     }
   }
-  const bridgingHeader = await expoBridgingHeader(paths.ios, paths.sources, ctx.log ?? console.log);
+  const bridging = await expoBridgingHeader(paths.ios, paths.sources, ctx.log ?? console.log);
+  if (bridging) origins[bridging.copy] = bridging.source;
+  const bridgingHeader = bridging?.copy;
   return {
     app: {
       mixed: false,
@@ -150,6 +166,7 @@ async function writeAppSources(ctx: GenerateContext, headersDir: string, resourc
       swiftHeadersDir: headersDir,
     },
     resources: [],
+    origins,
   };
 }
 
@@ -207,12 +224,16 @@ export function expoBridgingHeaderPath(iosDir: string, log?: (s: string) => void
 }
 
 /** `expoBridgingHeaderPath`'s header, copied into Sources/App for Swift; the prebuild's default is not passed. */
-async function expoBridgingHeader(iosDir: string, sourcesDir: string, log: (s: string) => void): Promise<string | undefined> {
+async function expoBridgingHeader(
+  iosDir: string,
+  sourcesDir: string,
+  log: (s: string) => void,
+): Promise<{ copy: string; source: string } | undefined> {
   const header = expoBridgingHeaderPath(iosDir, log);
   if (header === undefined) return undefined;
   const copy = join(sourcesDir, basename(header));
   await writeFile(copy, await readFile(header, "utf8"));
-  return copy;
+  return { copy, source: header };
 }
 
 /**
@@ -247,7 +268,7 @@ async function writeBundles(bundles: readonly BundleSource[], resourcesDir: stri
   return names.sort();
 }
 
-export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
+export async function writeIosXtool(ctx: GenerateContext): Promise<GeneratedApp> {
   const { project, paths } = ctx;
   const headersDir = swiftHeadersDir(paths.iosXtool);
   const resourcesDir = join(paths.iosXtool, "Resources");
@@ -255,7 +276,7 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
   await rm(paths.sources, { recursive: true, force: true });
   await rm(resourcesDir, { recursive: true, force: true });
   await mkdir(paths.sources, { recursive: true });
-  const { app, resources } = await writeAppSources(ctx, headersDir, resourcesDir);
+  const { app, resources, origins } = await writeAppSources(ctx, headersDir, resourcesDir);
   const appResources = [...(project.hasExpoConstants ? DEFAULT_RESOURCES : BASE_RESOURCES), ...resources.map((r) => `Resources/${r}`)];
   const bundleSources = ctx.resourceBundles ?? [];
   checkBundleNames(bundleSources, appResources);
@@ -274,12 +295,10 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
 
   if (project.hasExpoModules) {
     const linkPath = join(paths.sources, "ExpoModulesProvider.swift");
-    const target = relative(
-      dirname(linkPath),
-      join(paths.expoDir, "ExpoModulesProvider.swift"),
-    );
+    const provider = join(paths.expoDir, "ExpoModulesProvider.swift");
     await rm(linkPath, { force: true });
-    await symlink(target, linkPath);
+    await symlink(relative(dirname(linkPath), provider), linkPath);
+    origins[linkPath] = provider;
   }
 
   const template = await readRequired(project.infoPlistPath, "Info.plist");
@@ -315,7 +334,7 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
       entitlementsPath: entitlements !== undefined ? ENTITLEMENTS_FILE : undefined,
     }),
   );
-  const { manifest, manifest65 } = renderPackageSwift({
+  const pkg: PackageSwiftInput = {
     iosDir: paths.ios,
     frameworks: ctx.frameworks,
     iosMin: IOS_MIN,
@@ -329,11 +348,13 @@ export async function writeIosXtool(ctx: GenerateContext): Promise<void> {
     app: { ...app, importerPaths: await scaffoldedImporterPaths(paths.autolinking) },
     devSupport,
     ...(ctx.pods !== undefined ? { pods: ctx.pods } : {}),
-  });
+  };
+  const { manifest, manifest65 } = renderPackageSwift(pkg);
   await writeFile(join(paths.iosXtool, "Package.swift"), manifest);
   if (manifest65 !== undefined) await writeFile(join(paths.iosXtool, MANIFEST_6_5), manifest65);
   else await rm(join(paths.iosXtool, MANIFEST_6_5), { force: true });
   await writeFile(join(paths.iosXtool, ".gitignore"), "*\n");
   // Before xtool-build: Swift Build links an object it never writes for a target without sources.
   if (ctx.emptyTargets !== undefined && ctx.emptyTargets.length > 0) await writeEmptyTargetObjects(paths.iosXtool, ctx.emptyTargets, IOS_MIN);
+  return { pkg, origins };
 }

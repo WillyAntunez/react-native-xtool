@@ -114,6 +114,7 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
   };
   const writeIosXtool = vi.fn(async () => {
     calls.push("generate");
+    return { pkg: {}, origins: {} } as never;
   });
   const deps: BuildDeps = {
     loadConfig: async () => ({ metroPort: 8081, ...over.cfg }),
