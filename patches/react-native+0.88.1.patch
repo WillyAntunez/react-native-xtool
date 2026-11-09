@@ -583,7 +583,7 @@ index 0000000..8fb9e73
 +abort 'usage: ruby read-podspec-shim.rb --probe | <podspec> <out.json> <installation-root>' unless ARGV.length == 3
 +exit(RnXtoolShim.run(ARGV[0], ARGV[1], ARGV[2]) ? 0 : 1)
 diff --git a/node_modules/react-native/scripts/spm/read-podspec.js b/node_modules/react-native/scripts/spm/read-podspec.js
-index 8fcf04b..2582a16 100644
+index 8fcf04b..63eea08 100644
 --- a/node_modules/react-native/scripts/spm/read-podspec.js
 +++ b/node_modules/react-native/scripts/spm/read-podspec.js
 @@ -16,11 +16,12 @@
@@ -3263,7 +3263,7 @@ index 8fcf04b..2582a16 100644
    return {
      name: specStringField('name') ?? '',
      version: specStringField('version') ?? '',
-@@ -693,80 +2702,264 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -693,80 +2702,274 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      // header_mappings_dir copy step, which SPM has no equivalent for.
      headerMappingsDirs: mergeArrayField('header_mappings_dir'),
      headerDir: specStringField('header_dir'),
@@ -3462,8 +3462,18 @@ index 8fcf04b..2582a16 100644
 +    recordPodspecRead(podspecPath, choice, used, null);
 +    return model;
 +  } catch (e) {
-+    recordPodspecRead(podspecPath, choice, used, e);
-+    throw e;
++    // The reader's own plumbing (a temp folder, a file it cannot read) stops
++    // the run like a podspec Ruby cannot read: the autolinking callers
++    // rethrow only a PodspecReadError.
++    const error = isPodspecReadError(e)
++      ? e
++      : new PodspecReadError(
++          `${path.resolve(podspecPath)}: rn-xtool could not run the podspec ` +
++            `reader: ${e instanceof Error ? e.message : String(e)}`,
++          'exit',
++        );
++    recordPodspecRead(podspecPath, choice, used, error);
++    throw error;
 +  }
 +}
 +
@@ -3557,7 +3567,7 @@ index 8fcf04b..2582a16 100644
   * spawn — name resolution runs for every dep, including self-managed ones that
   * need nothing else from the podspec.
   *
-@@ -794,12 +2987,13 @@ function readPodspecNames(
+@@ -794,12 +2997,13 @@ function readPodspecNames(
    if (hasShadowingSubspec(source)) {
      return null;
    }
@@ -3572,7 +3582,7 @@ index 8fcf04b..2582a16 100644
  
    const name = field('name');
    const moduleName = field('module_name');
-@@ -817,8 +3011,9 @@ function readPodspecNames(
+@@ -817,8 +3021,9 @@ function readPodspecNames(
  
  /**
   * Every podspec in `dir`, sorted so two of them name a target the same way on
@@ -3584,7 +3594,7 @@ index 8fcf04b..2582a16 100644
   */
  function findPodspecs(dir /*: string */) /*: Array<string> */ {
    try {
-@@ -834,10 +3029,17 @@ function findPodspecs(dir /*: string */) /*: Array<string> */ {
+@@ -834,10 +3039,17 @@ function findPodspecs(dir /*: string */) /*: Array<string> */ {
  
  module.exports = {
    findPodspecs,

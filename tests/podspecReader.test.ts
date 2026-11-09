@@ -173,6 +173,29 @@ describe("the interpreter a read runs", () => {
   });
 });
 
+describe("the reader's own failures", () => {
+  it("stop the read as a PodspecReadError and are recorded", () => {
+    const rn = tempDir();
+    writeFileSync(path.join(rn, "package.json"), JSON.stringify({ name: "react-native", version: "0.86.3" }));
+    vi.stubEnv("RN_SPM_RN_ROOT", rn);
+    vi.stubEnv("RN_XTOOL_PODSPEC_READER", undefined);
+    const reads = path.join(tempDir(), "reads.jsonl");
+    vi.stubEnv("RN_SPM_PODSPEC_READS", reads);
+    vi.stubEnv("PATH", fakeRuby(`echo '{"ruby":"9.9.9","floor":"2.7.0","usable":true}'`));
+    const podspec = library(spec());
+    // No temp folder for the shim's out file.
+    const gone = path.join(tempDir(), "gone");
+    vi.stubEnv("TMPDIR", gone);
+    const e = thrown(() => readPodspec(podspec));
+    expect(isPodspecReadError(e)).toBe(true);
+    expect(e.kind).toBe("exit");
+    expect(e.message.startsWith(`${podspec}: rn-xtool could not run the podspec reader: ENOENT`)).toBe(true);
+    expect(e.message).toContain(gone);
+    const line = JSON.parse(readFileSync(reads, "utf8").trim().split("\n").pop()!);
+    expect(line).toMatchObject({ podspec, reader: "ruby", ok: false, error: e.message });
+  });
+});
+
 describe("the podspec's installation root", () => {
   it("finds the installation root", () => {
     vi.stubEnv("RN_SPM_APP_IOS_DIR", "/a/ios");

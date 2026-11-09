@@ -924,7 +924,10 @@ podspec calls `<name>(…)`, which the reader does not model), `constant`, `attr
 `require` (a gem other than `colored2`) or `not-a-spec`. Its message, like a podspec that does not finish in 120 s,
 ends with `Set RN_XTOOL_PODSPEC_READER=reduced to read it with the reduced reader for one run, and report it with
 rn-xtool doctor --report.` A podspec's own `raise`, `abort`, `exit` or syntax error (`raised`) keeps Ruby's message,
-and a Ruby that ends without a model says `ruby exited with <code or signal>` with its last stderr line. Without a
+and a Ruby that ends without a model says `ruby exited with <code or signal>` with its last stderr line. A failure
+of the reader's own (no temp folder for the shim's out file, a podspec it cannot read) stops the read the same way,
+as `<podspec>: rn-xtool could not run the podspec reader: <error>` (kind `exit`), so the autolinking callers stop on it
+too. Without a
 usable Ruby (none, older than 2.7, no `json`, the shim missing), or with `RN_XTOOL_PODSPEC_READER=reduced`, fix 28's
 evaluator reads the podspec as before, and `podspecReader()` says why; another value of the variable is named in a
 warning and ignored. `name`, `module_name` and `version` stay the literal readings under both readers.

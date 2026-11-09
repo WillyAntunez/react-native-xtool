@@ -2876,8 +2876,18 @@ function readPodspecWith(
     recordPodspecRead(podspecPath, choice, used, null);
     return model;
   } catch (e) {
-    recordPodspecRead(podspecPath, choice, used, e);
-    throw e;
+    // The reader's own plumbing (a temp folder, a file it cannot read) stops
+    // the run like a podspec Ruby cannot read: the autolinking callers
+    // rethrow only a PodspecReadError.
+    const error = isPodspecReadError(e)
+      ? e
+      : new PodspecReadError(
+          `${path.resolve(podspecPath)}: rn-xtool could not run the podspec ` +
+            `reader: ${e instanceof Error ? e.message : String(e)}`,
+          'exit',
+        );
+    recordPodspecRead(podspecPath, choice, used, error);
+    throw error;
   }
 }
 
