@@ -77,7 +77,8 @@ and `vendor/rn-spm/rn-xtool-edits.patch` (E1–E6) applied, for 0.85–0.87 and 
    cp -a "$T/x/package/scripts" "$T/a/node_modules/react-native/scripts"
    cp -a vendor/rn-spm/setup-apple-spm.js vendor/rn-spm/spm vendor/rn-spm/codegen \
      "$T/b/node_modules/react-native/scripts/"
-   patch -R -p1 -F0 -d "$T/b/node_modules/react-native/scripts" -i "$PWD/vendor/rn-spm/rn-xtool-edits.patch"
+   patch -R -p1 -F0 --no-backup-if-mismatch -d "$T/b/node_modules/react-native/scripts" \
+     -i "$PWD/vendor/rn-spm/rn-xtool-edits.patch"
    (cd "$T" && git diff --no-index --no-color --src-prefix= --dst-prefix= \
       a/node_modules/react-native/scripts b/node_modules/react-native/scripts) \
      | sed -E 's#^diff --git [ab]/([^ ]+) [ab]/#diff --git a/\1 b/#' > "$T/rn.patch"
