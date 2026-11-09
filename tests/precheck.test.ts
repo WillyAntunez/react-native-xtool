@@ -89,12 +89,18 @@ function fakeSwift(paths: ProjectPaths, packages: FakePackage[], calls: string[]
   };
 }
 
-/** An iPhoneOS SDK with UIKit and Foundation headers and the Swift standard library's module. */
-function fakeToolchain(root: string): PrecheckToolchain {
+/**
+ * An iPhoneOS SDK with UIKit and Foundation headers and the Swift standard library's module, and a clang whose
+ * `--version` names its InstalledDir, with `stdarg.h` in its resource headers (`installedDir: false`: no such line).
+ */
+function fakeToolchain(root: string, o: { installedDir?: boolean } = {}): PrecheckToolchain {
   const sdk = path.join(root, "sdk", "iPhoneOS.sdk");
   for (const f of ["UIKit", "Foundation"]) write(path.join(sdk, "System", "Library", "Frameworks", `${f}.framework`, "Headers", `${f}.h`), "");
   mkdirSync(path.join(sdk, "usr", "lib", "swift", "Swift.swiftmodule"), { recursive: true });
-  return { clang: "/t/bin/clang", swiftc: "/t/bin/swiftc", sdk, swiftResources: "/t/swift", swiftIncludes: [], swiftExtra: [], versions: "v" };
+  const bin = path.join(root, "toolchain", "usr", "bin");
+  write(path.join(bin, "..", "lib", "clang", "21", "include", "stdarg.h"), "");
+  const versions = o.installedDir === false ? "clang version 21.0.0\nSwift version 6.4.1" : `clang version 21.0.0\nInstalledDir: ${bin}\nSwift version 6.4.1`;
+  return { clang: "/t/bin/clang", swiftc: "/t/bin/swiftc", sdk, swiftResources: "/t/swift", swiftIncludes: [], swiftExtra: [], versions };
 }
 
 type Compiled = { tool: string; file: string; args: string[]; env: NodeJS.ProcessEnv };
@@ -105,7 +111,7 @@ interface Harness {
   logs: string[];
   calls: string[];
   compiled: Compiled[];
-  run: (o?: { clean?: boolean; deps?: Partial<PrecheckDeps>; packages?: FakePackage[] }) => Promise<void>;
+  run: (o?: { clean?: boolean; deps?: Partial<PrecheckDeps>; packages?: FakePackage[]; installedDir?: boolean }) => Promise<void>;
   dir: string;
 }
 
@@ -121,7 +127,6 @@ function harness(
   const logs: string[] = [];
   const calls: string[] = [];
   const compiled: Compiled[] = [];
-  const toolchain = fakeToolchain(paths.root);
   const h: Harness = {
     paths,
     app,
@@ -136,7 +141,7 @@ function harness(
         { root: paths.root, rnVersion: "0.88.1", clean: o.clean ?? false, log: (s) => logs.push(s) },
         {
           swift: fakeSwift(paths, o.packages ?? [reactNative(paths.root)], calls),
-          toolchain: async () => toolchain,
+          toolchain: async () => fakeToolchain(paths.root, { installedDir: o.installedDir }),
           compile: async (cmd, args, opts) => {
             const tool = path.basename(cmd);
             const file = path.basename(args.at(-1)!);
@@ -194,7 +199,7 @@ describe("runPrecheck", () => {
   it("plans, reads the graph, then compiles Swift before the C family", async () => {
     const { paths, app } = handApp({
       "AppDelegate.swift": "import UIKit\n@objc class Greeter: NSObject {}\n",
-      "Native.m": '#import "App-Swift.h"\n#import <React/RCTBundleURLProvider.h>\n',
+      "Native.m": '#import "App-Swift.h"\n#import <React/RCTBundleURLProvider.h>\n#include <stdarg.h>\n',
     });
     const h = harness(paths, app, (tool, _file, _n, args) => {
       // swiftc writes App-Swift.h where it is told to.
@@ -286,7 +291,7 @@ describe("runPrecheck", () => {
 
   it("retries once without a stale module cache", async () => {
     const { paths, app } = handApp({ "Native.m": "#import <UIKit/UIKit.h>\n" });
-    const cache = path.join(paths.iosXtool, ".precheck", "ModuleCache", moduleCacheKey("0.88.1", "v"));
+    const cache = path.join(paths.iosXtool, ".precheck", "ModuleCache", moduleCacheKey("0.88.1", fakeToolchain(paths.root).versions));
     const stale = "fatal error: module file '/c/UIKit.pcm' is out of date and needs to be rebuilt";
     const seen: boolean[] = [];
     const h = harness(paths, app, (_tool, _file, n) => {
@@ -326,7 +331,7 @@ describe("runPrecheck", () => {
   it("empties the module cache on --clean", async () => {
     const { paths, app } = handApp({ "Native.m": "#import <UIKit/UIKit.h>\n" });
     const moduleCache = path.join(paths.iosXtool, ".precheck", "ModuleCache");
-    const current = path.join(moduleCache, moduleCacheKey("0.88.1", "v"));
+    const current = path.join(moduleCache, moduleCacheKey("0.88.1", fakeToolchain(paths.root).versions));
     const other = path.join(moduleCache, "rn0.88.0-000000000000");
     const fake = fakeToolchain(paths.root);
     const runWith = async (clean: boolean) => {
@@ -395,6 +400,62 @@ describe("runPrecheck", () => {
     expect(maps).toContain(`-fmodule-map-file=${path.join(dir, "ExpoModulesCore.modulemap")}`);
     expect(maps.some((m) => m.includes("ExpoCamera"))).toBe(false);
     expect(readFileSync(path.join(dir, "ExpoModulesCore.modulemap"), "utf8")).toBe("module ExpoModulesCore {}\n");
+  });
+
+  it("leaves an angle miss to the compile when clang's own headers cannot be found", async () => {
+    const { paths, app } = await generated(objcApp("template"));
+    const h = harness(paths, app);
+    await h.run({ installedDir: false });
+    expect(h.logs).toEqual([
+      "⚠ precheck — ios/ObjcApp/AppDelegate.h:7 imports RCTAppDelegate.h, which rn-xtool did not find; the compile decides",
+    ]);
+    expect(h.calls.filter((c) => c.startsWith("clang")).sort()).toEqual(["clang AppDelegate.mm", "clang AppMain.m"]);
+  });
+
+  it("leaves a file that imports a module whose map is not there yet to xtool-build", async () => {
+    const { paths, app } = handApp({ "X.m": '#import "Bridge.h"\n', "Bridge.h": "@import Expo;\n", "Y.m": "#import <UIKit/UIKit.h>\n" });
+    const built = swiftHeadersDir(paths.iosXtool);
+    app.pkg.expo = {
+      compileInterfacesDir: path.join(paths.expoDir, "compile-interfaces"),
+      jsiHeaders: true,
+      clangImporter: { swiftHeadersDir: built, includeDirs: [], moduleMaps: [path.join(built, "Expo.modulemap")] },
+    };
+    const h = harness(paths, app);
+    await h.run();
+    expect(h.logs).toEqual([
+      "ℹ precheck — 1 module maps Swift Build writes are not there yet: ios/App/X.m are checked by xtool-build",
+    ]);
+    expect(h.calls.filter((c) => c.startsWith("clang"))).toEqual(["clang Y.m"]);
+    expect(h.compiled[0]!.args.some((a) => a.includes("Expo.modulemap"))).toBe(false);
+  });
+
+  it("leaves Swift to xtool-build when its bridging header waits for a module map", async () => {
+    const { paths, app } = handApp(
+      { "AppDelegate.swift": "import UIKit\n", "Bridging.h": "@import Expo;\n" },
+      { mixed: false, bridgingHeader: "Bridging.h" },
+    );
+    const built = swiftHeadersDir(paths.iosXtool);
+    app.pkg.expo = {
+      compileInterfacesDir: path.join(paths.expoDir, "compile-interfaces"),
+      jsiHeaders: true,
+      clangImporter: { swiftHeadersDir: built, includeDirs: [], moduleMaps: [path.join(built, "Expo.modulemap")] },
+    };
+    const h = harness(paths, app);
+    await h.run();
+    expect(h.logs).toEqual([
+      "ℹ precheck — 1 module maps Swift Build writes are not there yet: ios/App/Bridging.h, ios/App/AppDelegate.swift are checked by xtool-build",
+    ]);
+    expect(h.compiled).toEqual([]);
+  });
+
+  it("does not stop on a header nothing compiles", async () => {
+    const { paths, app } = handApp({ "Native.m": "#import <UIKit/UIKit.h>\n", "Orphan.h": '#import "Nope.h"\n' });
+    const h = harness(paths, app);
+    await h.run();
+    expect(h.logs).toEqual([
+      "⚠ precheck — ios/App/Orphan.h:1 imports Nope.h, which nothing compiles; checked by xtool-build if it is ever included",
+    ]);
+    expect(h.calls.filter((c) => c.startsWith("clang"))).toEqual(["clang Native.m"]);
   });
 
   it("names a compiler that fails without a diagnostic", async () => {
