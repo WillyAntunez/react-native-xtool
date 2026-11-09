@@ -739,6 +739,17 @@ describe("detectCapabilities", () => {
     expect((await detect(dir)).appTarget).toEqual([
       "ℹ app-includes — 2 includes into React Native's or the libraries' headers: checked at build",
     ]);
+    // A header next to it in ios/ is not copied: the build stops, and the line says why.
+    await writeFile(path.join(dir, "ios", "LibApp", "LibApp-Shared.h"), "// shared\n");
+    await writeFile(
+      path.join(dir, "ios", "LibApp", "LibApp-Bridging-Header.h"),
+      '#import <React/RCTBridgeModule.h>\n#import "LibApp-Shared.h"\n',
+    );
+    expect((await detect(dir)).appTarget).toEqual([
+      '✖ app-includes — ios/LibApp/LibApp-Bridging-Header.h:2 imports "LibApp-Shared.h", which is not in ios/LibApp or the ' +
+        "app target's headers; ios/LibApp/LibApp-Shared.h exists, but rn-xtool copies only the bridging header of an Expo app",
+      "ℹ app-includes — 1 includes into React Native's or the libraries' headers: checked at build",
+    ]);
     // A setting naming a missing file stops the build's check too: an error line, not silence.
     await rm(path.join(dir, "ios", "LibApp", "LibApp-Bridging-Header.h"));
     expect((await detect(dir)).appTarget).toEqual([

@@ -153,6 +153,8 @@ export interface Pass1Input {
   appHeaders: string[];
   /** The project uses binary pods, whose headers pass 1 cannot see. */
   binaryPods: boolean;
+  /** `files` is an Expo app's bridging header, the one file of ios/ generate copies. */
+  expo?: boolean;
 }
 
 export interface Pass1Result {
@@ -206,12 +208,19 @@ export function appIncludesPass1(i: Pass1Input): Pass1Result {
 
   const listed = new Set(i.files.map((f) => f.source));
   const byDisplay = new Map(i.files.map((f) => [f.display, f]));
-  /** What ios/ holds of that name: a file the target does not list, else one whose name differs only in case. */
+  /**
+   * What ios/ holds of that name: a file the target does not list (on Expo, one generate does not copy), else one
+   * whose name differs only in case.
+   */
   const hint = (spelling: string): string => {
     const base = path.posix.basename(spelling);
     const files = onDisk(base);
     const unlisted = files.find((f) => path.basename(f) === base && !listed.has(f));
-    if (unlisted !== undefined) return `; ${fromRoot(i.root, unlisted)} exists but the app target does not list it (add it to the target)`;
+    if (unlisted !== undefined) {
+      return i.expo === true
+        ? `; ${fromRoot(i.root, unlisted)} exists, but rn-xtool copies only the bridging header of an Expo app`
+        : `; ${fromRoot(i.root, unlisted)} exists but the app target does not list it (add it to the target)`;
+    }
     const twin = files.find((f) => path.basename(f) !== base);
     return twin === undefined ? "" : `; ${fromRoot(i.root, twin)} differs only in case (file names are case-sensitive on Linux)`;
   };
@@ -287,6 +296,7 @@ function checkAppTarget(
         defines: [],
         appHeaders: [base],
         binaryPods,
+        expo: true,
       };
     }
   }
