@@ -14,7 +14,7 @@
   { "spec": "@react-native-masked-view/masked-view@0.3.2", "rn": "react-native@0.88.1" },
   { "spec": "@react-native-picker/picker@2.11.4", "rn": "react-native@0.88.1" },
   { "spec": "@sentry/react-native@8.34.0", "rn": "react-native@0.88.1" },
-  { "spec": "@shopify/react-native-skia@2.14.0", "rn": "react-native@0.88.1" },
+  { "spec": "@shopify/react-native-skia@2.14.0", "rn": "react-native@0.88.1", "with": ["react-native-skia-apple-ios@154.0.0", "react-native-skia-apple-macos@154.0.0", "react-native-skia-apple-tvos@154.0.0"] },
   { "spec": "expo-asset@57.0.20", "rn": "react-native@0.86.3" },
   { "spec": "expo-asset@58.0.19", "rn": "react-native@0.88.1" },
   { "spec": "expo-constants@57.0.22", "rn": "react-native@0.86.3" },
