@@ -143,6 +143,48 @@ describe("parseDiagnostics", () => {
     expect(parseDiagnostics(output)).toHaveLength(2);
   });
 
+  it("keeps swiftc's include trail from a bridging header in the stack", () => {
+    // swiftc -typecheck A.swift -import-objc-header Bridge.h; Bridge.h imports lib/Top.h, which imports a broken Mid.h.
+    const output = [
+      "error: generate-pch command failed with exit code 1 (use -v to see invocation)",
+      "/p/app/Bridge.h:1:9: note: in file included from /p/app/Bridge.h:1:",
+      "1 | #import \"lib/Top.h\"",
+      "  |         `- note: in file included from /p/app/Bridge.h:1:",
+      "2 | ",
+      "",
+      "/p/app/lib/Top.h:1:9: note: in file included from /p/app/lib/Top.h:1:",
+      "1 | #import \"Mid.h\"",
+      "  |         `- note: in file included from /p/app/lib/Top.h:1:",
+      "2 | ",
+      "",
+      "1 error generated.",
+      "/p/app/lib/Mid.h:1:24: error: use of undeclared identifier 'nope'",
+      "1 | int bad(void) { return nope; }",
+      "  |                        `- error: use of undeclared identifier 'nope'",
+      "2 | ",
+      "",
+      "<unknown>:0: error: failed to emit precompiled header '/p/t/a.pch' for bridging header '/p/app/Bridge.h'",
+    ].join("\n");
+    expect(parseDiagnostics(output)).toEqual([
+      { file: "", line: 0, message: "generate-pch command failed with exit code 1 (use -v to see invocation)", stack: [] },
+      {
+        file: "/p/app/lib/Mid.h",
+        line: 1,
+        message: "use of undeclared identifier 'nope'",
+        stack: ["In file included from /p/app/Bridge.h:1:", "In file included from /p/app/lib/Top.h:1:"],
+      },
+      { file: "", line: 0, message: "failed to emit precompiled header '/p/t/a.pch' for bridging header '/p/app/Bridge.h'", stack: [] },
+    ]);
+  });
+
+  it("still drops swiftc's other notes", () => {
+    const output = [
+      "/p/a/A.swift:3:6: note: 'f()' declared here",
+      "/p/a/A.swift:5:1: error: missing argument",
+    ].join("\n");
+    expect(parseDiagnostics(output)).toEqual([{ file: "/p/a/A.swift", line: 5, message: "missing argument", stack: [] }]);
+  });
+
   it("starts a fresh stack at each diagnostic", () => {
     const output = [
       "In file included from /p/a/x.mm:1:",

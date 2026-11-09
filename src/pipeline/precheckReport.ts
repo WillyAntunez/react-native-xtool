@@ -10,7 +10,7 @@ export interface Diagnostic {
   /** 0 when the compiler named no line. */
   line: number;
   message: string;
-  /** The `In file included from <file>:<line>:` lines before it (and clang's module-build lines), in order. */
+  /** The `In file included from <file>:<line>:` lines before it (clang's module-build lines and swiftc's include notes too), in order. */
   stack: string[];
 }
 
@@ -27,34 +27,45 @@ const UNLOCATED = /^(?:[^\s:]+: )?(fatal error|error|warning|note|remark): (.*)$
 const STACK = /^(In file included from|(?:While building|In) module '[^']*' imported from) (.+):(\d+):$/;
 /** A source excerpt or caret line: clang's `   21 | …`, swiftc's `1 | …` and `  |  \`- error: …`. */
 const EXCERPT = /^\s*\d*\s*\|/;
+/** swiftc's include trail, a note per include: `<file>:<line>:<col>: note: in file included from <file>:<line>:`. */
+const SWIFT_TRAIL = /^in file included from (.+:\d+:)$/;
 
 /** The errors (and fatal errors) in clang's or swiftc's output; warnings, notes and excerpts dropped (row 51). */
 export function parseDiagnostics(output: string): Diagnostic[] {
   const diags: Diagnostic[] = [];
   let stack: string[] = [];
+  // The stack resets at each diagnostic only: swiftc puts excerpts, blank lines and clang's
+  // `N errors generated.` between its include-trail notes and the error they lead to.
   for (const raw of output.split(/\r?\n/)) {
     const text = raw.trimEnd();
     if (STACK.test(text)) {
       stack.push(text);
       continue;
     }
-    const diag = EXCERPT.test(text) ? undefined : diagnostic(text, stack);
-    if (diag) diags.push(diag);
+    if (EXCERPT.test(text)) continue;
+    const found = diagnostic(text);
+    if (!found) continue;
+    if (found.severity === "note") {
+      const trail = SWIFT_TRAIL.exec(found.message);
+      if (trail) {
+        stack.push(`In file included from ${trail[1]}`);
+        continue;
+      }
+    }
+    if (isError(found.severity)) diags.push({ file: found.file, line: found.line, message: found.message, stack });
     stack = [];
   }
   return diags;
 }
 
-function diagnostic(text: string, stack: string[]): Diagnostic | undefined {
+function diagnostic(text: string): { file: string; line: number; severity: string; message: string } | undefined {
   const located = LOCATED.exec(text);
   if (located) {
     const [, file, line, severity, message] = located;
-    if (!isError(severity)) return undefined;
-    return file === "<unknown>" ? { file: "", line: 0, message, stack } : { file, line: Number(line), message, stack };
+    return file === "<unknown>" ? { file: "", line: 0, severity, message } : { file, line: Number(line), severity, message };
   }
   const unlocated = UNLOCATED.exec(text);
-  if (unlocated && isError(unlocated[1])) return { file: "", line: 0, message: unlocated[2], stack };
-  return undefined;
+  return unlocated ? { file: "", line: 0, severity: unlocated[1], message: unlocated[2] } : undefined;
 }
 
 function isError(severity: string): boolean {
