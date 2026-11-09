@@ -892,9 +892,10 @@ Fix: the podspec runs in real Ruby. `read-podspec-shim.rb`, next to `read-podspe
 and an environment of `PATH`, `HOME`, `LANG` and fix 19's two variables (`RCT_NEW_ARCH_ENABLED=1`,
 `RCT_HERMES_V1_ENABLED=1`). It evaluates the podspec inside `module Pod`, as CocoaPods-core does, against a
 `Pod::Specification` with the attributes of CocoaPods 1.16's DSL (a setter and a getter each, the singular aliases
-stored under their plural keys), `dependency`, `subspec`, `test_spec`, `app_spec` and the platform proxies (`s.ios`,
-`s.osx`, `s.tvos`, `s.visionos`, `s.watchos`; `s.macos` stores under `osx`). It writes the spec in CocoaPods' JSON
-form, what `pod ipc spec` printed, so `flattenSubspecs` reads it unchanged. `ruby <shim> --probe` checks the Ruby
+stored under their plural keys), `attributes_hash` (the attributes as stored, which Nitro's generated
+`add_nitrogen_files` reads and extends), `dependency`, `subspec`, `test_spec`, `app_spec` and the platform proxies
+(`s.ios`, `s.osx`, `s.tvos`, `s.visionos`, `s.watchos`; `s.macos` stores under `osx`). It writes the spec in CocoaPods'
+JSON form, what `pod ipc spec` printed, so `flattenSubspecs` reads it unchanged. `ruby <shim> --probe` checks the Ruby
 version before anything loads.
 
 The shim models what a static scan found called in the podspecs of the reference apps, of the Expo SDK 57 and 58

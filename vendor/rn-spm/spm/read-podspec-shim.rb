@@ -89,6 +89,12 @@ module Pod
       define_method(proxy) { PlatformProxy.new(@attributes, platform) }
     end
 
+    # The attributes as stored, as CocoaPods' `attributes_hash` gives them (Nitro's generated `add_nitrogen_files` reads
+    # and extends them).
+    def attributes_hash
+      @attributes
+    end
+
     # A subspec's name reads as CocoaPods gives it, `Foo/core`; the model keeps its base name.
     def name
       @parent ? "#{@parent.name}/#{@attributes['name']}" : @attributes['name']

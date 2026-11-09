@@ -78,6 +78,27 @@ describe.skipIf(needsRuby !== "")(`the podspec shim${needsRuby}`, () => {
     expect(r.json).not.toHaveProperty("author");
   });
 
+  it("answers attributes_hash with the attributes as stored", () => {
+    // Nitro's generated add_nitrogen_files reads the attributes set so far and adds its own to them.
+    const r = runShim(spec(
+      ' s.source_files = "ios/**/*.swift"',
+      ' s.pod_target_xcconfig = { "DEFINES_MODULE" => "NO", "OTHER_CFLAGS" => "-DX=1" }',
+      ' s.ios.frameworks = "UIKit"',
+      " s.source_files = Array(s.attributes_hash['source_files']) + ['nitrogen/**/*.swift']",
+      " s.pod_target_xcconfig = (s.attributes_hash['pod_target_xcconfig'] || {}).merge('DEFINES_MODULE' => 'YES')",
+      " s.summary = s.attributes_hash['ios']['frameworks']",
+      " s.description = s.attributes_hash['public_header_files'].nil?.to_s",
+      ' s.subspec "core" do |ss|',
+      "  ss.summary = ss.attributes_hash.keys.join(',')",
+      " end",
+    ));
+    expect(r.status).toBe(0);
+    expect(r.json.source_files).toEqual(["ios/**/*.swift", "nitrogen/**/*.swift"]);
+    expect(r.json.pod_target_xcconfig).toEqual({ DEFINES_MODULE: "YES", OTHER_CFLAGS: "-DX=1" });
+    expect([r.json.summary, r.json.description]).toEqual(["UIKit", "true"]);
+    expect(r.json.subspecs[0].summary).toBe("name");
+  });
+
   it("refuses an attribute CocoaPods does not define", () => {
     const r = runShim(`Pod::Spec.new do |s|\n s.name = "Foo"\n s.not_an_attribute = 1\nend`);
     expect([r.status, r.json.error.kind]).toEqual([1, "attribute"]);
