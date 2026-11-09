@@ -91,7 +91,7 @@ describe("CI workflow", () => {
 
   it("uses Node 22 on hosted Ubuntu, and setup-ruby only for the Ruby floor", () => {
     const uses = (job: string) => jobSteps(job).flatMap((s) => (s.uses ? [s.uses] : []));
-    expect(uses("test")).toEqual(["actions/checkout@v7", "actions/setup-node@v7"]);
+    expect(uses("test")).toEqual(["actions/checkout@v7", "actions/setup-node@v7", "actions/cache@v6"]);
     expect(uses("shim-ruby-floor")).toEqual(["actions/checkout@v7", "actions/setup-node@v7", "ruby/setup-ruby@v1"]);
     for (const node of steps().filter((s) => s.uses === "actions/setup-node@v7")) {
       expect(node.with?.["node-version"]).toBe(22);
@@ -105,6 +105,14 @@ describe("CI workflow", () => {
     const ruby = jobSteps("shim-ruby-floor").find((s) => s.uses === "ruby/setup-ruby@v1")!;
     const floor = /^RN_XTOOL_RUBY_FLOOR = '(\d+\.\d+)\.\d+'$/m.exec(readFileSync(SHIM, "utf8"))?.[1];
     expect(ruby.with?.["ruby-version"]).toBe(floor);
+  });
+
+  it("restores the test tarballs from a cache keyed on their manifest, before fetching them", () => {
+    const all = jobSteps("test");
+    const cache = all.findIndex((s) => s.uses?.startsWith("actions/cache"));
+    expect(all[cache]!.with).toEqual({ path: "tests/.cache", key: "test-tarballs-${{ hashFiles('tests/tarballs.json') }}" });
+    expect(cache).toBe(all.findIndex((s) => s.name === "Fetch the test tarballs") - 1);
+    expect(jobSteps("shim-ruby-floor").some((s) => s.uses?.startsWith("actions/cache"))).toBe(false);
   });
 
   it("stops a stuck job after 15 minutes", () => {

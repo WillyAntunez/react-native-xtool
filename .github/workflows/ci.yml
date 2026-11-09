@@ -1,5 +1,6 @@
 # CI: on every pull request to main and every push to main, install, fetch the pinned upstream tarballs the tests
-# read, type-check, scan the tracked files for private identifiers and run the whole test suite.
+# read (restored from the cache while tests/tarballs.json is unchanged), type-check, scan the tracked files for private
+# identifiers and run the whole test suite.
 # A second job runs the podspec reader's Ruby shim tests on the oldest Ruby the shim supports.
 #
 # Nothing is compiled for iOS and no device is touched: there is no Swift, no Darwin SDK and no iPhone here. Tests that
@@ -27,6 +28,7 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # At least twice a fetch from an empty cache plus the tests (under 2 minutes measured locally), and never under 15.
     # Also bounds the fetch script's npm pack, which has no timeout of its own.
     timeout-minutes: 15
     steps:
@@ -40,6 +42,12 @@ jobs:
       # npm ci runs the package's prepare script, which builds dist/.
       - name: Install and build
         run: npm ci
+      # Keyed on the manifest: a changed pin starts a new cache, and the fetch below checks every integrity anyway.
+      - name: Cache the test tarballs
+        uses: actions/cache@v6
+        with:
+          path: tests/.cache
+          key: test-tarballs-${{ hashFiles('tests/tarballs.json') }}
       - name: Fetch the test tarballs
         run: node scripts/fetch-test-tarballs.mjs
       - name: Type-check
