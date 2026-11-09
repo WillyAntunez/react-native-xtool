@@ -3,7 +3,17 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { podspecReaderHere } from "../src/tools/podspecReader.js";
 import { packageRoot } from "../src/tools/exec.js";
-import { SWEEP, golden, goldenText, nameDifferences, orphanGoldens, podspecsOf, record, type SweepEntry } from "./support/podspecSweep.js";
+import {
+  SWEEP,
+  golden,
+  goldenText,
+  nameDifferences,
+  orphanGoldens,
+  podspecsOf,
+  record,
+  shimGapKinds,
+  type SweepEntry,
+} from "./support/podspecSweep.js";
 import { needsRuby } from "./support/ruby.js";
 import { needsTarball } from "./support/tarballs.js";
 
@@ -48,6 +58,12 @@ describe("the sweep's guards", () => {
     expect(() => goldenText(gap)).toThrow("a gap of the shim (method): Foo.podspec: undefined method `bar'");
     const raised = { shim: { error: "Foo.podspec: the podspec raised", kind: "raised" } };
     expect(goldenText(raised)).toBe(`${JSON.stringify(raised, null, 2)}\n`);
+  });
+
+  it("fails loudly when the shim's gap kinds parse empty", () => {
+    expect([...shimGapKinds("const SHIM_GAP_KINDS = [\n  'method',\n  'constant',\n];")]).toEqual(["method", "constant"]);
+    expect(() => shimGapKinds('const SHIM_GAP_KINDS = ["method", "constant"];')).toThrow("SHIM_GAP_KINDS parsed empty");
+    expect(() => shimGapKinds("const GAPS = ['method'];")).toThrow("SHIM_GAP_KINDS not found");
   });
 
   it("refuses to write an absolute path into a golden", () => {

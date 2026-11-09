@@ -30,15 +30,19 @@ const { defaultReadPodspec } = req("./expand-spm-dependencies.js");
 
 const WRITE = process.env.RN_XTOOL_SWEEP_WRITE === "1";
 /**
- * The error kinds of a read that stopped on a gap of the shim (`SHIM_GAP_KINDS` in the vendored read-podspec.js, read
- * from its text so the two never drift): such a read is modelled in the shim first, never written as a golden.
+ * The error kinds of a read that stopped on a gap of the shim, from read-podspec.js's text (`source`): its
+ * `SHIM_GAP_KINDS`, read so the two never drift. Throws when the list is missing or parses empty, so that no
+ * reformatting of it can turn the guard off.
  */
-const SHIM_GAP_KINDS: ReadonlySet<string> = (() => {
-  const source = readFileSync(path.join(VENDORED_RN_SPM, "read-podspec.js"), "utf8");
+export function shimGapKinds(source: string): ReadonlySet<string> {
   const list = /const SHIM_GAP_KINDS = \[([^\]]*)\]/.exec(source)?.[1];
   if (list === undefined) throw new Error("vendor/rn-spm/spm/read-podspec.js: SHIM_GAP_KINDS not found");
-  return new Set([...list.matchAll(/'([^']+)'/g)].map((m) => m[1]!));
-})();
+  const set = new Set([...list.matchAll(/'([^']+)'/g)].map((m) => m[1]!));
+  if (set.size === 0) throw new Error("vendor/rn-spm/spm/read-podspec.js: SHIM_GAP_KINDS parsed empty");
+  return set;
+}
+/** The vendored read-podspec.js's gap kinds: such a read is modelled in the shim first, never written as a golden. */
+const SHIM_GAP_KINDS = shimGapKinds(readFileSync(path.join(VENDORED_RN_SPM, "read-podspec.js"), "utf8"));
 /** Fields that name the reader rather than what it read: they differ by definition. */
 const READER_FIELDS = new Set(["reader", "partial"]);
 
