@@ -142,6 +142,42 @@ describe("the precheck's command lines", () => {
     expect(after(swiftc, "-Xcc")).toContain(`-fmodule-map-file=${synthesized}`);
   });
 
+  it("names one module map per module, Swift Build's own before a synthesized one", () => {
+    // Task 13's third false stop: Expo's ExpoUI, a mixed target, had its synthesized map and Swift Build's copied one.
+    const expoUI = "/p/expo/ExpoUI/root/ios";
+    const expo: ExpoPackageInputs = {
+      compileInterfacesDir: "/p/app/ios-xtool/.expo/interfaces",
+      jsiHeaders: false,
+      clangImporter: { swiftHeadersDir: HEADERS, includeDirs: [], moduleMaps: [`${HEADERS}/ExpoUI.modulemap`, `${HEADERS}/React.modulemap`] },
+    };
+    const i = inputs({}, expo);
+    i.graph = {
+      ...i.graph,
+      headerDirs: [...i.graph.headerDirs, expoUI],
+      synthesized: [...i.graph.synthesized, { module: "ExpoUI", text: `module ExpoUI {\n    umbrella "${expoUI}"\n    export *\n}\n` }],
+      modules: [...i.graph.modules, "ExpoUI"],
+    };
+    const maps = (args: string[]) => args.filter((a) => a.startsWith("-fmodule-map-file="));
+    for (const args of [clangArgs(i, "/p/a/x.m"), swiftcArgs(i, ["/p/a/A.swift"])]) {
+      // React's map on disk wins over Swift Build's importer map; ExpoUI's importer map over its synthesized one.
+      expect(maps(args)).toEqual([
+        `-fmodule-map-file=${DIR}/swift-headers/ExpoUI.modulemap`,
+        "-fmodule-map-file=/p/pkgs/React/include/module.modulemap",
+        `-fmodule-map-file=${DIR}/modulemaps/ReactCodegen/module.modulemap`,
+      ]);
+      // Swift Build gives the App no header folder for a module whose map it writes.
+      expect(args.some((a) => a.endsWith(expoUI))).toBe(false);
+      expect(args.filter((a) => a.endsWith("/p/pkgs/React/include")).length).toBeGreaterThan(0);
+    }
+    // The importer map left out takes its -Xcc with it.
+    expect(after(swiftcArgs(i, ["/p/a/A.swift"]), "-Xcc")).not.toContain("-Xcc");
+
+    // Not written yet (the precheck drops Swift Build's map from the command): the synthesized one stands in.
+    const waiting = clangArgs(i, "/p/a/x.m", new Set(["ExpoUI"]));
+    expect(maps(waiting)).toContain(`-fmodule-map-file=${DIR}/modulemaps/ExpoUI/module.modulemap`);
+    expect(after(waiting, "-I")).toContain(expoUI);
+  });
+
   it("typechecks Swift with the bridging header and writes App-Swift.h", () => {
     const args = swiftcArgs(inputs(), ["/p/a/AppDelegate.swift", "/p/a/View.swift"]);
     expect(args[0]).toBe("-typecheck");

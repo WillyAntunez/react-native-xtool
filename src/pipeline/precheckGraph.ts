@@ -330,6 +330,9 @@ export function graphHeaders(graph: Graph): PrecheckGraph {
   const appTarget = graph.root.targets.find((t) => t.name === "App");
   if (appTarget !== undefined) visit(graph.root, appTarget);
   out.targets = [...new Set(all.flatMap((p) => [...p.targets.map((t) => t.name), ...p.products.map((q) => q.name)]))];
+  // One map per module: a module a map on disk declares gets no synthesized one (two would be a redefinition).
+  const declared = new Set(out.modules);
+  out.synthesized = out.synthesized.filter((s) => !declared.has(s.module));
   out.modules = [...new Set([...out.modules, ...out.synthesized.map((s) => s.module)])];
   out.unresolved = [...new Set(out.unresolved)];
   return out;

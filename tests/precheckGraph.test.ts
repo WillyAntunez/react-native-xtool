@@ -216,6 +216,20 @@ describe("precheckGraph", () => {
     ]);
   });
 
+  it("synthesizes no module map for a module a map on disk declares", () => {
+    // Two maps of one module are a redefinition: the one on disk is the module's.
+    const lib = path.join(t, "declared");
+    write(path.join(lib, "Sources/Maps/include/module.modulemap"), "module Maps {}\nmodule Other {}\n");
+    write(path.join(lib, "Sources/Other/include/Other.h"));
+    const app = { name: "App", type: "regular", dependencies: [{ byName: ["Maps", null] }, { byName: ["Other", null] }] };
+    const targets = [app, ...["Maps", "Other"].map((name) => ({ name, type: "regular", dependencies: [] }))];
+    const g = graphHeaders({ root: { name: "Declared", path: lib, dependencies: [], products: [], targets }, packages: [] });
+    expect(g.synthesized).toEqual([]);
+    expect(g.moduleMaps).toEqual([path.join(lib, "Sources/Maps/include/module.modulemap")]);
+    expect(g.headerDirs).toEqual([path.join(lib, "Sources/Maps/include"), path.join(lib, "Sources/Other/include")]);
+    expect(g.modules).toEqual(["Maps", "Other"]);
+  });
+
   it("lists the graph's targets and modules", () => {
     const g = graphHeaders(graph);
     // Target names and product names: an angle include's first component is usually a product's (`<Autolinked/…>`).

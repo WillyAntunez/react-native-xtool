@@ -402,6 +402,29 @@ describe("runPrecheck", () => {
     expect(readFileSync(path.join(dir, "ExpoModulesCore.modulemap"), "utf8")).toBe("module ExpoModulesCore {}\n");
   });
 
+  it("names Swift Build's module map once it is there, the synthesized one before", async () => {
+    const { paths, app } = handApp({ "X.m": "#import <UIKit/UIKit.h>\n" });
+    const built = swiftHeadersDir(paths.iosXtool);
+    app.pkg.expo = {
+      compileInterfacesDir: path.join(paths.expoDir, "compile-interfaces"),
+      jsiHeaders: true,
+      clangImporter: { swiftHeadersDir: built, includeDirs: [], moduleMaps: [path.join(built, "React.modulemap")] },
+    };
+    const dir = path.join(paths.iosXtool, ".precheck");
+    const synthesized = `-fmodule-map-file=${path.join(dir, "modulemaps", "React", "module.modulemap")}`;
+    const copied = `-fmodule-map-file=${path.join(dir, "swift-headers", "React.modulemap")}`;
+    const maps = (h: Harness) => h.compiled[0]!.args.filter((a) => a.startsWith("-fmodule-map-file="));
+
+    const before = harness(paths, app);
+    await before.run();
+    expect(maps(before)).toEqual([synthesized]);
+
+    write(path.join(built, "React.modulemap"), "module React {}\n");
+    const after = harness(paths, app);
+    await after.run();
+    expect(maps(after)).toEqual([copied]);
+  });
+
   it("leaves an angle miss to the compile when clang's own headers cannot be found", async () => {
     const { paths, app } = await generated(objcApp("template"));
     const h = harness(paths, app);

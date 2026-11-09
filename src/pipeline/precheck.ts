@@ -462,7 +462,7 @@ async function swiftHop(r: Run, inputs: PrecheckInputs, waiting: Set<string>, ma
       return undefined;
     }
   }
-  const args = maps.drop(["-no-color-diagnostics", ...swiftcArgs(inputs, files)]);
+  const args = maps.drop(["-no-color-diagnostics", ...swiftcArgs(inputs, files, maps.missing)]);
   return withRetry(r, inputs, async () => [await compileOne(r, inputs.toolchain.swiftc, args, files)]);
 }
 
@@ -495,7 +495,7 @@ async function cFamilyHop(
     r.show(`ℹ precheck — ${by.map(r.name).join(", ")} import ${header}, which the Swift check did not write: checked by xtool-build`);
   }
   if (compiled.length === 0) return [];
-  const commands = compiled.map((file) => ({ file, args: maps.drop(["-fno-color-diagnostics", ...clangArgs(inputs, file)]) }));
+  const commands = compiled.map((file) => ({ file, args: maps.drop(["-fno-color-diagnostics", ...clangArgs(inputs, file, maps.missing)]) }));
   return withRetry(r, inputs, () =>
     mapLimit(commands, availableParallelism(), (c) => compileOne(r, inputs.toolchain.clang, c.args, [c.file])),
   );

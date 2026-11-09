@@ -131,11 +131,61 @@ export function synthesizedModuleMap(dir: string, module: string): string {
   return path.join(dir, "modulemaps", module, "module.modulemap");
 }
 
-/** The graph's module maps on disk, then the synthesized ones. */
-const moduleMaps = (i: PrecheckInputs): string[] => [
-  ...i.graph.moduleMaps,
-  ...i.graph.synthesized.map((s) => synthesizedModuleMap(i.dir, s.module)),
-];
+/** The module Swift Build's importer map `map` is for: each is named for its module. */
+const importerModule = (map: string): string => path.basename(map, ".modulemap");
+
+/** The header folder a synthesized map's umbrella names: the longest of the graph's folders it names or is inside. */
+function synthesizedFolder(headerDirs: string[], text: string): string | undefined {
+  return headerDirs.filter((d) => text.includes(`"${d}"`) || text.includes(`"${d}/`)).sort((a, b) => b.length - a.length)[0];
+}
+
+/** The module maps of a command, one per module, and what the target's own flags and the graph's folders give up. */
+interface ModuleMaps {
+  /** The graph's maps on disk, then the synthesized maps that stand in. */
+  maps: string[];
+  /** Swift Build's importer maps of a module a map on disk declares: left out of the target's flags. */
+  shadowed: Set<string>;
+  /** The header folders of the synthesized maps that gave way to Swift Build's own: left out too. */
+  folders: Set<string>;
+}
+
+/**
+ * The module maps, one per module (two maps of one module are a redefinition): the graph's on disk (`graphHeaders`
+ * synthesizes none for a module they declare), then Swift Build's importer maps (`expo.clangImporter.moduleMaps`) for
+ * the modules those do not declare, then a synthesized map for each module neither names. Swift Build gives the App no
+ * header folder for a module whose map it writes (a mixed Swift and Objective-C target), so a synthesized map that gives
+ * way takes its folder with it. A module in `unwritten`, whose importer map Swift Build has not written yet (the
+ * precheck drops that map from the command), keeps its synthesized map and folder.
+ */
+function moduleMaps(i: PrecheckInputs, unwritten: ReadonlySet<string>): ModuleMaps {
+  const synthesized = new Set(i.graph.synthesized.map((s) => s.module));
+  const onDisk = new Set(i.graph.modules.filter((m) => !synthesized.has(m)));
+  const importer = i.app.pkg.expo?.clangImporter?.moduleMaps ?? [];
+  const shadowed = new Set(importer.filter((m) => onDisk.has(importerModule(m))));
+  const swiftBuilds = new Set(importer.filter((m) => !shadowed.has(m)).map(importerModule).filter((m) => !unwritten.has(m)));
+  const gaveWay = i.graph.synthesized.filter((s) => swiftBuilds.has(s.module));
+  return {
+    maps: [
+      ...i.graph.moduleMaps,
+      ...i.graph.synthesized.filter((s) => !swiftBuilds.has(s.module)).map((s) => synthesizedModuleMap(i.dir, s.module)),
+    ],
+    shadowed,
+    folders: new Set(gaveWay.flatMap((s) => synthesizedFolder(i.graph.headerDirs, s.text) ?? [])),
+  };
+}
+
+/** `args` without the `-fmodule-map-file=` of each of `maps`, and the `-Xcc` before it. */
+function withoutMaps(args: string[], maps: Set<string>): string[] {
+  const kept: string[] = [];
+  for (const arg of args) {
+    if (arg.startsWith("-fmodule-map-file=") && maps.has(arg.slice("-fmodule-map-file=".length))) {
+      if (kept.at(-1) === "-Xcc") kept.pop();
+      continue;
+    }
+    kept.push(arg);
+  }
+  return kept;
+}
 
 /**
  * `args` with Swift Build's header folder moved to the precheck's wherever a path starts with it: an element of its
@@ -202,13 +252,14 @@ function importerArgs(args: string[]): string[] {
  * sources has no `appClangArgs`: its one C-family file, the bridging header, gets what Swift's clang importer gets
  * (Swift Build's importer macros, the `-F` frameworks and the `-Xcc` values).
  */
-export function clangArgs(i: PrecheckInputs, file: string): string[] {
+export function clangArgs(i: PrecheckInputs, file: string, unwritten: ReadonlySet<string> = new Set()): string[] {
   const language = languageOf(file);
   const objc = language === "objective-c" || language === "objective-c++";
   const cxx = language === "c++" || language === "objective-c++";
   const { app, expo } = i.app.pkg;
   const target = app.mixed ? appClangArgs(app, expo, cxx) : importerArgs(appSwiftArgs(app, expo));
   const defines = app.mixed ? [...SWIFT_BUILD_DEFINES.clang, ...(cxx ? SWIFT_BUILD_DEFINES.cxx : [])] : SWIFT_BUILD_DEFINES.importer;
+  const maps = moduleMaps(i, unwritten);
   return [
     "-fsyntax-only",
     "-x",
@@ -222,9 +273,9 @@ export function clangArgs(i: PrecheckInputs, file: string): string[] {
     // With C++ modules off the cache is unused, and clang warns about the flag.
     ...(cxx ? ["-fno-cxx-modules"] : [`-fmodules-cache-path=${i.moduleCache}`]),
     ...defines.map((d) => `-D${d}`),
-    ...withPrecheckHeaders(i, target),
-    ...i.graph.headerDirs.flatMap((d) => ["-I", d]),
-    ...moduleMaps(i).map((m) => `-fmodule-map-file=${m}`),
+    ...withPrecheckHeaders(i, withoutMaps(target, maps.shadowed)),
+    ...i.graph.headerDirs.filter((d) => !maps.folders.has(d)).flatMap((d) => ["-I", d]),
+    ...maps.maps.map((m) => `-fmodule-map-file=${m}`),
     file,
   ];
 }
@@ -236,8 +287,9 @@ export function clangArgs(i: PrecheckInputs, file: string): string[] {
  * macros (`DEBUG=1`: React Native's headers hide their debug API without it) and, in a mixed target, the App's own,
  * which the manifest's `cSettings` give Swift Build; a Swift-only target has them only with its bridging header.
  */
-export function swiftcArgs(i: PrecheckInputs, files: string[]): string[] {
+export function swiftcArgs(i: PrecheckInputs, files: string[], unwritten: ReadonlySet<string> = new Set()): string[] {
   const { app, expo } = i.app.pkg;
+  const maps = moduleMaps(i, unwritten);
   return [
     "-typecheck",
     "-parse-as-library",
@@ -259,9 +311,9 @@ export function swiftcArgs(i: PrecheckInputs, files: string[]): string[] {
     ...i.toolchain.swiftExtra,
     ...SWIFT_BUILD_DEFINES.swift.map((d) => `-D${d}`),
     ...[...new Set([...SWIFT_BUILD_DEFINES.importer, ...(app.mixed ? app.defines : [])])].flatMap((d) => ["-Xcc", `-D${d}`]),
-    ...withPrecheckHeaders(i, appSwiftArgs(app, expo)),
-    ...i.graph.headerDirs.flatMap((d) => ["-I", d, "-Xcc", `-I${d}`]),
-    ...moduleMaps(i).flatMap((m) => ["-Xcc", `-fmodule-map-file=${m}`]),
+    ...withPrecheckHeaders(i, withoutMaps(appSwiftArgs(app, expo), maps.shadowed)),
+    ...i.graph.headerDirs.filter((d) => !maps.folders.has(d)).flatMap((d) => ["-I", d, "-Xcc", `-I${d}`]),
+    ...maps.maps.flatMap((m) => ["-Xcc", `-fmodule-map-file=${m}`]),
     ...files,
   ];
 }
