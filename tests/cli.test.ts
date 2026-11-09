@@ -51,6 +51,16 @@ describe("buildProgram", () => {
     expect(runCmd.options.map((o) => o.flags)).toContain("--network [ip]");
   });
 
+  it("offers --skip-precheck on build and run", () => {
+    for (const name of ["build", "run"]) {
+      const cmd = buildProgram().commands.find((c) => c.name() === name)!;
+      expect(cmd.options.map((o) => [o.flags, o.description])).toContainEqual([
+        "--skip-precheck",
+        "skip the check of the app's own sources before xtool-build",
+      ]);
+    }
+  });
+
   it("doctor has --project and --report", () => {
     const doctorCmd = buildProgram().commands.find((c) => c.name() === "doctor")!;
     expect(doctorCmd.options.map((o) => [o.flags, o.description])).toEqual([

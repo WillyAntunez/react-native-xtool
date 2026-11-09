@@ -8,6 +8,7 @@ import { capabilityChecks, renderReport, type DoctorProbes, type ProjectProbe } 
 import { MissingBundleIdentifierError } from "../src/project/index.js";
 import {
   doctorReport,
+  precheckReportLine,
   realReportEnv,
   recordingProbes,
   redact,
@@ -152,6 +153,7 @@ describe("doctorReport", () => {
       `xtool: ${XTOOL_VERSION}`,
       "ruby: 9.9.9",
       "podspec reader: not recorded",
+      "precheck: not recorded",
       "os: Ubuntu 24.04.1 LTS, Linux 6.8.0-45-generic, x64",
       "project: expo, Expo SDK 58, expo 58.0.21, react-native 0.88.1",
       "✔ node — 24.15.0",
@@ -258,11 +260,12 @@ describe("doctorReport", () => {
 
   it("says the toolchain was not checked with --project", async () => {
     const lines = (await doctorReport("/home/me/apps/demo", { env, probes, projectOnly: true })).split("\n");
-    expect(lines.slice(4, 10)).toEqual([
+    expect(lines.slice(4, 11)).toEqual([
       "swift: not checked (--project)",
       "xtool: not checked (--project)",
       "ruby: 9.9.9",
       "podspec reader: not recorded",
+      "precheck: not recorded",
       "os: Ubuntu 24.04.1 LTS, Linux 6.8.0-45-generic, x64",
       "project: expo, Expo SDK 58, expo 58.0.21, react-native 0.88.1",
     ]);
@@ -290,13 +293,14 @@ describe("doctorReport", () => {
     );
     const lines = (await doctorReport(root, { env, probes })).split("\n");
     const at = lines.indexOf(`xtool: ${XTOOL_VERSION}`);
-    expect(lines.slice(at + 1, at + 5)).toEqual([
+    expect(lines.slice(at + 1, at + 6)).toEqual([
       "ruby: 9.9.9",
       "podspec reader: reduced: RN_XTOOL_PODSPEC_READER=reduced is set (last rn-spm, 2 podspecs)",
       "podspec ENV:",
       "  node_modules/x/X.podspec: RCT_NEW_ARCH_ENABLED, USE_FRAMEWORKS",
+      "precheck: not recorded",
     ]);
-    expect(lines[at + 5]).toMatch(/^os: /);
+    expect(lines[at + 6]).toMatch(/^os: /);
     // Inside the block: the fence closes after them.
     expect(lines.indexOf("```")).toBeGreaterThan(at + 4);
 
@@ -305,6 +309,30 @@ describe("doctorReport", () => {
     const ruby = (await doctorReport(root, { env, probes })).split("\n");
     expect(ruby).toContain("podspec reader: ruby 3.3.8 (last rn-spm, 1 podspec)");
     expect(ruby.some((l) => l.startsWith("podspec ENV:"))).toBe(false);
+  });
+
+  it("records whether the last build skipped the precheck", async () => {
+    const root = await tempDir("rn-xtool-report-precheck-");
+    const state = { version: 1, metroPort: 8081, lanIp: "10.0.0.7", bundleIdentifier: "com.example.app", builtAt: "" };
+    const precheckLine = async (precheck?: string): Promise<string | undefined> => {
+      await mkdir(path.join(root, "ios-xtool"), { recursive: true });
+      await writeFile(path.join(root, "ios-xtool", ".rn-xtool-state.json"), JSON.stringify({ ...state, precheck }));
+      const lines = (await doctorReport(root, { env, probes })).split("\n");
+      const at = lines.indexOf("podspec reader: not recorded");
+      expect(lines[at + 2]).toMatch(/^os: /);
+      expect(lines.indexOf("```", 1)).toBeGreaterThan(at + 1);
+      return lines[at + 1];
+    };
+    expect(await precheckLine("skipped")).toBe("precheck: skipped with --skip-precheck (last build)");
+    expect(await precheckLine("run")).toBe("precheck: run (last build)");
+    // A state from before the precheck, an unreadable one, none at all: not recorded.
+    expect(await precheckLine(undefined)).toBe("precheck: not recorded");
+    await writeFile(path.join(root, "ios-xtool", ".rn-xtool-state.json"), "{ not json");
+    expect((await doctorReport(root, { env, probes })).split("\n")).toContain("precheck: not recorded");
+    await rm(path.join(root, "ios-xtool"), { recursive: true });
+    expect((await doctorReport(root, { env, probes })).split("\n")).toContain("precheck: not recorded");
+    expect((await doctorReport(undefined, { env, probes })).split("\n")).toContain("precheck: not recorded");
+    expect(precheckReportLine(undefined)).toBe("precheck: not recorded");
   });
 
   it("records no reader without a project", async () => {

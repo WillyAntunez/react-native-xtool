@@ -39,6 +39,8 @@ export interface BuildState {
   emptyTargets?: string[];
   /** With binary pods: what the post-pack checks read; `install` runs them on the app xtool builds (row 88). */
   postPack?: PostPackPods;
+  /** Whether the last build ran the check of the app's own sources or skipped it (`--skip-precheck`), for the report. */
+  precheck?: "run" | "skipped";
 }
 
 const STATE_FILE = ".rn-xtool-state.json";
