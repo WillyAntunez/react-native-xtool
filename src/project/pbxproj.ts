@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import xcode from "xcode";
 import { DetectError } from "./detect.js";
@@ -90,16 +90,21 @@ export function openPbxproj(iosDir: string): Pbxproj {
   return { path: file, projectName: projects[0]!.slice(0, -".xcodeproj".length), appTarget: apps[0]!, targets, project };
 }
 
-/** The `buildSettings` of `configuration` in the configuration list `listUuid`. */
-function configurationSettings(p: Pbxproj, listUuid: string, configuration: string): Record<string, unknown> | undefined {
+/** The XCBuildConfiguration named `configuration` in the configuration list `listUuid`. */
+function buildConfiguration(p: Pbxproj, listUuid: string, configuration: string): any {
   const list = p.project.pbxXCConfigurationList()[listUuid];
   if (!list) return undefined;
   const configs = p.project.pbxXCBuildConfigurationSection();
   for (const ref of list.buildConfigurations as { value: string }[]) {
     const config = configs[ref.value];
-    if (config && unquote(String(config.name)) === configuration) return config.buildSettings;
+    if (config && unquote(String(config.name)) === configuration) return config;
   }
   return undefined;
+}
+
+/** The `buildSettings` of `configuration` in the configuration list `listUuid`. */
+function configurationSettings(p: Pbxproj, listUuid: string, configuration: string): Record<string, unknown> | undefined {
+  return buildConfiguration(p, listUuid, configuration)?.buildSettings;
 }
 
 function targetLevel(p: Pbxproj, key: string, configuration: string): string | undefined {
@@ -271,7 +276,10 @@ function walkGroups(objs: Record<string, any>, mainGroup: string) {
   const groups = objs.PBXGroup ?? {};
   const fileRefs = objs.PBXFileReference ?? {};
   const variantGroups = objs.PBXVariantGroup ?? {};
+  const syncedGroups = objs.PBXFileSystemSynchronizedRootGroup ?? {};
   const files = new Map<string, string | undefined>();
+  /** Xcode 16 synchronized folder uuid -> its path. */
+  const folders = new Map<string, string | undefined>();
   /** Variant group uuid -> its child file references. */
   const variants = new Map<string, string[]>();
   const groupPaths = new Map<string, { path: string; name?: string; files: string[] }>();
@@ -306,13 +314,16 @@ function walkGroups(objs: Record<string, any>, mainGroup: string) {
       } else if (fileRefs[child.value]) {
         placeRef(child.value, "<group>", here);
         collected.push(child.value);
+      } else if (syncedGroups[child.value]) {
+        const s = syncedGroups[child.value];
+        folders.set(child.value, here === undefined ? undefined : place(unquote(String(s.sourceTree ?? "<group>")), s.path === undefined ? undefined : unquote(String(s.path)), here));
       }
     }
     groupPaths.set(uuid, { path: here ?? "", name: g.name === undefined ? undefined : unquote(String(g.name)), files: collected });
     return collected;
   };
   visit(mainGroup, "", new Set());
-  return { files, groupPaths, variants };
+  return { files, groupPaths, variants, folders };
 }
 
 function phaseFiles(objs: Record<string, any>, target: any, section: string, variants: Map<string, string[]>): string[] {
@@ -333,7 +344,17 @@ export function readTargetContent(p: Pbxproj, iosDir: string): BareTargetContent
   const objs = p.project.hash.project.objects as Record<string, any>;
   const target = objs.PBXNativeTarget[p.appTarget.uuid];
   const mainGroup = p.project.getFirstProject().firstProject.mainGroup as string;
-  const { files, groupPaths, variants } = walkGroups(objs, mainGroup);
+  const { files, groupPaths, variants, folders } = walkGroups(objs, mainGroup);
+
+  const synced = ((target.fileSystemSynchronizedGroups ?? []) as ({ value: string } | string)[]).map(ref);
+  if (synced.length > 0) {
+    const g = objs.PBXFileSystemSynchronizedRootGroup?.[synced[0]!];
+    const folder = folders.get(synced[0]!) ?? unquote(String(g?.path ?? g?.name ?? synced[0]));
+    throw new DetectError(
+      `The app target ${p.appTarget.name} takes its files from the synchronized folder ${folder} (an Xcode 16 folder group); ` +
+        "rn-xtool reads only the files a target lists. Convert the folder to a group (Xcode: Convert to Group) so the target lists its files",
+    );
+  }
 
   const toFile = (rel: string): TargetFile => {
     const abs = path.isAbsolute(rel) ? rel : path.join(iosDir, rel);
@@ -455,4 +476,92 @@ export function readTargetContent(p: Pbxproj, iosDir: string): BareTargetContent
       resolveSetting(p, "PRODUCT_MODULE_NAME")?.trim() ||
       c99Identifier(resolveSetting(p, "PRODUCT_NAME")?.trim() || p.appTarget.name),
   };
+}
+
+/** The settings rn-xtool reads from the pbxproj that an xcconfig could set instead. */
+export const XCCONFIG_READ_SETTINGS = [
+  "HEADER_SEARCH_PATHS",
+  "GCC_PREPROCESSOR_DEFINITIONS",
+  "CLANG_CXX_LANGUAGE_STANDARD",
+  "SWIFT_OBJC_BRIDGING_HEADER",
+  "PRODUCT_MODULE_NAME",
+  "CODE_SIGN_ENTITLEMENTS",
+  "INFOPLIST_FILE",
+] as const;
+
+/** `KEY = …` or `KEY[cond]… = …`. */
+const XCCONFIG_SETTING = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:\[[^\]]*\]\s*)*=/;
+const XCCONFIG_INCLUDE = /^\s*#include(\?)?\s*"([^"]*)"/;
+/** CocoaPods' generated xcconfigs: their settings are the pods', which rn-xtool builds itself. */
+const PODS_XCCONFIG = /^Pods-.*\.xcconfig$/;
+
+/**
+ * Adds to `found` the setting names `file` and its includes (`#include`, `#include?`, relative to the including file)
+ * set. Each file is read once (`seen`); CocoaPods' are skipped; a file that cannot be read, unless an `#include?`, goes
+ * to `unreadable`.
+ */
+function scanXcconfig(file: string, seen: Set<string>, found: Set<string>, unreadable: string[], optional = false): void {
+  if (seen.has(file) || PODS_XCCONFIG.test(path.basename(file))) return;
+  seen.add(file);
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    if (!optional) unreadable.push(file);
+    return;
+  }
+  for (const line of text.split(/\r?\n/)) {
+    const include = XCCONFIG_INCLUDE.exec(line);
+    if (include) {
+      scanXcconfig(path.resolve(path.dirname(file), include[2]!), seen, found, unreadable, include[1] === "?");
+      continue;
+    }
+    // Anchored at the line start, neither pattern matches a `//` comment line.
+    const key = XCCONFIG_SETTING.exec(line)?.[1];
+    if (key) found.add(key);
+  }
+}
+
+/**
+ * One `⚠` line per xcconfig, other than CocoaPods', that the Debug configuration of the app target or of the project
+ * is based on and that sets one of `XCCONFIG_READ_SETTINGS` (in that order), and one per such file that cannot be read.
+ * rn-xtool reads those settings from the pbxproj only. Paths are relative to the project root `root`.
+ */
+export function appXcconfigWarnings(p: Pbxproj, root: string): string[] {
+  const objs = p.project.hash.project.objects as Record<string, any>;
+  const firstProject = p.project.getFirstProject().firstProject;
+  const { files } = walkGroups(objs, firstProject.mainGroup as string);
+  const iosDir = path.dirname(path.dirname(p.path));
+  const display = (abs: string): string => path.relative(root, abs).split(path.sep).join("/");
+  const cannotRead = (name: string): string =>
+    `⚠ ${name} (the app target's base configuration) could not be read; rn-xtool does not read xcconfig files`;
+
+  const lists = [objs.PBXNativeTarget[p.appTarget.uuid].buildConfigurationList, firstProject.buildConfigurationList];
+  const bases = new Set<string>();
+  for (const list of lists) {
+    const base = buildConfiguration(p, String(list), "Debug")?.baseConfigurationReference;
+    if (base !== undefined) bases.add(String(base));
+  }
+
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const uuid of bases) {
+    const placed = files.get(uuid);
+    if (placed === undefined) {
+      const fileRef = objs.PBXFileReference?.[uuid];
+      const name = unquote(String(fileRef?.path ?? fileRef?.name ?? uuid));
+      if (!PODS_XCCONFIG.test(path.posix.basename(name))) out.push(cannotRead(name));
+      continue;
+    }
+    const abs = path.isAbsolute(placed) ? placed : path.join(iosDir, placed);
+    const found = new Set<string>();
+    const unreadable: string[] = [];
+    scanXcconfig(abs, seen, found, unreadable);
+    const sets = XCCONFIG_READ_SETTINGS.filter((s) => found.has(s));
+    if (sets.length > 0) {
+      out.push(`⚠ ${display(abs)} sets ${sets.join(", ")} for the app target; rn-xtool does not read xcconfig files`);
+    }
+    out.push(...unreadable.map((f) => cannotRead(display(f))));
+  }
+  return out;
 }

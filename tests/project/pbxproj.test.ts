@@ -3,7 +3,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildSetting, openPbxproj, readTargetContent, resolveBuildSettingValue, resolveSetting } from "../../src/project/pbxproj.js";
+import { DetectError } from "../../src/project/detect.js";
+import {
+  appXcconfigWarnings,
+  buildSetting,
+  openPbxproj,
+  readTargetContent,
+  resolveBuildSettingValue,
+  resolveSetting,
+} from "../../src/project/pbxproj.js";
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures");
 const templateIos = path.join(fixtures, "bare", "ios");
@@ -422,5 +430,99 @@ describe("readTargetContent", () => {
     const { content } = await read(src);
     expect(rel(content().cSources)).toContain("HelloWorld/main.test.m");
     expect(rel(content().swiftSources)).toContain("HelloWorld/MainView.swift");
+  });
+});
+
+describe("the app target's shape", () => {
+  const withObjc = () => readFile(path.join(fixtures, "pbxproj", "with-objc.pbxproj"), "utf8");
+  const XCCONFIG_REF = "C50000000000000000000A01";
+  const TARGET_DEBUG_BASE = "baseConfigurationReference = 3B4392A12AC88292D35C810B /* Pods-HelloWorld.debug.xcconfig */;";
+  const PROJECT_DEBUG = "83CBBA201A601CBA00E9B192 /* Debug */ = {\n\t\t\tisa = XCBuildConfiguration;\n";
+
+  /** with-objc.pbxproj with ios/Config/App.xcconfig in the main group, the base of the target's and/or project's Debug. */
+  async function withAppXcconfig(o: { target: boolean; project: boolean }): Promise<string> {
+    let src = (await withObjc())
+      .replace(
+        "/* End PBXFileReference section */",
+        `\t\t${XCCONFIG_REF} = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/App.xcconfig; sourceTree = "<group>"; };\n/* End PBXFileReference section */`,
+      )
+      .replace("83CBB9F61A601CBA00E9B192 = {\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = (\n", `$&\t\t\t\t${XCCONFIG_REF},\n`);
+    expect(src).toContain(`\t\t\t\t${XCCONFIG_REF},\n`);
+    if (o.target) {
+      expect(src).toContain(TARGET_DEBUG_BASE);
+      src = src.replace(TARGET_DEBUG_BASE, `baseConfigurationReference = ${XCCONFIG_REF};`);
+    }
+    if (o.project) {
+      expect(src).toContain(PROJECT_DEBUG);
+      src = src.replace(PROJECT_DEBUG, `$&\t\t\tbaseConfigurationReference = ${XCCONFIG_REF};\n`);
+    }
+    return src;
+  }
+
+  /** A temp project root holding ios/HelloWorld.xcodeproj/project.pbxproj and `files` (paths relative to ios/). */
+  async function rootWith(pbxproj: string, files: Record<string, string> = {}): Promise<string> {
+    const root = await mkdtemp(path.join(tmpdir(), "rn-xtool-xcconfig-"));
+    tempDirs.push(root);
+    await mkdir(path.join(root, "ios", "HelloWorld.xcodeproj"), { recursive: true });
+    await writeFile(path.join(root, "ios", "HelloWorld.xcodeproj", "project.pbxproj"), pbxproj);
+    for (const [rel, text] of Object.entries(files)) {
+      await mkdir(path.dirname(path.join(root, "ios", rel)), { recursive: true });
+      await writeFile(path.join(root, "ios", rel), text);
+    }
+    return root;
+  }
+  const warnings = (root: string) => appXcconfigWarnings(openPbxproj(path.join(root, "ios")), root);
+
+  it("warns about an xcconfig that sets a setting rn-xtool reads", async () => {
+    const root = await rootWith(await withAppXcconfig({ target: true, project: true }), {
+      "Config/App.xcconfig": 'HEADER_SEARCH_PATHS = $(inherited) Vendor\nOTHER_LDFLAGS = -lz\n#include "Base.xcconfig"',
+      // Base.xcconfig includes App.xcconfig back, and an optional file that is not there.
+      "Config/Base.xcconfig": 'GCC_PREPROCESSOR_DEFINITIONS[config=Debug] = X=1\n#include? "App.xcconfig"\n#include? "Local.xcconfig"',
+    });
+    expect(warnings(root)).toEqual([
+      "⚠ ios/Config/App.xcconfig sets HEADER_SEARCH_PATHS, GCC_PREPROCESSOR_DEFINITIONS for the app target; rn-xtool does not read xcconfig files",
+    ]);
+  });
+
+  it("says nothing about CocoaPods' xcconfigs or one that sets nothing rn-xtool reads", async () => {
+    expect(warnings(await rootWith(await withObjc()))).toEqual([]);
+    const root = await rootWith(await withAppXcconfig({ target: true, project: false }), {
+      "Config/App.xcconfig":
+        "OTHER_LDFLAGS = -lz\nMY_HEADER_SEARCH_PATHS = Vendor\n// HEADER_SEARCH_PATHS = Vendor\n" +
+        '#include "../Pods/Target Support Files/Pods-HelloWorld/Pods-HelloWorld.debug.xcconfig"',
+      "Pods/Target Support Files/Pods-HelloWorld/Pods-HelloWorld.debug.xcconfig": "HEADER_SEARCH_PATHS = Pods/Headers",
+    });
+    expect(warnings(root)).toEqual([]);
+  });
+
+  it("names an xcconfig it cannot read", async () => {
+    const root = await rootWith(await withAppXcconfig({ target: false, project: true }));
+    expect(warnings(root)).toEqual([
+      "⚠ ios/Config/App.xcconfig (the app target's base configuration) could not be read; rn-xtool does not read xcconfig files",
+    ]);
+  });
+
+  it("refuses a synchronized folder in the app target", async () => {
+    const SYNCED = "C60000000000000000000A01";
+    const src = (await readFile(path.join(fixtures, "objc-app", "ios", "ObjcApp.xcodeproj", "project.pbxproj"), "utf8"))
+      .replace(
+        "/* Begin PBXGroup section */",
+        "/* Begin PBXFileSystemSynchronizedRootGroup section */\n" +
+          `\t\t${SYNCED} /* ObjcApp */ = {isa = PBXFileSystemSynchronizedRootGroup; path = ObjcApp; sourceTree = "<group>"; };\n` +
+          "/* End PBXFileSystemSynchronizedRootGroup section */\n\n/* Begin PBXGroup section */",
+      )
+      .replace("\t\t\t\t13B07FAE1A68108700A75B9A /* ObjcApp */,\n\t\t\t\t83CBBA001A601CBA00E9B192", `\t\t\t\t${SYNCED} /* ObjcApp */,\n\t\t\t\t83CBBA001A601CBA00E9B192`)
+      .replace("\t\t\tdependencies = (\n\t\t\t);\n", `$&\t\t\tfileSystemSynchronizedGroups = (\n\t\t\t\t${SYNCED} /* ObjcApp */,\n\t\t\t);\n`)
+      .replace(/(isa = PBXSourcesBuildPhase;\n\t\t\tbuildActionMask = 2147483647;\n\t\t\tfiles = \()[^)]*\)/, "$1\n\t\t\t)");
+    expect(src.match(new RegExp(SYNCED, "g"))).toHaveLength(3);
+    expect(src).not.toContain("AppDelegate.mm in Sources */,");
+    const ios = await iosWith(["ObjcApp"], src);
+    const content = () => readTargetContent(openPbxproj(ios), ios);
+    expect(content).toThrow(DetectError);
+    expect(content).toThrow(
+      "The app target ObjcApp takes its files from the synchronized folder ObjcApp (an Xcode 16 folder group); " +
+        "rn-xtool reads only the files a target lists. Convert the folder to a group (Xcode: Convert to Group) " +
+        "so the target lists its files",
+    );
   });
 });
