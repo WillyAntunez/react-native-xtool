@@ -1022,7 +1022,8 @@ between podspecs.
   every other variable a podspec reads (`USE_FRAMEWORKS`, `USE_HERMES`, a library's own) is unset, whatever your shell
   has. The podspec runs in its own folder, with `ios/` as CocoaPods' installation root and nothing on its standard
   input. The names each podspec read are in `rn-xtool doctor --report`, under `podspec ENV:`, one `<podspec>: NAME,
-  NAME` line per podspec; the build does not print them.
+  NAME` line per podspec that read any; the build does not print them. Only Ruby records them: after a run of the
+  reduced reader, the report has no `podspec ENV:` block.
 - **Podfile globals:** a podspec reads as with a Podfile that sets no globals (`$VCEnableLocation`,
   `$VCEnableFrameProcessors`, `$RNVideoUseVideoCaching` are undefined), so it takes its default branch:
   react-native-vision-camera compiles its location APIs in, and its frame processors only when
@@ -1067,8 +1068,9 @@ between podspecs.
 - **To report a podspec the reader cannot read:** run `rn-xtool doctor --report` in the project folder after the
   failed build and paste its block into a GitHub issue, with the stop's text and the library's name and version. Its
   `podspec reader:` line names the reader of the last `rn-spm` and how many podspecs it read (`podspec reader: reduced:
-  RN_XTOOL_PODSPEC_READER=reduced is set (last rn-spm, 12 podspecs)`), and `podspec ENV:` lists the names each podspec
-  read.
+  RN_XTOOL_PODSPEC_READER=reduced is set (last rn-spm, 12 podspecs)`). When a podspec read environment variables,
+  `podspec ENV:` follows with the names each one read; a run of the reduced reader records none, so the block is
+  not there.
 
 ### Scaffolded libraries
 
