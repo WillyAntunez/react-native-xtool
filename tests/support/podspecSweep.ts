@@ -4,19 +4,19 @@
  * and what was read against a reviewed golden in `tests/fixtures/podspec-sweep`. `RN_XTOOL_SWEEP_WRITE=1` writes the
  * goldens instead. The temp root is written as `<project>`, so a golden holds no machine's path.
  */
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { afterAll, vi } from "vitest";
+import { afterAll, beforeAll, vi } from "vitest";
 import { podspecResources } from "../../src/pipeline/scaffoldResources.js";
 import { podDependencies, podspecFiles, podspecLines, unconditionalLineIndexes } from "../../src/project/podspecs.js";
 import { packageRoot } from "../../src/tools/exec.js";
 import { VENDORED_RN_SPM } from "./rnScaffold.js";
 import { needsRuby } from "./ruby.js";
 import { isHeavy, needsTarball, tarballPath } from "./tarballs.js";
-import { tool } from "./tools.js";
+import { TAR_TIMEOUT_MS, tool } from "./tools.js";
 
 const ROOT = packageRoot();
 export const SWEEP_GOLDENS = path.join(ROOT, "tests", "fixtures", "podspec-sweep");
@@ -56,6 +56,41 @@ afterAll(() => {
   for (const d of tmp) rmSync(d, { recursive: true, force: true });
 }, 120_000);
 
+const SWEEP_PREFIX = "rn-xtool-sweep-";
+const STALE_MS = 3_600_000;
+/**
+ * Removes the sweep projects an interrupted run left in `dir` (`os.tmpdir()`): the folders named `rn-xtool-sweep-*`
+ * last changed more than an hour before `now`, never a newer one (another run's) and nothing else. Their names.
+ */
+export function removeStaleSweepDirs(dir: string = tmpdir(), now: number = Date.now()): string[] {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const removed: string[] = [];
+  for (const name of names.filter((n) => n.startsWith(SWEEP_PREFIX)).sort()) {
+    const full = path.join(dir, name);
+    try {
+      const st = lstatSync(full);
+      if (!st.isDirectory() || now - st.mtimeMs <= STALE_MS) continue;
+      rmSync(full, { recursive: true, force: true });
+      removed.push(name);
+    } catch {
+      // gone meanwhile, or not ours to remove
+    }
+  }
+  return removed;
+}
+// A sweep killed before its afterAll leaves its projects (skia's alone is hundreds of MB).
+beforeAll(() => {
+  removeStaleSweepDirs();
+}, 120_000);
+
+/** The `it` timeout of a sweep read, above the reader's own 120 s for a heavy library so its message wins. */
+export const sweepTestTimeout = (entry: SweepEntry): number => (isHeavyEntry(entry) ? 180_000 : 60_000);
+
 const nameOf = (spec: string) => spec.slice(0, spec.lastIndexOf("@"));
 const versionOf = (spec: string) => spec.slice(spec.lastIndexOf("@") + 1);
 const tarballsOf = (entry: SweepEntry) => [entry.spec, entry.rn, ...(entry.with ?? [])];
@@ -70,7 +105,9 @@ function extract(spec: string, dir: string, members: string[] = []): void {
   const file = tarballPath(spec);
   if (file === undefined) throw new Error(`${spec}: not cached or not pinned in tests/tarballs.json${needsTarball(spec)}`);
   mkdirSync(dir, { recursive: true });
-  const r = tool("tar", ["-xzf", file, "-C", dir, "--strip-components=1", ...members.map((m) => `package/${m}`)]);
+  const r = tool("tar", ["-xzf", file, "-C", dir, "--strip-components=1", ...members.map((m) => `package/${m}`)], {
+    timeout: TAR_TIMEOUT_MS,
+  });
   if (r.status !== 0) throw new Error(`tar failed for ${spec}: ${r.stderr}`);
 }
 
@@ -83,7 +120,7 @@ const projects = new Map<string, { root: string; podspecs: string[] }>();
 export function sweepProject(entry: SweepEntry): { root: string; podspecs: string[] } {
   let project = projects.get(entryName(entry));
   if (project) return project;
-  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "rn-xtool-sweep-")));
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), SWEEP_PREFIX)));
   tmp.push(root);
   const modules = path.join(root, "node_modules");
   for (const spec of [entry.spec, ...(entry.with ?? [])]) extract(spec, path.join(modules, nameOf(spec)));

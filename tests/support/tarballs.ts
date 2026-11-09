@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll } from "vitest";
 import { packageRoot } from "../../src/tools/exec.js";
-import { hasTool, patchTool, tool } from "./tools.js";
+import { TAR_TIMEOUT_MS, hasTool, patchTool, tool } from "./tools.js";
 
 const ROOT = packageRoot();
 const CACHE = path.join(ROOT, "tests", ".cache");
@@ -77,7 +77,7 @@ function extract(spec: string, prefix: string): string {
   tmp.push(base);
   const dir = path.join(base, "node_modules", nameOf(spec));
   mkdirSync(dir, { recursive: true });
-  const r = tool("tar", ["-xzf", tarballPath(spec)!, "-C", dir, "--strip-components=1"]);
+  const r = tool("tar", ["-xzf", tarballPath(spec)!, "-C", dir, "--strip-components=1"], { timeout: TAR_TIMEOUT_MS });
   if (r.status !== 0) throw new Error(`tar failed for ${spec}: ${r.stderr}`);
   return dir;
 }

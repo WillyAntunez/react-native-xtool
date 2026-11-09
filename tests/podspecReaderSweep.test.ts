@@ -1,3 +1,5 @@
+import { mkdirSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -13,12 +15,17 @@ import {
   orphanGoldens,
   podspecsOf,
   record,
+  removeStaleSweepDirs,
   shimGapKinds,
   sweepSkipReason,
+  sweepTestTimeout,
   type SweepEntry,
 } from "./support/podspecSweep.js";
 import { HEAVY_FETCH_HINT, MANIFEST } from "./support/tarballs.js";
 import { mkTmp } from "./support/expoSpm.js";
+import { VENDORED_RN_SPM } from "./support/rnScaffold.js";
+
+const { PODSPEC_TIMEOUT_MS } = createRequire(path.join(VENDORED_RN_SPM, "read-podspec.js"))("./read-podspec.js");
 
 // The podspec reader sweep: every podspec of the libraries in tests/podspec-sweep.json, read with Ruby and with the
 // reduced reader, against its reviewed golden in tests/fixtures/podspec-sweep (RN_XTOOL_SWEEP_WRITE=1 rewrites them).
@@ -27,9 +34,6 @@ import { mkTmp } from "./support/expoSpm.js";
 const CI = process.env.CI === "true";
 const skipReason = (entry: SweepEntry) => sweepSkipReason(entry, CI);
 const skip = (entry: SweepEntry) => skipReason(entry) !== "";
-// A heavy library's read can copy hundreds of MB (skia's podspec copies its prebuilt frameworks into the library):
-// tens of seconds on a slow or busy disk, past the suite's 20 s.
-const timeout = (entry: SweepEntry) => (isHeavyEntry(entry) ? 120_000 : undefined);
 
 describe("the podspec reader sweep", () => {
   for (const entry of SWEEP)
@@ -37,7 +41,7 @@ describe("the podspec reader sweep", () => {
       it.skipIf(skip(entry))(
         `reads ${entryName(entry)} ${podspec} as its golden${skipReason(entry)}`,
         () => expect(record(entry, podspec)).toEqual(golden(entry, podspec)),
-        timeout(entry),
+        sweepTestTimeout(entry),
       );
 
   it("keeps every library's names under both readers", () => expect(nameDifferences()).toEqual([]));
@@ -82,6 +86,30 @@ describe("the sweep's guards", () => {
 
   it("knows a library that needs a heavy tarball", () => {
     expect([isHeavyEntry(needsHeavy), isHeavyEntry(unpinned)]).toEqual([true, false]);
+  });
+
+  it("gives a heavy library's reads more time than the reader gives a podspec", () => {
+    expect([sweepTestTimeout(needsHeavy), sweepTestTimeout(unpinned)]).toEqual([180_000, 60_000]);
+    expect(sweepTestTimeout(needsHeavy)).toBeGreaterThan(PODSPEC_TIMEOUT_MS);
+  });
+
+  it("removes only the sweep's own temp folders older than an hour", () => {
+    const dir = mkTmp("sweep-stale-");
+    const now = Date.now();
+    const hoursAgo = (h: number) => new Date(now - h * 3_600_000);
+    const make = (name: string, age: number, file = false) => {
+      const p = path.join(dir, name);
+      if (file) writeFileSync(p, "");
+      else mkdirSync(path.join(p, "node_modules"), { recursive: true });
+      utimesSync(p, hoursAgo(age), hoursAgo(age));
+    };
+    make("rn-xtool-sweep-old", 2);
+    make("rn-xtool-sweep-recent", 0.5);
+    make("rn-xtool-sweep-file", 2, true);
+    make("rn-xtool-shim-old", 2);
+    make("other", 3);
+    expect(removeStaleSweepDirs(dir, now)).toEqual(["rn-xtool-sweep-old"]);
+    expect(readdirSync(dir).sort()).toEqual(["other", "rn-xtool-shim-old", "rn-xtool-sweep-file", "rn-xtool-sweep-recent"]);
   });
 
   it("does not report a heavy tarball as missing on CI", () => {
