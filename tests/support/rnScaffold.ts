@@ -19,6 +19,14 @@ export const RN_TARBALL = path.join(ROOT, "tests", ".cache", "react-native-0.88.
 export const RN_INTEGRITY =
   "sha512-v/wee0nYWcammMYBnSat/e3WY/5iaf9YQOMcBrfKT/wPApPPlHp94hgZovBtwhMuthR01yc/8cGn0FpFTE/C4A==";
 
+/**
+ * The app whose installed {@link GOLDEN_LIBS} the scaffold golden reads: `RN_XTOOL_REF_APP` in `env`, else
+ * `../app-golden` beside the repo, a reference app that holds exactly those libraries at the golden's versions.
+ */
+export function goldenApp(env: NodeJS.ProcessEnv = process.env): string {
+  return env["RN_XTOOL_REF_APP"] ?? path.resolve(ROOT, "..", "app-golden");
+}
+
 /** The libraries whose scaffolds the reference app persists in `patches/`. */
 export const GOLDEN_LIBS = [
   "react-native-screens",

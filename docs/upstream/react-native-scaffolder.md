@@ -979,7 +979,8 @@ every generated or scaffolded Swift target that depends on a mixed module the sa
 ## Tests
 
 `tests/rn-scaffolder.test.ts` loads the patched modules from the reference app and checks the fixes against fixtures
-(skipped when the reference app is not present; set `RN_XTOOL_REF_APP` to point at it). It also asserts that each hunk
+(skipped when the reference app is not present; it reads `../app-golden` beside the repo, or the app
+`RN_XTOOL_REF_APP` names). It also asserts that each hunk
 is present in the installed RN files. Fixes 14 to 29 are tested on the vendored copy (`vendor/rn-spm/spm`), so they
 run without the reference app, against podspec fixtures from the SDK 57 pins in `tests/fixtures/podspecs/` (worklets
 0.10.1, reanimated 4.5.1, screens 4.26.2, gesture-handler 2.32.0), from screens 4.30.1 (the clang-only importer paths

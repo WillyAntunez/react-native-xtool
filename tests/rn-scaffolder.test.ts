@@ -8,6 +8,7 @@ import {
   GOLDEN_LIBS,
   PODSPEC_FIXTURES,
   VENDORED_RN_SPM,
+  goldenApp,
   podspecCopy,
   readGolden,
   scaffoldLibraries,
@@ -32,8 +33,8 @@ const realPodspec = (spec: string, file: string) => ({
 const RNGH_PODSPEC = realPodspec("react-native-gesture-handler@3.4.0", "RNGestureHandler.podspec");
 const SCREENS_PODSPEC = realPodspec("react-native-screens@4.30.0", "RNScreens.podspec");
 const SVG_PODSPEC = realPodspec("react-native-svg@15.16.0", "RNSVG.podspec");
-// The golden test scaffolds the reference app's libraries (override with RN_XTOOL_REF_APP).
-const APP = process.env["RN_XTOOL_REF_APP"] ?? path.resolve(import.meta.dirname, "../../app");
+// The golden test scaffolds the golden's reference app's libraries (override with RN_XTOOL_REF_APP).
+const APP = goldenApp();
 const SWIFTLY_PATH = `${process.env["HOME"]}/.local/share/swiftly/bin:${process.env["PATH"]}`;
 /** `swift package dump-package` reads the 6.4 manifest only with a 6.4 toolchain (6.5 picks Package@swift-6.5.swift). */
 const swift64 = /\bSwift version 6\.4(\.\d+)?\b/.test(
@@ -1166,8 +1167,13 @@ describe("the scaffold golden (vendor/rn-spm)", () => {
   beforeEach(() => vi.stubEnv("RN_XTOOL_PODSPEC_READER", undefined));
   afterEach(() => vi.unstubAllEnvs());
 
+  it("reads the golden's libraries from ../app-golden unless RN_XTOOL_REF_APP names another app", () => {
+    expect(goldenApp({})).toBe(path.resolve(import.meta.dirname, "../../app-golden"));
+    expect(goldenApp({ RN_XTOOL_REF_APP: "/elsewhere/app" })).toBe("/elsewhere/app");
+  });
+
   it.skipIf(needsRuby !== "" || !GOLDEN_LIBS.every((l) => existsSync(path.join(APP, "node_modules", l))))(
-    `scaffolds the reference app's libraries as the golden (needs RN_XTOOL_REF_APP or ../app with the eight golden libraries)${needsRuby}`,
+    `scaffolds the reference app's libraries as the golden (needs ../app-golden or RN_XTOOL_REF_APP with the eight golden libraries)${needsRuby}`,
     () => {
       const now = scaffoldLibraries(
         VENDORED_RN_SPM,

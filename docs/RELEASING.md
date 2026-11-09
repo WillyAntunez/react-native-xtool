@@ -101,7 +101,8 @@ and `vendor/rn-spm/rn-xtool-edits.patch` (E1–E6) applied, for 0.85–0.87 and 
    warning for each persisted scaffold patch, so the CHANGELOG's "Upgrading" section says so. A change that alters no
    scaffold output keeps the revision.
 4. Regenerates the goldens in `tests/fixtures/scaffold-golden/` when the reference app's manifests change (the golden
-   test reads `RN_XTOOL_REF_APP`, else `../app`).
+   test reads `RN_XTOOL_REF_APP`, else `../app-golden`, a reference app beside the repo that holds exactly the eight
+   golden libraries at the golden's versions; `RN_XTOOL_WRITE_GOLDEN=1` writes the goldens instead of comparing).
 
 The byte tests need the pinned tarballs in `tests/.cache` (`node scripts/fetch-test-tarballs.mjs`); without them they
 skip, and the vitest summary says so. Before committing a scaffolder change, run `npx vitest run
