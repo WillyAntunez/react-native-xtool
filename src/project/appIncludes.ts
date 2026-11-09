@@ -161,8 +161,9 @@ function orList(items: readonly string[]): string {
  * Pass 1 of B1: the includes of `files` resolved in the app's copy as the generated App target compiles it, before
  * the copy exists. The include folders are `<sources>/include` (the forwards) then the header search paths; under
  * `sources` only the copy's planned files and forwards exist, elsewhere the disk answers. Only a certain include
- * counts (R6): resolved → `checked`; an angle miss, and a quote miss that an installed dependency's header matches by
- * path or that binary pods may provide → `pending`; any other quote miss → `missing`. Uncertain includes and
+ * counts (R6): resolved → `checked`; an angle miss, and a quote miss whose base name an installed dependency's header
+ * (`react-native` or a `dependencies` entry, any folder) carries or that binary pods may provide → `pending`; any
+ * other quote miss → `missing`. Uncertain includes and
  * Xcode's generated Swift headers count nowhere.
  */
 export function appIncludesPass1(i: Pass1Input): Pass1Result {
@@ -182,11 +183,12 @@ export function appIncludesPass1(i: Pass1Input): Pass1Result {
     defines: definesOf(i.defines),
   });
 
+  // By base name only: the build may find the header in another layout than the source tree's (React Native's staged
+  // `React/` headers for `React/Base/RCTBridgeModule.h`, a pod's `header_dir`), so any header of that name defers.
   let index: Map<string, string[]> | undefined;
   const dependencyProvides = (spelling: string): boolean => {
     index ??= dependencyHeaderIndex(i.root);
-    const suffix = `/${path.posix.normalize(spelling)}`;
-    return (index.get(path.posix.basename(spelling)) ?? []).some((h) => h.split(path.sep).join("/").endsWith(suffix));
+    return index.has(path.posix.basename(spelling));
   };
 
   /** A file whose path matches `p` but for case: in the copy, or on disk outside it. */

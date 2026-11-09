@@ -237,6 +237,15 @@ describe("appIncludesPass1", () => {
     expect(await pass1(root)).toEqual({ missing: [], pending: 5, checked: 2 });
   });
 
+  it("leaves a quote include a dependency provides under another folder to the build", async () => {
+    // The build finds it through React Native's staged headers (React/ flattened); the source tree has React/Base/.
+    const root = objcApp("template");
+    addToAppDelegate(root, '#import "React/RCTBridgeModule.h"\n');
+    mkdirSync(join(root, "node_modules", "react-native", "React", "Base"), { recursive: true });
+    writeFileSync(join(root, "node_modules", "react-native", "React", "Base", "RCTBridgeModule.h"), "// bridge module\n");
+    expect(await pass1(root)).toEqual({ missing: [], pending: 5, checked: 2 });
+  });
+
   it("leaves quote misses to the build when the project has binary pods", async () => {
     const root = objcApp("template");
     addToAppDelegate(root, '#import "RNCAsyncStorage.h"\n');
