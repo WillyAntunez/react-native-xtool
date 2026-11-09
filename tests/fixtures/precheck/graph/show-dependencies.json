@@ -1,0 +1,103 @@
+{
+  "identity": "ios-xtool",
+  "name": "AppXtool",
+  "url": "/home/me/app/ios-xtool",
+  "version": "unspecified",
+  "path": "/home/me/app/ios-xtool",
+  "traits": [
+    "default"
+  ],
+  "dependencies": [
+    {
+      "identity": "xcframeworks",
+      "name": "ReactNative",
+      "url": "/home/me/app/ios/build/xcframeworks",
+      "version": "unspecified",
+      "path": "/home/me/app/ios/build/xcframeworks",
+      "traits": [
+        "default"
+      ],
+      "dependencies": []
+    },
+    {
+      "identity": "ios",
+      "name": "React-GeneratedCode",
+      "url": "/home/me/app/ios/build/generated/ios",
+      "version": "unspecified",
+      "path": "/home/me/app/ios/build/generated/ios",
+      "traits": [
+        "default"
+      ],
+      "dependencies": [
+        {
+          "identity": "xcframeworks",
+          "name": "ReactNative",
+          "url": "/home/me/app/ios/build/xcframeworks",
+          "version": "unspecified",
+          "path": "/home/me/app/ios/build/xcframeworks",
+          "traits": [
+            "default"
+          ],
+          "dependencies": []
+        }
+      ]
+    },
+    {
+      "identity": "autolinking",
+      "name": "Autolinked",
+      "url": "/home/me/app/ios/build/generated/autolinking",
+      "version": "unspecified",
+      "path": "/home/me/app/ios/build/generated/autolinking",
+      "traits": [
+        "default"
+      ],
+      "dependencies": [
+        {
+          "identity": "rn-lib",
+          "name": "RNLib",
+          "url": "/home/me/app/node_modules/rn-lib",
+          "version": "unspecified",
+          "path": "/home/me/app/node_modules/rn-lib",
+          "traits": [
+            "default"
+          ],
+          "dependencies": [
+            {
+              "identity": "xcframeworks",
+              "name": "ReactNative",
+              "url": "/home/me/app/ios/build/xcframeworks",
+              "version": "unspecified",
+              "path": "/home/me/app/ios/build/xcframeworks",
+              "traits": [
+                "default"
+              ],
+              "dependencies": []
+            },
+            {
+              "identity": "ios",
+              "name": "React-GeneratedCode",
+              "url": "/home/me/app/ios/build/generated/ios",
+              "version": "unspecified",
+              "path": "/home/me/app/ios/build/generated/ios",
+              "traits": [
+                "default"
+              ],
+              "dependencies": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "identity": "unreached-lib",
+      "name": "UnreachedLib",
+      "url": "/home/me/app/node_modules/unreached-lib",
+      "version": "unspecified",
+      "path": "/home/me/app/node_modules/unreached-lib",
+      "traits": [
+        "default"
+      ],
+      "dependencies": []
+    }
+  ]
+}

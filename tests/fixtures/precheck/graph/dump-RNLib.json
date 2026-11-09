@@ -1,0 +1,93 @@
+{
+  "dependencies": [
+    {
+      "fileSystem": [
+        {
+          "identity": "xcframeworks",
+          "nameForTargetDependencyResolutionOnly": "ReactNative",
+          "path": "/home/me/app/ios/build/xcframeworks",
+          "productFilter": null
+        }
+      ]
+    },
+    {
+      "fileSystem": [
+        {
+          "identity": "ios",
+          "nameForTargetDependencyResolutionOnly": "React-GeneratedCode",
+          "path": "/home/me/app/ios/build/generated/ios",
+          "productFilter": null
+        }
+      ]
+    }
+  ],
+  "name": "RNLib",
+  "packageKind": {
+    "root": [
+      "/home/me/app/node_modules/rn-lib"
+    ]
+  },
+  "products": [
+    {
+      "name": "RNLib",
+      "settings": [],
+      "targets": [
+        "RNLib"
+      ],
+      "type": {
+        "library": [
+          "automatic"
+        ]
+      }
+    }
+  ],
+  "targets": [
+    {
+      "dependencies": [
+        {
+          "target": [
+            "RNLibSwift",
+            null
+          ]
+        },
+        {
+          "product": [
+            "ReactAppHeaders",
+            "React-GeneratedCode",
+            null,
+            null
+          ]
+        },
+        {
+          "product": [
+            "ReactHeaders",
+            "ReactNative",
+            null,
+            null
+          ]
+        }
+      ],
+      "exclude": [],
+      "name": "RNLib",
+      "packageAccess": true,
+      "path": "ios",
+      "publicHeadersPath": "public",
+      "resources": [],
+      "settings": [],
+      "type": "regular"
+    },
+    {
+      "dependencies": [],
+      "exclude": [],
+      "name": "RNLibSwift",
+      "packageAccess": true,
+      "path": "ios/swift",
+      "resources": [],
+      "settings": [],
+      "type": "regular"
+    }
+  ],
+  "toolsVersion": {
+    "_version": "6.0.0"
+  }
+}

@@ -1,0 +1,143 @@
+{
+  "dependencies": [
+    {
+      "fileSystem": [
+        {
+          "identity": "xcframeworks",
+          "nameForTargetDependencyResolutionOnly": "ReactNative",
+          "path": "/home/me/app/ios/build/xcframeworks",
+          "productFilter": null
+        }
+      ]
+    },
+    {
+      "fileSystem": [
+        {
+          "identity": "ios",
+          "nameForTargetDependencyResolutionOnly": "React-GeneratedCode",
+          "path": "/home/me/app/ios/build/generated/ios",
+          "productFilter": null
+        }
+      ]
+    },
+    {
+      "fileSystem": [
+        {
+          "identity": "autolinking",
+          "nameForTargetDependencyResolutionOnly": "Autolinked",
+          "path": "/home/me/app/ios/build/generated/autolinking",
+          "productFilter": null
+        }
+      ]
+    },
+    {
+      "fileSystem": [
+        {
+          "identity": "unreached-lib",
+          "path": "/home/me/app/node_modules/unreached-lib",
+          "productFilter": null
+        }
+      ]
+    }
+  ],
+  "name": "AppXtool",
+  "packageKind": {
+    "root": [
+      "/home/me/app/ios-xtool"
+    ]
+  },
+  "products": [
+    {
+      "name": "App",
+      "settings": [],
+      "targets": [
+        "App"
+      ],
+      "type": {
+        "library": [
+          "automatic"
+        ]
+      }
+    }
+  ],
+  "targets": [
+    {
+      "dependencies": [
+        {
+          "product": [
+            "ReactHeaders",
+            "ReactNative",
+            null,
+            null
+          ]
+        },
+        {
+          "product": [
+            "ReactNativeHeaders",
+            "ReactNative",
+            null,
+            null
+          ]
+        },
+        {
+          "product": [
+            "ReactNativeDependenciesHeaders",
+            "ReactNative",
+            null,
+            null
+          ]
+        },
+        {
+          "product": [
+            "ReactCodegen",
+            "React-GeneratedCode",
+            null,
+            null
+          ]
+        },
+        {
+          "product": [
+            "ReactAppDependencyProvider",
+            "React-GeneratedCode",
+            null,
+            null
+          ]
+        },
+        {
+          "product": [
+            "Autolinked",
+            "Autolinked",
+            null,
+            null
+          ]
+        },
+        {
+          "byName": [
+            "RNXtoolDevSupport",
+            null
+          ]
+        }
+      ],
+      "exclude": [],
+      "name": "App",
+      "packageAccess": true,
+      "path": "Sources/App",
+      "resources": [],
+      "settings": [],
+      "type": "regular"
+    },
+    {
+      "dependencies": [],
+      "exclude": [],
+      "name": "RNXtoolDevSupport",
+      "packageAccess": true,
+      "path": "Sources/RNXtoolDevSupport",
+      "resources": [],
+      "settings": [],
+      "type": "regular"
+    }
+  ],
+  "toolsVersion": {
+    "_version": "6.0.0"
+  }
+}

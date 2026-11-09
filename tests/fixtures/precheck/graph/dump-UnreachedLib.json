@@ -1,0 +1,39 @@
+{
+  "dependencies": [],
+  "name": "UnreachedLib",
+  "packageKind": {
+    "root": [
+      "/home/me/app/node_modules/unreached-lib"
+    ]
+  },
+  "products": [
+    {
+      "name": "UnreachedLib",
+      "settings": [],
+      "targets": [
+        "UnreachedLib"
+      ],
+      "type": {
+        "library": [
+          "automatic"
+        ]
+      }
+    }
+  ],
+  "targets": [
+    {
+      "dependencies": [],
+      "exclude": [],
+      "name": "UnreachedLib",
+      "packageAccess": true,
+      "path": "ios",
+      "publicHeadersPath": "include",
+      "resources": [],
+      "settings": [],
+      "type": "regular"
+    }
+  ],
+  "toolsVersion": {
+    "_version": "6.0.0"
+  }
+}
