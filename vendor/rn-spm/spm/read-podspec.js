@@ -65,7 +65,10 @@ type RubyProbe =
 const PODSPEC_SHIM = path.join(__dirname, 'read-podspec-shim.rb');
 const PODSPEC_READER_VAR = 'RN_XTOOL_PODSPEC_READER';
 const RUBY_PROBE_TIMEOUT_MS = 10000;
-const PODSPEC_TIMEOUT_MS = 30000;
+// Generous: a podspec may copy prebuilt frameworks while it is read
+// (react-native-skia's copies hundreds of MB), and a slow disk needs the
+// time. A podspec that hangs costs this once.
+const PODSPEC_TIMEOUT_MS = 120000;
 // What a read that stopped on a gap of the shim, or a podspec that did not
 // finish, says to do next. A podspec's own `raise` keeps the shim's message.
 const PODSPEC_READ_REMEDY =
@@ -3035,6 +3038,7 @@ module.exports = {
   installationRootFor,
   isPodspecReadError,
   PodspecReadError,
+  PODSPEC_TIMEOUT_MS,
   podspecReader,
   readPodspec,
   readPodspecCached,

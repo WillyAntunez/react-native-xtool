@@ -15,7 +15,7 @@ const req = createRequire(path.join(VENDORED_RN_SPM, "read-podspec.js"));
 const readPodspecJs = req("./read-podspec.js");
 const { podspecReader, runPodspecShim, isPodspecReadError, installationRootFor } = readPodspecJs;
 const { readPodspec, readPodspecCached, unresolvedSourcesReason } = readPodspecJs;
-const { flattenSubspecs, findPodspecs, spmDependencyReason } = readPodspecJs;
+const { flattenSubspecs, findPodspecs, spmDependencyReason, PODSPEC_TIMEOUT_MS } = readPodspecJs;
 const { scaffoldPackageSwiftForDep } = req("./scaffold-package-swift.js");
 const REMEDY =
   "Set RN_XTOOL_PODSPEC_READER=reduced to read it with the reduced reader for one run, and report it with rn-xtool doctor --report.";
@@ -224,6 +224,11 @@ describe.skipIf(needsRuby !== "")(`running the podspec shim${needsRuby}`, () => 
     const start = Date.now();
     expect(runPodspecShim(podspec).raw.summary).toBe("0");
     expect(Date.now() - start).toBeLessThan(5000);
+  });
+
+  it("gives a podspec 120 s by default", () => {
+    // skia's podspec copies its prebuilt frameworks (hundreds of MB) while it is read: a slow disk needs the time.
+    expect(PODSPEC_TIMEOUT_MS).toBe(120_000);
   });
 
   it("stops a podspec that does not finish", () => {

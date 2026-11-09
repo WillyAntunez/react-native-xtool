@@ -888,7 +888,7 @@ the rest with a warning, such as react-native-gesture-handler 3.3.0's `-DRNGH_US
 on a machine with CocoaPods, and an incomplete one on a machine without.
 
 Fix: the podspec runs in real Ruby. `read-podspec-shim.rb`, next to `read-podspec.js`, is run by the system `ruby`
-(2.7 or later, standard library only) once per podspec, in the podspec's folder, with an empty stdin, a 30 s timeout
+(2.7 or later, standard library only) once per podspec, in the podspec's folder, with an empty stdin, a 120 s timeout
 and an environment of `PATH`, `HOME`, `LANG` and fix 19's two variables (`RCT_NEW_ARCH_ENABLED=1`,
 `RCT_HERMES_V1_ENABLED=1`). It evaluates the podspec inside `module Pod`, as CocoaPods-core does, against a
 `Pod::Specification` with the attributes of CocoaPods 1.16's DSL (a setter and a getter each, the singular aliases
@@ -921,7 +921,7 @@ helpers stay undefined, and a call to one fails as `method`.
 A podspec Ruby cannot read stops the read with a `PodspecReadError`; nothing falls back. A gap of the shim names where
 it stopped (`<podspec>:<line>`, or `<podspec> (<file>:<line>)` in another of the library's files): `method` (the
 podspec calls `<name>(…)`, which the reader does not model), `constant`, `attribute` (one CocoaPods does not define),
-`require` (a gem other than `colored2`) or `not-a-spec`. Its message, like a podspec that does not finish in 30 s,
+`require` (a gem other than `colored2`) or `not-a-spec`. Its message, like a podspec that does not finish in 120 s,
 ends with `Set RN_XTOOL_PODSPEC_READER=reduced to read it with the reduced reader for one run, and report it with
 rn-xtool doctor --report.` A podspec's own `raise`, `abort`, `exit` or syntax error (`raised`) keeps Ruby's message,
 and a Ruby that ends without a model says `ruby exited with <code or signal>` with its last stderr line. Without a

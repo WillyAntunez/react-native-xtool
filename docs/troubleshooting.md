@@ -1040,7 +1040,7 @@ with the reduced reader; sudo apt install ruby`).
     not have, often a typo);
   - `<podspec>: cannot load such file -- <name>; rn-xtool's podspec reader stubs only colored2` (a `require` of a gem);
   - `<podspec>: the podspec does not evaluate to a Pod::Spec`;
-  - `<podspec> did not finish in 30 s.`
+  - `<podspec> did not finish in 120 s.`
 
   When the failing line is in another of the library's files, `<podspec>:<line>` reads `<podspec> (<file>:<line>)`;
   when Ruby keeps no line, it is `<podspec>` alone. A podspec that raises an error of its own (`raise`, `abort`) stops
