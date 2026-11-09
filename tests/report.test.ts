@@ -89,7 +89,7 @@ const probes: DoctorProbes = {
   portFree: async () => true,
   wifi: async () => ({ usb: { udid: "00008110-000000000000AAAA", enabled: true } }),
   capabilities: async () => caps,
-  podspecReader: () => ({ reader: "ruby", ruby: "3.3.8", forced: false, warning: null }),
+  podspecReader: () => ({ reader: "ruby", ruby: "9.9.9", forced: false, warning: null }),
 };
 const env: ReportEnv = { rnXtoolVersion: "9.9.9", os: "Ubuntu 24.04.1 LTS, Linux 6.8.0-45-generic", arch: "x64", home: "/home/me" };
 
@@ -150,12 +150,12 @@ describe("doctorReport", () => {
       "node: 24.15.0",
       "swift: 6.4",
       `xtool: ${XTOOL_VERSION}`,
-      "ruby: 3.3.8",
+      "ruby: 9.9.9",
       "podspec reader: not recorded",
       "os: Ubuntu 24.04.1 LTS, Linux 6.8.0-45-generic, x64",
       "project: expo, Expo SDK 58, expo 58.0.21, react-native 0.88.1",
       "✔ node — 24.15.0",
-      "✔ ruby — 3.3.8",
+      "✔ ruby — 9.9.9",
       "✔ swift — 6.4",
       "✔ llvm-nm — LLVM 21.0.0",
       "✔ llvm-ar — LLVM 21.0.0",
@@ -261,7 +261,7 @@ describe("doctorReport", () => {
     expect(lines.slice(4, 10)).toEqual([
       "swift: not checked (--project)",
       "xtool: not checked (--project)",
-      "ruby: 3.3.8",
+      "ruby: 9.9.9",
       "podspec reader: not recorded",
       "os: Ubuntu 24.04.1 LTS, Linux 6.8.0-45-generic, x64",
       "project: expo, Expo SDK 58, expo 58.0.21, react-native 0.88.1",
@@ -291,7 +291,7 @@ describe("doctorReport", () => {
     const lines = (await doctorReport(root, { env, probes })).split("\n");
     const at = lines.indexOf(`xtool: ${XTOOL_VERSION}`);
     expect(lines.slice(at + 1, at + 5)).toEqual([
-      "ruby: 3.3.8",
+      "ruby: 9.9.9",
       "podspec reader: reduced: RN_XTOOL_PODSPEC_READER=reduced is set (last rn-spm, 2 podspecs)",
       "podspec ENV:",
       "  node_modules/x/X.podspec: RCT_NEW_ARCH_ENABLED, USE_FRAMEWORKS",

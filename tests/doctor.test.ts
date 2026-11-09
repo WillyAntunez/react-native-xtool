@@ -88,7 +88,7 @@ const good: DoctorProbes = {
   portFree: async () => true,
   wifi: async () => ({ usb: { udid: "u1", enabled: true } }),
   capabilities: async () => expo58Caps,
-  podspecReader: () => ({ reader: "ruby", ruby: "3.3.8", forced: false, warning: null }),
+  podspecReader: () => ({ reader: "ruby", ruby: "9.9.9", forced: false, warning: null }),
 };
 
 const statusOf = (r: { checks: { name: string; status: string }[] }, name: string) =>
@@ -532,16 +532,16 @@ describe("ruby check", () => {
     const r = await doctorWithProbes(good);
     expect(r.checks.slice(0, 2)).toEqual([
       { name: "node", status: "ok", detail: "24.15.0" },
-      { name: "ruby", status: "ok", detail: "3.3.8" },
+      { name: "ruby", status: "ok", detail: "9.9.9" },
     ]);
     const warned = await doctorWithProbes({
       ...good,
-      podspecReader: () => ({ reader: "ruby", ruby: "3.3.8", forced: false, warning: "RN_XTOOL_PODSPEC_READER=REDUCED is not a reader rn-xtool knows (only reduced); reading podspecs with Ruby" }),
+      podspecReader: () => ({ reader: "ruby", ruby: "9.9.9", forced: false, warning: "RN_XTOOL_PODSPEC_READER=REDUCED is not a reader rn-xtool knows (only reduced); reading podspecs with Ruby" }),
     });
     expect(warned.checks[1]).toEqual({
       name: "ruby",
       status: "warn",
-      detail: "3.3.8; RN_XTOOL_PODSPEC_READER=REDUCED is not a reader rn-xtool knows (only reduced); reading podspecs with Ruby",
+      detail: "9.9.9; RN_XTOOL_PODSPEC_READER=REDUCED is not a reader rn-xtool knows (only reduced); reading podspecs with Ruby",
     });
     expect(warned.ok).toBe(true);
   });

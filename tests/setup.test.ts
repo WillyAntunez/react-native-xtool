@@ -20,8 +20,8 @@ import {
 } from "../src/commands/setup.js";
 
 const all = { hasSwift: true, hasXtool: true, hasSdk: true, loggedIn: true };
-const withRuby = () => ({ reader: "ruby", ruby: "3.3.8", forced: false, warning: null }) as const;
-const RUBY_LINE = "✔ ruby 3.3.8";
+const withRuby = () => ({ reader: "ruby", ruby: "9.9.9", forced: false, warning: null }) as const;
+const RUBY_LINE = "✔ ruby 9.9.9";
 const noPending = async () => undefined;
 
 // No test reaches the network: a download that slips through fails here instead.
@@ -60,7 +60,7 @@ const noInstaller = (name: string) => async () => {
 };
 /**
  * Every setup() in this file goes through here: the real installers are replaced by ones that throw (a test's own
- * fakes win), the disk is roomy unless the test probes it, Ruby 3.3.8 reads podspecs unless the test says otherwise,
+ * fakes win), the disk is roomy unless the test probes it, Ruby 9.9.9 reads podspecs unless the test says otherwise,
  * and HOME is temporary unless the test set one up.
  */
 const setup = (opts: Parameters<typeof realSetup>[0], deps: Partial<SetupDeps> = {}) => {
@@ -126,7 +126,7 @@ describe("setup", () => {
       "⚠ Ruby was not found: rn-xtool reads podspecs with its reduced reader; install Ruby with: sudo apt install ruby",
       "✔ Nothing to do: toolchain already set up",
     ]);
-    expect(await lines({ podspecReader: withRuby })).toEqual(["✔ ruby 3.3.8", "✔ Nothing to do: toolchain already set up"]);
+    expect(await lines({ podspecReader: withRuby })).toEqual(["✔ ruby 9.9.9", "✔ Nothing to do: toolchain already set up"]);
     // With an action to run, the line comes before it; the throwing installers prove nothing is installed for Ruby.
     expect(await lines({ podspecReader: noRuby, probe: async () => ({ ...all, loggedIn: false }) })).toEqual([
       "⚠ Ruby was not found: rn-xtool reads podspecs with its reduced reader; install Ruby with: sudo apt install ruby",
@@ -169,10 +169,10 @@ describe("setup", () => {
   it("names an unknown RN_XTOOL_PODSPEC_READER value under the Ruby line", async () => {
     const log = vi.fn();
     const warning = "RN_XTOOL_PODSPEC_READER=REDUCED is not a reader rn-xtool knows (only reduced); reading podspecs with Ruby";
-    const warned = () => ({ reader: "ruby", ruby: "3.3.8", forced: false, warning }) as const;
+    const warned = () => ({ reader: "ruby", ruby: "9.9.9", forced: false, warning }) as const;
     await setup({}, { checkSwiftPackages: noPending, probe: async () => all, podspecReader: warned, log });
     expect(log.mock.calls.map((c) => c[0] as string)).toEqual([
-      "✔ ruby 3.3.8",
+      "✔ ruby 9.9.9",
       `⚠ ${warning}`,
       "✔ Nothing to do: toolchain already set up",
     ]);

@@ -32,7 +32,7 @@ function fakeRuby(body: string): string {
   chmodSync(path.join(bin, "ruby"), 0o755);
   return bin;
 }
-const usableRuby = () => fakeRuby(`echo '{"ruby":"3.3.8","floor":"2.7.0","usable":true}'`);
+const usableRuby = () => fakeRuby(`echo '{"ruby":"9.9.9","floor":"2.7.0","usable":true}'`);
 
 /** `files` (paths relative to it) written into a temp library folder, and the path of its `Foo.podspec`. */
 function library(podspec: string, files: Record<string, string> = {}): string {
@@ -88,7 +88,7 @@ describe("the podspec reader's choice", () => {
   });
 
   it("reads with Ruby when the probe says it is usable", () => {
-    expect(podspecReader({ env: { PATH: usableRuby() } })).toEqual({ reader: "ruby", ruby: "3.3.8", forced: false, warning: null });
+    expect(podspecReader({ env: { PATH: usableRuby() } })).toEqual({ reader: "ruby", ruby: "9.9.9", forced: false, warning: null });
   });
 
   it("is forced to the reduced reader by RN_XTOOL_PODSPEC_READER=reduced", () => {
@@ -103,7 +103,7 @@ describe("the podspec reader's choice", () => {
   it("names an unknown RN_XTOOL_PODSPEC_READER value", () => {
     expect(podspecReader({ env: { PATH: usableRuby(), RN_XTOOL_PODSPEC_READER: "REDUCED" } })).toEqual({
       reader: "ruby",
-      ruby: "3.3.8",
+      ruby: "9.9.9",
       forced: false,
       warning: "RN_XTOOL_PODSPEC_READER=REDUCED is not a reader rn-xtool knows (only reduced); reading podspecs with Ruby",
     });
@@ -143,10 +143,10 @@ describe("the podspec reader's choice", () => {
 
   it("probes Ruby once per PATH", () => {
     const counter = path.join(tempDir(), "probes");
-    const bin = fakeRuby(`echo probe >> '${counter}'\necho '{"ruby":"3.3.8","floor":"2.7.0","usable":true}'`);
+    const bin = fakeRuby(`echo probe >> '${counter}'\necho '{"ruby":"9.9.9","floor":"2.7.0","usable":true}'`);
     for (let i = 0; i < 3; i++) expect(podspecReader({ env: { PATH: bin } }).reader).toBe("ruby");
     expect(readFileSync(counter, "utf8")).toBe("probe\n");
-    const other = fakeRuby(`echo probe >> '${counter}'\necho '{"ruby":"3.3.8","floor":"2.7.0","usable":true}'`);
+    const other = fakeRuby(`echo probe >> '${counter}'\necho '{"ruby":"9.9.9","floor":"2.7.0","usable":true}'`);
     podspecReader({ env: { PATH: other } });
     expect(readFileSync(counter, "utf8")).toBe("probe\nprobe\n");
   });
@@ -766,6 +766,6 @@ describe("the podspec reader rn-xtool reports", () => {
     expect(podspecReaderHere(forced)).toEqual(podspecReader({ env: forced }));
     const withFake = { PATH: usableRuby() };
     expect(podspecReaderHere(withFake)).toEqual(podspecReader({ env: withFake }));
-    expect(podspecReaderHere(withFake)).toEqual({ reader: "ruby", ruby: "3.3.8", forced: false, warning: null });
+    expect(podspecReaderHere(withFake)).toEqual({ reader: "ruby", ruby: "9.9.9", forced: false, warning: null });
   });
 });
