@@ -465,9 +465,7 @@ export type PodspecModel = {
   // Which reader read the podspec: Ruby through read-podspec-shim.rb, or the
   // reduced reader (podspecReader in read-podspec.js says why).
   reader: 'ruby' | 'reduced',
-  // True when produced by the reduced reader rather than Ruby. Used to emit a
-  // louder banner in the scaffold summary explaining that dependency wiring
-  // may be incomplete.
+  // True when produced by the reduced reader rather than Ruby.
   partial: boolean,
   // True when the podspec calls `install_modules_dependencies(s)` — RN's
   // Podfile-side helper that injects the React-Core family. With Ruby, when

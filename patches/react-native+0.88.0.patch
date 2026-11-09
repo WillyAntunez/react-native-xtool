@@ -1,5 +1,21 @@
+diff --git a/node_modules/react-native/scripts/setup-apple-spm.js b/node_modules/react-native/scripts/setup-apple-spm.js
+index 0ace968..35d5749 100644
+--- a/node_modules/react-native/scripts/setup-apple-spm.js
++++ b/node_modules/react-native/scripts/setup-apple-spm.js
+@@ -439,9 +439,8 @@ function runCodegenStep(
+ /**
+  * Walks autolinking.json and writes a Package.swift into each community RN
+  * package that ships a podspec but no SPM manifest. Reuses the dep's
+- * podspec (via `pod ipc spec` when available) so the scaffolded file
+- * captures the dep's actual sources, header search paths, frameworks, and
+- * dependencies. Files carrying the scaffolder's own marker are regenerated
++ * podspec so the scaffolded file captures the dep's actual sources, header
++ * search paths, frameworks, and dependencies. Files carrying the scaffolder's own marker are regenerated
+  * when the cache slot changes (manifest-hash bump); files without the
+  * marker are left alone (upstream-shipped or user-managed).
+  *
 diff --git a/node_modules/react-native/scripts/spm/expand-spm-dependencies.js b/node_modules/react-native/scripts/spm/expand-spm-dependencies.js
-index 872450e..79dd476 100644
+index 872450e..d0f302d 100644
 --- a/node_modules/react-native/scripts/spm/expand-spm-dependencies.js
 +++ b/node_modules/react-native/scripts/spm/expand-spm-dependencies.js
 @@ -12,6 +12,7 @@
@@ -10,6 +26,17 @@ index 872450e..79dd476 100644
    readPodspecCached,
    readPodspecNames,
  } = require('./read-podspec');
+@@ -198,8 +199,8 @@ function resolveSwiftName(
+   const fromNpm = toSwiftName(npmName);
+   if (podspec != null) {
+     warn(
+-      `'${npmName}' ships a podspec React Native could not read a name from (CocoaPods may not be installed), so it is named '${fromNpm}' after its npm package instead. ` +
+-        `A machine that can read the podspec may resolve a different name — set 'swiftpmConfig.name' in ${npmName}'s package.json to settle it everywhere.`,
++      `'${npmName}' ships a podspec whose name is computed in Ruby, which rn-xtool does not use for names, so it is named '${fromNpm}' after its npm package instead. ` +
++        `Set 'swiftpmConfig.name' in its package.json to override.`,
+     );
+   }
+   return {name: fromNpm, source: 'npm'};
 @@ -300,7 +301,8 @@ function expandSpmDependencies(
      byName.set(dep.name, {...dep, spmDependencies: []});
    }
@@ -5573,7 +5600,7 @@ index cf7e587..75d9715 100644
    scaffoldAll,
    scaffoldPackageSwiftForDep,
 diff --git a/node_modules/react-native/scripts/spm/spm-types.js b/node_modules/react-native/scripts/spm/spm-types.js
-index a89142f..4eb4089 100644
+index a89142f..24a3fa8 100644
 --- a/node_modules/react-native/scripts/spm/spm-types.js
 +++ b/node_modules/react-native/scripts/spm/spm-types.js
 @@ -411,8 +411,8 @@ export type PreprocessorDefine = {
@@ -5611,7 +5638,7 @@ index a89142f..4eb4089 100644
    // `WORKLETS_VERSION=0.9.2`). Emitted as `.define(...)` on the SPM target.
    preprocessorDefines: Array<PreprocessorDefine>,
    // File paths or glob patterns the dep declares as bundled resources.
-@@ -460,17 +462,28 @@ export type PodspecModel = {
+@@ -460,17 +462,26 @@ export type PodspecModel = {
    // a user can spot fields that didn't translate cleanly (unknown env vars,
    // unrecognized $(...) tokens, etc.). Never throws on parse errors.
    warnings: Array<string>,
@@ -5621,9 +5648,7 @@ index a89142f..4eb4089 100644
 +  // Which reader read the podspec: Ruby through read-podspec-shim.rb, or the
 +  // reduced reader (podspecReader in read-podspec.js says why).
 +  reader: 'ruby' | 'reduced',
-+  // True when produced by the reduced reader rather than Ruby. Used to emit a
-+  // louder banner in the scaffold summary explaining that dependency wiring
-+  // may be incomplete.
++  // True when produced by the reduced reader rather than Ruby.
    partial: boolean,
 -  // True when the podspec source calls `install_modules_dependencies(s)` —
 -  // RN's Podfile-side helper that injects the React-Core family. We strip that
@@ -5649,7 +5674,7 @@ index a89142f..4eb4089 100644
  };
  
  // Intermediate translation result — concrete data the Swift emitter consumes.
-@@ -485,7 +498,7 @@ export type SpmScaffoldSpec = {
+@@ -485,7 +496,7 @@ export type SpmScaffoldSpec = {
    // Header search paths resolved to dep-root-relative form. Each entry
    // becomes `.headerSearchPath("<path>")` in cSettings + cxxSettings.
    headerSearchPaths: Array<string>,
@@ -5658,7 +5683,7 @@ index a89142f..4eb4089 100644
    // cSettings + cxxSettings, honoring any per-config scope.
    preprocessorDefines: Array<PreprocessorDefine>,
    // True when the target has ObjC(++) sources (.m/.mm). Drives emitting +
-@@ -502,6 +515,9 @@ export type SpmScaffoldSpec = {
+@@ -502,6 +513,9 @@ export type SpmScaffoldSpec = {
    coreReactNative: boolean,
    siblingNames: Array<string>,
    siblingSwiftNames?: {[npmName: string]: string},
@@ -5668,7 +5693,7 @@ index a89142f..4eb4089 100644
    // Extra frameworks beyond the autolinker's default UIKit/Foundation/CoreGraphics
    // set. Merged with the defaults at emit time.
    extraFrameworks: Array<string>,
-@@ -539,6 +555,11 @@ export type ScaffoldResult =
+@@ -539,6 +553,11 @@ export type ScaffoldResult =
        // What became of `swiftpmConfig.name` in the library's package.json.
        // Absent when the name was not podspec-derived, so nothing was attempted.
        swiftpmName?: SwiftpmNameOutcome,

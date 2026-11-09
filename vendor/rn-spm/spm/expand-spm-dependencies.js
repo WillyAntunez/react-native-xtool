@@ -199,8 +199,8 @@ function resolveSwiftName(
   const fromNpm = toSwiftName(npmName);
   if (podspec != null) {
     warn(
-      `'${npmName}' ships a podspec React Native could not read a name from (CocoaPods may not be installed), so it is named '${fromNpm}' after its npm package instead. ` +
-        `A machine that can read the podspec may resolve a different name — set 'swiftpmConfig.name' in ${npmName}'s package.json to settle it everywhere.`,
+      `'${npmName}' ships a podspec whose name is computed in Ruby, which rn-xtool does not use for names, so it is named '${fromNpm}' after its npm package instead. ` +
+        `Set 'swiftpmConfig.name' in its package.json to override.`,
     );
   }
   return {name: fromNpm, source: 'npm'};

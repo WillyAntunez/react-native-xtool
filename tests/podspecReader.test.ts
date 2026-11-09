@@ -731,6 +731,23 @@ describe("reader failures propagate", () => {
     expect(thrown(() => expand(dep, defaultReadPodspec)).message).toBe(e.message);
   });
 
+  it("names a library after its npm package when its podspec computes the name", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const dep = { name: "react-native-foo", root: tempDir(), platforms: { ios: {} } };
+      const computed = () => ({ name: "#{package['name']}", moduleName: null, headerDir: null });
+      expect(expand(dep, computed)[0]).toMatchObject({ swiftName: "ReactNativeFoo", swiftNameSource: "npm" });
+      const said = warn.mock.calls.map((c) => String(c[0]).replace(/\x1b\[[0-9;]*m/g, "")).join("\n");
+      expect(said).toContain(
+        "'react-native-foo' ships a podspec whose name is computed in Ruby, which rn-xtool does not use for names, " +
+          "so it is named 'ReactNativeFoo' after its npm package instead. Set 'swiftpmConfig.name' in its package.json to override.",
+      );
+      expect(said).not.toMatch(/CocoaPods|different name/);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("keeps the old answer for an unreadable file", () => {
     const { root, podspecPath, dep, outputDir } = installedDep(null);
     expect(defaultReadPodspec(root, podspecPath)).toBeNull();
