@@ -5,6 +5,7 @@ import { podspecReaderHere } from "../src/tools/podspecReader.js";
 import { packageRoot } from "../src/tools/exec.js";
 import {
   SWEEP,
+  entryName,
   golden,
   goldenText,
   nameDifferences,
@@ -33,11 +34,15 @@ const skip = (entry: SweepEntry) => skipReason(entry) !== "";
 describe("the podspec reader sweep", () => {
   for (const entry of SWEEP)
     for (const podspec of podspecsOf(entry))
-      it.skipIf(skip(entry))(`reads ${entry.spec} ${podspec} as its golden${skipReason(entry)}`, () => {
+      it.skipIf(skip(entry))(`reads ${entryName(entry)} ${podspec} as its golden${skipReason(entry)}`, () => {
         expect(record(entry, podspec)).toEqual(golden(entry, podspec));
       });
 
   it("keeps every library's names under both readers", () => expect(nameDifferences()).toEqual([]));
+  it("lists each library once per React Native", () => {
+    const names = SWEEP.map(entryName);
+    expect(names.filter((name, i) => names.indexOf(name) !== i)).toEqual([]);
+  });
   it("has a golden for every podspec and no other", () => expect(orphanGoldens()).toEqual([]));
   it.runIf(CI)("runs with Ruby on CI", () => expect(podspecReaderHere().reader).toBe("ruby"));
 });
@@ -48,9 +53,16 @@ describe("the sweep's guards", () => {
   const needs = " (needs react-native-unpinned@0.0.1 pinned in tests/tarballs.json)";
 
   it("reports an entry without goldens, and on CI what it needs", () => {
-    expect(orphanGoldens([unpinned], false)).toContain("react-native-unpinned@0.0.1/ (no goldens)");
-    expect(orphanGoldens([unpinned], false)).not.toContain(`react-native-unpinned@0.0.1${needs}`);
-    expect(orphanGoldens([unpinned], true)).toContain(`react-native-unpinned@0.0.1${needs}`);
+    expect(orphanGoldens([unpinned], false)).toContain("react-native-unpinned@0.0.1@rn-0.88.1/ (no goldens)");
+    expect(orphanGoldens([unpinned], false)).not.toContain(`react-native-unpinned@0.0.1 on react-native@0.88.1${needs}`);
+    expect(orphanGoldens([unpinned], true)).toContain(`react-native-unpinned@0.0.1 on react-native@0.88.1${needs}`);
+  });
+
+  it("gives a library read against two React Natives a golden folder for each", () => {
+    const older: SweepEntry = { ...unpinned, rn: "react-native@0.86.3" };
+    const orphans = orphanGoldens([unpinned, older], false);
+    expect(orphans).toContain("react-native-unpinned@0.0.1@rn-0.88.1/ (no goldens)");
+    expect(orphans).toContain("react-native-unpinned@0.0.1@rn-0.86.3/ (no goldens)");
   });
 
   it("refuses to write a gap of the shim as a golden", () => {

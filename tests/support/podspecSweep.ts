@@ -20,7 +20,10 @@ import { tool } from "./tools.js";
 const ROOT = packageRoot();
 export const SWEEP_GOLDENS = path.join(ROOT, "tests", "fixtures", "podspec-sweep");
 
-/** An entry of `tests/podspec-sweep.json`: a library, the React Native it is read against, and the packages it needs. */
+/**
+ * An entry of `tests/podspec-sweep.json`: a library, the React Native it is read against, and the packages it needs. A
+ * library and a React Native together name the entry: the same library may be read against several React Natives.
+ */
 export type SweepEntry = { spec: string; rn: string; with?: string[] };
 export const SWEEP = JSON.parse(readFileSync(path.join(ROOT, "tests", "podspec-sweep.json"), "utf8")) as SweepEntry[];
 
@@ -54,6 +57,8 @@ afterAll(() => {
 const nameOf = (spec: string) => spec.slice(0, spec.lastIndexOf("@"));
 const versionOf = (spec: string) => spec.slice(spec.lastIndexOf("@") + 1);
 const tarballsOf = (entry: SweepEntry) => [entry.spec, entry.rn, ...(entry.with ?? [])];
+/** The entry's name in titles and messages: `<spec> on <rn>`. */
+export const entryName = (entry: SweepEntry) => `${entry.spec} on ${entry.rn}`;
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** `spec`'s tarball extracted into `dir` (only `members` of it when given). */
@@ -72,7 +77,7 @@ const projects = new Map<string, { root: string; podspecs: string[] }>();
  * `<root>/node_modules/react-native`. `podspecs` are the library's podspec files that exist, relative to it.
  */
 export function sweepProject(entry: SweepEntry): { root: string; podspecs: string[] } {
-  let project = projects.get(entry.spec);
+  let project = projects.get(entryName(entry));
   if (project) return project;
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "rn-xtool-sweep-")));
   tmp.push(root);
@@ -84,12 +89,16 @@ export function sweepProject(entry: SweepEntry): { root: string; podspecs: strin
   writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "sweep-app", version: "1.0.0", dependencies }));
   const lib = path.join(modules, nameOf(entry.spec));
   const podspecs = podspecFiles(lib).filter((f) => existsSync(f)).map((f) => path.relative(lib, f));
-  projects.set(entry.spec, (project = { root, podspecs }));
+  projects.set(entryName(entry), (project = { root, podspecs }));
   return project;
 }
 
-/** The entry's golden folder, and a podspec's golden file in it. */
-const goldenDir = (entry: SweepEntry) => path.join(SWEEP_GOLDENS, entry.spec.replaceAll("/", "+"));
+/**
+ * The entry's golden folder, `<spec>@rn-<React Native's version>` with a scoped name's `/` as `+` (the last `@` starts
+ * React Native's version), and a podspec's golden file in it.
+ */
+const goldenDir = (entry: SweepEntry) =>
+  path.join(SWEEP_GOLDENS, `${entry.spec.replaceAll("/", "+")}@rn-${versionOf(entry.rn)}`);
 const goldenFile = (entry: SweepEntry, podspec: string) => path.join(goldenDir(entry), `${podspec.replaceAll("/", "__")}.json`);
 /** The podspecs the entry's goldens are for. */
 function goldenPodspecs(entry: SweepEntry): string[] {
@@ -194,7 +203,7 @@ const records = new Map<string, unknown>();
  * every environment stub is undone after it.
  */
 export function record(entry: SweepEntry, podspec: string): unknown {
-  const key = `${entry.spec}\0${podspec}`;
+  const key = `${entryName(entry)}\0${podspec}`;
   if (records.has(key)) return records.get(key);
   const { root } = sweepProject(entry);
   const lib = path.join(root, "node_modules", nameOf(entry.spec));
@@ -262,12 +271,12 @@ export function golden(entry: SweepEntry, podspec: string): unknown {
   return JSON.parse(readFileSync(file, "utf8"));
 }
 
-/** Each golden whose library's names differ between the readers, as `<spec> <podspec>: <shim> ≠ <reduced>`. */
+/** Each golden whose library's names differ between the readers, as `<spec> on <rn> <podspec>: <shim> ≠ <reduced>`. */
 export function nameDifferences(): string[] {
   return SWEEP.flatMap((entry) =>
     goldenPodspecs(entry).flatMap((podspec) => {
       const { names: n } = JSON.parse(readFileSync(goldenFile(entry, podspec), "utf8")) as { names: { shim: unknown; reduced: unknown } };
-      return isDeepStrictEqual(n.shim, n.reduced) ? [] : [`${entry.spec} ${podspec}: ${JSON.stringify(n.shim)} ≠ ${JSON.stringify(n.reduced)}`];
+      return isDeepStrictEqual(n.shim, n.reduced) ? [] : [`${entryName(entry)} ${podspec}: ${JSON.stringify(n.shim)} ≠ ${JSON.stringify(n.reduced)}`];
     }),
   );
 }
@@ -286,7 +295,7 @@ export function orphanGoldens(entries: readonly SweepEntry[] = SWEEP, ci = proce
     ...strays,
     ...entries.flatMap((entry) => {
       const missing = tarballsOf(entry).map((spec) => needsTarball(spec)).join("");
-      const needs = ci && missing !== "" ? [`${entry.spec}${missing}`] : [];
+      const needs = ci && missing !== "" ? [`${entryName(entry)}${missing}`] : [];
       if (!existsSync(goldenDir(entry))) return [`${path.basename(goldenDir(entry))}/ (no goldens)`, ...needs];
       const podspecs = podspecsOf(entry);
       const goldens = goldenPodspecs(entry);
