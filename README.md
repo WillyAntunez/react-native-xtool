@@ -130,7 +130,7 @@ rn-xtool's own version) and compares them with the last successful build and ins
 
 Some libraries depend on CocoaPods pods that ship prebuilt static binaries instead of sources, such as Google's ML Kit
 behind @react-native-ml-kit/text-recognition. rn-xtool reads their specs from the CocoaPods CDN, downloads the files on
-your machine, wraps them for SwiftPM and links them, with no CocoaPods or Ruby. ML Kit text recognition 2.0.0 builds
+your machine, wraps them for SwiftPM and links them, with no CocoaPods. ML Kit text recognition 2.0.0 builds
 this way on bare React Native 0.88.1, and recognizes text on a physical iPhone (checked on 2026-11-05).
 
 - Before the first download, `build` names the files, their sizes, the host and the vendor, with the vendor's terms:
