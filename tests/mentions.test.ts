@@ -36,6 +36,16 @@ describe("mentions", () => {
   it("reads CRLF line ends, as GitHub sends a PR description", () =>
     expect(mentions("```\r\n@x\r\n```\r\n\r\n`a\r\n@b`\r\nthanks @c\r\n")).toEqual([{ line: 7, word: "c" }]));
 
+  it("skips CRLF fences, a blank line inside included", () =>
+    expect(
+      mentions("```swift\r\n@objc func a() {}\r\n\r\n@MainActor\r\n```\r\n~~~\r\n@objc\r\n~~~\r\nthanks @c\r\n"),
+    ).toEqual([{ line: 9, word: "c" }]));
+
+  it("reads a line that opens with a triple-backtick code span as prose, and lets a ~~~ info string hold backticks", () => {
+    expect(mentions("```a``` then @foo\n\nmore @bar\n")).toEqual([{ line: 1, word: "foo" }, { line: 3, word: "bar" }]);
+    expect(mentions("~~~ `x`\n@y\n~~~\n")).toEqual([]);
+  });
+
   it("finds none in the tracked markdown or the local PR and notes files", () => {
     const hits = markdownFiles().flatMap((f) =>
       mentions(readFileSync(path.join(ROOT, f), "utf8")).map((m) => `${f}:${m.line}: @${m.word}`),

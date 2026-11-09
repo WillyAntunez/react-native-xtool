@@ -8,8 +8,11 @@ import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** The opening line of a fenced block: its marker (three or more backticks or tildes) and the rest of the line. */
-const FENCE = /^\s*(`{3,}|~{3,})(.*)$/;
+/**
+ * The opening line of a fenced block: its marker (three or more backticks or tildes) and the rest of the line. After
+ * backticks the rest holds none (CommonMark): "```a``` then" opens a code span, not a fence.
+ */
+const FENCE = /^\s*(`{3,}(?=[^`]*$)|~{3,})(.*)$/;
 
 /**
  * A bare mention: a `@` not preceded by a letter, digit, `_`, `` ` ``, `/`, `.`, `-` or `@`, followed by a GitHub login
@@ -48,7 +51,7 @@ function blankCodeSpans(text) {
  */
 export function mentions(text) {
   const found = [];
-  const lines = text.split("\n");
+  const lines = text.split(/\r?\n/); // a PR description comes with CRLF line ends
   let fence; // the open fence's marker
   let para = []; // the current paragraph's lines
   let first = 0; // the index of its first line
