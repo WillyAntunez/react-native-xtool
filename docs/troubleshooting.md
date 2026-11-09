@@ -1067,7 +1067,8 @@ compilers run at low priority (`nice`), as many at a time as the machine has cor
   `precheck: run (last build)`, and before any build of this release reached `generate`, `precheck: not recorded`.
 - **"ℹ precheck — <file> imports <module>, which SwiftPM builds: checked by xtool-build"**: a Swift file imports a
   module that exists only once SwiftPM builds it, so `swiftc -typecheck` does not run and the Swift files are left to
-  `xtool-build`. The C-family files are still checked. Nothing to do.
+  `xtool-build`. On Expo it is the usual line, since the app's `AppDelegate.swift` imports `Expo`. The C-family files
+  are still checked. Nothing to do.
 - **"ℹ precheck — <files> import <header>, which the Swift check did not write: checked by xtool-build"**: these files
   import a `-Swift.h` header (Xcode's generated Swift header) that the Swift check did not write, because it did not
   run or the header is another module's, so they are left to `xtool-build`. Nothing to do.
