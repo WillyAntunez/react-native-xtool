@@ -383,5 +383,23 @@
     "spec": "semver@7.8.5",
     "file": "semver-7.8.5.tgz",
     "integrity": "sha512-Y7/KDsb8LjooZpwaqGyulO6DQlksgCncchHGk+sZIY4SBvUocMBEFH5Ur1fI4dV+Jvl0w6cjvucaIi40puRioA=="
+  },
+  {
+    "spec": "react-native-skia-apple-ios@154.0.0",
+    "file": "react-native-skia-apple-ios-154.0.0.tgz",
+    "integrity": "sha512-7xq2XYEbcfQYcqyXEnTDXF9GjQzKHuDiUep6wOvOXzoK62108DR8dM3VYgOqJqCTqspPHC9fEJeT52fK3UU5Qg==",
+    "heavy": true
+  },
+  {
+    "spec": "react-native-skia-apple-macos@154.0.0",
+    "file": "react-native-skia-apple-macos-154.0.0.tgz",
+    "integrity": "sha512-0BE6/oVMXYOKsxI4JJP1MwwrgmaDnZAl9l6N+7q434MFiT+w0z96a0gTilZukzo1y+35sDi/sA+iAdTz16ElYA==",
+    "heavy": true
+  },
+  {
+    "spec": "react-native-skia-apple-tvos@154.0.0",
+    "file": "react-native-skia-apple-tvos-154.0.0.tgz",
+    "integrity": "sha512-W06tUa+O3TJTYg5G+Lly/pwxE+2zKsmwJ/23yeR+25zSu7VmfdSz3VqFN3BM0jEioN4ASMm/0cMECocV7vxbMQ==",
+    "heavy": true
   }
 ]

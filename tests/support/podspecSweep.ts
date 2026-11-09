@@ -14,7 +14,8 @@ import { podspecResources } from "../../src/pipeline/scaffoldResources.js";
 import { podDependencies, podspecFiles, podspecLines, unconditionalLineIndexes } from "../../src/project/podspecs.js";
 import { packageRoot } from "../../src/tools/exec.js";
 import { VENDORED_RN_SPM } from "./rnScaffold.js";
-import { needsTarball, tarballPath } from "./tarballs.js";
+import { needsRuby } from "./ruby.js";
+import { isHeavy, needsTarball, tarballPath } from "./tarballs.js";
 import { tool } from "./tools.js";
 
 const ROOT = packageRoot();
@@ -110,10 +111,23 @@ function goldenPodspecs(entry: SweepEntry): string[] {
     .sort();
 }
 
-/** The entry's podspecs: its project's, or its goldens' when its tarballs are not here (its tests then skip or fail). */
-export function podspecsOf(entry: SweepEntry): string[] {
-  const here = tarballsOf(entry).every((spec) => needsTarball(spec) === "");
+/**
+ * The entry's podspecs: its project's, or its goldens' when its tarballs are not in `dir` (`tests/.cache` by default;
+ * its tests then skip or fail).
+ */
+export function podspecsOf(entry: SweepEntry, dir?: string): string[] {
+  const here = tarballsOf(entry).every((spec) => needsTarball(spec, dir) === "");
   return here ? sweepProject(entry).podspecs : goldenPodspecs(entry);
+}
+
+/**
+ * `""` when the entry's podspecs can be read here, else a title suffix that says what they need. Off CI: each tarball
+ * not in `dir` (`tests/.cache` by default), and Ruby. On CI (`ci`), which fetches every tarball but the heavy ones,
+ * only a heavy tarball that is not there: anything else missing fails there instead.
+ */
+export function sweepSkipReason(entry: SweepEntry, ci = process.env.CI === "true", dir?: string): string {
+  const needs = (specs: string[]) => specs.map((spec) => needsTarball(spec, dir)).join("");
+  return ci ? needs(tarballsOf(entry).filter(isHeavy)) : needs(tarballsOf(entry)) + needsRuby;
 }
 
 /** `value` with its object keys sorted, at every depth; arrays keep their order. */
@@ -285,20 +299,23 @@ export function nameDifferences(): string[] {
 /**
  * What the goldens folder holds that no sweep entry's podspec owns (a folder of no entry, a golden of no podspec), each
  * entry without a goldens folder, and each podspec without a golden, by path under `tests/fixtures/podspec-sweep`. An
- * entry whose tarballs are not here is checked for its folder only, and on CI (`ci`), which fetched every tarball, it
- * is listed with what it needs.
+ * entry whose tarballs are not in `dir` (`tests/.cache` by default) is checked for its folder only, and on CI (`ci`),
+ * which fetched every tarball but the heavy ones, it is listed with the others it needs.
  */
-export function orphanGoldens(entries: readonly SweepEntry[] = SWEEP, ci = process.env.CI === "true"): string[] {
+export function orphanGoldens(entries: readonly SweepEntry[] = SWEEP, ci = process.env.CI === "true", dir?: string): string[] {
   const dirs = new Set(entries.map((entry) => path.basename(goldenDir(entry))));
   const found = existsSync(SWEEP_GOLDENS) ? readdirSync(SWEEP_GOLDENS).sort() : [];
   const strays = found.filter((d) => !dirs.has(d)).map((d) => `${d}/ (no entry)`);
   return [
     ...strays,
     ...entries.flatMap((entry) => {
-      const missing = tarballsOf(entry).map((spec) => needsTarball(spec)).join("");
+      const missing = tarballsOf(entry)
+        .filter((spec) => !isHeavy(spec))
+        .map((spec) => needsTarball(spec, dir))
+        .join("");
       const needs = ci && missing !== "" ? [`${entryName(entry)}${missing}`] : [];
       if (!existsSync(goldenDir(entry))) return [`${path.basename(goldenDir(entry))}/ (no goldens)`, ...needs];
-      const podspecs = podspecsOf(entry);
+      const podspecs = podspecsOf(entry, dir);
       const goldens = goldenPodspecs(entry);
       const rel = (p: string) => path.relative(SWEEP_GOLDENS, goldenFile(entry, p));
       return [

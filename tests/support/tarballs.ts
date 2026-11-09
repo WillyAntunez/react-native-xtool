@@ -15,9 +15,11 @@ import { hasTool, patchTool, tool } from "./tools.js";
 const ROOT = packageRoot();
 const CACHE = path.join(ROOT, "tests", ".cache");
 
-export type TarballEntry = { spec: string; file: string; integrity: string };
+/** A pinned tarball; a `heavy` one is fetched only on request ({@link HEAVY_FETCH_HINT}). */
+export type TarballEntry = { spec: string; file: string; integrity: string; heavy?: true };
 export const MANIFEST = JSON.parse(readFileSync(path.join(ROOT, "tests", "tarballs.json"), "utf8")) as TarballEntry[];
 export const FETCH_HINT = "run: node scripts/fetch-test-tarballs.mjs";
+export const HEAVY_FETCH_HINT = "run: RN_XTOOL_FETCH_HEAVY=1 node scripts/fetch-test-tarballs.mjs";
 
 const tmp: string[] = [];
 afterAll(() => {
@@ -25,6 +27,8 @@ afterAll(() => {
 });
 
 const entryOf = (spec: string) => MANIFEST.find((e) => e.spec === spec);
+/** Whether `spec` is pinned as heavy: fetched only on request, and on CI never (its tests skip there). */
+export const isHeavy = (spec: string): boolean => entryOf(spec)?.heavy === true;
 const nameOf = (spec: string) => spec.slice(0, spec.lastIndexOf("@"));
 const integrityOf = (file: string) => "sha512-" + createHash("sha512").update(readFileSync(file)).digest("base64");
 
@@ -53,13 +57,16 @@ const hasTools = () =>
 
 /**
  * `""` when the tests of `spec` can run here, else a title suffix that says what they need: the spec in the manifest,
- * its tarball in `tests/.cache` (with {@link FETCH_HINT}), or `tar` and `patch`. A cached tarball counts whatever its
+ * its tarball in `tests/.cache` (with {@link FETCH_HINT}, or {@link HEAVY_FETCH_HINT} for a heavy one), or `tar` and
+ * `patch`. A cached tarball counts whatever its
  * integrity, so that a mismatch fails the tests ({@link tarballPath}) instead of skipping them.
  */
 export function needsTarball(spec: string, dir = CACHE): string {
   const entry = entryOf(spec);
   if (!entry) return ` (needs ${spec} pinned in tests/tarballs.json)`;
-  if (!existsSync(path.join(dir, entry.file))) return ` (needs tests/.cache/${entry.file}; ${FETCH_HINT})`;
+  if (!existsSync(path.join(dir, entry.file))) {
+    return ` (needs tests/.cache/${entry.file}; ${entry.heavy ? HEAVY_FETCH_HINT : FETCH_HINT})`;
+  }
   if (!hasTools()) return " (needs tar and patch)";
   return "";
 }

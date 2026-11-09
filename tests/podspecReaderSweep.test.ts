@@ -13,22 +13,18 @@ import {
   podspecsOf,
   record,
   shimGapKinds,
+  sweepSkipReason,
   type SweepEntry,
 } from "./support/podspecSweep.js";
-import { needsRuby } from "./support/ruby.js";
-import { needsTarball } from "./support/tarballs.js";
+import { HEAVY_FETCH_HINT, MANIFEST } from "./support/tarballs.js";
+import { mkTmp } from "./support/expoSpm.js";
 
 // The podspec reader sweep: every podspec of the libraries in tests/podspec-sweep.json, read with Ruby and with the
 // reduced reader, against its reviewed golden in tests/fixtures/podspec-sweep (RN_XTOOL_SWEEP_WRITE=1 rewrites them).
-// Off CI a library whose tarballs are not cached, or a machine without Ruby, skips; on CI both fail.
+// Off CI a library whose tarballs are not cached, or a machine without Ruby, skips; on CI both fail, except a heavy
+// tarball (tests/tarballs.json), which CI does not fetch: the libraries that need one skip there.
 const CI = process.env.CI === "true";
-
-/** `""` when the entry's podspecs can be read here, else a title suffix that says what they need. */
-function skipReason(entry: SweepEntry): string {
-  if (CI) return "";
-  const tarballs = [entry.spec, entry.rn, ...(entry.with ?? [])].map((spec) => needsTarball(spec)).join("");
-  return tarballs + needsRuby;
-}
+const skipReason = (entry: SweepEntry) => sweepSkipReason(entry, CI);
 const skip = (entry: SweepEntry) => skipReason(entry) !== "";
 
 describe("the podspec reader sweep", () => {
@@ -63,6 +59,26 @@ describe("the sweep's guards", () => {
     const orphans = orphanGoldens([unpinned, older], false);
     expect(orphans).toContain("react-native-unpinned@0.0.1@rn-0.88.1/ (no goldens)");
     expect(orphans).toContain("react-native-unpinned@0.0.1@rn-0.86.3/ (no goldens)");
+  });
+
+  // A library that needs a heavy tarball, with a cache folder that holds nothing.
+  const heavy = MANIFEST.find((e) => e.heavy)!;
+  const needsHeavy: SweepEntry = { spec: "react-native-unpinned@0.0.1", rn: "react-native@0.88.1", with: [heavy.spec] };
+  const heavyNeeds = ` (needs tests/.cache/${heavy.file}; ${HEAVY_FETCH_HINT})`;
+
+  it("skips a library whose heavy tarball is missing, on CI too, and only for it there", () => {
+    const empty = mkTmp("sweep-empty-cache-");
+    expect(sweepSkipReason(needsHeavy, true, empty)).toBe(heavyNeeds);
+    expect(sweepSkipReason(needsHeavy, false, empty)).toContain(heavyNeeds);
+    expect(sweepSkipReason(needsHeavy, false, empty)).toContain(needs);
+    expect(sweepSkipReason(unpinned, true, empty)).toBe("");
+  });
+
+  it("does not report a heavy tarball as missing on CI", () => {
+    const empty = mkTmp("sweep-empty-cache-");
+    const orphans = orphanGoldens([needsHeavy], true, empty).join("\n");
+    expect(orphans).toContain(needs);
+    expect(orphans).not.toContain(heavy.file);
   });
 
   it("refuses to write a gap of the shim as a golden", () => {
