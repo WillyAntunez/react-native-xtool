@@ -5,7 +5,7 @@ import { packageRoot } from "./exec.js";
 
 /** Which reader the vendored scaffolder reads podspecs with (`podspecReader` in vendor/rn-spm/spm/read-podspec.js). */
 export type PodspecReaderChoice =
-  | { reader: "ruby"; ruby: string; forced: false; warning: string | null }
+  | { reader: "ruby"; ruby: string; interpreter?: string; forced: false; warning: string | null }
   | { reader: "reduced"; why: string; forced: boolean; warning: string | null };
 
 type PodspecReader = (opts: { env?: NodeJS.ProcessEnv }) => PodspecReaderChoice;

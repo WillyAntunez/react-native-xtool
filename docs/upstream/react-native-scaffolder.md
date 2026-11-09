@@ -896,7 +896,9 @@ stored under their plural keys), `attributes_hash` (the attributes as stored, wh
 `add_nitrogen_files` reads and extends), `dependency`, `subspec`, `test_spec`, `app_spec` and the platform proxies
 (`s.ios`, `s.osx`, `s.tvos`, `s.visionos`, `s.watchos`; `s.macos` stores under `osx`). It writes the spec in CocoaPods'
 JSON form, what `pod ipc spec` printed, so `flattenSubspecs` reads it unchanged. `ruby <shim> --probe` checks the Ruby
-version before anything loads.
+version before anything loads and names the interpreter that answered (`RbConfig.ruby`, an absolute path). Each read
+runs that path, not `ruby` from `PATH`, so a version manager's `ruby` shim (rbenv, asdf, mise) cannot pick another
+Ruby from a `.ruby-version` in the podspec's folder.
 
 The shim models what a static scan found called in the podspecs of the reference apps, of the Expo SDK 57 and 58
 references and of the podspec fixtures, and in the scripts they load. React Native's helpers:

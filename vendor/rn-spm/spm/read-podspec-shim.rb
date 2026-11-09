@@ -5,18 +5,25 @@
 # DSL, and writes the spec in CocoaPods' JSON form (what `pod ipc spec` prints).
 #
 #   ruby read-podspec-shim.rb --probe
-#     prints {"ruby":"<version>","floor":"<floor>","usable":true}, or "usable":false with a "why", and exits 0.
+#     prints {"ruby":"<version>","floor":"<floor>","usable":true,"interpreter":"<path>"}, or "usable":false with a
+#     "why", and exits 0. The interpreter is the absolute path of the Ruby that ran (RbConfig.ruby): reads run it, not
+#     whatever `ruby` a version manager's shim picks in the podspec's folder.
 #   ruby read-podspec-shim.rb <podspec> <out.json> <installation-root>
 #     run in the podspec's folder: exits 0 with the model in <out.json>, or 1 with {"error":{"kind","message"}} in it.
 #     Nothing of the shim's own goes to stdout; the podspec's prints do.
 #
 # Ruby 2.7 syntax only: on an older Ruby the file must still parse, so that the floor check can say why it stops.
 
+require 'rbconfig'
+
 RN_XTOOL_RUBY_FLOOR = '2.7.0'
 if (RUBY_VERSION.split('.').map(&:to_i) <=> RN_XTOOL_RUBY_FLOOR.split('.').map(&:to_i)) < 0
   why = "ruby #{RUBY_VERSION} is older than #{RN_XTOOL_RUBY_FLOOR}"
   abort why unless ARGV == ['--probe']
-  puts %({"ruby":"#{RUBY_VERSION}","floor":"#{RN_XTOOL_RUBY_FLOOR}","usable":false,"why":"#{why}"})
+  # Without `json`, which this Ruby may not load: the path escaped as a JSON string by hand.
+  interpreter = RbConfig.ruby.gsub(/[\\"]/) { |c| "\\#{c}" }.gsub(/[\x00-\x1f]/) { |c| format('\\u%04x', c.ord) }
+  puts %({"ruby":"#{RUBY_VERSION}","floor":"#{RN_XTOOL_RUBY_FLOOR}","usable":false,"why":"#{why}",) +
+       %("interpreter":"#{interpreter}"})
   exit 0
 end
 
@@ -28,7 +35,8 @@ RN_XTOOL_LOAD_PATH = $LOAD_PATH.dup.freeze
 require 'json'
 
 if ARGV == ['--probe']
-  puts JSON.generate('ruby' => RUBY_VERSION, 'floor' => RN_XTOOL_RUBY_FLOOR, 'usable' => true)
+  puts JSON.generate('ruby' => RUBY_VERSION, 'floor' => RN_XTOOL_RUBY_FLOOR, 'usable' => true,
+                     'interpreter' => RbConfig.ruby)
   exit 0
 end
 

@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -130,6 +130,17 @@ describe("the podspec reader's choice", () => {
     });
   });
 
+  it("keeps the interpreter the probe names", () => {
+    const bin = fakeRuby(`echo '{"ruby":"9.9.9","floor":"2.7.0","usable":true,"interpreter":"/opt/rubies/9.9.9/bin/ruby"}'`);
+    expect(podspecReader({ env: { PATH: bin } })).toEqual({
+      reader: "ruby",
+      ruby: "9.9.9",
+      interpreter: "/opt/rubies/9.9.9/bin/ruby",
+      forced: false,
+      warning: null,
+    });
+  });
+
   it("probes Ruby once per PATH", () => {
     const counter = path.join(tempDir(), "probes");
     const bin = fakeRuby(`echo probe >> '${counter}'\necho '{"ruby":"3.3.8","floor":"2.7.0","usable":true}'`);
@@ -138,6 +149,27 @@ describe("the podspec reader's choice", () => {
     const other = fakeRuby(`echo probe >> '${counter}'\necho '{"ruby":"3.3.8","floor":"2.7.0","usable":true}'`);
     podspecReader({ env: { PATH: other } });
     expect(readFileSync(counter, "utf8")).toBe("probe\nprobe\n");
+  });
+});
+
+describe("the interpreter a read runs", () => {
+  it("runs the podspec with the interpreter the probe named, not the ruby on PATH", () => {
+    const rn = tempDir();
+    writeFileSync(path.join(rn, "package.json"), JSON.stringify({ name: "react-native", version: "0.86.3" }));
+    vi.stubEnv("RN_SPM_RN_ROOT", rn);
+    vi.stubEnv("RN_XTOOL_PODSPEC_READER", undefined);
+    vi.stubEnv("RN_SPM_PODSPEC_READS", undefined);
+    // The interpreter: writes a model to <out.json> ($3).
+    const real = path.join(tempDir(), "ruby-9.9.9");
+    writeFileSync(real, `#!/bin/sh\necho '{"name":"Foo","source_files":"pinned/**/*.m"}' > "$3"\n`);
+    chmodSync(real, 0o755);
+    // The `ruby` on PATH: answers the probe with that interpreter, and fails any read it is given.
+    const bin = fakeRuby(
+      `if [ "$2" = --probe ]; then echo '{"ruby":"9.9.9","floor":"2.7.0","usable":true,"interpreter":"${real}"}'; ` +
+        `else echo "the ruby on PATH ran the podspec" >&2; exit 7; fi`,
+    );
+    vi.stubEnv("PATH", `${bin}:${process.env.PATH}`);
+    expect(readPodspec(library(spec())).sourceFiles).toEqual(["pinned/**/*.m"]);
   });
 });
 
@@ -273,6 +305,13 @@ describe.skipIf(needsRuby !== "")(`readPodspec${needsRuby}`, () => {
     vi.stubEnv("RN_SPM_PODSPEC_READS", undefined);
   });
   const forceReduced = () => vi.stubEnv("RN_XTOOL_PODSPEC_READER", "reduced");
+
+  it("pins the Ruby this machine's probe finds", () => {
+    const choice = podspecReader({ env: { PATH: process.env.PATH } });
+    expect(choice.reader).toBe("ruby");
+    expect(path.isAbsolute(choice.interpreter)).toBe(true);
+    accessSync(choice.interpreter, constants.X_OK);
+  });
 
   it("reads with Ruby and says so", () => {
     const podspec = library(spec(' s.version = "1.0.0"', ' s.source_files = "ios/**/*.{h,m}"'));

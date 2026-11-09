@@ -51,10 +51,10 @@ index 872450e..79dd476 100644
  }
 diff --git a/node_modules/react-native/scripts/spm/read-podspec-shim.rb b/node_modules/react-native/scripts/spm/read-podspec-shim.rb
 new file mode 100644
-index 0000000..2bd1819
+index 0000000..8fb9e73
 --- /dev/null
 +++ b/node_modules/react-native/scripts/spm/read-podspec-shim.rb
-@@ -0,0 +1,519 @@
+@@ -0,0 +1,527 @@
 +# This source code is licensed under the MIT license found in the
 +# LICENSE file in the root directory of this source tree.
 +
@@ -62,18 +62,25 @@ index 0000000..2bd1819
 +# DSL, and writes the spec in CocoaPods' JSON form (what `pod ipc spec` prints).
 +#
 +#   ruby read-podspec-shim.rb --probe
-+#     prints {"ruby":"<version>","floor":"<floor>","usable":true}, or "usable":false with a "why", and exits 0.
++#     prints {"ruby":"<version>","floor":"<floor>","usable":true,"interpreter":"<path>"}, or "usable":false with a
++#     "why", and exits 0. The interpreter is the absolute path of the Ruby that ran (RbConfig.ruby): reads run it, not
++#     whatever `ruby` a version manager's shim picks in the podspec's folder.
 +#   ruby read-podspec-shim.rb <podspec> <out.json> <installation-root>
 +#     run in the podspec's folder: exits 0 with the model in <out.json>, or 1 with {"error":{"kind","message"}} in it.
 +#     Nothing of the shim's own goes to stdout; the podspec's prints do.
 +#
 +# Ruby 2.7 syntax only: on an older Ruby the file must still parse, so that the floor check can say why it stops.
 +
++require 'rbconfig'
++
 +RN_XTOOL_RUBY_FLOOR = '2.7.0'
 +if (RUBY_VERSION.split('.').map(&:to_i) <=> RN_XTOOL_RUBY_FLOOR.split('.').map(&:to_i)) < 0
 +  why = "ruby #{RUBY_VERSION} is older than #{RN_XTOOL_RUBY_FLOOR}"
 +  abort why unless ARGV == ['--probe']
-+  puts %({"ruby":"#{RUBY_VERSION}","floor":"#{RN_XTOOL_RUBY_FLOOR}","usable":false,"why":"#{why}"})
++  # Without `json`, which this Ruby may not load: the path escaped as a JSON string by hand.
++  interpreter = RbConfig.ruby.gsub(/[\\"]/) { |c| "\\#{c}" }.gsub(/[\x00-\x1f]/) { |c| format('\\u%04x', c.ord) }
++  puts %({"ruby":"#{RUBY_VERSION}","floor":"#{RN_XTOOL_RUBY_FLOOR}","usable":false,"why":"#{why}",) +
++       %("interpreter":"#{interpreter}"})
 +  exit 0
 +end
 +
@@ -85,7 +92,8 @@ index 0000000..2bd1819
 +require 'json'
 +
 +if ARGV == ['--probe']
-+  puts JSON.generate('ruby' => RUBY_VERSION, 'floor' => RN_XTOOL_RUBY_FLOOR, 'usable' => true)
++  puts JSON.generate('ruby' => RUBY_VERSION, 'floor' => RN_XTOOL_RUBY_FLOOR, 'usable' => true,
++                     'interpreter' => RbConfig.ruby)
 +  exit 0
 +end
 +
@@ -575,7 +583,7 @@ index 0000000..2bd1819
 +abort 'usage: ruby read-podspec-shim.rb --probe | <podspec> <out.json> <installation-root>' unless ARGV.length == 3
 +exit(RnXtoolShim.run(ARGV[0], ARGV[1], ARGV[2]) ? 0 : 1)
 diff --git a/node_modules/react-native/scripts/spm/read-podspec.js b/node_modules/react-native/scripts/spm/read-podspec.js
-index 8fcf04b..032bc7c 100644
+index 8fcf04b..87225cc 100644
 --- a/node_modules/react-native/scripts/spm/read-podspec.js
 +++ b/node_modules/react-native/scripts/spm/read-podspec.js
 @@ -16,11 +16,12 @@
@@ -604,7 +612,7 @@ index 8fcf04b..032bc7c 100644
  const path = require('node:path');
  
  /*::
-@@ -36,192 +38,1681 @@ type RawSpec = {[string]: unknown};
+@@ -36,192 +38,1709 @@ type RawSpec = {[string]: unknown};
  */
  
  // ---------------------------------------------------------------------------
@@ -659,9 +667,17 @@ index 8fcf04b..032bc7c 100644
 +
 +/*::
 +type PodspecReaderChoice =
-+  | {reader: 'ruby', ruby: string, forced: false, warning: ?string}
++  | {
++      reader: 'ruby',
++      ruby: string,
++      interpreter?: string,
++      forced: false,
++      warning: ?string,
++    }
 +  | {reader: 'reduced', why: string, forced: boolean, warning: ?string};
-+type RubyProbe = {usable: true, ruby: string} | {usable: false, why: string};
++type RubyProbe =
++  | {usable: true, ruby: string, interpreter?: string}
++  | {usable: false, why: string};
 +*/
 +
 +const PODSPEC_SHIM = path.join(__dirname, 'read-podspec-shim.rb');
@@ -766,16 +782,21 @@ index 8fcf04b..032bc7c 100644
 +      answer = null;
 +    }
 +    if (answer?.usable === true && typeof answer.ruby === 'string') {
-+      return {usable: true, ruby: answer.ruby};
++      // The absolute path of the Ruby that answered: a version manager's
++      // `ruby` shim on PATH may pick another one in the podspec's folder.
++      return typeof answer.interpreter === 'string' &&
++        path.isAbsolute(answer.interpreter)
++        ? {usable: true, ruby: answer.ruby, interpreter: answer.interpreter}
++        : {usable: true, ruby: answer.ruby};
 +    }
 +    if (answer?.usable === false && typeof answer.why === 'string') {
 +      return {usable: false, why: answer.why};
 +    }
-+  }
+   }
 +  const stderr = nonEmptyLines(result.stderr);
 +  if (stderr.some(line => /cannot load such file -- json\b/.test(line))) {
 +    return {usable: false, why: 'ruby cannot load json'};
-   }
++  }
 +  let detail;
 +  if (stderr.length > 0) {
 +    detail = stderr[0];
@@ -830,9 +851,18 @@ index 8fcf04b..032bc7c 100644
 +    probe = probeRuby(shim, env);
 +    rubyProbes.set(key, probe);
 +  }
-+  return probe.usable
-+    ? {reader: 'ruby', ruby: probe.ruby, forced: false, warning}
-+    : {reader: 'reduced', why: probe.why, forced: false, warning};
++  if (!probe.usable) {
++    return {reader: 'reduced', why: probe.why, forced: false, warning};
++  }
++  return probe.interpreter != null
++    ? {
++        reader: 'ruby',
++        ruby: probe.ruby,
++        interpreter: probe.interpreter,
++        forced: false,
++        warning,
++      }
++    : {reader: 'ruby', ruby: probe.ruby, forced: false, warning};
 +}
 +
 +// The app's `ios/` folder, CocoaPods' installation root for the podspec:
@@ -849,12 +879,18 @@ index 8fcf04b..032bc7c 100644
 +}
 +
 +// Runs the podspec with Ruby through the shim, in the podspec's folder, with
-+// an empty stdin and `podspecChildEnv`: its model, and what it printed.
++// an empty stdin and `podspecChildEnv`: its model, and what it printed. The
++// Ruby is `opts.interpreter`, the one the probe found, else `ruby` on PATH.
 +function runPodspecShim(
 +  podspecPath /*: string */,
-+  opts /*: {timeoutMs?: number, installationRoot?: string} */ = {},
++  opts /*: {
++    timeoutMs?: number,
++    installationRoot?: string,
++    interpreter?: ?string,
++  } */ = {},
 +) /*: {raw: RawSpec, output: string} */ {
 +  const podspec = path.resolve(podspecPath);
++  const ruby = opts.interpreter ?? 'ruby';
 +  const timeoutMs = opts.timeoutMs ?? PODSPEC_TIMEOUT_MS;
 +  const root = opts.installationRoot ?? installationRootFor(podspec);
 +  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rn-xtool-podspec-'));
@@ -863,7 +899,7 @@ index 8fcf04b..032bc7c 100644
 +  let written = null;
    try {
 -    result = spawnSync('pod', ['ipc', 'spec', patchedPath], {
-+    result = spawnSync('ruby', [PODSPEC_SHIM, podspec, out, root], {
++    result = spawnSync(ruby, [PODSPEC_SHIM, podspec, out, root], {
 +      cwd: path.dirname(podspec),
        encoding: 'utf8',
 -      timeout: 30000,
@@ -1094,8 +1130,10 @@ index 8fcf04b..032bc7c 100644
 +    return h;
 +  }
 +  return v;
-+}
-+
+ }
+ 
+-function cleanupPatchedPodspec(patchedPath /*: ?string */) /*: void */ {
+-  if (patchedPath == null) return;
 +// The source-glob fields an unevaluated expression must not reach silently.
 +const STRICT_FIELDS /*: Set<string> */ = new Set([
 +  'source_files',
@@ -1174,7 +1212,7 @@ index 8fcf04b..032bc7c 100644
 +    }
 +  }
 +  return null;
- }
++}
 +const PLATFORM_SCOPES /*: Set<string> */ = new Set([
 +  'ios',
 +  'osx',
@@ -1183,9 +1221,7 @@ index 8fcf04b..032bc7c 100644
 +  'visionos',
 +  'watchos',
 +]);
- 
--function cleanupPatchedPodspec(patchedPath /*: ?string */) /*: void */ {
--  if (patchedPath == null) return;
++
 +// Tokens of one Ruby expression. A double-quoted string keeps its parts:
 +// literal text and the source of each `#{...}`.
 +function tokenizeRubyExpr(src /*: string */) /*: Array<any> */ {
@@ -2420,7 +2456,7 @@ index 8fcf04b..032bc7c 100644
    }
  
    // The fields that identify the spec, and only when the receiver spelling
-@@ -235,9 +1726,27 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -235,9 +1754,27 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    // Matches:
    //   s.<field> = ["a", "b"]            (array)
    //   s.<field> = "single"              (single value treated as 1-element array)
@@ -2451,7 +2487,7 @@ index 8fcf04b..032bc7c 100644
      if (mArr != null) {
        const inner = mArr[1];
        const out /*: Array<string> */ = [];
-@@ -249,16 +1758,37 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -249,16 +1786,37 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
        }
        return out;
      }
@@ -2494,7 +2530,7 @@ index 8fcf04b..032bc7c 100644
        if (m == null) break;
        out.push(m[1]);
      }
-@@ -269,21 +1799,25 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -269,21 +1827,25 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    //   s.framework "X"          → ["X"]
    //   s.framework = "X"        → ["X"]
    //   s.frameworks = ["X","Y"] → ["X","Y"]
@@ -2525,7 +2561,7 @@ index 8fcf04b..032bc7c 100644
        if (m == null) break;
        const itemRe = /["']([^"']+)["']/g;
        while (true) {
-@@ -298,12 +1832,14 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -298,12 +1860,14 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
    // Matches:  'HEADER_SEARCH_PATHS' => '...'   or  => ["...","..."]
    // Returns the raw token strings (still containing $(PODS_TARGET_SRCROOT)
    // etc.); substitution happens at translation time.
@@ -2542,7 +2578,7 @@ index 8fcf04b..032bc7c 100644
        if (m == null) break;
        const itemRe = /["']((?:[^"'\\]|\\.)+)["']/g;
        while (true) {
-@@ -321,7 +1857,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -321,7 +1885,7 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      const strRe =
        /["']HEADER_SEARCH_PATHS["']\s*=>\s*["']((?:[^"'\\]|\\.)+)["']/g;
      while (true) {
@@ -2551,7 +2587,7 @@ index 8fcf04b..032bc7c 100644
        if (m == null) break;
        for (const token of m[1].split(/\s+/)) {
          if (token.length > 0) {
-@@ -332,48 +1868,163 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
+@@ -332,48 +1896,163 @@ function regexPodspec(podspecPath /*: string */) /*: RawSpec */ {
      return Array.from(new Set(out));
    }
  
@@ -2733,7 +2769,7 @@ index 8fcf04b..032bc7c 100644
    };
  }
  
-@@ -423,10 +2074,150 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
+@@ -423,10 +2102,150 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
    return tokens;
  }
  
@@ -2884,7 +2920,7 @@ index 8fcf04b..032bc7c 100644
  /**
   * Merges a podspec's default subspecs (or all subspecs when no defaults are
   * declared) into a single logical view. RN libraries use subspecs for
-@@ -438,8 +2229,16 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
+@@ -438,8 +2257,16 @@ function shellTokenize(value /*: string */) /*: Array<string> */ {
   *   - String fields → top-level wins; if absent, take the first subspec's value
   *   - pod_target_xcconfig HEADER_SEARCH_PATHS → array-union across all selected subspecs
   *   - dependencies  → array-union of name strings (version constraints dropped)
@@ -2902,7 +2938,7 @@ index 8fcf04b..032bc7c 100644
    const warnings /*: Array<string> */ = [];
    // $FlowFixMe[prop-missing] dynamic shape
    const partial /*: boolean */ = rawSpec.__regex_partial__ === true;
-@@ -451,12 +2250,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -451,12 +2278,17 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      }
    }
  
@@ -2922,7 +2958,7 @@ index 8fcf04b..032bc7c 100644
      const wanted = new Set(rawSpec.default_subspecs);
      selected = subspecs.filter(s => {
        // $FlowFixMe[prop-missing] dynamic shape
-@@ -464,7 +2268,22 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -464,7 +2296,22 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        return name != null && wanted.has(name);
      });
    }
@@ -2946,7 +2982,7 @@ index 8fcf04b..032bc7c 100644
  
    function mergeArrayField(key /*: string */) /*: Array<string> */ {
      const out /*: Array<string> */ = [];
-@@ -482,11 +2301,22 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -482,11 +2329,22 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return Array.from(new Set(out));
    }
  
@@ -2970,7 +3006,7 @@ index 8fcf04b..032bc7c 100644
      return typeof value === 'string' && value.length > 0 ? value : null;
    }
  
-@@ -544,6 +2374,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -544,6 +2402,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
    // `-D`s are safe to forward; arbitrary flags may be machine- or
    // example-app-specific. $(inherited), unresolved $(...) tokens, and invalid
    // C identifiers are skipped.
@@ -2991,7 +3027,7 @@ index 8fcf04b..032bc7c 100644
    function mergePreprocessorDefines() /*: Array<PreprocessorDefine> */ {
      const out /*: Array<PreprocessorDefine> */ = [];
      const seen /*: Set<string> */ = new Set();
-@@ -554,7 +2398,23 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -554,7 +2426,23 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        config /*: ?('debug' | 'release') */,
      ) => {
        if (!validName.test(name)) return;
@@ -3016,7 +3052,7 @@ index 8fcf04b..032bc7c 100644
          return; // unresolved Xcode/Ruby token — don't emit a broken define
        }
        const key = `${name}|${config ?? ''}`;
-@@ -571,6 +2431,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -571,6 +2459,20 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
        'xcconfig',
        'user_target_xcconfig',
      ];
@@ -3037,7 +3073,7 @@ index 8fcf04b..032bc7c 100644
      for (const layer of layers) {
        if (layer == null || typeof layer !== 'object') continue;
        for (const xcKey of XCCONFIG_KEYS) {
-@@ -627,56 +2501,160 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -627,56 +2529,160 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      return out;
    }
  
@@ -3224,7 +3260,7 @@ index 8fcf04b..032bc7c 100644
    return {
      name: specStringField('name') ?? '',
      version: specStringField('version') ?? '',
-@@ -693,80 +2671,262 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
+@@ -693,80 +2699,264 @@ function flattenSubspecs(rawSpec /*: RawSpec */) /*: PodspecModel */ {
      // header_mappings_dir copy step, which SPM has no equivalent for.
      headerMappingsDirs: mergeArrayField('header_mappings_dir'),
      headerDir: specStringField('header_dir'),
@@ -3387,7 +3423,9 @@ index 8fcf04b..032bc7c 100644
 -    const src = fs.readFileSync(podspecPath, 'utf8');
 +    let shimRaw = null;
 +    if (choice.reader === 'ruby') {
-+      shimRaw = runPodspecShim(podspecPath).raw;
++      shimRaw = runPodspecShim(podspecPath, {
++        interpreter: choice.interpreter,
++      }).raw;
 +      // $FlowFixMe[prop-missing] the shim's dynamic shape
 +      const rnXtool = shimRaw.__rn_xtool__;
 +      used = {
@@ -3516,7 +3554,7 @@ index 8fcf04b..032bc7c 100644
   * spawn — name resolution runs for every dep, including self-managed ones that
   * need nothing else from the podspec.
   *
-@@ -794,12 +2954,13 @@ function readPodspecNames(
+@@ -794,12 +2984,13 @@ function readPodspecNames(
    if (hasShadowingSubspec(source)) {
      return null;
    }
@@ -3531,7 +3569,7 @@ index 8fcf04b..032bc7c 100644
  
    const name = field('name');
    const moduleName = field('module_name');
-@@ -817,8 +2978,9 @@ function readPodspecNames(
+@@ -817,8 +3008,9 @@ function readPodspecNames(
  
  /**
   * Every podspec in `dir`, sorted so two of them name a target the same way on
@@ -3543,7 +3581,7 @@ index 8fcf04b..032bc7c 100644
   */
  function findPodspecs(dir /*: string */) /*: Array<string> */ {
    try {
-@@ -834,10 +2996,16 @@ function findPodspecs(dir /*: string */) /*: Array<string> */ {
+@@ -834,10 +3026,16 @@ function findPodspecs(dir /*: string */) /*: Array<string> */ {
  
  module.exports = {
    findPodspecs,

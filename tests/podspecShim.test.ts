@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { accessSync, constants, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { packageRoot } from "../src/tools/exec.js";
@@ -18,8 +18,20 @@ const NEEDS_RN = RN_LINES.map((line) => needsTarball(line)).find((needs) => need
 const WORKLETS = path.join(packageRoot(), "tests", "fixtures", "podspecs", "RNWorklets-0.8.3");
 
 describe.skipIf(needsRuby !== "")(`the podspec shim${needsRuby}`, () => {
-  it("--probe prints the Ruby version and the floor", () => {
-    expect(JSON.parse(tool("ruby", [SHIM, "--probe"]).stdout)).toEqual({ ruby: expect.stringMatching(/^\d+\.\d+\.\d+/), floor: "2.7.0", usable: true });
+  it("--probe prints the Ruby version, the floor and the interpreter", () => {
+    const probe = JSON.parse(tool("ruby", [SHIM, "--probe"]).stdout);
+    expect(probe).toEqual({ ruby: expect.stringMatching(/^\d+\.\d+\.\d+/), floor: "2.7.0", usable: true, interpreter: expect.any(String) });
+    expect(path.isAbsolute(probe.interpreter)).toBe(true);
+    accessSync(probe.interpreter, constants.X_OK);
+  });
+
+  it("--probe names the interpreter below the floor too", () => {
+    const shim = path.join(tempDir(), "read-podspec-shim.rb");
+    writeFileSync(shim, readFileSync(SHIM, "utf8").replace("RN_XTOOL_RUBY_FLOOR = '2.7.0'", "RN_XTOOL_RUBY_FLOOR = '99.0.0'"));
+    const probe = JSON.parse(tool("ruby", [shim, "--probe"]).stdout);
+    expect(probe).toMatchObject({ floor: "99.0.0", usable: false, why: `ruby ${probe.ruby} is older than 99.0.0` });
+    expect(probe.interpreter).toEqual(expect.any(String));
+    expect(probe.interpreter).toBe(JSON.parse(tool("ruby", [SHIM, "--probe"]).stdout).interpreter);
   });
 
   it("writes the spec in CocoaPods' JSON form", () => {

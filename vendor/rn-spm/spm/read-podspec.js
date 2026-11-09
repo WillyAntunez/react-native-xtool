@@ -49,9 +49,17 @@ type RawSpec = {[string]: unknown};
 
 /*::
 type PodspecReaderChoice =
-  | {reader: 'ruby', ruby: string, forced: false, warning: ?string}
+  | {
+      reader: 'ruby',
+      ruby: string,
+      interpreter?: string,
+      forced: false,
+      warning: ?string,
+    }
   | {reader: 'reduced', why: string, forced: boolean, warning: ?string};
-type RubyProbe = {usable: true, ruby: string} | {usable: false, why: string};
+type RubyProbe =
+  | {usable: true, ruby: string, interpreter?: string}
+  | {usable: false, why: string};
 */
 
 const PODSPEC_SHIM = path.join(__dirname, 'read-podspec-shim.rb');
@@ -144,7 +152,12 @@ function probeRuby(
       answer = null;
     }
     if (answer?.usable === true && typeof answer.ruby === 'string') {
-      return {usable: true, ruby: answer.ruby};
+      // The absolute path of the Ruby that answered: a version manager's
+      // `ruby` shim on PATH may pick another one in the podspec's folder.
+      return typeof answer.interpreter === 'string' &&
+        path.isAbsolute(answer.interpreter)
+        ? {usable: true, ruby: answer.ruby, interpreter: answer.interpreter}
+        : {usable: true, ruby: answer.ruby};
     }
     if (answer?.usable === false && typeof answer.why === 'string') {
       return {usable: false, why: answer.why};
@@ -208,9 +221,18 @@ function podspecReader(
     probe = probeRuby(shim, env);
     rubyProbes.set(key, probe);
   }
-  return probe.usable
-    ? {reader: 'ruby', ruby: probe.ruby, forced: false, warning}
-    : {reader: 'reduced', why: probe.why, forced: false, warning};
+  if (!probe.usable) {
+    return {reader: 'reduced', why: probe.why, forced: false, warning};
+  }
+  return probe.interpreter != null
+    ? {
+        reader: 'ruby',
+        ruby: probe.ruby,
+        interpreter: probe.interpreter,
+        forced: false,
+        warning,
+      }
+    : {reader: 'ruby', ruby: probe.ruby, forced: false, warning};
 }
 
 // The app's `ios/` folder, CocoaPods' installation root for the podspec:
@@ -227,12 +249,18 @@ function installationRootFor(podspecPath /*: string */) /*: string */ {
 }
 
 // Runs the podspec with Ruby through the shim, in the podspec's folder, with
-// an empty stdin and `podspecChildEnv`: its model, and what it printed.
+// an empty stdin and `podspecChildEnv`: its model, and what it printed. The
+// Ruby is `opts.interpreter`, the one the probe found, else `ruby` on PATH.
 function runPodspecShim(
   podspecPath /*: string */,
-  opts /*: {timeoutMs?: number, installationRoot?: string} */ = {},
+  opts /*: {
+    timeoutMs?: number,
+    installationRoot?: string,
+    interpreter?: ?string,
+  } */ = {},
 ) /*: {raw: RawSpec, output: string} */ {
   const podspec = path.resolve(podspecPath);
+  const ruby = opts.interpreter ?? 'ruby';
   const timeoutMs = opts.timeoutMs ?? PODSPEC_TIMEOUT_MS;
   const root = opts.installationRoot ?? installationRootFor(podspec);
   const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rn-xtool-podspec-'));
@@ -240,7 +268,7 @@ function runPodspecShim(
   let result;
   let written = null;
   try {
-    result = spawnSync('ruby', [PODSPEC_SHIM, podspec, out, root], {
+    result = spawnSync(ruby, [PODSPEC_SHIM, podspec, out, root], {
       cwd: path.dirname(podspec),
       encoding: 'utf8',
       env: podspecChildEnv(process.env),
@@ -2810,7 +2838,9 @@ function readPodspecWith(
   try {
     let shimRaw = null;
     if (choice.reader === 'ruby') {
-      shimRaw = runPodspecShim(podspecPath).raw;
+      shimRaw = runPodspecShim(podspecPath, {
+        interpreter: choice.interpreter,
+      }).raw;
       // $FlowFixMe[prop-missing] the shim's dynamic shape
       const rnXtool = shimRaw.__rn_xtool__;
       used = {
