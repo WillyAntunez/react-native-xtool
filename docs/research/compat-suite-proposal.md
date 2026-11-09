@@ -261,7 +261,7 @@ risk flag nothing else covers. Until they pass, they need the same isolation as 
 | google-signin, react-native-purchases | Each needs one pod-map entry, same mechanism as 12/13. Runtime needs an OAuth client / RevenueCat key + StoreKit. Hard cases |
 | react-native-permissions, react-native-config | RUBY/SP gaps that fail at runtime more than at build. Hard cases |
 | react-native-quick-crypto | Nitro (12) plus an OpenSSL download at podspec time. Hard case |
-| react-native-fast-image / @d11 | Low downloads. SDWebImage already covered by 9. Would conflict with expo-image's SDWebImage pin if both were in one app |
+| react-native-fast-image / `@d11` | Low downloads. SDWebImage already covered by 9. Would conflict with expo-image's SDWebImage pin if both were in one app |
 | netinfo, device-info, share, linear-gradient, localize, keychain, fs, image-picker, blur, sound | Plain SC-objc/objcxx, duplicates of 6. device-info/linear-gradient/fs would add LEG (legacy bridge) coverage if wanted |
 | react-native-track-player, @react-native-documents/picker | SW-ish / MX2, covered by 13. track-player adds POD SwiftAudioEx (one map entry) |
 | expo-av | Not part of SDK 58 (16.x line). Superseded by expo-audio/expo-video |

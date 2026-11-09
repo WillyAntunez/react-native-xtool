@@ -1,0 +1,33 @@
+# Mentions: on every pull request that is opened, edited, reopened or pushed to, check its description for bare GitHub
+# mentions (`@name` outside a code span), which notify that user. The Markdown files in the repo are checked by
+# tests/mentions.test.ts in CI.
+#
+# The description reaches the shell through an environment variable and is written to a file, never put into the
+# script text: an expression inside run text would let a description run commands.
+
+name: Mentions
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  description:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Write the description to a file
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s' "$BODY" > "$RUNNER_TEMP/body.md"
+      - name: Check the description for bare mentions
+        run: node scripts/check-mentions.mjs "$RUNNER_TEMP/body.md"

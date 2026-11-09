@@ -3,9 +3,11 @@ import { accessSync, constants, existsSync } from "node:fs";
 import { mkdir, readFile, rm, stat, statfs } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import { troubleshootingUrl } from "../docs.js";
 import { cacheDir } from "../paths.js";
 import { downloadFile } from "../tools/download.js";
 import { run, toolEnv } from "../tools/exec.js";
+import { installingRubyHelps, podspecReaderHere, type PodspecReaderChoice } from "../tools/podspecReader.js";
 import { authStatus, defaultXtoolPath } from "../tools/xtool.js";
 import { SWIFT_VERSION, XTOOL_SHA256, XTOOL_VERSION } from "../versions.js";
 
@@ -28,6 +30,20 @@ export interface SetupDeps {
   log: (line: string) => void;
   /** Message to fail with while Swift's system packages from a previous run are still missing. */
   checkSwiftPackages: () => Promise<string | undefined>;
+  /** Which reader the scaffolder reads podspecs with; setup only reports it. */
+  podspecReader: () => PodspecReaderChoice;
+}
+
+/** setup's Ruby lines: Ruby is never installed, only named, and a forced reduced reader gets no install advice. */
+function rubySetupLines(c: PodspecReaderChoice): string[] {
+  if (c.reader === "ruby") return c.warning ? [`✔ ruby ${c.ruby}`, `⚠ ${c.warning}`] : [`✔ ruby ${c.ruby}`];
+  const reduced = `⚠ ${c.why}: rn-xtool reads podspecs with its reduced reader`;
+  if (c.forced) return [reduced];
+  return [
+    installingRubyHelps(c.why)
+      ? `${reduced}; install Ruby with: sudo apt install ruby`
+      : `${reduced}. See ${troubleshootingUrl("podspec-reader")}`,
+  ];
 }
 
 export const GB = 1024 ** 3;
@@ -330,8 +346,10 @@ export async function setup(
     log(`ℹ Removing ${tilde(staging)}, left by an interrupted Darwin SDK install.`);
     await rm(staging, { recursive: true, force: true });
   };
+  const logRuby = (): void => rubySetupLines((deps.podspecReader ?? podspecReaderHere)()).forEach((line) => log(line));
   if (actions.length === 0) {
     await removeSdkStaging();
+    logRuby();
     log("✔ Nothing to do: toolchain already set up");
     return;
   }
@@ -348,6 +366,7 @@ export async function setup(
     installSdk: (to: string, xip: string) => installSdk(to, xip, log),
     ...deps.actions,
   };
+  logRuby();
   for (const action of actions) {
     switch (action) {
       case "install-swift":

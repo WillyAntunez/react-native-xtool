@@ -41,13 +41,29 @@ git push --follow-tags
 ```
 
 Then create a GitHub release from the tag with the notes (what changed, known limits, tested xtool/Swift/Expo
-versions). Check the result: `npm view react-native-xtool dist-tags` and `npx react-native-xtool@alpha doctor`.
+versions), from a checked file as below. Check the result: `npm view react-native-xtool dist-tags` and
+`npx react-native-xtool@alpha doctor`.
+
+**Pull requests and release notes.** A bare `@name` outside a code span notifies that GitHub user, and in release
+notes lists them as a contributor. Write the text of a pull request and the release notes into files, check each one,
+and give GitHub the checked file:
+
+```sh
+npm run check:mentions -- <file>    # names each bare mention and fails; put it in a code span or drop the @
+gh pr create --body-file <file>
+gh release create <tag> --notes-file <file>
+```
+
+Publish release notes from the checked file only, never typed or pasted into GitHub's release page. CI checks the
+Markdown files in the repo (`tests/mentions.test.ts`), and the Mentions workflow
+(`.github/workflows/mentions.yml`) checks a pull request's description again each time it is opened, edited or
+pushed to.
 
 ## Scaffolder changes
 
 React Native's scaffolder ships twice: as `patches/react-native+0.88.0.patch` and its byte-identical copy
 `react-native+0.88.1.patch`, applied to an installed 0.88.x, and as `vendor/rn-spm/`, pristine 0.88.0 with that patch
-and `vendor/rn-spm/rn-xtool-edits.patch` (E1–E5) applied, for 0.85–0.87 and Expo SDK 57. A change to the scaffolder:
+and `vendor/rn-spm/rn-xtool-edits.patch` (E1–E6) applied, for 0.85–0.87 and Expo SDK 57. A change to the scaffolder:
 
 1. Edits the vendored copy (`vendor/rn-spm/spm/*.js`), and documents the fix in
    [upstream/react-native-scaffolder.md](upstream/react-native-scaffolder.md) and the count in
@@ -61,11 +77,16 @@ and `vendor/rn-spm/rn-xtool-edits.patch` (E1–E5) applied, for 0.85–0.87 and 
    cp -a "$T/x/package/scripts" "$T/a/node_modules/react-native/scripts"
    cp -a vendor/rn-spm/setup-apple-spm.js vendor/rn-spm/spm vendor/rn-spm/codegen \
      "$T/b/node_modules/react-native/scripts/"
-   patch -R -p1 -F0 -d "$T/b/node_modules/react-native/scripts" -i "$PWD/vendor/rn-spm/rn-xtool-edits.patch"
+   patch -R -p1 -F0 --no-backup-if-mismatch -d "$T/b/node_modules/react-native/scripts" \
+     -i "$PWD/vendor/rn-spm/rn-xtool-edits.patch"
    (cd "$T" && git diff --no-index --no-color --src-prefix= --dst-prefix= \
-      a/node_modules/react-native/scripts b/node_modules/react-native/scripts) > "$T/rn.patch"
+      a/node_modules/react-native/scripts b/node_modules/react-native/scripts) \
+     | sed -E 's#^diff --git [ab]/([^ ]+) [ab]/#diff --git a/\1 b/#' > "$T/rn.patch"
    cp "$T/rn.patch" patches/react-native+0.88.0.patch && cp "$T/rn.patch" patches/react-native+0.88.1.patch
    ```
+
+   The `sed` gives a new file's header the `a/` side patch-package reads (`git diff --no-index` names both sides
+   `b/`, and patch-package then refuses the whole patch).
 
    When the reverse `patch` fails, the change moved the context of an E-edit. That `b/` is half-reversed and holds
    `.rej` files, so a diff from it would drop the E-edit from `rn-xtool-edits.patch` and move it into the 0.88 patch.
@@ -80,7 +101,8 @@ and `vendor/rn-spm/rn-xtool-edits.patch` (E1–E5) applied, for 0.85–0.87 and 
    warning for each persisted scaffold patch, so the CHANGELOG's "Upgrading" section says so. A change that alters no
    scaffold output keeps the revision.
 4. Regenerates the goldens in `tests/fixtures/scaffold-golden/` when the reference app's manifests change (the golden
-   test reads `RN_XTOOL_REF_APP`, else `../app`).
+   test reads `RN_XTOOL_REF_APP`, else `../app-golden`, a reference app beside the repo that holds exactly the eight
+   golden libraries at the golden's versions; `RN_XTOOL_WRITE_GOLDEN=1` writes the goldens instead of comparing).
 
 The byte tests need the pinned tarballs in `tests/.cache` (`node scripts/fetch-test-tarballs.mjs`); without them they
 skip, and the vitest summary says so. Before committing a scaffolder change, run `npx vitest run

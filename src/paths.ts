@@ -20,6 +20,8 @@ export interface ProjectPaths {
   projectPatchesDir: string;
   /** What the driver's scaffold step did for each library (`rn-spm-generate.js --results`). */
   scaffoldResults: string;
+  /** One JSON line per podspec read of the last `rn-spm` (`RN_SPM_PODSPEC_READS`, src/pipeline/podspecReads.ts). */
+  podspecReads: string;
   /** The generated package of the binary CocoaPods pods (`src/pods/stage.ts`). */
   podBinaries: string;
   sources: string;
@@ -48,6 +50,7 @@ export function projectPaths(root: string): ProjectPaths {
     patchesDir: join(iosXtool, ".patches"),
     projectPatchesDir: join(iosXtool, ".project-patches"),
     scaffoldResults: join(iosBuild, "rn-xtool-scaffold-results.json"),
+    podspecReads: join(iosBuild, "rn-xtool-podspec-reads.jsonl"),
     podBinaries: join(iosBuild, "pod-binaries"),
     sources: join(iosXtool, "Sources", "App"),
     frameworks: join(iosXtool, "Frameworks"),

@@ -48,6 +48,7 @@ const {MIN_IOS_VERSION_SUPPORTED} = require('./ios-deployment-target');
 const {
   findPodspecs,
   readPodspecCached,
+  spmDependencyReason,
   unresolvedSourcesReason,
 } = require('./read-podspec');
 const {
@@ -136,7 +137,10 @@ const SCAFFOLDER_VERSION_LINE_RE = /^\/\/ AUTO-SCAFFOLDED-VERSION: (\d+)$/m;
 // condition rules out left out of the target. Revision 7: the defines a
 // podspec builds from its package.json and partly evaluated strings
 // (react-native-worklets 0.8.3's WORKLETS_VERSION), which revision 6 lost.
-const RN_XTOOL_SCAFFOLD_REVISION = 7;
+// Revision 8 (fix 29): podspecs read by real Ruby through
+// read-podspec-shim.rb, `ios` attributes merged, and the reader recorded in
+// the marker.
+const RN_XTOOL_SCAFFOLD_REVISION = 8;
 const RN_XTOOL_SCAFFOLD_REVISION_RE = /^\/\/ rn-xtool-scaffold-revision: (\d+)$/m;
 
 // An importer (Swift, or a Clang module) builds the target's module from its
@@ -185,6 +189,11 @@ const POD_TABLE_ENV = 'RN_SPM_POD_TABLE';
 // The pods a manifest pins, `<pod>=<exact>` sorted by pod, on the line after
 // the importer paths (or the revision line).
 const POD_PINS_MARKER = '// rn-xtool-pods: ';
+
+// Which reader read the podspec (fix 29): `ruby` (read-podspec-shim.rb) or
+// `reduced` (the reduced reader, without Ruby or when forced), on the line
+// after the cache slot, the last line of the marker block.
+const PODSPEC_READER_MARKER = '// rn-xtool-podspec-reader: ';
 
 // One pod table entry in its full shape; `product: string` is read as
 // `products: [product]`. An entry with `binary` is a binary pod (fix 27) and
@@ -1645,6 +1654,8 @@ type EmitContext = {
   // (<appRoot>/build/pod-binaries, fix 27). Only referenced for binary pods.
   podBinariesPackageDir?: ?string,
   iosDeploymentTarget?: ?string,
+  // The reader that read the podspec (PODSPEC_READER_MARKER); no line without.
+  reader?: ?('ruby' | 'reduced'),
 };
 */
 
@@ -1661,6 +1672,8 @@ function emitScaffoldedPackageSwift(
 ) /*: string */ {
   const slotComment =
     ctx.cacheSlotLabel != null ? `\n// Cache slot: ${ctx.cacheSlotLabel}` : '';
+  const readerLine =
+    ctx.reader != null ? `\n${PODSPEC_READER_MARKER}${ctx.reader}` : '';
   const iosDeploymentTarget /*: string */ =
     ctx.iosDeploymentTarget ?? MIN_IOS_VERSION_SUPPORTED;
 
@@ -1944,7 +1957,7 @@ let rnSpmBridgingHeader = Context.packageDirectory + "/${mixed.bridgingHeader}"
   return `${toolsVersionLine}
 ${SCAFFOLDER_MARKER}
 // AUTO-SCAFFOLDED-VERSION: ${SCAFFOLDER_VERSION}
-// rn-xtool-scaffold-revision: ${RN_XTOOL_SCAFFOLD_REVISION}${importerPathsLine}${podsLine}${slotComment}
+// rn-xtool-scaffold-revision: ${RN_XTOOL_SCAFFOLD_REVISION}${importerPathsLine}${podsLine}${slotComment}${readerLine}
 // Edit the contents below if needed and re-run \`npx patch-package <dep-name>\`
 // to persist across \`npm install\`. To regenerate from the podspec, remove
 // this file (or just this marker) and re-run \`npx react-native spm scaffold\`.
@@ -2295,6 +2308,12 @@ function scaffoldPackageSwiftForDep(
   if (unresolved != null) {
     return {depName, status: 'error', reason: unresolved};
   }
+  // A SwiftPM package the podspec asks for (`spm_dependency`): the target
+  // would not link without it.
+  const spmDependency = spmDependencyReason(podspecPath, model);
+  if (spmDependency != null) {
+    return {depName, status: 'error', reason: spmDependency};
+  }
 
   const spec = translatePodspecToSpmTarget(
     model,
@@ -2342,6 +2361,7 @@ function scaffoldPackageSwiftForDep(
     codegenPackageDir: relFromManifest('build', 'generated', 'ios'),
     localXcfwPackageDir: relFromManifest('build', 'xcframeworks'),
     podBinariesPackageDir: relFromManifest('build', 'pod-binaries'),
+    reader: model.reader,
   });
 
   // Distinguish "first-time scaffold" (no file at all) from "regenerate"
@@ -2504,6 +2524,7 @@ function scaffoldPackageSwiftForDep(
     previouslyExisted,
     swiftpmName,
     files: [...written].sort(),
+    reader: model.reader,
   };
 }
 

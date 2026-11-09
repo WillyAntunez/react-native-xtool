@@ -45,4 +45,18 @@ describe("the npm package", () => {
   it("ships the pod table and the vendors' terms", () => {
     expect(listed()).toEqual(expect.arrayContaining(["data/pods.json", "data/pod-terms.json"]));
   });
+
+  it("ships the podspec reader's shim", () => {
+    expect(listed()).toContain("vendor/rn-spm/spm/read-podspec-shim.rb");
+  });
+
+  it("ships the scripts the CLI runs and none of the repo's own (the mention check, CI's and the release's)", () => {
+    expect(listed().filter((f) => f.startsWith("scripts/"))).toEqual([
+      "scripts/build-expo-modules-jsi.sh",
+      "scripts/exclude-config-command.js",
+      "scripts/package.json",
+      "scripts/rn-spm-generate.js",
+      "scripts/stage-frameworks.sh",
+    ]);
+  });
 });

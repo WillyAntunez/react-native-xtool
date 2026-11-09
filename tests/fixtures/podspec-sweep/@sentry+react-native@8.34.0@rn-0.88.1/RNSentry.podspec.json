@@ -1,0 +1,112 @@
+{
+  "env": [
+    "RCT_NEW_ARCH_ENABLED",
+    "REACT_NATIVE_NODE_MODULES_DIR",
+    "SENTRY_USE_SPM",
+    "SENTRY_USE_XCFRAMEWORK",
+    "SENTRY_XCFRAMEWORK_CACHE_DIR",
+    "USE_FRAMEWORKS",
+    "USE_HERMES"
+  ],
+  "helpers": [
+    "install_modules_dependencies"
+  ],
+  "names": {
+    "reduced": {
+      "headerDir": null,
+      "moduleName": null,
+      "name": "RNSentry"
+    },
+    "shim": {
+      "headerDir": null,
+      "moduleName": null,
+      "name": "RNSentry"
+    }
+  },
+  "reduced": {
+    "refused": "<project>/node_modules/@sentry/react-native/RNSentry.podspec: `s.compiler_flags = other_cflags` cannot be evaluated: it uses `other_cflags`, which is assigned `\"$(inherited)\" + new_arch_enabled_flag + sentry_profiling_supported_flag + new_hermes_runtime_flag`, which the reader cannot evaluate (`new_arch_enabled_flag`, which is assigned `(is_new_arch_enabled ? folly_compiler_flags + \" -DRCT_NEW_ARCH_ENABLED\" : \"\")`, which the reader cannot evaluate (`folly_compiler_flags`, which is set under `should_use_folly_flags(rn_version)`, a condition the reader cannot evaluate)). The podspec reader evaluates locals, string interpolation, arrays, ENV['...'], package.json reads, comparisons, ternaries and if/unless blocks; building from the part it could read would leave some of the library's files or settings out of its target. Install Ruby (sudo apt install ruby) so rn-xtool reads the podspec as CocoaPods does, or give the library a Package.swift of its own."
+  },
+  "shim": {
+    "compilerFlags": [
+      "$(inherited)"
+    ],
+    "dependencies": [
+      "React-hermes",
+      "hermes-engine"
+    ],
+    "excludeFiles": [
+      "ios/include/**/*"
+    ],
+    "frameworks": [],
+    "headerDir": null,
+    "headerDirScopes": [],
+    "headerMappingsDir": null,
+    "headerMappingsDirs": [],
+    "headerSearchPaths": [],
+    "libraries": [],
+    "moduleName": null,
+    "name": "RNSentry",
+    "partial": false,
+    "preprocessorDefines": [
+      {
+        "config": null,
+        "name": "RCT_NEW_ARCH_ENABLED",
+        "value": null
+      },
+      {
+        "config": null,
+        "name": "SENTRY_PROFILING_SUPPORTED",
+        "value": "1"
+      },
+      {
+        "config": null,
+        "name": "NEW_HERMES_RUNTIME",
+        "value": null
+      }
+    ],
+    "privateHeaderFiles": [],
+    "publicHeaderFiles": [
+      "ios/RNSentry.h",
+      "ios/RNSentrySDK.h",
+      "ios/RNSentryStart.h",
+      "ios/RNSentryVersion.h",
+      "ios/RNSentryBreadcrumb.h",
+      "ios/RNSentryReplay.h",
+      "ios/RNSentryReplayBreadcrumbConverter.h",
+      "ios/Replay/RNSentryReplayMask.h",
+      "ios/Replay/RNSentryReplayUnmask.h",
+      "ios/RNSentryTimeToDisplay.h"
+    ],
+    "reader": "ruby",
+    "requiresArc": true,
+    "resources": [],
+    "sourceFiles": [
+      "ios/**/*.{h,m,mm,swift}",
+      "cpp/**/*.{h,cpp}"
+    ],
+    "spmDependencies": [],
+    "subspecDependencies": {},
+    "swiftConditions": [],
+    "swiftVersions": [
+      "5.5"
+    ],
+    "unresolvedSources": [],
+    "usesInstallModulesDependencies": true,
+    "version": "",
+    "warnings": [],
+    "weakFrameworks": []
+  },
+  "tsReaders": {
+    "dependencies": {
+      "onlyShim": [
+        "React-hermes",
+        "hermes-engine"
+      ],
+      "onlyTs": []
+    },
+    "resourceBundles": {
+      "onlyShim": [],
+      "onlyTs": []
+    }
+  }
+}

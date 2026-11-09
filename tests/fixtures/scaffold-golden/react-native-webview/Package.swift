@@ -1,9 +1,10 @@
 // swift-tools-version: 6.0
 // AUTO-SCAFFOLDED by react-native spm scaffold — safe to edit & commit via patch-package.
 // AUTO-SCAFFOLDED-VERSION: 20
-// rn-xtool-scaffold-revision: 7
+// rn-xtool-scaffold-revision: 8
 // rn-xtool-swift-importer-paths: ["apple","."]
 // Cache slot: 0.86.3/dual-flavor
+// rn-xtool-podspec-reader: ruby
 // Edit the contents below if needed and re-run `npx patch-package <dep-name>`
 // to persist across `npm install`. To regenerate from the podspec, remove
 // this file (or just this marker) and re-run `npx react-native spm scaffold`.

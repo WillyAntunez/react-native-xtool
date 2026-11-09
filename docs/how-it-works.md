@@ -55,14 +55,14 @@ scaffolded libraries, CocoaPods binaries); [recipe.md](recipe.md) has every step
      resources only Xcode's tools compile (asset catalogs, storyboards); refuses modules built from vendored C sources
      such as expo-sqlite ([upstream/expo-spm-plugin-mixed-modules.md](upstream/expo-spm-plugin-mixed-modules.md)).
    - **React Native** (`patches/react-native+0.88.1.patch`, and its identical copy `react-native+0.88.0.patch` for bare
-     0.88.0; about 3.0k lines across 3 files under
-     `react-native/scripts/spm/`: `read-podspec.js`, `scaffold-package-swift.js`, `spm-utils.js`): 25 generic fixes to
-     the `spm scaffold` podspec reader and `Package.swift` generator, including mixed Swift + Objective-C/C++ targets,
-     CocoaPods dependencies mapped to SwiftPM packages through a pod table file (or to the local package of CocoaPods
-     binaries), the Swift importer paths of mixed
-     targets, dependencies on
-     packages that are not installed left out, the Swift 5 language mode and Swift compilation conditions, plus two to
-     the per-app header farm ([upstream/react-native-scaffolder.md](upstream/react-native-scaffolder.md)).
+     0.88.0; about 5.7k lines across 6 files under `react-native/scripts/spm/`: `read-podspec.js` and its Ruby shim
+     `read-podspec-shim.rb`, `scaffold-package-swift.js`, `spm-utils.js`, `expand-spm-dependencies.js`,
+     `spm-types.js`): 29 generic fixes to the `spm scaffold` podspec reader, the `Package.swift` generator and (two)
+     the per-app header farm, including reading podspecs in Ruby, mixed Swift + Objective-C/C++ targets, CocoaPods
+     dependencies mapped to SwiftPM packages through a pod table file (or to the local package of CocoaPods binaries),
+     the Swift importer paths of mixed targets, dependencies on packages that are not installed left out, the Swift 5
+     language mode and Swift compilation conditions
+     ([upstream/react-native-scaffolder.md](upstream/react-native-scaffolder.md)).
 
    Then, in the same step, rn-xtool makes the libraries' own `Package.swift` files portable to Linux, because SwiftPM
    compiles them on the host. In each top-level and scoped package of the project's `node_modules`, it rewrites a known
@@ -106,10 +106,10 @@ Xcode project, ExpoModulesJSI only with Expo modules): see [bare-react-native.md
 ## Vendored SwiftPM scripts
 
 React Native 0.85 and 0.86 ship no SwiftPM scripts, and 0.87's lack exports and an option rn-xtool's driver calls.
-Rather than patching those installs, rn-xtool bundles the 0.88.0 scripts in `vendor/rn-spm/` (the 25 scaffolder fixes
+Rather than patching those installs, rn-xtool bundles the 0.88.0 scripts in `vendor/rn-spm/` (the 29 scaffolder fixes
 already applied; provenance and how it is checked in [vendor/rn-spm/README.md](../vendor/rn-spm/README.md)) and the
 driver is given `--scripts-root` pointing at them. Expo SDK 57 (React Native 0.86.3) uses them too. The installed React
-Native keeps its own codegen. Five edits to the vendored copy:
+Native keeps its own codegen. Six edits to the vendored copy:
 
 - **E1**: the codegen template (`Package.swift.spm-template`, missing from 0.85 and 0.86) is read from the vendored
   copy.
@@ -120,6 +120,9 @@ Native keeps its own codegen. Five edits to the vendored copy:
 - **E5**: `spm/autolinking-plugins.js` takes the autolinking plugin of the dependency named `expo` from the
   `RN_SPM_EXPO_PLUGIN` environment variable (set by the driver's `--expo-plugin`) when `expo` declares none, which is
   the case on Expo SDK 57.
+- **E6**: `spm/generate-spm-autolinking.js` rethrows a podspec reader failure from its header search path read instead
+  of returning no paths, so autolinking stops with the reader's message (React Native 0.88.1 has no such read, so the
+  0.88 patches cannot carry it).
 
 React Native 0.88.x keeps using its installed scripts and the bundled patch for its version, else the highest one of
 its release line (`patches/react-native+0.88.0.patch` or `patches/react-native+0.88.1.patch`, the same content: a fix
@@ -352,8 +355,21 @@ patch above is what makes that scaffolder work for real-world podspecs.
   `Scaffolding <library> failed: <reason>`, followed by that library's own warnings, one block per failed library.
   Nothing is persisted for a failed library, and React Native does not run a second time
   ([troubleshooting.md](troubleshooting.md#scaffolded-libraries)).
-- The scaffolder reads a podspec with `pod ipc spec` when CocoaPods is installed, and otherwise with its own reader,
-  which runs the podspec's statements over the subset of Ruby podspecs use for their fields: locals (`name = …`, `+=`,
+- The scaffolder reads each podspec with the system `ruby` (2.7 or later) through a shim of CocoaPods' DSL and React
+  Native's podspec helpers, in the podspec's folder, the way CocoaPods runs it on a Mac: the podspec's own Ruby, and
+  the scripts and `node` calls it makes, run on your machine, with the same trust as installing the library. rn-xtool
+  never runs `pod ipc spec` or any other CocoaPods command, so a machine with CocoaPods reads a podspec exactly as any
+  machine with Ruby. The podspec runs with your `PATH`, `HOME` and `LANG`, and with `RCT_NEW_ARCH_ENABLED` and
+  `RCT_HERMES_V1_ENABLED` set to `1`; every other variable and every Podfile global is unset. Its `ios` attributes are
+  merged as CocoaPods merges them for an iOS target. A podspec Ruby cannot read stops the build with the podspec and
+  the reason ([troubleshooting.md](troubleshooting.md#podspec-reader)). Each read is recorded in
+  `ios/build/rn-xtool-podspec-reads.jsonl` (the reader, the Ruby, the `ENV` names the podspec read), which
+  `doctor --report` sums up, and each scaffolded manifest names its reader on a marker line,
+  `// rn-xtool-podspec-reader: ruby` or `// rn-xtool-podspec-reader: reduced`
+  ([fix 29](upstream/react-native-scaffolder.md#29-scriptsspmread-podspecjs-podspecs-are-read-without-react-natives-helpers-or-in-part)).
+- Without a usable Ruby, or with `RN_XTOOL_PODSPEC_READER=reduced`, the reduced reader reads the podspecs instead, and
+  `rn-spm` says so in one `⚠` line after its runs. It runs the podspec's statements over the subset of Ruby podspecs
+  use for their fields: locals (`name = …`, `+=`,
   `||=`; the last assignment that runs wins), single- and double-quoted strings with `#{…}` interpolation, arrays and
   `%w[…]`, `ENV['…']` and `ENV.fetch` (`RCT_NEW_ARCH_ENABLED` and `RCT_HERMES_V1_ENABLED` are `1`, as React Native's
   CocoaPods setup sets them, and every other variable is unset, whatever the shell says), `==`, `!=`, `!`, `&&`,
@@ -400,7 +416,9 @@ patch above is what makes that scaffolder work for real-world podspecs.
   headers (`// rn-xtool-swift-importer-paths: [...]`), and rn-xtool passes them as `-Xcc -I...` to the App target and
   to the Expo packages that depend on the library.
 - A persisted patch written by an older scaffolder revision (or for another React Native version) gets a warning at the
-  `patches` step naming the file to delete and the library to reinstall; rn-xtool then regenerates it.
+  `patches` step naming the file to delete and the library to reinstall; rn-xtool then regenerates it. So does a patch
+  the reduced reader wrote, on a machine where Ruby reads podspecs
+  ([troubleshooting.md](troubleshooting.md#podspec-reader)).
 - Before anything is scaffolded, `doctor --project` and `build` check every dependency's podspec. A CocoaPods-only
   library whose podspec declares prebuilt binaries (`vendored_frameworks`, `vendored_libraries`) cannot be scaffolded
   yet: the generated `Package.swift` cannot link them. Neither can one that depends on a git-source pod the pod table

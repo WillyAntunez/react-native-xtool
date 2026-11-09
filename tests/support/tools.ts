@@ -8,6 +8,11 @@
 import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from "node:child_process";
 
 export const TOOL_TIMEOUT_MS = 15_000;
+/**
+ * The timeout of a `tar` extraction of a pinned tarball: a heavy one (skia's prebuilt packages, hundreds of MB) takes
+ * longer than {@link TOOL_TIMEOUT_MS} on a slow disk, and the sweep extracts while it collects its tests.
+ */
+export const TAR_TIMEOUT_MS = 60_000;
 /** The timeout of a `swift` call. */
 export const SWIFT_TIMEOUT_MS = 60_000;
 /** The `it` timeout of a test that runs `swift`. */

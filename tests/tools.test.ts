@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { mkTmp } from "./support/expoSpm.js";
-import { SWIFT_TEST_TIMEOUT_MS, SWIFT_TIMEOUT_MS, TOOL_TIMEOUT_MS, hasTool, patchTool, tool } from "./support/tools.js";
+import { SWIFT_TEST_TIMEOUT_MS, SWIFT_TIMEOUT_MS, TAR_TIMEOUT_MS, TOOL_TIMEOUT_MS, hasTool, patchTool, tool } from "./support/tools.js";
 
 describe("tests/support/tools", () => {
   it("fails a hung tool at its timeout instead of hanging the worker", () => {
@@ -16,6 +16,11 @@ describe("tests/support/tools", () => {
 
   it("gives every tool a timeout well under the test timeout", () => {
     expect(TOOL_TIMEOUT_MS).toBe(15_000);
+  });
+
+  it("gives tar a minute to extract a tarball", () => {
+    // skia's prebuilt packages are hundreds of MB; they are extracted while the sweep collects its tests.
+    expect(TAR_TIMEOUT_MS).toBe(60_000);
   });
 
   it("gives swift a longer timeout, and the tests that run it a longer test timeout still", () => {

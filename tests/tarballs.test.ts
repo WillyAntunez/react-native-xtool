@@ -6,9 +6,9 @@ import { packageRoot } from "../src/tools/exec.js";
 import { fetchAll, integrityOf } from "../scripts/fetch-test-tarballs.mjs";
 import { EXPO_INTEGRITY, mkTmp } from "./support/expoSpm.js";
 import { RN_INTEGRITY } from "./support/rnScaffold.js";
-import { FETCH_HINT, needsTarball, packageFromTarball, patchedSpm, tarballPath } from "./support/tarballs.js";
+import { FETCH_HINT, HEAVY_FETCH_HINT, isHeavy, needsTarball, packageFromTarball, patchedSpm, tarballPath } from "./support/tarballs.js";
 
-type Entry = { spec: string; file: string; integrity: string };
+type Entry = { spec: string; file: string; integrity: string; heavy?: true };
 const MANIFEST = JSON.parse(readFileSync(path.join(packageRoot(), "tests", "tarballs.json"), "utf8")) as Entry[];
 
 const BYTES = new TextEncoder().encode("a pinned tarball\n");
@@ -82,6 +82,24 @@ describe("fetchAll", () => {
     expect(existsSync(path.join(dir, GOOD.file))).toBe(true);
   });
 
+  it("skips a heavy tarball unless asked, and says how to fetch it", async () => {
+    const dir = mkTmp("tarballs-heavy-");
+    const heavy: Entry = { ...GOOD, heavy: true };
+    const lines: string[] = [];
+    const pack = packer(0);
+    await fetchAll([heavy], { dir, pack, log: (s) => lines.push(s) });
+    expect(pack).not.toHaveBeenCalled();
+    expect(existsSync(path.join(dir, GOOD.file))).toBe(false);
+    await fetchAll([heavy], { dir, pack, log: (s) => lines.push(s), heavy: true });
+    await fetchAll([heavy], { dir, pack, log: (s) => lines.push(s) });
+    expect(pack).toHaveBeenCalledTimes(1);
+    expect(lines).toEqual([
+      "expo-58.0.21.tgz: skipped (heavy; fetch it with RN_XTOOL_FETCH_HEAVY=1 node scripts/fetch-test-tarballs.mjs)",
+      "expo-58.0.21.tgz: fetched",
+      "expo-58.0.21.tgz: cached",
+    ]);
+  });
+
   it("says what it fetched and what it kept", async () => {
     const dir = mkTmp("tarballs-log-");
     mkdirSync(dir, { recursive: true });
@@ -101,6 +119,8 @@ describe("tests/tarballs.json", () => {
       expect(file, spec).toBe(`${name}-${spec.slice(at + 1)}.tgz`);
       expect(integrity, spec).toMatch(/^sha512-[A-Za-z0-9+/]{86}==$/);
     }
+    // `heavy` is set to true or left out.
+    for (const entry of MANIFEST) expect([undefined, true], entry.spec).toContain(entry.heavy);
   });
 
   it("matches the provenance tests", () => {
@@ -134,6 +154,13 @@ describe("tests/support/tarballs", () => {
     expect(() => tarballPath(pinned.spec, dir)).toThrow(
       new Error("tests/.cache/expo-58.0.21.tgz: integrity mismatch; re-run node scripts/fetch-test-tarballs.mjs"),
     );
+  });
+
+  it("gives a heavy tarball that is not cached the heavy fetch command", () => {
+    const heavy = MANIFEST.find((e) => e.heavy)!;
+    expect(HEAVY_FETCH_HINT).toBe("run: RN_XTOOL_FETCH_HEAVY=1 node scripts/fetch-test-tarballs.mjs");
+    expect([isHeavy(heavy.spec), isHeavy(pinned.spec), isHeavy("left-pad@0.0.0")]).toEqual([true, false, false]);
+    expect(needsTarball(heavy.spec, mkTmp("tarballs-heavy-absent-"))).toBe(` (needs tests/.cache/${heavy.file}; ${HEAVY_FETCH_HINT})`);
   });
 
   const rn = "react-native@0.88.1";

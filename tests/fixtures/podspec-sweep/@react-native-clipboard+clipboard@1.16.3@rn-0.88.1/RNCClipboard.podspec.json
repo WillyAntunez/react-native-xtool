@@ -1,0 +1,89 @@
+{
+  "env": [
+    "RCT_NEW_ARCH_ENABLED"
+  ],
+  "helpers": [
+    "install_modules_dependencies"
+  ],
+  "names": {
+    "reduced": {
+      "headerDir": null,
+      "moduleName": null,
+      "name": "RNCClipboard"
+    },
+    "shim": {
+      "headerDir": null,
+      "moduleName": null,
+      "name": "RNCClipboard"
+    }
+  },
+  "reduced": {
+    "differs": {
+      "headerSearchPaths": [],
+      "requiresArc": false,
+      "warnings": [
+        "`install_modules_dependencies(s)` detected — dependency wiring may be incomplete without Ruby.",
+        "Env-var or Ruby-config interpolation detected — values may not translate cleanly without Ruby.",
+        "Dropped Folly define(s) FOLLY_NO_CONFIG, FOLLY_MOBILE=1, FOLLY_USE_LIBCPP=1 — the prebuilt React Native headers ship folly-config.h, and defining them without the full CocoaPods set breaks the build."
+      ]
+    }
+  },
+  "shim": {
+    "compilerFlags": [
+      "-Wno-comma",
+      "-Wno-shorten-64-to-32"
+    ],
+    "dependencies": [],
+    "excludeFiles": [],
+    "frameworks": [],
+    "headerDir": null,
+    "headerDirScopes": [],
+    "headerMappingsDir": null,
+    "headerMappingsDirs": [],
+    "headerSearchPaths": [
+      "$(PODS_ROOT)/boost",
+      "$(PODS_ROOT)/boost-for-react-native",
+      "$(PODS_ROOT)/RCT-Folly"
+    ],
+    "libraries": [],
+    "moduleName": null,
+    "name": "RNCClipboard",
+    "partial": false,
+    "preprocessorDefines": [
+      {
+        "config": null,
+        "name": "RCT_NEW_ARCH_ENABLED",
+        "value": null
+      }
+    ],
+    "privateHeaderFiles": [],
+    "publicHeaderFiles": [],
+    "reader": "ruby",
+    "requiresArc": true,
+    "resources": [],
+    "sourceFiles": [
+      "ios/**/*.{h,m,mm}"
+    ],
+    "spmDependencies": [],
+    "subspecDependencies": {},
+    "swiftConditions": [],
+    "swiftVersions": [],
+    "unresolvedSources": [],
+    "usesInstallModulesDependencies": true,
+    "version": "",
+    "warnings": [
+      "Dropped Folly define(s) FOLLY_NO_CONFIG, FOLLY_MOBILE=1, FOLLY_USE_LIBCPP=1 — the prebuilt React Native headers ship folly-config.h, and defining them without the full CocoaPods set breaks the build."
+    ],
+    "weakFrameworks": []
+  },
+  "tsReaders": {
+    "dependencies": {
+      "onlyShim": [],
+      "onlyTs": []
+    },
+    "resourceBundles": {
+      "onlyShim": [],
+      "onlyTs": []
+    }
+  }
+}

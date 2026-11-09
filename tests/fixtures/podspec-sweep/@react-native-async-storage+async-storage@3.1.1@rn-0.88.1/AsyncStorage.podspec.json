@@ -1,0 +1,71 @@
+{
+  "env": [],
+  "helpers": [
+    "install_modules_dependencies"
+  ],
+  "names": {
+    "reduced": {
+      "headerDir": null,
+      "moduleName": null,
+      "name": "AsyncStorage"
+    },
+    "shim": {
+      "headerDir": null,
+      "moduleName": null,
+      "name": "AsyncStorage"
+    }
+  },
+  "reduced": {
+    "differs": {
+      "requiresArc": false,
+      "warnings": [
+        "`install_modules_dependencies(s)` detected — dependency wiring may be incomplete without Ruby."
+      ]
+    }
+  },
+  "shim": {
+    "compilerFlags": [],
+    "dependencies": [],
+    "excludeFiles": [],
+    "frameworks": [],
+    "headerDir": null,
+    "headerDirScopes": [],
+    "headerMappingsDir": null,
+    "headerMappingsDirs": [],
+    "headerSearchPaths": [],
+    "libraries": [],
+    "moduleName": null,
+    "name": "AsyncStorage",
+    "partial": false,
+    "preprocessorDefines": [],
+    "privateHeaderFiles": [],
+    "publicHeaderFiles": [],
+    "reader": "ruby",
+    "requiresArc": true,
+    "resources": [],
+    "sourceFiles": [
+      "apple/**/*.{h,m,mm,cpp,swift}"
+    ],
+    "spmDependencies": [],
+    "subspecDependencies": {},
+    "swiftConditions": [],
+    "swiftVersions": [
+      "5.9.2"
+    ],
+    "unresolvedSources": [],
+    "usesInstallModulesDependencies": true,
+    "version": "",
+    "warnings": [],
+    "weakFrameworks": []
+  },
+  "tsReaders": {
+    "dependencies": {
+      "onlyShim": [],
+      "onlyTs": []
+    },
+    "resourceBundles": {
+      "onlyShim": [],
+      "onlyTs": []
+    }
+  }
+}

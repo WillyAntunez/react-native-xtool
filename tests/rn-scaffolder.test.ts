@@ -1,17 +1,21 @@
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync, existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { execa } from "execa";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   GOLDEN_LIBS,
   PODSPEC_FIXTURES,
   VENDORED_RN_SPM,
+  goldenApp,
+  podspecCopy,
   readGolden,
   scaffoldLibraries,
   withRnRoot,
+  writeGolden,
 } from "./support/rnScaffold.js";
+import { needsRuby } from "./support/ruby.js";
 import { needsTarball, packageFromTarball, patchedSpm, tarballPath } from "./support/tarballs.js";
 import { SWIFT_TEST_TIMEOUT_MS, SWIFT_TIMEOUT_MS, hasTool, tool } from "./support/tools.js";
 
@@ -29,8 +33,8 @@ const realPodspec = (spec: string, file: string) => ({
 const RNGH_PODSPEC = realPodspec("react-native-gesture-handler@3.4.0", "RNGestureHandler.podspec");
 const SCREENS_PODSPEC = realPodspec("react-native-screens@4.30.0", "RNScreens.podspec");
 const SVG_PODSPEC = realPodspec("react-native-svg@15.16.0", "RNSVG.podspec");
-// The golden test scaffolds the reference app's libraries (override with RN_XTOOL_REF_APP).
-const APP = process.env["RN_XTOOL_REF_APP"] ?? path.resolve(import.meta.dirname, "../../app");
+// The golden test scaffolds the golden's reference app's libraries (override with RN_XTOOL_REF_APP).
+const APP = goldenApp();
 const SWIFTLY_PATH = `${process.env["HOME"]}/.local/share/swiftly/bin:${process.env["PATH"]}`;
 /** `swift package dump-package` reads the 6.4 manifest only with a 6.4 toolchain (6.5 picks Package@swift-6.5.swift). */
 const swift64 = /\bSwift version 6\.4(\.\d+)?\b/.test(
@@ -69,18 +73,6 @@ function tempDir(): string {
 afterAll(() => {
   for (const d of tmp) rmSync(d, { recursive: true, force: true });
 });
-/**
- * A copy of a library podspec, with what it reads (package.json, svg's scripts/): reading a podspec
- * writes a temporary `.spm-scaffold-*.podspec` next to it, which must not land in the shared pristine tree.
- */
-function podspecCopy(file: string): string {
-  const dir = tempDir();
-  for (const f of [path.basename(file), "package.json", "scripts"]) {
-    const src = path.join(path.dirname(file), f);
-    if (existsSync(src)) cpSync(src, path.join(dir, f), { recursive: true, dereference: true });
-  }
-  return path.join(dir, path.basename(file));
-}
 
 describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () => {
   beforeAll(() => {
@@ -153,11 +145,11 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
     });
     it("the scaffolder has the fixes 14–19 hunks", () => {
       expect(src("read-podspec.js")).toContain("function resolvePackageVersion");
-      // Fix 19's RN_POD_ENV ternary, which fix 28 grew into ENV lookups in the evaluator.
+      // Fix 19's RN_POD_ENV ternary, which fix 28 grew into ENV lookups in the evaluator, and the shim's environment.
       expect(src("read-podspec.js")).toContain("const RN_POD_ENV");
-      expect(src("read-podspec.js")).toContain("env: {...process.env, ...RN_POD_ENV}");
+      expect(src("read-podspec.js")).toContain("...RN_POD_ENV");
       const f = src("scaffold-package-swift.js");
-      expect(f).toContain("RN_XTOOL_SCAFFOLD_REVISION = 7");
+      expect(f).toContain("RN_XTOOL_SCAFFOLD_REVISION = 8");
       expect(f).toContain("rn-xtool-swift-importer-paths");
       expect(f).toContain("function importsOwnSwiftHeader");
       expect(f).toContain("function clangModuleExcludes");
@@ -217,6 +209,10 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
       expect(reader).toContain("function unresolvedSourcesReason");
       expect(src("scaffold-package-swift.js")).toContain("unresolvedSourcesReason(podspecPath, model)");
     });
+    it("the scaffolder has the fix 29 shim", () => expect(existsSync(path.join(SPM, "read-podspec-shim.rb"))).toBe(true));
+    it("scaffold-package-swift.js has the fix 29 reader marker hunk", () => {
+      expect(src("scaffold-package-swift.js")).toContain("const PODSPEC_READER_MARKER = '// rn-xtool-podspec-reader: '");
+    });
   });
 
   it("gives the per-app header farm a header-less module map, so Objective-C imports it textually", () => {
@@ -256,6 +252,8 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
   });
 
   describe("read-podspec Ruby constants", () => {
+    beforeEach(() => vi.stubEnv("RN_XTOOL_PODSPEC_READER", "reduced"));
+    afterEach(() => vi.unstubAllEnvs());
     const read = (body: string) =>
       load<ReadPodspec>("read-podspec.js").readPodspecCached(podspec(body)).sourceFiles;
 
@@ -285,6 +283,8 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
   });
 
   describe("read-podspec subspecs", () => {
+    beforeEach(() => vi.stubEnv("RN_XTOOL_PODSPEC_READER", "reduced"));
+    afterEach(() => vi.unstubAllEnvs());
     const readModel = (body: string) =>
       load<ReadPodspec>("read-podspec.js").readPodspecCached(podspec(body)) as Model & {
         excludeFiles: string[];
@@ -324,6 +324,8 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
   });
 
   describe("read-podspec hardening", () => {
+    beforeEach(() => vi.stubEnv("RN_XTOOL_PODSPEC_READER", "reduced"));
+    afterEach(() => vi.unstubAllEnvs());
     type M = Model & { excludeFiles: string[]; frameworks: string[] };
     function readRaw(src: string): M {
       const file = path.join(tempDir(), "Foo.podspec");
@@ -441,6 +443,9 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
   });
 
   describe("preprocessor defines", () => {
+    // The reduced reader's: Ruby cannot run their `#{x}` interpolations of undefined locals.
+    beforeEach(() => vi.stubEnv("RN_XTOOL_PODSPEC_READER", "reduced"));
+    afterEach(() => vi.unstubAllEnvs());
     type Def = { name: string; value: string | null; config: string | null };
     const model = (body: string) =>
       load<ReadPodspec>("read-podspec.js").readPodspecCached(podspec(body)) as Model & {
@@ -1109,7 +1114,7 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
 
       it("emits the rn-xtool-scaffold-revision marker next to AUTO-SCAFFOLDED-VERSION", () => {
         const pkg = readFileSync(path.join(fresh(), "Package.swift"), "utf8");
-        expect(pkg).toMatch(/^\/\/ AUTO-SCAFFOLDED-VERSION: \d+\n\/\/ rn-xtool-scaffold-revision: 7$/m);
+        expect(pkg).toMatch(/^\/\/ AUTO-SCAFFOLDED-VERSION: \d+\n\/\/ rn-xtool-scaffold-revision: 8$/m);
       });
 
       it("keeps a scaffold that carries the current marker", () => {
@@ -1122,14 +1127,14 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
         writeFileSync(file, readFileSync(file, "utf8").replace(/^\/\/ rn-xtool-scaffold-revision: \d+\n/m, "").replace("exact:", "from:"));
         expect(scaffoldAgain(root)).toBe("written");
         const pkg = readFileSync(file, "utf8");
-        expect(pkg).toContain("rn-xtool-scaffold-revision: 7");
+        expect(pkg).toContain("rn-xtool-scaffold-revision: 8");
         expect(pkg).toContain('exact: "1.5.0"');
       });
 
       it("regenerates a scaffold whose marker is lower than the current revision", () => {
         const root = fresh();
         const file = path.join(root, "Package.swift");
-        writeFileSync(file, readFileSync(file, "utf8").replace("revision: 7", "revision: 6"));
+        writeFileSync(file, readFileSync(file, "utf8").replace("revision: 8", "revision: 7"));
         expect(scaffoldAgain(root)).toBe("written");
       });
     });
@@ -1156,11 +1161,52 @@ describe.skipIf(NEEDS_RN !== "")(`patched RN SwiftPM scaffolder${NEEDS_RN}`, () 
   });
 });
 
+// The reference app's libraries scaffolded as rn-xtool's driver does, their podspecs read by Ruby, against
+// tests/fixtures/scaffold-golden. RN_XTOOL_WRITE_GOLDEN=1 writes the run there instead of comparing.
+describe("the scaffold golden (vendor/rn-spm)", () => {
+  beforeEach(() => vi.stubEnv("RN_XTOOL_PODSPEC_READER", undefined));
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("reads the golden's libraries from ../app-golden unless RN_XTOOL_REF_APP names another app", () => {
+    expect(goldenApp({})).toBe(path.resolve(import.meta.dirname, "../../app-golden"));
+    expect(goldenApp({ RN_XTOOL_REF_APP: "/elsewhere/app" })).toBe("/elsewhere/app");
+  });
+
+  it.skipIf(needsRuby !== "" || !GOLDEN_LIBS.every((l) => existsSync(path.join(APP, "node_modules", l))))(
+    `scaffolds the reference app's libraries as the golden (needs ../app-golden or RN_XTOOL_REF_APP with the eight golden libraries)${needsRuby}`,
+    () => {
+      const now = scaffoldLibraries(
+        VENDORED_RN_SPM,
+        Object.fromEntries(GOLDEN_LIBS.map((l) => [l, path.join(APP, "node_modules", l)])),
+      );
+      const manifests = Object.keys(now.files).filter((k) => /\/Package(@swift-[\d.]+)?\.swift$/.test(k));
+      expect(manifests.length).toBeGreaterThan(0);
+      expect(manifests.some((k) => k.startsWith("react-native-pager-view/"))).toBe(true);
+      // Mixed (pager-view) or clang-only, each of these targets searches beyond its public headers path, so each
+      // manifest records its importer paths right after the revision line, and the reader after the slot.
+      for (const k of manifests) {
+        expect(now.files[k], k).toMatch(/^\/\/ rn-xtool-scaffold-revision: 8\n\/\/ rn-xtool-swift-importer-paths: \[.+\]$/m);
+        expect(now.files[k], k).toMatch(/^\/\/ Cache slot: .+\n\/\/ rn-xtool-podspec-reader: ruby$/m);
+      }
+      if (process.env["RN_XTOOL_WRITE_GOLDEN"] === "1") {
+        writeGolden(now);
+        return;
+      }
+      const golden = readGolden();
+      expect(now.statuses).toEqual(golden.statuses);
+      expect(now.files).toEqual(golden.files);
+    },
+  );
+});
+
 // Fixes 14–19 (React Native 0.88.0 patch), exercised on the vendored copy, so they never skip.
 // The podspec fixtures are the SDK 57 pins: worklets 0.10.1, reanimated 4.5.1, screens 4.26.2 and
 // gesture-handler 2.32.0, plus screens 4.30.1, which has no Swift (a clang-only target), and
 // worklets 0.8.3 (fix 19's `RCT_HERMES_V1_ENABLED` ternary).
 describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
+  // The reduced reader's: the RNReanimated-4.5.1 and RNWorklets-0.10.1 fixtures lack the scripts/*.rb they require.
+  beforeEach(() => vi.stubEnv("RN_XTOOL_PODSPEC_READER", "reduced"));
+  afterEach(() => vi.unstubAllEnvs());
   const req = createRequire(import.meta.url);
   const load = <T>(f: string) => req(path.join(VENDORED_RN_SPM, f)) as T;
   const IMPORTER = /^\/\/ rn-xtool-swift-importer-paths: (.*)$/m;
@@ -1198,27 +1244,6 @@ describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
       return { ...res, pkg: readFileSync(path.join(root, "Package.swift"), "utf8") };
     });
   const defineOf = (pkg: string, name: string) => pkg.match(new RegExp(`\\.define\\("${name}", to: "([^"]*)"\\)`))?.[1];
-
-  it.skipIf(!GOLDEN_LIBS.every((l) => existsSync(path.join(APP, "node_modules", l))))(
-    "scaffolds the reference app's libraries as the golden (needs RN_XTOOL_REF_APP or ../app with the eight golden libraries)",
-    () => {
-      const golden = readGolden();
-      const now = scaffoldLibraries(
-        VENDORED_RN_SPM,
-        Object.fromEntries(GOLDEN_LIBS.map((l) => [l, path.join(APP, "node_modules", l)])),
-      );
-      expect(now.statuses).toEqual(golden.statuses);
-      const manifests = Object.keys(now.files).filter((k) => /\/Package(@swift-[\d.]+)?\.swift$/.test(k));
-      expect(manifests.length).toBeGreaterThan(0);
-      expect(manifests.some((k) => k.startsWith("react-native-pager-view/"))).toBe(true);
-      // Mixed (pager-view) or clang-only, each of these targets searches beyond its public headers path, so each
-      // manifest records its importer paths right after the revision line.
-      for (const k of manifests) {
-        expect(now.files[k], k).toMatch(/^\/\/ rn-xtool-scaffold-revision: 7\n\/\/ rn-xtool-swift-importer-paths: \[.+\]$/m);
-      }
-      expect(now.files).toEqual(golden.files);
-    },
-  );
 
   it("14: keeps own -Swift.h importers out of the mixed umbrella", () => {
     const umbrella = file("react-native-screens/rn-spm-swift/umbrella.h");
@@ -1317,7 +1342,7 @@ describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
   it("17: records the Swift importer paths", () => {
     for (const manifest of ["Package.swift", "Package@swift-6.5.swift"]) {
       const pkg = file(`react-native-screens/${manifest}`);
-      expect(pkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 7\n\/\/ rn-xtool-swift-importer-paths: \[.*\]$/m);
+      expect(pkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 8\n\/\/ rn-xtool-swift-importer-paths: \[.*\]$/m);
       const paths = JSON.parse(pkg.match(IMPORTER)![1]!) as string[];
       expect(paths).toContain(".");
       expect(paths).toContain("ios/bridging");
@@ -1332,7 +1357,7 @@ describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
     expect(pkg.split("\n")[0]).toBe("// swift-tools-version: 6.0");
     expect(files["react-native-screens/Package@swift-6.5.swift"]).toBeUndefined();
     expect(pkg).toContain('publicHeadersPath: "ios",');
-    expect(pkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 7\n\/\/ rn-xtool-swift-importer-paths: \[.*\]$/m);
+    expect(pkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 8\n\/\/ rn-xtool-swift-importer-paths: \[.*\]$/m);
     const paths = JSON.parse(pkg.match(IMPORTER)![1]!) as string[];
     expect(paths).toContain("ios/utils");
     expect(paths).toEqual(searchPaths(pkg));
@@ -1515,23 +1540,19 @@ describe("scaffolder fixes 14–19 (vendor/rn-spm)", () => {
     }
   });
 
-  it("19: runs `pod ipc spec` with React Native's value 1 for both variables, whatever the environment says", () => {
-    // With the CocoaPods gem on PATH, `pod ipc spec` evaluates the podspec itself: it must see the same values as the
-    // regex path, or worklets loses HERMES_V1_ENABLED there. A stub `pod` prints the values it was given as the spec.
-    const bin = tempDir();
-    writeFileSync(
-      path.join(bin, "pod"),
-      '#!/bin/sh\nprintf \'{"name":"Foo","args":"%s %s","arch":"%s","hermes":"%s"}\\n\' "$1" "$2" "$RCT_NEW_ARCH_ENABLED" "$RCT_HERMES_V1_ENABLED"\n',
-      { mode: 0o755 },
+  it.skipIf(needsRuby !== "")(`19: the shim reads both variables as 1, whatever the environment says${needsRuby}`, () => {
+    // Ruby runs the podspec itself: it must see the same values as the reduced reader, or worklets loses
+    // HERMES_V1_ENABLED there.
+    const podspecFile = path.join(
+      lib({}, "  s.summary = ENV['RCT_NEW_ARCH_ENABLED'] + ENV['RCT_HERMES_V1_ENABLED']"),
+      "Foo.podspec",
     );
-    const podspecFile = path.join(lib({}, ""), "Foo.podspec");
-    const { runPodIpcSpec } = load<{ runPodIpcSpec(f: string): Record<string, unknown> | null }>("read-podspec.js");
+    const { runPodspecShim } = load<{ runPodspecShim(f: string): { raw: Record<string, unknown> } }>("read-podspec.js");
     try {
-      vi.stubEnv("PATH", `${bin}${path.delimiter}${process.env["PATH"] ?? ""}`);
-      for (const value of [undefined, "0", "", "true"]) {
+      for (const value of ["0", "", "true"]) {
         vi.stubEnv("RCT_NEW_ARCH_ENABLED", value);
         vi.stubEnv("RCT_HERMES_V1_ENABLED", value);
-        expect(runPodIpcSpec(podspecFile), String(value)).toEqual({ name: "Foo", args: "ipc spec", arch: "1", hermes: "1" });
+        expect(runPodspecShim(podspecFile).raw.summary, value).toBe("11");
       }
     } finally {
       vi.unstubAllEnvs();
@@ -1593,6 +1614,8 @@ describe("scaffolder fixes 20–26 (vendor/rn-spm)", () => {
     `Dependency "${dep}" is not installed (or not linked for iOS); left out with the subspec "${subspec}" that declares it (its sources, headers, settings and dependencies), as CocoaPods leaves it out.`;
 
   describe("20: a dependency on a package that is not installed", () => {
+    beforeEach(() => vi.stubEnv("RN_XTOOL_PODSPEC_READER", "reduced"));
+    afterEach(() => vi.unstubAllEnvs());
     // react-native-vision-camera 4.7.3's shape: the FrameProcessors subspec exists only `if enableFrameProcessors`,
     // which the podspec turns off when react-native-worklets-core does not resolve. The regex reader sees it anyway.
     const VISION_CAMERA = [
@@ -1748,6 +1771,8 @@ describe("scaffolder fixes 20–26 (vendor/rn-spm)", () => {
   });
 
   describe("21: Swift 5 language mode unless the podspec asks for 6", () => {
+    beforeEach(() => vi.stubEnv("RN_XTOOL_PODSPEC_READER", "reduced"));
+    afterEach(() => vi.unstubAllEnvs());
     const MODE = "    swiftLanguageModes: [.v5],\n    cxxLanguageStandard: .cxx20\n";
     const scaffold = (files: Record<string, string>, podBody: string) => {
       const run = scaffoldLibraries(VENDORED_RN_SPM, { foo: lib(files, podBody) });
@@ -1803,7 +1828,7 @@ describe("scaffolder fixes 20–26 (vendor/rn-spm)", () => {
       expect(files["foo/Package.swift"]).not.toContain("swiftLanguageModes");
     });
 
-    it("reads swift_version and swift_versions from pod ipc spec's JSON", () => {
+    it("reads swift_version and swift_versions from CocoaPods' JSON form", () => {
       const { flattenSubspecs } = load<{ flattenSubspecs(raw: object): { swiftVersions: string[] } }>("read-podspec.js");
       const model = withRnRoot("0.86.3", () =>
         flattenSubspecs({ name: "Foo", swift_versions: ["5.0"], subspecs: [{ name: "core", swift_version: "6.0" }] }),
@@ -1933,6 +1958,8 @@ describe("scaffolder fixes 20–26 (vendor/rn-spm)", () => {
   });
 
   describe("24: Swift compilation conditions", () => {
+    beforeEach(() => vi.stubEnv("RN_XTOOL_PODSPEC_READER", "reduced"));
+    afterEach(() => vi.unstubAllEnvs());
     const swiftSettingsOf = (pkg: string) => pkg.split("\n").find((l) => l.trim().startsWith("swiftSettings:"))?.trim();
     const scaffold = (files: Record<string, string>, podBody: string) => {
       const run = scaffoldLibraries(VENDORED_RN_SPM, { foo: lib(files, podBody) });
@@ -1976,7 +2003,7 @@ describe("scaffolder fixes 20–26 (vendor/rn-spm)", () => {
       expect(pkg).not.toContain('.define("FOO")');
     });
 
-    it("reads them from pod ipc spec's JSON", () => {
+    it("reads them from CocoaPods' JSON form", () => {
       const { flattenSubspecs } = load<{ flattenSubspecs(raw: object): { swiftConditions: string[] } }>("read-podspec.js");
       const model = withRnRoot("0.86.3", () =>
         flattenSubspecs({
@@ -2031,6 +2058,8 @@ describe("scaffolder fixes 20–26 (vendor/rn-spm)", () => {
   });
 
   describe("26: parenthesised dependencies", () => {
+    beforeEach(() => vi.stubEnv("RN_XTOOL_PODSPEC_READER", "reduced"));
+    afterEach(() => vi.unstubAllEnvs());
     type Deps = { dependencies: string[]; subspecDependencies?: Record<string, string[]> };
     it("26: reads `s.dependency('Pod', …)` as CocoaPods does", () => {
       const root = lib(
@@ -2151,7 +2180,7 @@ describe("scaffolder fix 13: the pod table (vendor/rn-spm)", () => {
     const pkg = manifest(scaffold(`${APPAUTH_DEP}\n  s.dependency "SwiftUIIntrospect", '~> 1.0'`, table));
     // Clang-only, searching beyond its public headers: after the importer-paths line.
     expect(pkg).toMatch(
-      /^\/\/ rn-xtool-scaffold-revision: 7\n\/\/ rn-xtool-swift-importer-paths: \[.*\]\n\/\/ rn-xtool-pods: AppAuth=3\.0\.0, SwiftUIIntrospect=1\.5\.0\n\/\/ Cache slot: /m,
+      /^\/\/ rn-xtool-scaffold-revision: 8\n\/\/ rn-xtool-swift-importer-paths: \[.*\]\n\/\/ rn-xtool-pods: AppAuth=3\.0\.0, SwiftUIIntrospect=1\.5\.0\n\/\/ Cache slot: /m,
     );
     // Pure Swift (no importer-paths line): after the revision line.
     const swift = tempDir();
@@ -2163,9 +2192,9 @@ describe("scaffolder fix 13: the pod table (vendor/rn-spm)", () => {
       `Pod::Spec.new do |s|\n  s.name = "Foo"\n  s.source_files = "ios/**/*.swift"\n${APPAUTH_DEP}\nend\n`,
     );
     const swiftPkg = manifest(withTable(table, () => scaffoldLibraries(VENDORED_RN_SPM, { foo: swift })));
-    expect(swiftPkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 7\n\/\/ rn-xtool-pods: AppAuth=3\.0\.0\n/m);
+    expect(swiftPkg).toMatch(/^\/\/ rn-xtool-scaffold-revision: 8\n\/\/ rn-xtool-pods: AppAuth=3\.0\.0\n/m);
     // No pinned pod, no line.
-    expect(manifest(scaffold("", table))).not.toContain("rn-xtool-pods");
+    expect(manifest(scaffold("", table))).not.toContain("// rn-xtool-pods: ");
   });
 
   it("13: sorts the rn-xtool-pods line by pod name", () => {
@@ -2394,7 +2423,7 @@ describe("scaffolder fix 27: binary pods (vendor/rn-spm)", () => {
     const run = scaffold({});
     const pkg = manifestOf(run);
     expect(pkg).not.toContain("pod-binaries");
-    expect(pkg).not.toContain("rn-xtool-pods");
+    expect(pkg).not.toContain("// rn-xtool-pods: ");
     expect(run.results[0]!.warnings.some((w) => w.startsWith('Dependency "GoogleMLKit" is a CocoaPods pod with no known SwiftPM equivalent'))).toBe(true);
   });
 });
@@ -2404,6 +2433,8 @@ describe("scaffolder fix 27: binary pods (vendor/rn-spm)", () => {
 // conditional `.push`, `if !gamma … else … end` around `exclude_files`): the reader left `#{exts}` unresolved, the
 // target got only the `common` subspec's C++ and no Objective-C class, and the app crashed at start.
 describe("scaffolder fix 28: podspec locals and conditions (vendor/rn-spm)", () => {
+  beforeEach(() => vi.stubEnv("RN_XTOOL_PODSPEC_READER", "reduced"));
+  afterEach(() => vi.unstubAllEnvs());
   const fixture = (dir: string) => path.join(PODSPEC_FIXTURES, dir);
   /** The `sources:` entries of a manifest's first target. */
   const sourcesOf = (pkg: string) => [...pkg.match(/sources: \[([^\]]*)\]/)![1]!.matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
@@ -2570,6 +2601,46 @@ describe("scaffolder fix 28: podspec locals and conditions (vendor/rn-spm)", () 
     const run = scaffoldPod(podLib(FILES, podspec));
     expect(run.results[0]?.status, run.results[0]?.reason).toBe("written");
     expect(sourcesOf(run.files["react-native-foo/Package.swift"]!).sort()).toEqual(["ios/A.h", "ios/A.mm"]);
+  });
+});
+
+// Fix 29: podspecs read by Ruby through read-podspec-shim.rb, and the reader recorded in each manifest's marker.
+describe("scaffolder fix 29: the podspec reader in the marker (vendor/rn-spm)", () => {
+  afterEach(() => vi.unstubAllEnvs());
+  /** A library both readers read alike: one header and one Objective-C file under ios/. */
+  function podLib(): string {
+    const root = tempDir();
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "react-native-foo", version: "1.0.0" }));
+    mkdirSync(path.join(root, "ios"));
+    writeFileSync(path.join(root, "ios", "Foo.h"), "#import <Foundation/Foundation.h>\n");
+    writeFileSync(path.join(root, "ios", "Foo.m"), '#import "Foo.h"\n');
+    writeFileSync(
+      path.join(root, "Foo.podspec"),
+      'Pod::Spec.new do |s|\n  s.name = "Foo"\n  s.version = "1.0.0"\n  s.source_files = "ios/**/*.{h,m}"\nend\n',
+    );
+    return root;
+  }
+  /** The scaffold of {@link podLib}: its manifest and the reader its result names. */
+  function scaffoldFoo(): { pkg: string; reader: string | undefined } {
+    const run = scaffoldLibraries(VENDORED_RN_SPM, { "react-native-foo": podLib() });
+    const result = run.results[0]!;
+    expect(result.status, result.reason).toBe("written");
+    return { pkg: run.files["react-native-foo/Package.swift"]!, reader: result.reader };
+  }
+
+  it.skipIf(needsRuby !== "")(`29: records the podspec reader in the marker, after the slot${needsRuby}`, () => {
+    vi.stubEnv("RN_XTOOL_PODSPEC_READER", undefined);
+    const { pkg, reader } = scaffoldFoo();
+    expect(pkg).toMatch(/^\/\/ Cache slot: .+\n\/\/ rn-xtool-podspec-reader: ruby$/m);
+    expect(reader).toBe("ruby");
+  });
+
+  it("29: records the reduced reader when it is forced", () => {
+    vi.stubEnv("RN_XTOOL_PODSPEC_READER", "reduced");
+    const { pkg, reader } = scaffoldFoo();
+    expect(pkg).toMatch(/^\/\/ Cache slot: .+\n\/\/ rn-xtool-podspec-reader: reduced$/m);
+    expect(pkg.match(/^\/\/ rn-xtool-podspec-reader: /gm)).toHaveLength(1);
+    expect(reader).toBe("reduced");
   });
 });
 

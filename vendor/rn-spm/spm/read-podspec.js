@@ -16,11 +16,12 @@
  * read-podspec.js — produces a flattened, SPM-friendly view of an iOS
  * podspec for the scaffolder.
  *
- * Strategy: prefer `pod ipc spec <path>` (CocoaPods evaluates the Ruby DSL,
- * including `install_modules_dependencies(s)` and `$config[:...]`
- * interpolation, so the JSON output reflects the real spec). Fall back to a
- * best-effort regex parser when CocoaPods isn't available — handles simple
- * RN libs but skips subspec blocks and Ruby helpers with a warning.
+ * Strategy: run the podspec with the system Ruby against a shim of
+ * CocoaPods' DSL and React Native's helpers (read-podspec-shim.rb), which
+ * writes the spec in CocoaPods' JSON form, so the model reflects the real
+ * spec. Without a usable Ruby, or with RN_XTOOL_PODSPEC_READER=reduced, the
+ * reduced reader (a JavaScript evaluator and regex parser) reads it instead
+ * and says so. A podspec Ruby cannot read is an error, never a fallback.
  *
  * The output `PodspecModel` collapses the spec's default subspecs into a
  * single logical target view, since that's how RN consumers compile these
@@ -29,6 +30,7 @@
 
 const {spawnSync} = require('node:child_process');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 /*::
@@ -36,133 +38,327 @@ type RawSpec = {[string]: unknown};
 */
 
 // ---------------------------------------------------------------------------
-// Pod-IPC primary path
+// The podspec reader: Ruby or the reduced reader
 // ---------------------------------------------------------------------------
 
-/**
- * Runs `pod ipc spec <path>` and parses the JSON it prints. Returns null
- * on any failure: CocoaPods missing, command threw, output not JSON, etc.
- * Callers should treat null as a signal to fall back to the regex parser.
- */
-/**
- * Strips RN-specific Ruby helpers from a podspec source so `pod ipc spec`
- * can evaluate it without RN's Podfile-side helpers loaded. The stripped
- * helpers (`install_modules_dependencies(s)`) typically inject the React-Core
- * / React-Fabric family — all of which the scaffolder collapses into the
- * single `ReactNative` product anyway, so dropping them is safe as long as
- * the podspec also has an explicit `s.dependency "React-Core"` (almost all
- * RN libs do). Writes the patched content to a temp file and returns its
- * path; caller deletes when done.
- */
-function patchPodspecForPodIpc(podspecPath /*: string */) /*: string */ {
-  const content = fs.readFileSync(podspecPath, 'utf8');
-  // Comment out RN-Podfile-only helpers. We do NOT remove the lines so
-  // line numbers in any pod ipc errors still match the original file.
-  const patched = content
-    .replace(
-      /^(\s*)install_modules_dependencies\(([^)]*)\)/gm,
-      '$1# install_modules_dependencies($2) # stripped for pod ipc',
-    )
-    .replace(
-      /^(\s*)use_react_native!\(([^)]*)\)/gm,
-      '$1# use_react_native!($2) # stripped for pod ipc',
-    );
-  // Write the patched copy NEXT TO the original podspec, not in os.tmpdir.
-  // Podspecs commonly do `File.read(File.join(__dir__, 'package.json'))` or
-  // similar, expecting the package.json sibling. Keeping the patched file
-  // in the same directory makes those reads continue to work.
-  const depDir = path.dirname(podspecPath);
-  // pod ipc only accepts files ending in `.podspec` or `.podspec.json`.
-  // Use a dotfile prefix so the patched copy is invisible to normal listing
-  // but the suffix CocoaPods requires is preserved.
-  const tmpFile = path.join(
-    depDir,
-    `.spm-scaffold-${process.pid}-${path.basename(podspecPath)}`,
+// The podspec reader runs each podspec with the system Ruby, against a shim of
+// CocoaPods' DSL (read-podspec-shim.rb), which writes the spec in CocoaPods'
+// JSON form. Without a usable Ruby, or with RN_XTOOL_PODSPEC_READER=reduced,
+// the reduced reader (the evaluator below) reads it instead, and the choice
+// says why.
+
+/*::
+type PodspecReaderChoice =
+  | {
+      reader: 'ruby',
+      ruby: string,
+      interpreter?: string,
+      forced: false,
+      warning: ?string,
+    }
+  | {reader: 'reduced', why: string, forced: boolean, warning: ?string};
+type RubyProbe =
+  | {usable: true, ruby: string, interpreter?: string}
+  | {usable: false, why: string};
+*/
+
+const PODSPEC_SHIM = path.join(__dirname, 'read-podspec-shim.rb');
+const PODSPEC_READER_VAR = 'RN_XTOOL_PODSPEC_READER';
+const RUBY_PROBE_TIMEOUT_MS = 10000;
+// Generous: a podspec may copy prebuilt frameworks while it is read
+// (react-native-skia's copies hundreds of MB), and a slow disk needs the
+// time. A podspec that hangs costs this once.
+const PODSPEC_TIMEOUT_MS = 120000;
+// What a read that stopped on a gap of the shim, a podspec that did not
+// finish, a Ruby that ended without a model (`exit`) or a name `ENV.fetch`
+// did not find says to do next. A podspec's own `raise` keeps the shim's
+// message.
+const PODSPEC_READ_REMEDY =
+  'Set RN_XTOOL_PODSPEC_READER=reduced to read it with the reduced reader ' +
+  'for one run, and report it with rn-xtool doctor --report.';
+const SHIM_GAP_KINDS = [
+  'method',
+  'constant',
+  'attribute',
+  'require',
+  'not-a-spec',
+];
+
+// One probe per `PATH` (and shim): the Ruby it finds does not change during a
+// run.
+const rubyProbes /*: Map<string, RubyProbe> */ = new Map();
+
+class PodspecReadError extends Error {
+  /*:: code: string; kind: string; */
+  constructor(message /*: string */, kind /*: string */) {
+    super(message);
+    this.name = 'PodspecReadError';
+    this.code = 'RN_SPM_PODSPEC_READ';
+    this.kind = kind;
+  }
+}
+
+// By `code` as well, so an error of another copy of this file (the vendored
+// scaffolder and the patched one) counts too.
+function isPodspecReadError(e /*: mixed */) /*: boolean */ {
+  return (
+    e instanceof PodspecReadError ||
+    (e != null && typeof e === 'object' && e.code === 'RN_SPM_PODSPEC_READ')
   );
-  fs.writeFileSync(tmpFile, patched, 'utf8');
-  return tmpFile;
 }
 
-function runPodIpcSpec(podspecPath /*: string */) /*: RawSpec | null */ {
-  // RN podspecs often call `install_modules_dependencies(s)`, a helper
-  // defined by RN's Podfile-side scripts. `pod ipc spec` doesn't load
-  // those, so the helper is undefined and the whole spec fails to parse.
-  // Pre-process to strip those calls before invoking pod ipc.
-  let patchedPath /*: ?string */ = null;
-  try {
-    patchedPath = patchPodspecForPodIpc(podspecPath);
-  } catch {
-    return null;
+// The child's whole environment: `PATH`, `HOME`, `LANG` and React Native's
+// two pod variables (`RN_POD_ENV`), so neither RUBYOPT, Bundler, a gem home
+// nor a `0` in the shell changes how a podspec reads.
+function podspecChildEnv(
+  env /*: {+[string]: ?string} */,
+) /*: {[string]: string} */ {
+  const child /*: {[string]: string} */ = {};
+  for (const name of ['PATH', 'HOME', 'LANG']) {
+    const value = env[name];
+    if (value != null) child[name] = value;
   }
+  return {...child, ...RN_POD_ENV};
+}
+
+// `message`, then the escape.
+function withRemedy(message /*: string */) /*: string */ {
+  return `${message.replace(/\.$/, '')}. ${PODSPEC_READ_REMEDY}`;
+}
+
+// Whether the shim's `raised` message for `podspec` is Ruby's KeyError of a
+// name `ENV.fetch` did not find: `<where>: key not found: "<name>"`, where
+// `<where>` is `<podspec>`, `<podspec>:<line>` or `<podspec> (<file>:<line>)`.
+function isEnvKeyError(
+  podspec /*: string */,
+  message /*: string */,
+) /*: boolean */ {
+  return (
+    message.startsWith(podspec) &&
+    /^(?::\d+| \([^)]*:\d+\))?: key not found: "/.test(
+      message.slice(podspec.length),
+    )
+  );
+}
+
+function nonEmptyLines(text /*: ?string */) /*: Array<string> */ {
+  return String(text ?? '')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line !== '');
+}
+
+// `<code>` or `<signal>` of an ended child.
+function howRubyEnded(
+  result /*: {status: ?number, signal: ?string, ...} */,
+) /*: string */ {
+  return result.status != null ? String(result.status) : String(result.signal);
+}
+
+function probeRuby(
+  shim /*: string */,
+  env /*: {+[string]: ?string} */,
+) /*: RubyProbe */ {
+  const result = spawnSync('ruby', [shim, '--probe'], {
+    encoding: 'utf8',
+    env: podspecChildEnv(env),
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: RUBY_PROBE_TIMEOUT_MS,
+    killSignal: 'SIGKILL',
+  });
+  if (result.error != null && result.error.code === 'ENOENT') {
+    return {usable: false, why: 'Ruby was not found'};
+  }
+  if (result.status === 0) {
+    let answer;
+    try {
+      answer = JSON.parse(result.stdout);
+    } catch {
+      answer = null;
+    }
+    if (answer?.usable === true && typeof answer.ruby === 'string') {
+      // The absolute path of the Ruby that answered: a version manager's
+      // `ruby` shim on PATH may pick another one in the podspec's folder.
+      return typeof answer.interpreter === 'string' &&
+        path.isAbsolute(answer.interpreter)
+        ? {usable: true, ruby: answer.ruby, interpreter: answer.interpreter}
+        : {usable: true, ruby: answer.ruby};
+    }
+    if (answer?.usable === false && typeof answer.why === 'string') {
+      return {usable: false, why: answer.why};
+    }
+  }
+  const stderr = nonEmptyLines(result.stderr);
+  if (stderr.some(line => /cannot load such file -- json\b/.test(line))) {
+    return {usable: false, why: 'ruby cannot load json'};
+  }
+  let detail;
+  if (stderr.length > 0) {
+    detail = stderr[0];
+  } else if (result.error != null && result.error.code === 'ETIMEDOUT') {
+    detail = `did not finish in ${RUBY_PROBE_TIMEOUT_MS / 1000} s`;
+  } else if (result.error != null) {
+    detail = result.error.message;
+  } else if (result.status === 0) {
+    detail = 'its probe printed no answer';
+  } else {
+    detail = `exited with ${howRubyEnded(result)}`;
+  }
+  return {
+    usable: false,
+    why: `ruby could not run the podspec reader (${detail})`,
+  };
+}
+
+// Which reader reads the podspecs, and why when it is not Ruby.
+// RN_XTOOL_PODSPEC_READER is read on every call; the Ruby probe is memoised.
+function podspecReader(
+  opts /*: {env?: {+[string]: ?string}, shim?: string} */ = {},
+) /*: PodspecReaderChoice */ {
+  const env = opts.env ?? process.env;
+  const shim = opts.shim ?? PODSPEC_SHIM;
+  const value = env[PODSPEC_READER_VAR];
+  if (value === 'reduced') {
+    return {
+      reader: 'reduced',
+      why: `${PODSPEC_READER_VAR}=reduced is set`,
+      forced: true,
+      warning: null,
+    };
+  }
+  // An empty value counts as unset.
+  const warning =
+    value != null && value !== ''
+      ? `${PODSPEC_READER_VAR}=${value} is not a reader rn-xtool knows ` +
+        '(only reduced); reading podspecs with Ruby'
+      : null;
+  if (!fs.existsSync(shim)) {
+    return {
+      reader: 'reduced',
+      why: `the podspec reader's Ruby shim is missing from ${shim}`,
+      forced: false,
+      warning,
+    };
+  }
+  const key = `${shim}\0${env.PATH ?? ''}`;
+  let probe = rubyProbes.get(key);
+  if (probe == null) {
+    probe = probeRuby(shim, env);
+    rubyProbes.set(key, probe);
+  }
+  if (!probe.usable) {
+    return {reader: 'reduced', why: probe.why, forced: false, warning};
+  }
+  return probe.interpreter != null
+    ? {
+        reader: 'ruby',
+        ruby: probe.ruby,
+        interpreter: probe.interpreter,
+        forced: false,
+        warning,
+      }
+    : {reader: 'ruby', ruby: probe.ruby, forced: false, warning};
+}
+
+// The app's `ios/` folder, CocoaPods' installation root for the podspec:
+// RN_SPM_APP_IOS_DIR when set, else the folder that holds the first
+// `node_modules` of the podspec's path (as given, not through its links) plus
+// `ios`, else the podspec's own folder.
+function installationRootFor(podspecPath /*: string */) /*: string */ {
+  const appIosDir = process.env.RN_SPM_APP_IOS_DIR;
+  if (appIosDir != null && appIosDir !== '') return appIosDir;
+  const full = path.resolve(podspecPath);
+  const nodeModules = full.indexOf('/node_modules/');
+  if (nodeModules >= 0) return path.join(full.slice(0, nodeModules), 'ios');
+  return path.dirname(full);
+}
+
+// Runs the podspec with Ruby through the shim, in the podspec's folder, with
+// an empty stdin and `podspecChildEnv`: its model, and what it printed. The
+// Ruby is `opts.interpreter`, the one the probe found, else `ruby` on PATH.
+function runPodspecShim(
+  podspecPath /*: string */,
+  opts /*: {
+    timeoutMs?: number,
+    installationRoot?: string,
+    interpreter?: ?string,
+  } */ = {},
+) /*: {raw: RawSpec, output: string} */ {
+  const podspec = path.resolve(podspecPath);
+  const ruby = opts.interpreter ?? 'ruby';
+  const timeoutMs = opts.timeoutMs ?? PODSPEC_TIMEOUT_MS;
+  const root = opts.installationRoot ?? installationRootFor(podspec);
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rn-xtool-podspec-'));
+  const out = path.join(outDir, 'spec.json');
   let result;
+  let written = null;
   try {
-    result = spawnSync('pod', ['ipc', 'spec', patchedPath], {
+    result = spawnSync(ruby, [PODSPEC_SHIM, podspec, out, root], {
+      cwd: path.dirname(podspec),
       encoding: 'utf8',
-      timeout: 30000,
+      env: podspecChildEnv(process.env),
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: timeoutMs,
+      killSignal: 'SIGKILL',
       maxBuffer: 8 * 1024 * 1024,
-      // Many RN podspecs gate subspec definitions on `RCT_NEW_ARCH_ENABLED`
-      // (e.g. safe-area-context wraps its Fabric `common` + `fabric`
-      // subspecs in `if fabric_enabled`), and react-native-worklets gates its
-      // `-DHERMES_V1_ENABLED` flag on `RCT_HERMES_V1_ENABLED`. Give both the
-      // value React Native's CocoaPods setup gives them (`RN_POD_ENV`, which
-      // the regex fallback evaluates with too), whatever the environment
-      // says, so `pod ipc spec` reads the podspec as that setup would.
-      env: {...process.env, ...RN_POD_ENV},
     });
-  } catch {
-    cleanupPatchedPodspec(patchedPath);
-    return null;
+    if (fs.existsSync(out)) written = fs.readFileSync(out, 'utf8');
+  } finally {
+    fs.rmSync(outDir, {recursive: true, force: true});
   }
-  cleanupPatchedPodspec(patchedPath);
-  if (result == null || result.error != null) {
-    return null;
-  }
-  if (typeof result.status !== 'number' || result.status !== 0) {
-    return null;
-  }
-  if (typeof result.stdout !== 'string' || result.stdout.length === 0) {
-    return null;
-  }
-  // Some podspecs print diagnostics to stdout during evaluation (e.g. skia:
-  // `-- SK_GRAPHITE: OFF ...`) before `pod ipc` emits the JSON, and a
-  // diagnostic can itself contain braces (`Building {module}`). `pod ipc`
-  // pretty-prints the spec as a JSON object whose outermost braces sit at
-  // column 0, so ANCHOR on a line-boundary `{`…`}` rather than the first/last
-  // brace anywhere — otherwise a brace inside a diagnostic shifts the slice and
-  // JSON.parse throws. When the authoritative parse is abandoned we log (not
-  // silently drop to the much weaker, subspec-blind regex parser).
-  const stdout = result.stdout;
-  const startMatch = stdout.match(/^\{/m);
-  const start = startMatch != null ? startMatch.index : -1;
-  const lastLineBrace = stdout.lastIndexOf('\n}');
-  const end =
-    lastLineBrace >= 0 ? lastLineBrace + 2 : stdout.lastIndexOf('}') + 1;
-  if (start < 0 || end <= start) {
-    console.warn(
-      '[read-podspec] pod ipc spec produced no line-anchored JSON object; ' +
-        'falling back to the regex parser (subspecs/helpers may be missed).',
+  if (result.error != null && result.error.code === 'ETIMEDOUT') {
+    throw new PodspecReadError(
+      `${podspec} did not finish in ${timeoutMs / 1000} s. ` +
+        PODSPEC_READ_REMEDY,
+      'timeout',
     );
-    return null;
   }
+  const stderr = nonEmptyLines(result.stderr);
+  const lastStderr = stderr.length > 0 ? `: ${stderr[stderr.length - 1]}` : '';
+  if (written == null) {
+    const error = result.error;
+    if (error != null && result.status == null && result.signal == null) {
+      throw new PodspecReadError(
+        withRemedy(`${podspec}: ruby could not run (${error.message})`),
+        'exit',
+      );
+    }
+    throw new PodspecReadError(
+      withRemedy(
+        `${podspec}: ruby exited with ${howRubyEnded(result)}${lastStderr}`,
+      ),
+      'exit',
+    );
+  }
+  let model;
   try {
-    return JSON.parse(stdout.slice(start, end));
+    model = JSON.parse(written);
   } catch (e) {
-    console.warn(
-      `[read-podspec] pod ipc spec JSON parse failed (${e.message}); ` +
-        'falling back to the regex parser (subspecs/helpers may be missed).',
+    throw new PodspecReadError(
+      withRemedy(`${podspec}: the podspec reader wrote no JSON (${e.message})`),
+      'exit',
     );
-    return null;
   }
-}
-
-function cleanupPatchedPodspec(patchedPath /*: ?string */) /*: void */ {
-  if (patchedPath == null) return;
-  try {
-    fs.unlinkSync(patchedPath);
-  } catch {
-    // best-effort cleanup; the file is named with `.spm-scaffold-...tmp`
-    // so a leftover is identifiable.
+  if (model != null && typeof model.error === 'object' && model.error != null) {
+    const kind = String(model.error.kind);
+    const message = String(model.error.message);
+    throw new PodspecReadError(
+      SHIM_GAP_KINDS.includes(kind) ||
+      (kind === 'raised' && isEnvKeyError(podspec, message))
+        ? withRemedy(message)
+        : message,
+      kind,
+    );
   }
+  if (result.status !== 0) {
+    throw new PodspecReadError(
+      withRemedy(
+        `${podspec}: ruby exited with ${howRubyEnded(result)}${lastStderr}`,
+      ),
+      'exit',
+    );
+  }
+  return {raw: model, output: result.stdout};
 }
 
 // ---------------------------------------------------------------------------
@@ -1530,7 +1726,7 @@ function regexPodspec(
   // The main spec's own statements, and each subspec block apart. The readers
   // below default to the main text and receiver; a subspec is read with the
   // same readers anchored on its block variable, then merged like
-  // flattenSubspecs does for `pod ipc spec` output.
+  // flattenSubspecs does for the shim's model.
   const {main, subspecs: allSubspecs} = splitSubspecs(content, mainName);
 
   // Matches:  s.<field> = "value"   or   s.<field> = 'value'  — on `recv`
@@ -1733,7 +1929,7 @@ function regexPodspec(
   // Literal `'OTHER_CFLAGS' => '-DFOO=1'` and `'GCC_PREPROCESSOR_DEFINITIONS' =>
   // '$(inherited) BAR=1'` entries (also `[config=*Debug*]` keys), from any
   // xcconfig hash. Returned as {rawKey: space-joined values} so
-  // flattenSubspecs lifts them like the `pod ipc` JSON. Only string literals
+  // flattenSubspecs lifts them like the shim's JSON. Only string literals
   // are read: an array, `.join` or interpolated value is not understood (an
   // interpolated token is dropped later, with the other unresolved ones).
   function getDefineXcconfig(
@@ -1771,22 +1967,22 @@ function regexPodspec(
   // Surface known unparseable constructs so the caller can warn the user.
   if (shadowedIdentity) {
     warnings.push(
-      "A subspec rebinds the spec variable (`do |s|`), so its `name`, `module_name` and `header_dir` cannot be told from the library's own — those are left unread. Install CocoaPods (`gem install cocoapods`) to enable full `pod ipc spec` parsing.",
+      "A subspec rebinds the spec variable (`do |s|`), so its `name`, `module_name` and `header_dir` cannot be told from the library's own — those are left unread. Install Ruby (`sudo apt install ruby`) so rn-xtool reads the podspec as CocoaPods does.",
     );
   }
   if (new RegExp(`(?:${mainName})\\.subspec\\b`).test(content)) {
     warnings.push(
-      'Subspecs detected — regex parser merges their source/exclude/header, framework, dependency and define fields (default_subspecs honoured); nested subspecs, `{ }` brace blocks and heredocs are not understood. Install CocoaPods (`gem install cocoapods`) to enable full `pod ipc spec` parsing.',
+      'Subspecs detected — regex parser merges their source/exclude/header, framework, dependency and define fields (default_subspecs honoured); nested subspecs, `{ }` brace blocks and heredocs are not understood. Install Ruby (`sudo apt install ruby`) so rn-xtool reads the podspec as CocoaPods does.',
     );
   }
   if (/install_modules_dependencies/.test(content)) {
     warnings.push(
-      '`install_modules_dependencies(s)` detected — dependency wiring may be incomplete without CocoaPods.',
+      '`install_modules_dependencies(s)` detected — dependency wiring may be incomplete without Ruby.',
     );
   }
   if (/\bENV\[/.test(content) || /\$config\[/.test(content)) {
     warnings.push(
-      'Env-var or Ruby-config interpolation detected — values may not translate cleanly without CocoaPods.',
+      'Env-var or Ruby-config interpolation detected — values may not translate cleanly without Ruby.',
     );
   }
 
@@ -1992,6 +2188,94 @@ function headerDirScopes(
 // Subspec flattening
 // ---------------------------------------------------------------------------
 
+// The attributes CocoaPods' DSL declares with an Array container: for an iOS
+// target its consumer appends the `ios` value to the spec's.
+const ARRAY_ATTRIBUTES /*: Set<string> */ = new Set([
+  'compiler_flags',
+  'exclude_files',
+  'frameworks',
+  'libraries',
+  'preserve_paths',
+  'private_header_files',
+  'project_header_files',
+  'public_header_files',
+  'resources',
+  'source_files',
+  'vendored_frameworks',
+  'vendored_libraries',
+  'weak_frameworks',
+]);
+
+// What a CocoaPods build applies and the scaffold does not: each is named in
+// a warning when the spec or a selected subspec sets it.
+const UNAPPLIED_KEYS /*: Array<string> */ = [
+  'script_phases',
+  'prepare_command',
+  'info_plist',
+  'module_map',
+];
+
+const isHash = (v /*: mixed */) /*: boolean */ =>
+  v != null && typeof v === 'object' && !Array.isArray(v);
+
+/**
+ * A spec (or subspec) of the shim's model as CocoaPods' consumer reads it for
+ * an iOS target: each value under its `ios` merged over the spec's. An
+ * ARRAY_ATTRIBUTES value is the spec's followed by the platform's (a string
+ * read as a one-element array); two hashes merge key by key as CocoaPods'
+ * `merge_hash_value` does (two strings joined by one space, an array on
+ * either side concatenated with the other read as an array, any other pair
+ * the platform's value); anything else is the platform's value.
+ * The other platforms (`osx`, `tvos`, `visionos`, `watchos`) are never read.
+ * The reduced reader's model has no `ios`: it is returned as it is.
+ */
+function mergeIos(layer /*: mixed */) /*: mixed */ {
+  // $FlowFixMe[incompatible-use] layer narrowed by isHash
+  if (!isHash(layer) || !isHash(layer.ios)) return layer;
+  // $FlowFixMe[incompatible-use] layer narrowed by isHash
+  const spec /*: {[string]: mixed} */ = layer;
+  // $FlowFixMe[incompatible-type] narrowed by isHash
+  const ios /*: {[string]: mixed} */ = spec.ios;
+  const out /*: {[string]: mixed} */ = {...spec};
+  for (const key of Object.keys(ios)) {
+    const own = spec[key];
+    const platform = ios[key];
+    if (platform == null) continue;
+    if (own == null) {
+      out[key] = platform;
+    } else if (ARRAY_ATTRIBUTES.has(key)) {
+      out[key] = [
+        ...(Array.isArray(own) ? own : [own]),
+        ...(Array.isArray(platform) ? platform : [platform]),
+      ];
+    } else if (isHash(own) && isHash(platform)) {
+      // $FlowFixMe[incompatible-type] narrowed by isHash
+      const ownHash /*: {[string]: mixed} */ = own;
+      // $FlowFixMe[incompatible-type] narrowed by isHash
+      const platformHash /*: {[string]: mixed} */ = platform;
+      const merged /*: {[string]: mixed} */ = {...ownHash};
+      for (const k of Object.keys(platformHash)) {
+        const a = ownHash[k];
+        const b = platformHash[k];
+        if (typeof a === 'string' && typeof b === 'string') {
+          merged[k] = `${a} ${b}`;
+        } else if (a != null && (Array.isArray(a) || Array.isArray(b))) {
+          merged[k] = [
+            ...(Array.isArray(a) ? a : [a]),
+            ...(Array.isArray(b) ? b : [b]),
+          ].filter(v => v != null);
+        } else {
+          merged[k] = b;
+        }
+      }
+      out[key] = merged;
+    } else {
+      out[key] = platform;
+    }
+  }
+  return out;
+}
+
 /**
  * Merges a podspec's default subspecs (or all subspecs when no defaults are
  * declared) into a single logical view. RN libraries use subspecs for
@@ -2024,7 +2308,7 @@ function flattenSubspecs(
     }
   }
 
-  // Determine which subspecs to merge. pod ipc returns:
+  // Determine which subspecs to merge. CocoaPods' JSON form has:
   //   - `subspecs`: array of nested specs (or undefined)
   //   - `default_subspecs`: array of names (or undefined → use all subspecs)
   const subspecs = Array.isArray(rawSpec.subspecs) ? rawSpec.subspecs : [];
@@ -2046,7 +2330,18 @@ function flattenSubspecs(
     // $FlowFixMe[prop-missing] dynamic shape
     s => !(s != null && typeof s.name === 'string' && dropped.has(s.name)),
   );
-  const layers = [rawSpec, ...selected];
+  // Each layer as CocoaPods reads it for iOS, before any reader below.
+  const layers = [rawSpec, ...selected].map(mergeIos);
+  // $FlowFixMe[incompatible-type] mergeIos keeps the spec's shape
+  const spec /*: RawSpec */ = layers[0];
+  for (const key of UNAPPLIED_KEYS) {
+    // $FlowFixMe[incompatible-use] layer narrowed from `mixed`
+    if (layers.some(l => isHash(l) && l[key] != null)) {
+      warnings.push(
+        `The podspec sets ${key}, which a CocoaPods build applies and rn-xtool's scaffold does not.`,
+      );
+    }
+  }
 
   function mergeArrayField(key /*: string */) /*: Array<string> */ {
     const out /*: Array<string> */ = [];
@@ -2079,7 +2374,7 @@ function flattenSubspecs(
   // headers, and several subspecs can disagree.
   function specStringField(key /*: string */) /*: string | null */ {
     // $FlowFixMe[incompatible-use] dynamic shape
-    const value = rawSpec[key];
+    const value = spec[key];
     return typeof value === 'string' && value.length > 0 ? value : null;
   }
 
@@ -2264,7 +2559,7 @@ function flattenSubspecs(
     return out;
   }
 
-  // A layer's dependency names. pod ipc returns deps as
+  // A layer's dependency names. CocoaPods' JSON form has deps as
   // {name: [versionConstraint, ...], ...}, the regex reader as [name, ...].
   // A reference to a dropped subspec (`<Pod>/<subspec>`) is left out.
   const ownName = specStringField('name');
@@ -2293,6 +2588,21 @@ function flattenSubspecs(
     return Array.from(new Set(out));
   }
 
+  // The SwiftPM packages the podspec's run asked for with
+  // `spm_dependency(spec, url:, requirement:, products:)`, as the shim
+  // recorded them.
+  function spmDependencies() /*: Array<{url: string, products: Array<string>}> */ {
+    // $FlowFixMe[prop-missing] the shim's dynamic shape
+    const recorded = rawSpec.__rn_xtool__?.spm_dependencies;
+    if (!Array.isArray(recorded)) return [];
+    return recorded.filter(isHash).map(d => ({
+      url: String(d.url),
+      products: (Array.isArray(d.products) ? d.products : [d.products]).filter(
+        p => typeof p === 'string',
+      ),
+    }));
+  }
+
   // Each selected subspec's own dependencies, by subspec name.
   function subspecDependencies() /*: {[string]: Array<string>} */ {
     const out /*: {[string]: Array<string>} */ = {};
@@ -2304,7 +2614,7 @@ function flattenSubspecs(
       }
       return out;
     }
-    for (const sub of selected) {
+    for (const sub of layers.slice(1)) {
       // $FlowFixMe[prop-missing] dynamic shape
       if (sub == null || typeof sub.name !== 'string') continue;
       // $FlowFixMe[prop-missing] dynamic shape
@@ -2383,7 +2693,7 @@ function flattenSubspecs(
   }
 
   // $FlowFixMe[prop-missing] dynamic shape
-  const reqArc /*: unknown */ = rawSpec.requires_arc;
+  const reqArc /*: unknown */ = spec.requires_arc;
   const requiresArc =
     reqArc === false || (Array.isArray(reqArc) && reqArc.length === 0)
       ? false
@@ -2457,13 +2767,15 @@ function flattenSubspecs(
     ).filter(v => !v.includes('#{')),
     requiresArc,
     warnings,
+    reader: partial ? 'reduced' : 'ruby',
     partial,
-    // Default: overridden in readPodspec, which can see the podspec source.
+    // Default: overridden in readPodspec, which knows what the podspec called.
     usesInstallModulesDependencies: false,
     // $FlowFixMe[incompatible-type] runtime-validated dynamic shape
     unresolvedSources: Array.isArray(rawSpec.__unresolved__)
       ? rawSpec.__unresolved__
       : [],
+    spmDependencies: spmDependencies(),
   };
 }
 
@@ -2489,9 +2801,31 @@ function unresolvedSourcesReason(
     '. The podspec reader evaluates locals, string interpolation, arrays, ' +
     "ENV['...'], package.json reads, comparisons, ternaries and if/unless " +
     'blocks; building from the part it could read would leave some of the ' +
-    "library's files or settings out of its target. Install CocoaPods (`gem " +
-    'install cocoapods`) so `pod ipc spec` reads the podspec, or give the ' +
-    'library a Package.swift of its own.'
+    "library's files or settings out of its target. Install Ruby (sudo apt " +
+    'install ruby) so rn-xtool reads the podspec as CocoaPods does, or give ' +
+    'the library a Package.swift of its own.'
+  );
+}
+
+/**
+ * Why the library cannot be scaffolded for the SwiftPM packages its podspec
+ * declares with `spm_dependency`, or null: a CocoaPods build resolves them,
+ * and a scaffold without them would not link.
+ */
+function spmDependencyReason(
+  podspecPath /*: string */,
+  model /*: PodspecModel */,
+) /*: ?string */ {
+  const list = model.spmDependencies ?? [];
+  if (list.length === 0) return null;
+  return (
+    `${podspecPath}: uses ` +
+    list
+      .map(
+        d => `spm_dependency(url: ${d.url}, products: ${d.products.join(', ')})`,
+      )
+      .join(', ') +
+    ', which rn-xtool does not map yet'
   );
 }
 
@@ -2500,38 +2834,124 @@ function unresolvedSourcesReason(
 // ---------------------------------------------------------------------------
 
 /**
- * Reads and flattens a podspec at `podspecPath`. Tries `pod ipc spec` first
- * (full Ruby DSL evaluation); falls back to a regex parser when CocoaPods
- * isn't available.
+ * Reads and flattens a podspec at `podspecPath` with the reader
+ * `podspecReader()` picks: Ruby through the shim, or the reduced reader. A
+ * podspec Ruby cannot read throws a PodspecReadError; nothing falls back.
+ * `name`, `module_name` and `version` are the reduced reader's literal
+ * readings under both readers (IDENTITY_FIELDS): evaluating `s.name =
+ * package['name']` would rename the scaffolded target.
  *
- * Throws when the file doesn't exist. Otherwise always returns a
- * PodspecModel — warnings on the model surface partial parses to the
- * caller, who can decide whether to proceed or abort scaffolding for that
- * dep. The subspecs named in `opts.dropSubspecs` are left out.
+ * Throws when the file doesn't exist. Warnings on the model surface partial
+ * reads to the caller, who can decide whether to proceed or abort scaffolding
+ * for that dep. The subspecs named in `opts.dropSubspecs` are left out. Each
+ * read is appended to RN_SPM_PODSPEC_READS when it is set.
  */
 function readPodspec(
+  podspecPath /*: string */,
+  opts /*:: ?: {dropSubspecs?: ReadonlyArray<string>} */,
+) /*: PodspecModel */ {
+  return readPodspecWith(podspecReader(), podspecPath, opts);
+}
+
+function readPodspecWith(
+  choice /*: PodspecReaderChoice */,
   podspecPath /*: string */,
   opts /*:: ?: {dropSubspecs?: ReadonlyArray<string>} */,
 ) /*: PodspecModel */ {
   if (!fs.existsSync(podspecPath)) {
     throw new Error(`readPodspec: file does not exist: ${podspecPath}`);
   }
-  const podIpc = runPodIpcSpec(podspecPath);
-  const raw = podIpc != null ? podIpc : regexPodspec(podspecPath, opts);
-  const model = flattenSubspecs(raw, opts);
-  // Record whether the podspec calls `install_modules_dependencies(s)`. We
-  // strip that helper before `pod ipc` and the regex parser can't expand it,
-  // so the React-Core family it injects never lands in `model.dependencies`.
-  // The scaffolder uses this as an implicit React-core marker (plain ObjC
-  // modules using the helper have no `codegenConfig` to detect instead).
+  let used /*: {env: Array<string>, helpers: Array<string>} */ = {
+    env: [],
+    helpers: [],
+  };
   try {
-    const src = fs.readFileSync(podspecPath, 'utf8');
+    let shimRaw = null;
+    if (choice.reader === 'ruby') {
+      shimRaw = runPodspecShim(podspecPath, {
+        interpreter: choice.interpreter,
+      }).raw;
+      // $FlowFixMe[prop-missing] the shim's dynamic shape
+      const rnXtool = shimRaw.__rn_xtool__;
+      used = {
+        env: Array.isArray(rnXtool?.env) ? rnXtool.env : [],
+        helpers: Array.isArray(rnXtool?.helpers) ? rnXtool.helpers : [],
+      };
+    }
+    const literal = regexPodspec(podspecPath, opts);
+    const model = flattenSubspecs(shimRaw ?? literal, opts);
+    // Whether the podspec calls `install_modules_dependencies(s)`, which
+    // injects the React-Core family under CocoaPods: the scaffolder uses this
+    // as an implicit React-core marker (plain ObjC modules using the helper
+    // have no `codegenConfig` to detect instead). Ruby knows whether the run
+    // called it; the reduced reader marks every podspec whose source names it.
     model.usesInstallModulesDependencies =
-      /\binstall_modules_dependencies\b/.test(src);
-  } catch {
-    // best-effort; leave the flattenSubspecs default (false)
+      shimRaw != null
+        ? used.helpers.includes('install_modules_dependencies')
+        : /\binstall_modules_dependencies\b/.test(
+            fs.readFileSync(podspecPath, 'utf8'),
+          );
+    // IDENTITY_FIELDS: the literal readings, under both readers.
+    const identity = (key /*: string */) /*: ?string */ => {
+      // $FlowFixMe[prop-missing] RawSpec is dynamically shaped
+      const value = literal[key];
+      return typeof value === 'string' && value.length > 0 ? value : null;
+    };
+    model.name = identity('name') ?? '';
+    model.moduleName = identity('module_name');
+    model.version = identity('version') ?? '';
+    recordPodspecRead(podspecPath, choice, used, null);
+    return model;
+  } catch (e) {
+    // The reader's own plumbing (a temp folder, a file it cannot read) stops
+    // the run like a podspec Ruby cannot read: the autolinking callers
+    // rethrow only a PodspecReadError. The escape is offered when it changes
+    // the reader.
+    let error = e;
+    if (!isPodspecReadError(e)) {
+      const message =
+        `${path.resolve(podspecPath)}: rn-xtool could not run the podspec ` +
+        `reader: ${e instanceof Error ? e.message : String(e)}`;
+      error = new PodspecReadError(
+        choice.reader === 'ruby' ? withRemedy(message) : message,
+        'exit',
+      );
+    }
+    recordPodspecRead(podspecPath, choice, used, error);
+    throw error;
   }
-  return model;
+}
+
+// One JSON line per read in RN_SPM_PODSPEC_READS, when it is set: the
+// podspec, its reader and why, what the podspec used of its environment, and
+// whether it read. A line that cannot be written does not stop the read.
+function recordPodspecRead(
+  podspecPath /*: string */,
+  choice /*: PodspecReaderChoice */,
+  used /*: {env: Array<string>, helpers: Array<string>} */,
+  error /*: mixed */,
+) /*: void */ {
+  const file = process.env.RN_SPM_PODSPEC_READS;
+  if (file == null || file === '') return;
+  const line /*: {[string]: mixed} */ = {
+    podspec: path.resolve(podspecPath),
+    reader: choice.reader,
+  };
+  if (choice.reader === 'reduced') line.why = choice.why;
+  line.forced = choice.forced;
+  if (choice.reader === 'ruby') line.ruby = choice.ruby;
+  if (choice.warning != null) line.warning = choice.warning;
+  line.env = used.env;
+  line.helpers = used.helpers;
+  line.ok = error == null;
+  if (error != null) {
+    line.error = error instanceof Error ? error.message : String(error);
+  }
+  try {
+    fs.appendFileSync(file, `${JSON.stringify(line)}\n`);
+  } catch {
+    // the read itself stands
+  }
 }
 
 // The installed React Native's version as the macros libraries derive from it.
@@ -2563,29 +2983,30 @@ function readRnVersionMacros() /*: {[string]: number} */ {
 const podspecModels /*: Map<string, PodspecModel> */ = new Map();
 
 /**
- * readPodspec memoized on the resolved path. `pod ipc spec` costs a process
+ * readPodspec memoized on the resolved path. A Ruby read costs a process
  * spawn, and one autolinking run reads the same podspec from several sites
  * (name resolution, header search paths, scaffolding). The model is shared, so
- * callers must treat it as read-only. The key is the resolved path plus the
- * sorted `opts.dropSubspecs`.
+ * callers must treat it as read-only. The key is the resolved path, the
+ * sorted `opts.dropSubspecs` and the reader.
  */
 function readPodspecCached(
   podspecPath /*: string */,
   opts /*:: ?: {dropSubspecs?: ReadonlyArray<string>} */,
 ) /*: PodspecModel */ {
   const drop = [...(opts?.dropSubspecs ?? [])].sort();
-  const key = [path.resolve(podspecPath), ...drop].join('\0');
+  const choice = podspecReader();
+  const key = [path.resolve(podspecPath), choice.reader, ...drop].join('\0');
   const cached = podspecModels.get(key);
   if (cached != null) {
     return cached;
   }
-  const model = readPodspec(podspecPath, {dropSubspecs: drop});
+  const model = readPodspecWith(choice, podspecPath, {dropSubspecs: drop});
   podspecModels.set(key, model);
   return model;
 }
 
 /**
- * The three fields that name a library, read WITHOUT `pod ipc spec`'s process
+ * The three fields that name a library, read WITHOUT Ruby's process
  * spawn — name resolution runs for every dep, including self-managed ones that
  * need nothing else from the podspec.
  *
@@ -2637,8 +3058,9 @@ function readPodspecNames(
 
 /**
  * Every podspec in `dir`, sorted so two of them name a target the same way on
- * every machine (readdir order is unspecified). Skips a crashed run's leftover
- * `.spm-scaffold-<pid>-<name>.podspec` copy.
+ * every machine (readdir order is unspecified). Skips the
+ * `.spm-scaffold-<pid>-<name>.podspec` copy a crashed run of an older rn-xtool
+ * (which read podspecs with `pod ipc spec`) left.
  */
 function findPodspecs(dir /*: string */) /*: Array<string> */ {
   try {
@@ -2654,11 +3076,17 @@ function findPodspecs(dir /*: string */) /*: Array<string> */ {
 
 module.exports = {
   findPodspecs,
+  installationRootFor,
+  isPodspecReadError,
+  PodspecReadError,
+  PODSPEC_TIMEOUT_MS,
+  podspecReader,
   readPodspec,
   readPodspecCached,
   readPodspecNames,
-  runPodIpcSpec,
+  runPodspecShim,
   regexPodspec,
   flattenSubspecs,
+  spmDependencyReason,
   unresolvedSourcesReason,
 };

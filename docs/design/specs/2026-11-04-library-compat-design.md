@@ -41,7 +41,7 @@ header layout, an entitlement key), never a library name or a version number.
    reported none.
    - These build as they are, together: @aws-amplify/react-native 1.3.3, async-storage 1.24.0, keychain 10.0.0,
      localize 3.7.2, linear-gradient 2.8.3, wifi-reborn 4.13.6, webview 13.17.0, svg 15.16.0, screens 4.30.1,
-     safe-area-context 5.11.1, reanimated 4.7.1 + worklets 0.13.0, and @react-navigation 6 (JS only).
+     safe-area-context 5.11.1, reanimated 4.7.1 + worklets 0.13.0, and `@react-navigation` 6 (JS only).
    - These do not: vision-camera 4.7.3, device-info 15.0.2, netinfo 11.5.2 and video 6.19.3.
    - With the four hand fixes below, every library builds together. The final build produced `App.app`, and
      `llvm-nm` shows each library's classes in the binary. No device was used.

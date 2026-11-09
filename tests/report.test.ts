@@ -89,6 +89,7 @@ const probes: DoctorProbes = {
   portFree: async () => true,
   wifi: async () => ({ usb: { udid: "00008110-000000000000AAAA", enabled: true } }),
   capabilities: async () => caps,
+  podspecReader: () => ({ reader: "ruby", ruby: "9.9.9", forced: false, warning: null }),
 };
 const env: ReportEnv = { rnXtoolVersion: "9.9.9", os: "Ubuntu 24.04.1 LTS, Linux 6.8.0-45-generic", arch: "x64", home: "/home/me" };
 
@@ -149,9 +150,12 @@ describe("doctorReport", () => {
       "node: 24.15.0",
       "swift: 6.4",
       `xtool: ${XTOOL_VERSION}`,
+      "ruby: 9.9.9",
+      "podspec reader: not recorded",
       "os: Ubuntu 24.04.1 LTS, Linux 6.8.0-45-generic, x64",
       "project: expo, Expo SDK 58, expo 58.0.21, react-native 0.88.1",
       "✔ node — 24.15.0",
+      "✔ ruby — 9.9.9",
       "✔ swift — 6.4",
       "✔ llvm-nm — LLVM 21.0.0",
       "✔ llvm-ar — LLVM 21.0.0",
@@ -254,13 +258,58 @@ describe("doctorReport", () => {
 
   it("says the toolchain was not checked with --project", async () => {
     const lines = (await doctorReport("/home/me/apps/demo", { env, probes, projectOnly: true })).split("\n");
-    expect(lines.slice(4, 8)).toEqual([
+    expect(lines.slice(4, 10)).toEqual([
       "swift: not checked (--project)",
       "xtool: not checked (--project)",
+      "ruby: 9.9.9",
+      "podspec reader: not recorded",
       "os: Ubuntu 24.04.1 LTS, Linux 6.8.0-45-generic, x64",
       "project: expo, Expo SDK 58, expo 58.0.21, react-native 0.88.1",
     ]);
     expect(lines.some((l) => l.startsWith("✔ apple-login"))).toBe(false);
+  });
+
+  it("records the last build's reader and ENV names", async () => {
+    const root = await tempDir("rn-xtool-report-reads-");
+    const reads = path.join(root, "ios", "build", "rn-xtool-podspec-reads.jsonl");
+    await mkdir(path.dirname(reads), { recursive: true });
+    const forced = (podspec: string, names: string[]) =>
+      JSON.stringify({
+        podspec: path.join(root, podspec),
+        reader: "reduced",
+        why: "RN_XTOOL_PODSPEC_READER=reduced is set",
+        forced: true,
+        env: names,
+        helpers: [],
+        ok: true,
+      });
+    await writeFile(
+      reads,
+      `${forced("node_modules/x/X.podspec", ["USE_FRAMEWORKS", "RCT_NEW_ARCH_ENABLED"])}\n` +
+        `${forced("node_modules/y/Y.podspec", [])}\n`,
+    );
+    const lines = (await doctorReport(root, { env, probes })).split("\n");
+    const at = lines.indexOf(`xtool: ${XTOOL_VERSION}`);
+    expect(lines.slice(at + 1, at + 5)).toEqual([
+      "ruby: 9.9.9",
+      "podspec reader: reduced: RN_XTOOL_PODSPEC_READER=reduced is set (last rn-spm, 2 podspecs)",
+      "podspec ENV:",
+      "  node_modules/x/X.podspec: RCT_NEW_ARCH_ENABLED, USE_FRAMEWORKS",
+    ]);
+    expect(lines[at + 5]).toMatch(/^os: /);
+    // Inside the block: the fence closes after them.
+    expect(lines.indexOf("```")).toBeGreaterThan(at + 4);
+
+    const rubyRead = { podspec: path.join(root, "a.podspec"), reader: "ruby", ruby: "3.3.8", forced: false, env: [], helpers: [], ok: true };
+    await writeFile(reads, `${JSON.stringify(rubyRead)}\n`);
+    const ruby = (await doctorReport(root, { env, probes })).split("\n");
+    expect(ruby).toContain("podspec reader: ruby 3.3.8 (last rn-spm, 1 podspec)");
+    expect(ruby.some((l) => l.startsWith("podspec ENV:"))).toBe(false);
+  });
+
+  it("records no reader without a project", async () => {
+    const lines = (await doctorReport(undefined, { env, probes })).split("\n");
+    expect(lines).toContain("podspec reader: not recorded");
   });
 
   it("names only the parts the project has", async () => {

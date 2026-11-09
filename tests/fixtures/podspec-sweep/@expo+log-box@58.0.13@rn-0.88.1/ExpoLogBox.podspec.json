@@ -1,0 +1,70 @@
+{
+  "env": [
+    "EXPO_DEBUG_LOG_BOX",
+    "EXPO_DEVELOP_LOG_BOX",
+    "EXPO_UNSTABLE_LOG_BOX"
+  ],
+  "helpers": [],
+  "names": {
+    "reduced": {
+      "headerDir": null,
+      "moduleName": null,
+      "name": "ExpoLogBox"
+    },
+    "shim": {
+      "headerDir": null,
+      "moduleName": null,
+      "name": "ExpoLogBox"
+    }
+  },
+  "reduced": {
+    "refused": "<project>/node_modules/@expo/log-box/ExpoLogBox.podspec: `s.compiler_flags = extraCompilerFlags` cannot be evaluated: it uses `extraCompilerFlags`, which is assigned `'$(inherited)' \\\n    + (isDevelop ? \" -DEXPO_DEVELOP_LOG_BOX\" : \"\") \\\n    + (isDebug ? \" -DEXPO_DEBUG_LOG_BOX\" : \"\") \\\n    + (isEnabled ? \" -DEXPO_UNSTABLE_LOG_BOX\" : \"\")`, which the reader cannot evaluate (`\\` where it ends). The podspec reader evaluates locals, string interpolation, arrays, ENV['...'], package.json reads, comparisons, ternaries and if/unless blocks; building from the part it could read would leave some of the library's files or settings out of its target. Install Ruby (sudo apt install ruby) so rn-xtool reads the podspec as CocoaPods does, or give the library a Package.swift of its own."
+  },
+  "shim": {
+    "compilerFlags": [
+      "$(inherited)"
+    ],
+    "dependencies": [
+      "React-Core"
+    ],
+    "excludeFiles": [],
+    "frameworks": [],
+    "headerDir": null,
+    "headerDirScopes": [],
+    "headerMappingsDir": null,
+    "headerMappingsDirs": [],
+    "headerSearchPaths": [],
+    "libraries": [],
+    "moduleName": null,
+    "name": "ExpoLogBox",
+    "partial": false,
+    "preprocessorDefines": [],
+    "privateHeaderFiles": [],
+    "publicHeaderFiles": [],
+    "reader": "ruby",
+    "requiresArc": true,
+    "resources": [],
+    "sourceFiles": [
+      "ios/**/*.{h,m,mm,swift}"
+    ],
+    "spmDependencies": [],
+    "subspecDependencies": {},
+    "swiftConditions": [],
+    "swiftVersions": [],
+    "unresolvedSources": [],
+    "usesInstallModulesDependencies": false,
+    "version": "",
+    "warnings": [],
+    "weakFrameworks": []
+  },
+  "tsReaders": {
+    "dependencies": {
+      "onlyShim": [],
+      "onlyTs": []
+    },
+    "resourceBundles": {
+      "onlyShim": [],
+      "onlyTs": []
+    }
+  }
+}

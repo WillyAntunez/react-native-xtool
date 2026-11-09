@@ -88,10 +88,13 @@ const good: DoctorProbes = {
   portFree: async () => true,
   wifi: async () => ({ usb: { udid: "u1", enabled: true } }),
   capabilities: async () => expo58Caps,
+  podspecReader: () => ({ reader: "ruby", ruby: "9.9.9", forced: false, warning: null }),
 };
 
 const statusOf = (r: { checks: { name: string; status: string }[] }, name: string) =>
   r.checks.find((c) => c.name === name)?.status;
+
+const PODSPEC_READER_LINK = "https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/troubleshooting.md#podspec-reader";
 
 describe("renderReport", () => {
   it("marks ok, fail and warn with distinct symbols", () => {
@@ -124,7 +127,7 @@ describe("doctorWithProbes", () => {
     const r = await doctorWithProbes(good);
     expect(r.ok).toBe(true);
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "swift", "llvm-nm", "llvm-ar", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
+      "node", "ruby", "swift", "llvm-nm", "llvm-ar", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
     ]);
     expect(r.checks.every((c) => c.status === "ok")).toBe(true);
   });
@@ -371,7 +374,7 @@ describe("doctorWithProbes", () => {
     const r = await doctorWithProbes({ ...good, ufwActive: async () => true, buildState: async () => ({ metroPort: 8099, lanIp: "1.2.3.4" }) }, "/p");
     expect(r.checks.find((c) => c.name === "firewall")?.detail).toContain("ufw allow 8099/tcp");
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "swift", "llvm-nm", "llvm-ar", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip", "project", "project-config", "build-state", "deps", "metro-port",
+      "node", "ruby", "swift", "llvm-nm", "llvm-ar", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip", "project", "project-config", "build-state", "deps", "metro-port",
     ]);
   });
 
@@ -522,9 +525,79 @@ describe("wifi check", () => {
   });
 });
 
+describe("ruby check", () => {
+  const reduced = { reader: "reduced", forced: false, warning: null } as const;
+
+  it("reports Ruby", async () => {
+    const r = await doctorWithProbes(good);
+    expect(r.checks.slice(0, 2)).toEqual([
+      { name: "node", status: "ok", detail: "24.15.0" },
+      { name: "ruby", status: "ok", detail: "9.9.9" },
+    ]);
+    const warned = await doctorWithProbes({
+      ...good,
+      podspecReader: () => ({ reader: "ruby", ruby: "9.9.9", forced: false, warning: "RN_XTOOL_PODSPEC_READER=REDUCED is not a reader rn-xtool knows (only reduced); reading podspecs with Ruby" }),
+    });
+    expect(warned.checks[1]).toEqual({
+      name: "ruby",
+      status: "warn",
+      detail: "9.9.9; RN_XTOOL_PODSPEC_READER=REDUCED is not a reader rn-xtool knows (only reduced); reading podspecs with Ruby",
+    });
+    expect(warned.ok).toBe(true);
+  });
+
+  it("warns without Ruby, also under --project", async () => {
+    const noRuby = { ...good, podspecReader: () => ({ ...reduced, why: "Ruby was not found" }) };
+    const expected = {
+      name: "ruby",
+      status: "warn",
+      detail: "not found — podspecs are read with the reduced reader; sudo apt install ruby",
+    };
+    for (const r of [await doctorWithProbes(noRuby, "/proj", { projectOnly: true }), await doctorWithProbes(noRuby)]) {
+      expect(r.checks[1]).toEqual(expected);
+      expect(r.ok).toBe(true);
+    }
+    const old = await doctorWithProbes({ ...good, podspecReader: () => ({ ...reduced, why: "ruby 2.5.1 is older than 2.7.0" }) });
+    expect(old.checks[1]).toEqual({
+      name: "ruby",
+      status: "warn",
+      detail: "ruby 2.5.1 is older than 2.7.0 — podspecs are read with the reduced reader; sudo apt install ruby",
+    });
+  });
+
+  it("points to the troubleshooting page when installing Ruby does not help", async () => {
+    for (const why of [
+      "ruby cannot load json",
+      "ruby could not run the podspec reader (rbenv: version '3.1.2' is not installed)",
+      "the podspec reader's Ruby shim is missing from /x/read-podspec-shim.rb",
+    ]) {
+      const r = await doctorWithProbes({ ...good, podspecReader: () => ({ ...reduced, why }) });
+      expect(r.checks[1]).toEqual({
+        name: "ruby",
+        status: "warn",
+        detail: `${why} — podspecs are read with the reduced reader; see ${PODSPEC_READER_LINK}`,
+      });
+      expect(r.ok).toBe(true);
+    }
+  });
+
+  it("names the forced reduced reader", async () => {
+    const r = await doctorWithProbes({
+      ...good,
+      podspecReader: () => ({ reader: "reduced", why: "RN_XTOOL_PODSPEC_READER=reduced is set", forced: true, warning: null }),
+    });
+    expect(r.checks[1]).toEqual({
+      name: "ruby",
+      status: "warn",
+      detail: "RN_XTOOL_PODSPEC_READER=reduced is set — podspecs are read with the reduced reader",
+    });
+    expect(r.ok).toBe(true);
+  });
+});
+
 describe("doctor --project", () => {
   /** The only probes --project may call. */
-  const PROJECT_PROBES = new Set(["nodeVersion", "project", "capabilities"]);
+  const PROJECT_PROBES = new Set(["nodeVersion", "podspecReader", "project", "capabilities"]);
   /** Every other probe, recording its name and throwing: --project must never call them. */
   function forbidden(called: string[]): Partial<DoctorProbes> {
     return Object.fromEntries(
@@ -540,7 +613,7 @@ describe("doctor --project", () => {
     );
   }
 
-  it("makes every probe but node, project and capabilities throw", () => {
+  it("makes every probe but node, ruby, project and capabilities throw", () => {
     expect(Object.keys(forbidden([])).sort()).toEqual([
       "authStatus", "buildState", "configLanIp", "depsFingerprint", "devices", "hasBinaryPods", "llvmArVersion", "llvmNmVersion", "lanRoute", "portFree",
       "sdkInstalled", "swiftVersion", "ufwActive", "wifi", "xtoolInstalled", "xtoolPath", "xtoolSha256", "xtoolVersion",
@@ -552,7 +625,7 @@ describe("doctor --project", () => {
     const r = await doctorWithProbes({ ...good, ...forbidden(called) }, "/proj", { projectOnly: true });
     expect(called).toEqual([]);
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "project", "project-config", "versions", "rn-scripts", "rn-artifacts", "expo-plugin", "expo-modules", "podspecs",
+      "node", "ruby", "project", "project-config", "versions", "rn-scripts", "rn-artifacts", "expo-plugin", "expo-modules", "podspecs",
     ]);
     expect(r.ok).toBe(true);
   });
@@ -752,7 +825,7 @@ describe("doctor --project", () => {
     );
     expect(called).toEqual([]);
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "swift", "llvm-nm", "llvm-ar", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
+      "node", "ruby", "swift", "llvm-nm", "llvm-ar", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
       "project", "project-config", "build-state", "deps", "metro-port",
     ]);
     expect(r.capabilities).toBeUndefined();
@@ -761,7 +834,7 @@ describe("doctor --project", () => {
   it("withCapabilities appends the capability lines", async () => {
     const r = await doctorWithProbes(good, "/proj", { withCapabilities: true });
     expect(r.checks.map((c) => c.name)).toEqual([
-      "node", "swift", "llvm-nm", "llvm-ar", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
+      "node", "ruby", "swift", "llvm-nm", "llvm-ar", "xtool", "darwin-sdk", "apple-login", "device", "wifi", "firewall", "lan-ip",
       "project", "project-config", "build-state", "deps", "metro-port",
       "versions", "rn-scripts", "rn-artifacts", "expo-plugin", "expo-modules", "podspecs",
     ]);
@@ -855,7 +928,7 @@ describe("doctor --project", () => {
       status: "fail",
       detail: "Unexpected token } in JSON at position 20",
     });
-    expect(r.checks.map((c) => c.name)).toEqual(["node", "project", "project-config"]);
+    expect(r.checks.map((c) => c.name)).toEqual(["node", "ruby", "project", "project-config"]);
     expect(r.ok).toBe(false);
   });
 
@@ -870,7 +943,7 @@ describe("doctor --project", () => {
       const project = r.checks.find((c) => c.name === "project");
       expect(project?.status).toBe("fail");
       expect(project?.detail).toMatch(/^rn-xtool\.config\.json: .*JSON/);
-      expect(r.checks.map((c) => c.name)).toEqual(["node", "project", "project-config"]);
+      expect(r.checks.map((c) => c.name)).toEqual(["node", "ruby", "project", "project-config"]);
       expect(r.ok).toBe(false);
     } finally {
       await rm(dir, { recursive: true, force: true });

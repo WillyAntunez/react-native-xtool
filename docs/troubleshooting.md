@@ -830,7 +830,7 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   `npm install`, and the next build applies the patch again. A nested package's patch
   (`<parent>++<child>+<version>.patch`) is named `<parent> => <child>`. A package installed at another version than
   its patch's is not skipped: patch-package applies the patch with its own version warning.
-- **"⚠ patches/<name> was written by an older rn-xtool scaffolder (revision <n>, now 7); delete it so rn-xtool
+- **"⚠ patches/<name> was written by an older rn-xtool scaffolder (revision <n>, now 8); delete it so rn-xtool
   regenerates it (also remove node_modules/<package> and reinstall: that copy still has the old Package.swift)":** the
   `patches` step found a persisted scaffold patch from an older scaffolder. Revision 1 patches lack the Swift importer
   paths of mixed libraries, revision 2 patches lack those of clang-only libraries and their module map, revision 3
@@ -839,17 +839,19 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   sources of a podspec that builds its globs from Ruby locals and conditions (fix 28: react-native-screens 4.24.0 got no
   `ios/` sources), and revision 6 patches may lack defines a podspec builds from its package.json (react-native-worklets
   0.8.3's `WORKLETS_VERSION`, whose `WorkletsVersion.cpp` then stops with `use of undeclared identifier
-  'WORKLETS_VERSION_STRING'`). Without those fixes, Swift code that
-  imports a scaffolded library (the app, or expo-router importing react-native-screens) can fail with
-  `'RNSReactBaseView.h' file not found` (a mixed library, such as react-native-screens 4.26) or `'RNSDefines.h' file
-  not found` (a clang-only one, such as react-native-screens 4.30), and an Objective-C++ file that imports
-  `<AppAuth/AppAuth.h>` stops with `use of '@import' when modules are disabled`, and an app with react-native-screens
-  4.24.0 stops at `build` with [the codegen classes
+  'WORKLETS_VERSION_STRING'`), and revision 7 patches were read without React Native's podspec helpers (fix 29:
+  react-native-gesture-handler 3.3.0 lacks `RNGH_USE_WORKLETS=1` beside react-native-worklets 0.8 or later, and
+  react-native-webview 14.0.1 has the `-Wno-comma -Wno-shorten-64-to-32` of its old-architecture branch). Without
+  those fixes, Swift code that imports a scaffolded library (the app, or expo-router importing react-native-screens)
+  can fail with `'RNSReactBaseView.h' file not found` (a mixed library, such as react-native-screens 4.26) or
+  `'RNSDefines.h' file not found` (a clang-only one, such as react-native-screens 4.30), and an Objective-C++ file that
+  imports `<AppAuth/AppAuth.h>` stops with `use of '@import' when modules are disabled`, and an app with
+  react-native-screens 4.24.0 stops at `build` with [the codegen classes
   check](#rctthirdpartycomponentsprovider-thirdpartyfabriccomponents). Do what the warning says: delete the
   patch, remove the library from `node_modules` and reinstall it, then build; rn-xtool scaffolds it again and persists
-  the new patch. This release's scaffolder is revision 7, so each scaffold patch persisted before it gets the line at
+  the new patch. This release's scaffolder is revision 8, so each scaffold patch persisted before it gets the line at
   every build until it is regenerated, for example `⚠ patches/react-native-screens+4.30.0.patch was written by an
-  older rn-xtool scaffolder (revision 4, now 7); delete it so rn-xtool regenerates it (also remove
+  older rn-xtool scaffolder (revision 4, now 8); delete it so rn-xtool regenerates it (also remove
   node_modules/react-native-screens and reinstall: that copy still has the old Package.swift)`. Until then the build
   goes on with the older manifest.
 - **"⚠ patches/<name> was scaffolded for React Native <version>; delete it so rn-xtool regenerates it for <installed>
@@ -858,21 +860,21 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   Do the same as for the revision warning above. Both warnings also read patches with the marker's name before the
   rename, `expo-xtool-scaffold-revision` (apps scaffolded before 0.1.0-alpha.1).
 - **"ℹ node_modules/<package>/Package.swift was scaffolded with revision <n> for React Native <version>, older than
-  patches/<name> (revision 7, React Native <installed>): rn-xtool replaced it with the persisted one":** a teammate
+  patches/<name> (revision 8, React Native <installed>): rn-xtool replaced it with the persisted one":** a teammate
   committed a regenerated scaffold patch, and your `node_modules` still had the copy an older patch wrote
   (patch-package does not replace a file that exists). rn-xtool owns these generated files, so the `patches` step
   removes the files the current patch creates and patch-package writes them again; the line is printed once
   patch-package has done so. Nothing to do; files the older scaffold wrote and the current one does not stay in place.
   This happens only when the patch holds nothing but scaffolded new files.
 - **"⚠ node_modules/<package>/Package.swift was scaffolded with revision <n> for React Native <version>, older than
-  patches/<name> (revision 7, React Native <installed>), and that patch also changes the library's own files, so
+  patches/<name> (revision 8, React Native <installed>), and that patch also changes the library's own files, so
   rn-xtool does not replace it: run rm -rf node_modules/<package> && npm install, then build again":** the same case,
   but the persisted patch also holds your own fix to the library. rn-xtool persists a scaffold with
   `patch-package <package>`, which writes everything that differs from the published package into one patch.
   Removing only the scaffold files would leave a patch that patch-package can apply neither forward nor backward, so
   rn-xtool changes nothing and the build goes on with the older manifest. Run the command: the reinstall gives the
   published package, and the next build applies the whole patch.
-- **"ℹ node_modules/<package>/Package.swift was scaffolded by an older rn-xtool scaffolder (revision <n>, now 7)" (or
+- **"ℹ node_modules/<package>/Package.swift was scaffolded by an older rn-xtool scaffolder (revision <n>, now 8)" (or
   "was scaffolded for React Native <version>, not <installed>"), followed by "rn-xtool removed it so the rn-spm step
   scaffolds it again":** a library has no persisted patch, and the manifest rn-xtool generated for it is out of date,
   for example after you deleted a stale patch but kept the package installed. The `rn-spm` step scaffolds it again
@@ -915,7 +917,7 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   releases also search each autolinked library's `rn-spm-pod-headers`, where the scaffold writes the pod table's
   `forwardHeaders`. See
   [Mixed Swift + Objective-C/C++ app target](bare-react-native.md#mixed-swift--objective-cc-app-target).
-- **"use of '@import' when modules are disabled"** (in `rn-spm-pod-headers/AppAuth/AppAuth.h`, compiling an
+- **"use of '`@import`' when modules are disabled"** (in `rn-spm-pod-headers/AppAuth/AppAuth.h`, compiling an
   Objective-C++ file that imports `<AppAuth/AppAuth.h>`, such as a bare app's `AppDelegate.mm`): the scaffold of
   rn-xtool 0.1.0-alpha.6 (scaffolder revision 4) wrote the pod table's `forwardHeaders` as `@import` lines.
   Objective-C++ compiles with `-fmodules -fno-cxx-modules`, Xcode's default, so `@import` is an error there;
@@ -923,7 +925,7 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   `#import` per public header of the pod, which compiles in `.m` and `.mm` files alike, and their scaffolder revision
   (5 and later) replaces an older scaffold: a copy in `node_modules` without a persisted patch is scaffolded again by
   itself, and a persisted patch gets the `⚠ patches/<name> was written by an older rn-xtool scaffolder (revision 4,
-  now 7)` line
+  now 8)` line
   above, whose steps regenerate it. A `forwardHeaders` entry of your config that still lists modules is refused with
   `… lists the module <name>; list the pod's public headers instead`: list the headers, as in [Libraries that depend
   on CocoaPods pods](#libraries-that-depend-on-cocoapods-pods).
@@ -970,6 +972,107 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
 - **"Could not write node_modules/<package>/Package.swift (EACCES) to make it portable to Linux":** `node_modules` is
   read-only, often after `sudo npm install`. Make it writable (reinstall without `sudo`), or apply the portable
   manifest yourself.
+
+### Podspec reader
+
+The `rn-spm` step reads each library's podspec with the system `ruby`, through a shim of CocoaPods' DSL and React
+Native's podspec helpers, so a podspec gives the same fields it gives under CocoaPods. Without a usable Ruby, it reads
+them with its reduced reader, written in JavaScript, which evaluates the subset of Ruby podspecs use for their fields.
+`rn-xtool doctor` names the reader this machine uses (`✔ ruby — 3.3.8`, or `⚠ ruby — not found — podspecs are read
+with the reduced reader; sudo apt install ruby`). The Ruby is the first `ruby` on `PATH`, asked once per run where it
+lives; every podspec then runs with that interpreter, so a version manager (rbenv, asdf, mise) cannot switch Ruby
+between podspecs.
+
+- **"⚠ Ruby was not found, so rn-xtool read the podspecs with its reduced reader, which evaluates a subset of Ruby;
+  install Ruby (sudo apt install ruby) to read them as CocoaPods does.":** `rn-spm` prints this once, after its runs,
+  when the reduced reader read a podspec. The build goes on with the reduced reader. The first words say why, and
+  `rn-xtool doctor` and `rn-xtool setup` give the same reason:
+  - `Ruby was not found`, or `ruby <version> is older than 2.7.0`: the line ends with the install advice. Install Ruby
+    2.7 or newer (`sudo apt install ruby`), check it with `rn-xtool doctor`, and build again.
+  - `ruby cannot load json`: the line ends with a link to this section instead. The Ruby on `PATH` is built without
+    its standard library's `json`; install the distribution's Ruby (`sudo apt install ruby`) or rebuild that Ruby
+    with its default gems, then check it with `rn-xtool doctor`.
+  - `ruby could not run the podspec reader (<detail>)`: the line ends with a link to this section. The `ruby` on
+    `PATH` did not answer, often a version manager's shim that failed. Run `ruby --version` in the project folder:
+    when it fails there, the detail says why, for example a `.ruby-version` (in the project or a folder above it)
+    that selects a Ruby the version manager has not installed. Install that version, or change the `.ruby-version`,
+    and run `rn-xtool doctor` in the project folder again.
+  - `the podspec reader's Ruby shim is missing from <path>`: the line ends with a link to this section. Reinstall the
+    package whose folder `<path>` names (rn-xtool, or an installed React Native 0.88), then build again.
+- **"⚠ patches/<name> was written by the reduced podspec reader; Ruby is available here: delete it so rn-xtool
+  regenerates it (also remove node_modules/<package> and reinstall: that copy still has the old Package.swift)":** the
+  `patches` step found a scaffold the reduced reader persisted, for example by a teammate without Ruby, on a machine
+  where Ruby reads podspecs. It stays until you delete it, and the build goes on with it. Do what the line says, as
+  for the revision warning in [Build and patches](#build-and-patches): the next build scaffolds that library with
+  Ruby and persists the new patch.
+- **"⚠ patches/<name> was written by the Ruby podspec reader, and this machine reads podspecs with the reduced one
+  (<why>): keep the patch, and install Ruby (sudo apt install ruby) before you regenerate it":** the opposite case.
+  The patch is the better reading, so keep it; a scaffold regenerated here would be the reduced reader's. With
+  `RN_XTOOL_PODSPEC_READER=reduced` set, the line ends `keep the patch, and unset RN_XTOOL_PODSPEC_READER before you
+  regenerate it`. When installing Ruby would not help (`ruby cannot load json`, `ruby could not run the podspec
+  reader (<detail>)`, the shim missing), it ends `keep the patch; see <link to this section> before you regenerate
+  it`: fix the reason as the first entry of this section says.
+- **"⚠ RN_XTOOL_PODSPEC_READER=reduced is set, so rn-xtool read the podspecs with its reduced reader, which evaluates
+  a subset of Ruby; unset it to read them as CocoaPods does.":** the variable is set in the environment of the build,
+  so the reduced reader read every podspec, Ruby or not. Unset it (`unset RN_XTOOL_PODSPEC_READER`) once the podspec
+  that needed it reads with Ruby again.
+- **"⚠ RN_XTOOL_PODSPEC_READER=<value> is not a reader rn-xtool knows (only reduced); reading podspecs with Ruby":**
+  the variable is set to another value (`REDUCED`, `1`, `ruby`), which picks nothing. Set it to `reduced` exactly, or
+  unset it.
+- **The environment a podspec sees:** rn-xtool reads every podspec with `RCT_NEW_ARCH_ENABLED` and
+  `RCT_HERMES_V1_ENABLED` set, both to `1`, and your `PATH`, `HOME` and `LANG`, so that the `node` it calls is found;
+  every other variable a podspec reads (`USE_FRAMEWORKS`, `USE_HERMES`, a library's own) is unset, whatever your shell
+  has. The podspec runs in its own folder, with `ios/` as CocoaPods' installation root and nothing on its standard
+  input. The names each podspec read are in `rn-xtool doctor --report`, under `podspec ENV:`, one `<podspec>: NAME,
+  NAME` line per podspec that read any; the build does not print them. Only Ruby records them: after a run of the
+  reduced reader, the report has no `podspec ENV:` block.
+- **Podfile globals:** a podspec reads as with a Podfile that sets no globals (`$VCEnableLocation`,
+  `$VCEnableFrameProcessors`, `$RNVideoUseVideoCaching` are undefined), so it takes its default branch:
+  react-native-vision-camera compiles its location APIs in, and its frame processors only when
+  react-native-worklets-core is installed.
+- **A podspec that reads your project:** some podspecs compute their settings from the project when they run:
+  react-native-reanimated reads its static feature flags from the app's `package.json`, and
+  react-native-vision-camera checks whether react-native-worklets-core is installed. A persisted scaffold keeps what
+  its podspec read the day it was written, and a later build does not read it again. After you change a library's
+  feature flags or install an optional sibling, delete the library's patch and re-scaffold it as in [Scaffolded
+  libraries](#scaffolded-libraries).
+- **"! <library>: The podspec sets script_phases, which a CocoaPods build applies and rn-xtool's scaffold does
+  not."** (also `prepare_command`, `info_plist` and `module_map`): the spec, a subspec the scaffold uses, or their
+  `ios` attributes set a key that changes a CocoaPods build and that the scaffolded `Package.swift` does not carry.
+  The build goes on without it. If the library needs what that key does (a build script, a generated file, its own
+  module map), add it to the library's `Package.swift` and persist it in `patches/`.
+- **"✖ Scaffolding <library> failed: <podspec>: uses spm_dependency(url: <url>, products: <a, b>), which rn-xtool
+  does not map yet":** with Ruby, the podspec asks React Native's `spm_dependency` helper for a SwiftPM package, and
+  the scaffold does not add that package, so the target would not link. Give the library a `Package.swift` of its
+  own, persisted in `patches/`, and [report it](#reporting-a-problem).
+- **"<podspec>:<line>: the podspec calls <name>(…), which rn-xtool's podspec reader does not model. Set
+  RN_XTOOL_PODSPEC_READER=reduced to read it with the reduced reader for one run, and report it with rn-xtool doctor
+  --report.":** the podspec calls a method of CocoaPods or React Native the shim does not provide, and `rn-spm` stops
+  there. The same stop, with the same last sentence, has these other forms:
+  - `<podspec>:<line>: the podspec uses <Name>, which rn-xtool's podspec reader does not model` (a constant);
+  - `<podspec>:<line>: the podspec sets <spec>.<name>, which CocoaPods does not define` (an attribute CocoaPods does
+    not have, often a typo);
+  - `<podspec>: cannot load such file -- <name>; rn-xtool's podspec reader stubs only colored2` (a `require` of a gem);
+  - `<podspec>: the podspec does not evaluate to a Pod::Spec`;
+  - `<podspec> did not finish in 120 s.`;
+  - `<podspec>: ruby exited with <code or signal>: <its last error line>` or `<podspec>: ruby could not run (<error>)`
+    (Ruby ended without a result: out of memory, killed, or the interpreter the probe found is gone);
+  - `<podspec>: rn-xtool could not run the podspec reader: <error>` (rn-xtool itself could not run the read, for
+    example no writable temp folder: check `TMPDIR` and the disk space);
+  - `<podspec>:<line>: key not found: "<NAME>"` (the podspec reads an environment variable with `ENV.fetch`, and
+    rn-xtool gives podspecs only `PATH`, `HOME`, `LANG`, `RCT_NEW_ARCH_ENABLED` and `RCT_HERMES_V1_ENABLED`).
+
+  When the failing line is in another of the library's files, `<podspec>:<line>` reads `<podspec> (<file>:<line>)`;
+  when Ruby keeps no line, it is `<podspec>` alone. A podspec that raises another error of its own (`raise`, `abort`)
+  stops with its message after `<podspec>:<line>: ` (or `<podspec>: `), without the last sentence.
+  To build for one run, set the escape on the command: `RN_XTOOL_PODSPEC_READER=reduced rn-xtool build`. `rn-spm` then
+  prints the `⚠ RN_XTOOL_PODSPEC_READER=reduced is set` line, and `doctor --report` records the reduced reader.
+- **To report a podspec the reader cannot read:** run `rn-xtool doctor --report` in the project folder after the
+  failed build and paste its block into a GitHub issue, with the stop's text and the library's name and version. Its
+  `podspec reader:` line names the reader of the last `rn-spm` and how many podspecs it read (`podspec reader: reduced:
+  RN_XTOOL_PODSPEC_READER=reduced is set (last rn-spm, 12 podspecs)`). When a podspec read environment variables,
+  `podspec ENV:` follows with the names each one read; a run of the reduced reader records none, so the block is
+  not there.
 
 ### Scaffolded libraries
 
@@ -1062,17 +1165,19 @@ module is unavailable.`
   and conditions, which the podspec reader did not evaluate before scaffolder revision 6, so the scaffolded `RNScreens`
   target held only the C++ of its `common` subspec ([fix 28](upstream/react-native-scaffolder.md)). The revision
   warning above names its persisted patch; re-scaffold it as in [Scaffolded libraries](#scaffolded-libraries).
-- **A podspec the reader cannot evaluate** stops the scaffold instead of building such a target: ``✖ Scaffolding
-  <library> failed: <podspec>: `s.source_files = <expression>` cannot be evaluated: it uses <what>. …``. The reader
+- **A podspec the reduced reader cannot evaluate** stops the scaffold instead of building such a target: ``✖
+  Scaffolding <library> failed: <podspec>: `s.source_files = <expression>` cannot be evaluated: it uses <what>. …``.
+  The reduced reader, used without Ruby or with `RN_XTOOL_PODSPEC_READER=reduced` ([Podspec reader](#podspec-reader)),
   evaluates locals, string interpolation, arrays, `ENV['…']`, comparisons, ternaries and `if`/`unless` blocks
   ([how it works](how-it-works.md#cocoapods-only-libraries)); a method call or a value it does not know in a source
-  glob, `compiler_flags`, `header_dir`, `header_mappings_dir`, `frameworks` or `libraries` is refused. Installing
-  CocoaPods (`gem install cocoapods`) lets `pod ipc spec` read the podspec instead, or give the library a
-  `Package.swift` of its own.
+  glob, `compiler_flags`, `header_dir`, `header_mappings_dir`, `frameworks` or `libraries` is refused. Install Ruby
+  (`sudo apt install ruby`) so the podspec is read with Ruby instead, or give the library a `Package.swift` of its
+  own.
 - **"! <library>: Left out of s.pod_target_xcconfig OTHER_CFLAGS: `#{feature_flags}`, which the podspec reader cannot
   evaluate; CocoaPods passes its value."** (also `GCC_PREPROCESSOR_DEFINITIONS`, `HEADER_SEARCH_PATHS`,
-  `SWIFT_ACTIVE_COMPILATION_CONDITIONS`): the scaffold left that part of the value out, and the library compiles as if
-  it were empty. CocoaPods computes it from the app or the Podfile, so these libraries differ from a CocoaPods build:
+  `SWIFT_ACTIVE_COMPILATION_CONDITIONS`): the reduced reader read the podspec, and the scaffold left that part of the
+  value out, so the library compiles as if it were empty. CocoaPods computes it from the app or the Podfile, so with
+  the reduced reader these libraries differ from a CocoaPods build:
   - react-native-worklets and react-native-reanimated: every static feature flag reads as off, also the ones their
     `src/featureFlags/staticFlags.json` turns on, such as worklets 0.8's `IOS_DYNAMIC_FRAMERATE_ENABLED` (the
     worklets display link asks for 120 fps throughout, instead of lowering its frame rate on a ProMotion iPhone when
@@ -1083,7 +1188,8 @@ module is unavailable.`
     (`VISION_CAMERA_ENABLE_FRAME_PROCESSORS` and `VISION_CAMERA_ENABLE_LOCATION` are not set). CocoaPods turns location
     tagging on by default, and frame processors when react-native-worklets-core is installed.
 
-  To set such a value, edit the library's `Package.swift` and persist it in `patches/`.
+  With Ruby the podspec computes these values itself, as under CocoaPods, and the line does not appear. With the
+  reduced reader, to set such a value, edit the library's `Package.swift` and persist it in `patches/`.
 - **A hand-edited `Package.swift`** that leaves out the files defining a class: put them back.
 - **"ℹ The packed app's binaries list no Objective-C class symbols, so rn-xtool could not check the <n> classes React
   Native's codegen providers name.":** the binaries have no symbol table, so nothing is checked and the build goes on.

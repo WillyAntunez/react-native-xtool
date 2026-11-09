@@ -12,6 +12,7 @@
 
 const {
   findPodspecs,
+  isPodspecReadError,
   readPodspecCached,
   readPodspecNames,
 } = require('./read-podspec');
@@ -198,8 +199,8 @@ function resolveSwiftName(
   const fromNpm = toSwiftName(npmName);
   if (podspec != null) {
     warn(
-      `'${npmName}' ships a podspec React Native could not read a name from (CocoaPods may not be installed), so it is named '${fromNpm}' after its npm package instead. ` +
-        `A machine that can read the podspec may resolve a different name — set 'swiftpmConfig.name' in ${npmName}'s package.json to settle it everywhere.`,
+      `'${npmName}' ships a podspec whose name is computed in Ruby, which rn-xtool does not use for names, so it is named '${fromNpm}' after its npm package instead. ` +
+        `Set 'swiftpmConfig.name' in its package.json to override.`,
     );
   }
   return {name: fromNpm, source: 'npm'};
@@ -300,7 +301,8 @@ function expandSpmDependencies(
     byName.set(dep.name, {...dep, spmDependencies: []});
   }
   // A podspec that cannot be read leaves the name to the next precedence step,
-  // rather than failing a build over a file only CocoaPods needs.
+  // rather than failing a build over a file only CocoaPods needs. One the
+  // podspec reader failed on stops the run with its message instead.
   const podspecFor = (
     root /*: string */,
     podspecPath /*: ?string */,
@@ -310,7 +312,10 @@ function expandSpmDependencies(
     }
     try {
       return readPodspec(root, podspecPath);
-    } catch {
+    } catch (e) {
+      if (isPodspecReadError(e)) {
+        throw e;
+      }
       return null;
     }
   };
@@ -478,9 +483,14 @@ function defaultReadPodspec(
   }
   try {
     // Ruby-computed fields need the real evaluator; everything else is spared
-    // the `pod ipc spec` spawn.
+    // the Ruby shim's spawn.
     return readPodspecNames(found) ?? readPodspecCached(found);
-  } catch {
+  } catch (e) {
+    // A file that cannot be read names nothing; a podspec the reader failed on
+    // stops the run.
+    if (isPodspecReadError(e)) {
+      throw e;
+    }
     return null;
   }
 }

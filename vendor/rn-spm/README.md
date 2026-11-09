@@ -6,14 +6,16 @@ versions that ship no `scripts/spm` of their own.
 
 - Origin: react-native 0.88.0, MIT, Meta Platforms, Inc. and affiliates (see `LICENSE`).
 - Modifications, in order:
-  1. The 28 fixes of `docs/upstream/react-native-scaffolder.md`, applied with
+  1. The 29 fixes of `docs/upstream/react-native-scaffolder.md`, applied with
      `patches/react-native+0.88.0.patch` (`patch -p4`, run in the extracted `scripts/`).
-  2. Five rn-xtool edits (E1-E5) in `rn-xtool-edits.patch` (`patch -p1`, run in this directory):
+  2. Six rn-xtool edits (E1-E6) in `rn-xtool-edits.patch` (`patch -p1`, run in this directory):
      the codegen template resolves relative to this copy, the installed React Native root comes
-     only from `RN_SPM_RN_ROOT`, `download-spm-artifacts.js` gains `--allow-pre-headers-spec`, and
+     only from `RN_SPM_RN_ROOT`, `download-spm-artifacts.js` gains `--allow-pre-headers-spec`,
      (E5) `spm/autolinking-plugins.js` takes the autolinking plugin of the dependency named `expo`
      from `RN_SPM_EXPO_PLUGIN` (an absolute path, set by the driver's `--expo-plugin`) when `expo`
-     declares none, which is the case for Expo SDK 57.
+     declares none, which is the case for Expo SDK 57, and (E6) `spm/generate-spm-autolinking.js`
+     rethrows a podspec reader failure from the header-search-path read instead of returning `[]`
+     (React Native 0.88.1 has no such read, so the 0.88 patches cannot carry it).
 - `package.json` (`{ "type": "commonjs" }`) is needed because rn-xtool is `"type": "module"`.
 - The `__dirname` candidates in `spm/spm-utils.js` and `setup-apple-spm.js` `resolveReactNativeRoot`
   are untouched and unreachable: the driver always passes `--react-native-root`.

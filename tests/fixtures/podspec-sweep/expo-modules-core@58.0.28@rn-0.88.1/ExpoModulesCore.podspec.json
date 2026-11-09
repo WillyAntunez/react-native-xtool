@@ -1,0 +1,132 @@
+{
+  "env": [
+    "RCT_NEW_ARCH_ENABLED",
+    "REACT_NATIVE_PATH",
+    "USE_FRAMEWORKS",
+    "USE_HERMES"
+  ],
+  "helpers": [
+    "add_dependency",
+    "get_folly_config",
+    "install_modules_dependencies"
+  ],
+  "names": {
+    "reduced": {
+      "headerDir": "ExpoModulesCore",
+      "moduleName": null,
+      "name": "ExpoModulesCore"
+    },
+    "shim": {
+      "headerDir": "ExpoModulesCore",
+      "moduleName": null,
+      "name": "ExpoModulesCore"
+    }
+  },
+  "reduced": {
+    "refused": "<project>/node_modules/expo-modules-core/ExpoModulesCore.podspec: `s.compiler_flags = compiler_flags` cannot be evaluated: it uses `compiler_flags`, which is changed by `compiler_flags << ' ' << new_arch_compiler_flags`, which the reader cannot evaluate. The podspec reader evaluates locals, string interpolation, arrays, ENV['...'], package.json reads, comparisons, ternaries and if/unless blocks; building from the part it could read would leave some of the library's files or settings out of its target. Install Ruby (sudo apt install ruby) so rn-xtool reads the podspec as CocoaPods does, or give the library a Package.swift of its own."
+  },
+  "shim": {
+    "compilerFlags": [
+      "-Wno-comma",
+      "-Wno-shorten-64-to-32"
+    ],
+    "dependencies": [
+      "hermes-engine",
+      "React-jsinspector",
+      "React-Core",
+      "ReactCommon/turbomodule/core",
+      "React-NativeModulesApple",
+      "React-RCTFabric",
+      "ExpoModulesJSI"
+    ],
+    "excludeFiles": [
+      "ios/Tests",
+      "ios/Benchmarks",
+      "ios/Worklets",
+      "ios/WorkletsTests",
+      "ios/WorkletsAdapter"
+    ],
+    "frameworks": [],
+    "headerDir": "ExpoModulesCore",
+    "headerDirScopes": [
+      {
+        "headerDir": "ExpoModulesCore",
+        "headerMappingsDirs": [],
+        "sourceFiles": [
+          "ios/**/*.{h,m,mm,swift,cpp}",
+          "common/cpp/**/*.{h,cpp}"
+        ]
+      }
+    ],
+    "headerMappingsDir": null,
+    "headerMappingsDirs": [],
+    "headerSearchPaths": [
+      "${PODS_CONFIGURATION_BUILD_DIR}/ExpoModulesCore/Swift Compatibility Header",
+      "$(PODS_ROOT)/Headers/Private/Yoga"
+    ],
+    "libraries": [],
+    "moduleName": null,
+    "name": "ExpoModulesCore",
+    "partial": false,
+    "preprocessorDefines": [
+      {
+        "config": null,
+        "name": "REACT_NATIVE_TARGET_VERSION",
+        "value": "88"
+      },
+      {
+        "config": null,
+        "name": "USE_HERMES",
+        "value": null
+      },
+      {
+        "config": null,
+        "name": "RCT_NEW_ARCH_ENABLED",
+        "value": null
+      },
+      {
+        "config": null,
+        "name": "EXPO_MODULES_CORE_VERSION",
+        "value": "58.0.28"
+      }
+    ],
+    "privateHeaderFiles": [
+      "ios/**/*+Private.h",
+      "ios/**/Swift.h"
+    ],
+    "publicHeaderFiles": [],
+    "reader": "ruby",
+    "requiresArc": true,
+    "resources": [],
+    "sourceFiles": [
+      "ios/**/*.{h,m,mm,swift,cpp}",
+      "common/cpp/**/*.{h,cpp}"
+    ],
+    "spmDependencies": [],
+    "subspecDependencies": {},
+    "swiftConditions": [],
+    "swiftVersions": [
+      "6.0"
+    ],
+    "unresolvedSources": [],
+    "usesInstallModulesDependencies": true,
+    "version": "",
+    "warnings": [
+      "Dropped Folly define(s) FOLLY_MOBILE=1, FOLLY_USE_LIBCPP=1, FOLLY_CFG_NO_COROUTINES=1, FOLLY_HAVE_CLOCK_GETTIME=1 — the prebuilt React Native headers ship folly-config.h, and defining them without the full CocoaPods set breaks the build."
+    ],
+    "weakFrameworks": []
+  },
+  "tsReaders": {
+    "dependencies": {
+      "onlyShim": [
+        "React-jsinspector",
+        "hermes-engine"
+      ],
+      "onlyTs": []
+    },
+    "resourceBundles": {
+      "onlyShim": [],
+      "onlyTs": []
+    }
+  }
+}

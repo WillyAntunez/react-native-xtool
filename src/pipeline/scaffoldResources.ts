@@ -97,7 +97,7 @@ interface PodspecResources {
  * are literal strings is a bundle rn-xtool builds (a key given twice, for every platform and for iOS, merges its
  * globs); any other bundle is named by its key, and a plain resource by its basename.
  */
-function podspecResources(text: string): PodspecResources {
+export function podspecResources(text: string): PodspecResources {
   const lines = podspecLines(text);
   const podName = /\.name\s*=\s*(["'])([^"'#]+)\1/.exec(text)?.[2];
   const items: string[] = [];

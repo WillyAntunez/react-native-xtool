@@ -5,6 +5,66 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 
 ## [Unreleased]
 
+### Upgrading from 0.1.0-alpha.7
+- Install Ruby 2.7 or newer (`sudo apt install ruby`) before your first build with this release, so rn-xtool reads
+  podspecs as CocoaPods does; `rn-xtool doctor` shows the reader this machine uses. Without Ruby, `rn-spm` reads them
+  with the reduced reader and says so in a `⚠` line.
+- On React Native 0.88 (bare, and Expo SDK 58), the first build after the upgrade stops at `patches` with "rn-xtool
+  could not apply its patch to react-native@0.88.1 (patch file: react-native+0.88.1.patch): node_modules/react-native
+  is the version the patch is for, but its files match neither the original package nor the patched one.": this
+  release changes the bundled react-native patch (a new file, `scripts/spm/read-podspec-shim.rb`, and a rewritten
+  `scripts/spm/read-podspec.js`), and `node_modules/react-native` still holds 0.1.0-alpha.7's. Run
+  `rm -rf node_modules/react-native && npm install`, then build again.
+- The scaffolder is now revision 8, so every scaffold patch rn-xtool persisted in your `patches/` before this release
+  gets a warning at each `build`: "⚠ patches/<name> was written by an older rn-xtool scaffolder (revision 7, now 8);
+  delete it so rn-xtool regenerates it (also remove node_modules/<package> and reinstall: that copy still has the old
+  Package.swift)". With Ruby installed, delete each such patch, remove the library from `node_modules` and reinstall
+  it, then build: rn-xtool scaffolds it again and persists the new patch.
+
+### Changed
+- The scaffolder reads every podspec with the system `ruby` (2.7 or later) through a shim of CocoaPods' DSL and React
+  Native's podspec helpers, the way CocoaPods runs it on a Mac: `install_modules_dependencies`, `defined?` and
+  `respond_to?` answer as under React Native's Podfile, and a library's own Ruby and `node` scripts run. So
+  react-native-gesture-handler 3.3.0 gets `RNGH_USE_WORKLETS=1` beside react-native-worklets 0.8 or later, and
+  react-native-webview 14.0.1 takes its `install_modules_dependencies` branch. Every podspec runs with the
+  interpreter of the first `ruby` on `PATH`, by its absolute path, so a version manager's `ruby` shim cannot pick
+  another one per folder, for at most 120 s. Without a usable Ruby, the reduced reader of earlier releases reads them, and
+  `rn-spm` prints one `⚠` line saying why. See [how-it-works.md](docs/how-it-works.md#cocoapods-only-libraries).
+- `pod ipc spec` is no longer run, so a machine with CocoaPods reads a podspec exactly as any machine with Ruby, instead
+  of with React Native's helpers stripped (react-native-webview, `@react-native-async-storage/async-storage`,
+  react-native-keychain and react-native-video took their old-architecture branch there).
+- A podspec's `ios` attributes (`s.ios.exclude_files`, `ss.ios.dependency`, …) are merged over the spec and each
+  subspec the scaffold uses, as CocoaPods merges them for an iOS target; `osx`, `tvos`, `visionos` and `watchos` ones
+  are never read.
+- A podspec Ruby cannot read, or one that does not finish in 120 s, stops `rn-spm` with the podspec (and its line,
+  when Ruby keeps one) and the reason, also when autolinking reads it for header search paths, on React Native 0.88
+  and in the copy used for 0.85–0.87 and Expo SDK 57, instead of leaving that library without them. A gap of the
+  reader, a timeout, a Ruby that ends without a result and a `key not found` from `ENV.fetch` end with "Set
+  RN_XTOOL_PODSPEC_READER=reduced to read it with the reduced reader for one run, and report it with rn-xtool doctor
+  --report." See [troubleshooting.md](docs/troubleshooting.md#podspec-reader).
+- A podspec that calls React Native's `spm_dependency` is refused by name, "<podspec>: uses spm_dependency(url: <url>,
+  products: <a, b>), which rn-xtool does not map yet", instead of scaffolding a target that would not link.
+- A podspec that sets `script_phases`, `prepare_command`, `info_plist` or `module_map` gets a line at `rn-spm`,
+  "! <library>: The podspec sets <key>, which a CocoaPods build applies and rn-xtool's scaffold does not.", instead
+  of leaving it out silently.
+
+### Added
+- `rn-xtool doctor` (also with `--project`) and `rn-xtool setup` report Ruby: `✔ ruby — 3.3.8`, or `⚠ ruby — not
+  found — podspecs are read with the reduced reader; sudo apt install ruby`. The install command is named when Ruby is
+  missing or older than 2.7; for another reason (no `json`, a Ruby that cannot run the reader) the line names it and
+  links the troubleshooting page. `setup` never installs Ruby.
+- `RN_XTOOL_PODSPEC_READER=reduced` reads every podspec with the reduced reader for one run, the escape when Ruby
+  cannot read one; `rn-spm` says so in a `⚠` line. Another value is named in a warning and ignored.
+- Each scaffolded `Package.swift` names its podspec reader on its marker (`// rn-xtool-podspec-reader: ruby` or
+  `reduced`), and the `patches` step warns about a persisted scaffold patch the other reader wrote: delete one the
+  reduced reader wrote where Ruby is available, keep one Ruby wrote on a machine that reads with the reduced reader.
+- `rn-xtool doctor --report` has `ruby:`, `podspec reader:` (the reader of the last `rn-spm` and how many podspecs it
+  read) and `podspec ENV:` (the environment variables each podspec read) lines, from
+  `ios/build/rn-xtool-podspec-reads.jsonl`, which `rn-spm` writes.
+- CI runs the podspec reader sweep, which reads the podspecs of a pinned set of libraries with both readers and
+  compares them with recorded goldens, the shim's tests on Ruby 2.7, and a check that no Markdown file holds a bare
+  `@` mention, which would notify a GitHub user.
+
 ## [0.1.0-alpha.7] - 2026-11-06
 
 ### Upgrading from 0.1.0-alpha.6
@@ -44,7 +104,7 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   the project's `CLANG_CXX_LANGUAGE_STANDARD` (C++20 when unset), instead of clang's default, which stopped on React
   Native's C++20 headers with "unknown type name 'Hashable'" in `react/utils/hash_combine.h`.
 - An Objective-C++ file that imports a pod table forward (a bare app's `AppDelegate.mm` with
-  `#import <AppAuth/AppAuth.h>`) compiles, instead of stopping with "use of '@import' when modules are disabled": the
+  `#import <AppAuth/AppAuth.h>`) compiles, instead of stopping with "use of '`@import`' when modules are disabled": the
   scaffold's forwarder `#import`s the pod's public headers instead of `@import`ing its modules.
 - A library that was also built for Android gets its scaffold persisted, instead of "⚠ Did not persist <library>'s
   scaffold: the patch would contain a binary file (node_modules/<library>/android/build/…/BuildConfig.dex)" and a new

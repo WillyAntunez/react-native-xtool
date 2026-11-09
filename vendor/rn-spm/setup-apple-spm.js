@@ -439,9 +439,8 @@ function runCodegenStep(
 /**
  * Walks autolinking.json and writes a Package.swift into each community RN
  * package that ships a podspec but no SPM manifest. Reuses the dep's
- * podspec (via `pod ipc spec` when available) so the scaffolded file
- * captures the dep's actual sources, header search paths, frameworks, and
- * dependencies. Files carrying the scaffolder's own marker are regenerated
+ * podspec so the scaffolded file captures the dep's actual sources, header
+ * search paths, frameworks, and dependencies. Files carrying the scaffolder's own marker are regenerated
  * when the cache slot changes (manifest-hash bump); files without the
  * marker are left alone (upstream-shipped or user-managed).
  *

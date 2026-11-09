@@ -25,9 +25,18 @@ import { mergedPodTable, type PodTable } from "../src/project/podTable.js";
 import path from "node:path";
 
 const RESULTS = "/proj/ios/build/rn-xtool-scaffold-results.json";
-const paths = { root: "/proj", ios: "/proj/ios", iosXtool: "/proj/ios-xtool", scaffoldResults: RESULTS } as unknown as ProjectPaths;
+const READS = "/proj/ios/build/rn-xtool-podspec-reads.jsonl";
+const paths = {
+  root: "/proj",
+  ios: "/proj/ios",
+  iosXtool: "/proj/ios-xtool",
+  scaffoldResults: RESULTS,
+  podspecReads: READS,
+} as unknown as ProjectPaths;
 const SWIFT_HEADERS = "/proj/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos";
 const POD_TABLE = "/proj/ios/build/rn-xtool-pods.json";
+/** What every React Native run gets for the podspec reads (Task 10). */
+const READS_ENV = { RN_SPM_PODSPEC_READS: READS, RN_SPM_APP_IOS_DIR: "/proj/ios" };
 const rnDir = "/proj/node_modules/react-native";
 const INST = { rnScripts: "installed" } as const;
 const missing = (n: string) =>
@@ -203,6 +212,7 @@ describe("Expo on the driver", () => {
       RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS,
       EXPO_PRECOMPILED_MODULES_PATH: "/proj/ios/build/expo-precompiled",
       RN_SPM_POD_TABLE: POD_TABLE,
+      ...READS_ENV,
     };
     expect(h.calls).toEqual([
       { cmd: "node", args: generate, cwd: "/proj/ios", env },
@@ -217,7 +227,7 @@ describe("Expo on the driver", () => {
     const setup = `${rnDir}/scripts/setup-apple-spm.js`;
     const cfg = '["npx","expo-modules-autolinking","react-native-config","--json","--platform","ios"]';
     const offline = ["--download", "skip", "--artifacts", "/art"];
-    const env = { RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS, RN_SPM_POD_TABLE: POD_TABLE };
+    const env = { RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS, RN_SPM_POD_TABLE: POD_TABLE, ...READS_ENV };
     const h = harness([
       { exitCode: 1, output: missing("lib-a") },
       { exitCode: 0, output: "" },
@@ -253,8 +263,12 @@ describe("Expo on the driver", () => {
       { cmd: persistScaffoldArgv("lib-a")[0], args: persistScaffoldArgv("lib-a")[1], cwd: "/proj" },
       { cmd: "node", args: [setup, "add", "--config-command", cfg, "--yes", ...offline], cwd: "/proj/ios", env },
     ]);
-    expect(rnSpmEnv(full, "installed")).toEqual(swiftHeadersEnv(full.iosXtool));
-    expect(rnSpmEnv(full, "installed", POD_TABLE)).toEqual({ ...swiftHeadersEnv(full.iosXtool), RN_SPM_POD_TABLE: POD_TABLE });
+    expect(rnSpmEnv(full, "installed")).toEqual({ ...swiftHeadersEnv(full.iosXtool), ...READS_ENV });
+    expect(rnSpmEnv(full, "installed", POD_TABLE)).toEqual({
+      ...swiftHeadersEnv(full.iosXtool),
+      RN_SPM_POD_TABLE: POD_TABLE,
+      ...READS_ENV,
+    });
 
     const bare = harness([{ exitCode: 0, output: "" }]);
     await runRnSpm(full, { kind: "bare", rnScripts: "vendored", expoPlugin: "installed", rnArtifactsDir: "/art" }, bare.deps);
@@ -278,12 +292,89 @@ describe("runRnSpm", () => {
         cmd: "node",
         args: rnSpmGenerateArgs(paths, INST, rnDir),
         cwd: "/proj/ios",
-        env: { RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS, RN_SPM_POD_TABLE: POD_TABLE },
+        env: { RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS, RN_SPM_POD_TABLE: POD_TABLE, ...READS_ENV },
       },
     ]);
     const expo = harness([{ exitCode: 0, output: "" }]);
     await runRnSpm(paths, { kind: "expo", rnScripts: "installed", expoPlugin: "installed" }, expo.deps);
     expect(expo.calls[0]!.args).toEqual(rnSpmArgs(paths, {}, rnDir));
+  });
+
+  it("hands the scaffolder the reads file and the iOS folder", () => {
+    const full = projectPaths("/proj");
+    expect(full.podspecReads).toBe(READS);
+    expect(rnSpmEnv(full, "installed", POD_TABLE)).toMatchObject({
+      RN_SPM_PODSPEC_READS: READS,
+      RN_SPM_APP_IOS_DIR: "/proj/ios",
+    });
+  });
+
+  it("prints the reader line after rn-spm, also when it fails", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "rn-spm-reads-"));
+    try {
+      const full = projectPaths(root);
+      mkdirSync(full.iosBuild, { recursive: true });
+      // A previous run's read, with a warning: never this run's.
+      writeFileSync(full.podspecReads, `${JSON.stringify({ podspec: "/old.podspec", reader: "ruby", warning: "old" })}\n`);
+      const events: string[] = [];
+      const runner: RnRunner = async (_cmd, _args, o) => {
+        const file = o.env?.["RN_SPM_PODSPEC_READS"];
+        if (file === undefined) throw new Error("no RN_SPM_PODSPEC_READS");
+        for (const name of ["a", "b"]) {
+          const read = {
+            podspec: path.join(root, "node_modules", name, `${name}.podspec`),
+            reader: "reduced",
+            why: "Ruby was not found",
+            forced: false,
+            env: ["USE_FRAMEWORKS"],
+            helpers: [],
+            ok: true,
+          };
+          writeFileSync(file, `${JSON.stringify(read)}\n`, { flag: "a" });
+        }
+        return { exitCode: 1, output: "rn-spm-generate: boom" };
+      };
+      const deps = { runner, log: (s: string) => events.push(s), rnDir, writePodTable: () => POD_TABLE };
+      await runRnSpm(full, { kind: "bare", rnScripts: "vendored", expoPlugin: "installed" }, deps).catch((e: Error) =>
+        events.push(`error: ${e.message.split("\n")[0]}`),
+      );
+      expect(events).toEqual([
+        "⚠ Ruby was not found, so rn-xtool read the podspecs with its reduced reader, which evaluates a subset of Ruby; " +
+          "install Ruby (sudo apt install ruby) to read them as CocoaPods does. " +
+          "See https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/troubleshooting.md#podspec-reader",
+        "error: React Native SwiftPM setup failed (exit 1):",
+      ]);
+      // The ENV names go to the reads file only, never to the terminal (R4).
+      expect(events.join("\n")).not.toContain("USE_FRAMEWORKS");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("prints the reader line once when React Native runs again", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "rn-spm-reads-"));
+    try {
+      const full = projectPaths(root);
+      mkdirSync(full.iosBuild, { recursive: true });
+      const logs: string[] = [];
+      let runs = 0;
+      const runner: RnRunner = async (_cmd, args, o) => {
+        runs++;
+        if (args.includes("--scaffold")) return { exitCode: 0, output: "" };
+        const file = o.env?.["RN_SPM_PODSPEC_READS"];
+        const read = { podspec: path.join(root, "x.podspec"), reader: "reduced", why: "Ruby was not found", forced: false };
+        if (file !== undefined) writeFileSync(file, `${JSON.stringify({ ...read, env: [], helpers: [], ok: true })}\n`, { flag: "a" });
+        return runs === 1 ? { exitCode: 2, output: missing("lib-a") } : { exitCode: 0, output: "" };
+      };
+      await runRnSpm(
+        full,
+        { kind: "bare", rnScripts: "vendored", expoPlugin: "installed" },
+        { runner, log: (s) => logs.push(s), rnDir, writePodTable: () => POD_TABLE },
+      ).catch(() => undefined);
+      expect(logs.filter((l) => l.startsWith("⚠ Ruby was not found"))).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("refuses to run without the project kind (never `add --yes` by default)", async () => {
@@ -317,7 +408,7 @@ describe("runRnSpm", () => {
     ]);
     for (const c of [h.calls[0]!, h.calls[1]!, h.calls[3]!]) {
       expect(c.cwd).toBe("/proj/ios");
-      expect(c.env).toEqual({ RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS, RN_SPM_POD_TABLE: POD_TABLE });
+      expect(c.env).toEqual({ RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS, RN_SPM_POD_TABLE: POD_TABLE, ...READS_ENV });
     }
   });
 
@@ -402,7 +493,9 @@ describe("runRnSpm", () => {
     await runRnSpm(paths, { kind: "expo", rnScripts: "installed", expoPlugin: "installed" }, h.deps);
     const rnRuns = h.calls.filter((c) => c.cmd === "node");
     expect(rnRuns.map((c) => c.args[1])).toEqual([expect.stringMatching(/add|update/), "--rn-dir", expect.stringMatching(/add|update/)]);
-    for (const c of rnRuns) expect(c.env).toEqual({ RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS, RN_SPM_POD_TABLE: POD_TABLE });
+    for (const c of rnRuns) {
+      expect(c.env).toEqual({ RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS, RN_SPM_POD_TABLE: POD_TABLE, ...READS_ENV });
+    }
     expect(h.calls[1]!.args).toContain("--scaffold");
     expect(h.calls[2]!.args[1]).toBe("pager");
   });
