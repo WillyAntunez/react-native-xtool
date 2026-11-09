@@ -217,11 +217,16 @@ export function clangArgs(i: PrecheckInputs, file: string): string[] {
   ];
 }
 
-/** `swiftc -typecheck` of the App's Swift files, writing `App-Swift.h` to the precheck's header folder. */
+/**
+ * `swiftc -typecheck` of the App's Swift files, writing `App-Swift.h` to the precheck's header folder. App is a library
+ * target (the precheck refuses an executable one), which Swift Build compiles with `-parse-as-library`: without it a
+ * one-file module's file is its main file, where an `@main` type is an error.
+ */
 export function swiftcArgs(i: PrecheckInputs, files: string[]): string[] {
   const { app, expo } = i.app.pkg;
   return [
     "-typecheck",
+    "-parse-as-library",
     "-module-name",
     "App",
     "-target",

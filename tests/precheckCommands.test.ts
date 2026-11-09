@@ -145,6 +145,8 @@ describe("the precheck's command lines", () => {
   it("typechecks Swift with the bridging header and writes App-Swift.h", () => {
     const args = swiftcArgs(inputs(), ["/p/a/AppDelegate.swift", "/p/a/View.swift"]);
     expect(args[0]).toBe("-typecheck");
+    // Task 13's first false stop: a one-file App is not its main file ('main' attribute … top-level code).
+    expect(args).toContain("-parse-as-library");
     expect(after(args, "-module-name")).toEqual(["App"]);
     expect(after(args, "-target")).toEqual(["arm64-apple-ios16.4"]);
     expect(after(args, "-sdk")).toEqual(["/t/sdk/iPhoneOS.sdk"]);
@@ -329,6 +331,13 @@ describe.skipIf(!HAS_IOS_TOOLS)(
           expect(typecheck.stderr).toBe("");
           expect(typecheck.status).toBe(0);
           expect(existsSync(path.join(dir, "swift-headers", "App-Swift.h"))).toBe(true);
+
+          // One file with an @main type, as the bare template's AppDelegate.swift: a library's file, not main.swift.
+          const main = path.join(t, "AppDelegate.swift");
+          writeFileSync(main, "import UIKit\n\n@main\nclass AppDelegate: UIResponder, UIApplicationDelegate {}\n");
+          const library = tool(tc.swiftc, swiftcArgs(i(false), [main]), { env: toolEnv(), timeout: SWIFT_TIMEOUT_MS });
+          expect(library.stderr).toBe("");
+          expect(library.status).toBe(0);
 
           const objc = path.join(t, "B.m");
           writeFileSync(objc, "#import <Foundation/Foundation.h>\n");
