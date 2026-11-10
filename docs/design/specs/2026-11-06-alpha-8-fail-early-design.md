@@ -539,9 +539,11 @@ nowhere; one under a condition B1 cannot evaluate is never an error. B1 runs twi
 2. **Swift first.** `swiftc -typecheck` on the App's Swift files with `-import-objc-header` and the same `-Xcc` paths,
    writing `App-Swift.h` into `ios-xtool/.precheck/` (`-emit-objc-header-path`) for the next hop. When a Swift file
    imports a module SwiftPM builds from Swift (Expo, `ExpoModulesCore`, any Swift library target), the Swift part is
-   not checked: one `ℹ` line names the file and the module (row 43).
+   not checked: one `ℹ` line names the file and the module (row 43). A module counts as one SwiftPM builds from Swift
+   when its target has a Swift source, even when the graph also has a clang module map for it (a mixed target).
 3. **C-family next.** `clang -fsyntax-only` on each `.m`, `.mm`, `.c`, `.cc`, `.cpp` of the App, in parallel, with
-   `nice`. A file that imports `App-Swift.h` is checked only when hop 2 wrote it.
+   `nice`. A file that imports `App-Swift.h` is checked only when hop 2 wrote it. A file whose reach `@import`s a
+   module SwiftPM builds from Swift, or one no map declares, is not compiled: one `ℹ` line per module (row 43b).
 4. **Report.** An error stops the build before `xtool-build`: `✖ precheck — <file>:<line>: <clang's message>` with
    clang's include stack (F4's error is in a React Native header; the cause is the app's flags), the first ten errors,
    and the log file's path. Warnings are not printed: `xtool-build` prints them once.
@@ -769,7 +771,8 @@ USB, the disk, GitHub's mention parser, npm and the drift watch's runners.
 | 40 | B2, false pass | the flags differ the other way | user at `xtool-build`, as today | accept |
 | 41 | B2, toolchain | `clang`, `swiftc` or the iPhoneOS SDK cannot be found | user: a stop naming the tool and `rn-xtool setup` | handle; doctor already fails on `swift` and `darwin-sdk` |
 | 42 | B2, module cache | a stale cache after a React Native or toolchain change ("module file out of date") | user: a stop, or nothing after the retry | handle: the cache is keyed by React Native version and toolchain; one retry without it; `--clean` removes it |
-| 43 | B2, Swift modules | a Swift file imports a module SwiftPM builds from Swift (Expo, `ExpoModulesCore`) | user: `ℹ precheck — <file> imports <module>, which SwiftPM builds: checked by xtool-build` | accept: an Expo app's `AppDelegate.swift` is never prechecked; handle the line |
+| 43 | B2, Swift modules | a Swift file imports a module whose target SwiftPM builds from Swift (Expo, `ExpoModulesCore`, a mixed target) | user: `ℹ precheck — <file> imports <module>, which SwiftPM builds: checked by xtool-build` | accept: an Expo app's `AppDelegate.swift` is never prechecked; handle the line: a module is known to Swift only when the graph's maps declare it and its target has no Swift sources, or the SDK has it |
+| 43b | B2, C-family `@import` | a C-family file, or the bridging header through its includes, `@import`s a module whose target SwiftPM builds from Swift, or one no map declares | user: `ℹ precheck — <file> imports the module <M>, which SwiftPM builds; checked by xtool-build`, one line per module; the log lists every such file | handle (this wave): the file is not compiled, nor are the Swift files when it is the bridging header; B1 never errors on `@import` (row 35) |
 | 44 | B2, clang modules | Swift imports a clang target without a module map on disk (`ReactAppDependencyProvider`, `ReactCodegen`; SwiftPM synthesises theirs at build) | nobody: synthesised by SwiftPM's rule into `.precheck/`, or the file skipped with `ℹ` | handle: never an error; the builder picks synthesis or skip |
 | 45 | B2, `App-Swift.h` | an Objective-C file imports the App's Swift header and hop 2 did not write it | user: one `ℹ` naming the files not checked | handle |
 | 46 | B, target shape: xcconfig | `HEADER_SEARCH_PATHS`, defines, the C++ standard or another setting rn-xtool reads come from an xcconfig (`baseConfigurationReference`); the manifest lacks them, and B mirrors the manifest, so the errors look like rn-xtool's | user: `⚠ <xcconfig> sets HEADER_SEARCH_PATHS, … for the app target; rn-xtool does not read xcconfig files` at doctor and build start | handle (R6): the `⚠` only, and only for an xcconfig that is not CocoaPods' generated `Pods-*.xcconfig` and sets a setting rn-xtool reads; reading xcconfigs is a later block |

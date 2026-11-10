@@ -1066,10 +1066,16 @@ compilers run at low priority (`nice`), as many at a time as the machine has cor
   `precheck: skipped with --skip-precheck (last build)`; after a build that ran the step, stopped or not, it reads
   `precheck: run (last build)`, and before any build of this release reached `generate`, `precheck: not recorded`.
 - **"ℹ precheck — <file> imports <module>, which SwiftPM builds: checked by xtool-build"**: a Swift file imports a
-  module that exists only once SwiftPM builds it, so `swiftc -typecheck` does not run and the Swift files are left to
-  `xtool-build`. On Expo it is the usual line once Swift Build has written its module maps: the app's
+  module that exists only once SwiftPM builds it (a Swift library, or a library target with Swift files next to its
+  Objective-C, whose clang half alone the precheck could give `swiftc`), or the bridging header `@import`s one, so
+  `swiftc -typecheck` does not run and the Swift files are left to `xtool-build`. On Expo it is the usual line once Swift Build has written its module maps: the app's
   `AppDelegate.swift` imports `Expo`, or the generated `ExpoModulesProvider.swift` imports `ExpoModulesCore`. The
   C-family files are still checked. Nothing to do.
+- **"ℹ precheck — <file> imports the module <M>, which SwiftPM builds; checked by xtool-build"**: a C-family file, or
+  a header it includes, has `@import M;` for a module SwiftPM builds from Swift, or for one no module map of the
+  package declares, so clang would not find it as `xtool-build` does. That file is not compiled (nor the Swift files,
+  when it is the bridging header); the line names the first such file, and `ios-xtool/.precheck/precheck.log` lists
+  them all. The other C-family files are still checked. Nothing to do.
 - **"ℹ precheck — <files> import <header>, which the Swift check did not write: checked by xtool-build"**: these files
   import a `-Swift.h` header (Xcode's generated Swift header) that the Swift check did not write, because it did not
   run or the header is another module's, so they are left to `xtool-build`. Nothing to do.

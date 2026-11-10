@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync, type Dirent } from "node:fs";
 import { availableParallelism } from "node:os";
 import path from "node:path";
 import { devEnv } from "../tools/xtool.js";
@@ -21,7 +21,17 @@ export interface DumpedPackage {
    */
   dependencies: { identity: string; name?: string; path?: string }[];
   products: { name: string; targets: string[] }[];
-  targets: { name: string; type: string; path?: string | null; publicHeadersPath?: string | null; dependencies: unknown[] }[];
+  targets: {
+    name: string;
+    type: string;
+    path?: string | null;
+    publicHeadersPath?: string | null;
+    /** The manifest's `sources` (relative to the target's folder); absent: the whole folder. */
+    sources?: string[];
+    /** The manifest's `exclude`, relative to the target's folder. */
+    exclude?: string[];
+    dependencies: unknown[];
+  }[];
 }
 
 type Graph = { root: DumpedPackage; packages: DumpedPackage[] };
@@ -41,6 +51,12 @@ export interface PrecheckGraph {
   targets: string[];
   /** Every module the module maps declare, then the synthesized ones. */
   modules: string[];
+  /**
+   * The modules of the targets SwiftPM builds from Swift: each reached target whose sources hold a `.swift` file, by
+   * its C99 name and the modules its own module map declares. Their clang half alone (in `modules`) is not the module
+   * Swift Build gives an importer.
+   */
+  swiftModules: string[];
   /** The references the walk could not place (`<product> of <package>`, or a by-name reference), each once. */
   unresolved: string[];
 }
@@ -140,6 +156,8 @@ function dumpedPackage(json: unknown, dir: string): DumpedPackage | undefined {
         type: t.type as string,
         ...(typeof t.path === "string" ? { path: t.path } : {}),
         ...(typeof t.publicHeadersPath === "string" ? { publicHeadersPath: t.publicHeadersPath } : {}),
+        ...(Array.isArray(t.sources) ? { sources: t.sources.filter((x): x is string => typeof x === "string") } : {}),
+        ...(Array.isArray(t.exclude) ? { exclude: t.exclude.filter((x): x is string => typeof x === "string") } : {}),
         dependencies: Array.isArray(t.dependencies) ? t.dependencies : [],
       })),
   };
@@ -267,7 +285,7 @@ export function graphHeaders(graph: Graph): PrecheckGraph {
     }
     return all.find((p) => p.name === ref) ?? all.find((p) => identity(p) === r);
   };
-  const out: PrecheckGraph = { headerDirs: [], moduleMaps: [], synthesized: [], targets: [], modules: [], unresolved: [] };
+  const out: PrecheckGraph = { headerDirs: [], moduleMaps: [], synthesized: [], targets: [], modules: [], swiftModules: [], unresolved: [] };
   const seen = new Set<Target>();
 
   const visitProduct = (pkg: DumpedPackage | undefined, productName: string, unplaced: string) => {
@@ -284,7 +302,10 @@ export function graphHeaders(graph: Graph): PrecheckGraph {
   const visit = (pkg: DumpedPackage, target: Target) => {
     if (seen.has(target)) return;
     seen.add(target);
-    if (target !== appTarget) addHeaders(pkg, target);
+    if (target !== appTarget) {
+      const declared = addHeaders(pkg, target);
+      if (target.type === "regular" && hasSwiftSources(pkg, target)) out.swiftModules.push(c99name(target.name), ...declared);
+    }
     for (const raw of target.dependencies) {
       const d = dependency(raw);
       if (d === undefined) continue;
@@ -300,31 +321,36 @@ export function graphHeaders(graph: Graph): PrecheckGraph {
       }
     }
   };
-  const addHeaders = (pkg: DumpedPackage, target: Target) => {
+  /** The target's header folder and module map; the modules its map on disk declares (none: synthesized or no map). */
+  const addHeaders = (pkg: DumpedPackage, target: Target): string[] => {
     if (target.type === "binary") {
       const headers = binaryHeaders(pkg, target);
-      if (headers === undefined) return;
+      if (headers === undefined) return [];
       out.headerDirs.push(headers);
-      addModuleMap(path.join(headers, "module.modulemap"));
-    } else if (target.type === "regular") {
-      const include = path.join(pkg.path, target.path ?? path.join("Sources", target.name), target.publicHeadersPath ?? "include");
-      if (!isDir(include)) return;
-      out.headerDirs.push(include);
-      if (addModuleMap(path.join(include, "module.modulemap"))) return;
-      const module = c99name(target.name);
-      out.synthesized.push({ module, text: synthesizedModuleMap(module, include) });
+      return addModuleMap(path.join(headers, "module.modulemap")) ?? [];
     }
+    if (target.type !== "regular") return [];
+    const include = path.join(sourceDir(pkg, target), target.publicHeadersPath ?? "include");
+    if (!isDir(include)) return [];
+    out.headerDirs.push(include);
+    const declared = addModuleMap(path.join(include, "module.modulemap"));
+    if (declared !== undefined) return declared;
+    const module = c99name(target.name);
+    out.synthesized.push({ module, text: synthesizedModuleMap(module, include) });
+    return [];
   };
-  const addModuleMap = (file: string): boolean => {
+  /** The modules the map declares; undefined when there is no map. */
+  const addModuleMap = (file: string): string[] | undefined => {
     let text: string;
     try {
       text = readFileSync(file, "utf8");
     } catch {
-      return false;
+      return undefined;
     }
+    const declared = declaredModules(text);
     out.moduleMaps.push(file);
-    out.modules.push(...declaredModules(text));
-    return true;
+    out.modules.push(...declared);
+    return declared;
   };
 
   const appTarget = graph.root.targets.find((t) => t.name === "App");
@@ -334,8 +360,39 @@ export function graphHeaders(graph: Graph): PrecheckGraph {
   const declared = new Set(out.modules);
   out.synthesized = out.synthesized.filter((s) => !declared.has(s.module));
   out.modules = [...new Set([...out.modules, ...out.synthesized.map((s) => s.module)])];
+  out.swiftModules = [...new Set(out.swiftModules)];
   out.unresolved = [...new Set(out.unresolved)];
   return out;
+}
+
+/** A regular target's folder: its `path`, else `Sources/<name>`. */
+const sourceDir = (pkg: DumpedPackage, target: Target): string => path.join(pkg.path, target.path ?? path.join("Sources", target.name));
+
+/**
+ * The target compiles a Swift file: one of its `sources` is a `.swift` file or a folder holding one, or, without
+ * `sources`, its folder holds one. Not looked in: dot folders, its `exclude` entries and the folders of the package's
+ * other targets inside its own. Its public headers folder counts (an Expo mixed target's is its whole folder).
+ */
+function hasSwiftSources(pkg: DumpedPackage, target: Target): boolean {
+  const dir = sourceDir(pkg, target);
+  const skipped = new Set([
+    ...(target.exclude ?? []).map((e) => path.join(dir, e)),
+    ...pkg.targets.filter((t) => t !== target && t.type !== "binary").map((t) => sourceDir(pkg, t)).filter((d) => d !== dir),
+  ]);
+  const found = (p: string): boolean => {
+    if (skipped.has(p)) return false;
+    if (p.endsWith(".swift") && !isDir(p)) return existsSync(p);
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(p, { withFileTypes: true });
+    } catch {
+      return false;
+    }
+    return entries.some((e) =>
+      e.isDirectory() ? !e.name.startsWith(".") && found(path.join(p, e.name)) : e.name.endsWith(".swift") && !skipped.has(path.join(p, e.name)),
+    );
+  };
+  return (target.sources ?? ["."]).some((s) => found(path.join(dir, s)));
 }
 
 /** A binary target's device slice `Headers` (the slice without a platform variant), when it is an xcframework with one. */

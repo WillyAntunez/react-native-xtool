@@ -31,7 +31,8 @@ const write = (file: string, text: string): void => {
 interface FakePackage {
   name: string;
   path: string;
-  targets: { name: string; headers: Record<string, string> }[];
+  /** `swift`: the target's folder holds a Swift file too (a mixed target). */
+  targets: { name: string; headers: Record<string, string>; swift?: boolean }[];
 }
 
 /** React Native's headers as the fake graph gives them: `<React/…>` from a target named React. */
@@ -52,6 +53,7 @@ function fakeSwift(paths: ProjectPaths, packages: FakePackage[], calls: string[]
     for (const t of p.targets) {
       mkdirSync(path.join(p.path, t.name, "include"), { recursive: true });
       for (const [rel, text] of Object.entries(t.headers)) write(path.join(p.path, t.name, "include", rel), text);
+      if (t.swift === true) write(path.join(p.path, t.name, `${t.name}.swift`), "public let x = 1\n");
     }
   }
   const json = (o: unknown) => ({ code: 0, stdout: JSON.stringify(o), stderr: "" });
@@ -262,6 +264,52 @@ describe("runPrecheck", () => {
       "ℹ precheck — ios/App/Bridge.m import App-Swift.h, which the Swift check did not write: checked by xtool-build",
     ]);
     expect(h.calls.filter((c) => !["describe", "show-dependencies", "dump-package"].includes(c))).toEqual(["clang Plain.m"]);
+  });
+
+  it("skips Swift that imports a mixed module of the graph", async () => {
+    const { paths, app } = handApp({ "AppDelegate.swift": "import UIKit\nimport MixedLib\n", "Plain.m": "#import <UIKit/UIKit.h>\n" });
+    const h = harness(paths, app);
+    const mixed: FakePackage = { name: "MixedLib", path: path.join(paths.root, "mixed"), targets: [{ name: "MixedLib", headers: { "MixedLib.h": "" }, swift: true }] };
+    await h.run({ packages: [reactNative(paths.root), mixed] });
+    expect(h.logs).toEqual(["ℹ precheck — ios/App/AppDelegate.swift imports MixedLib, which SwiftPM builds: checked by xtool-build"]);
+    expect(h.calls.filter((c) => c.startsWith("swiftc") || c.startsWith("clang"))).toEqual(["clang Plain.m"]);
+  });
+
+  it("skips a C-family file that imports a Swift-built module or one no map declares", async () => {
+    const { paths, app } = handApp({
+      "A.m": "@import MixedLib;\n",
+      "X.m": '#import "Bridge.h"\n',
+      "Bridge.h": "@import Nowhere.Sub;\n",
+      "Also.m": "@import Nowhere;\n",
+      "Sdk.m": "@import UIKit;\n@import React;\n",
+    });
+    const h = harness(paths, app);
+    const mixed: FakePackage = { name: "MixedLib", path: path.join(paths.root, "mixed"), targets: [{ name: "MixedLib", headers: { "MixedLib.h": "" }, swift: true }] };
+    await h.run({ packages: [reactNative(paths.root), mixed] });
+    expect(h.logs).toEqual([
+      "ℹ precheck — ios/App/A.m imports the module MixedLib, which SwiftPM builds; checked by xtool-build",
+      "ℹ precheck — ios/App/X.m imports the module Nowhere, which SwiftPM builds; checked by xtool-build",
+    ]);
+    // An SDK framework and a module of the graph's maps compile; every skipped file is in the log.
+    expect(h.calls.filter((c) => c.startsWith("clang"))).toEqual(["clang Sdk.m"]);
+    expect(readFileSync(path.join(h.dir, "precheck.log"), "utf8")).toContain(
+      `# not compiled, imports the module Nowhere: ${path.join(paths.sources, "X.m")} ${path.join(paths.sources, "Also.m")}`,
+    );
+  });
+
+  it("skips Swift when its bridging header imports a Swift-built module", async () => {
+    const { paths, app } = handApp(
+      { "AppDelegate.swift": "import UIKit\n", "Bridging.h": "@import MixedLib;\n" },
+      { mixed: false, bridgingHeader: "Bridging.h" },
+    );
+    const h = harness(paths, app);
+    const mixed: FakePackage = { name: "MixedLib", path: path.join(paths.root, "mixed"), targets: [{ name: "MixedLib", headers: { "MixedLib.h": "" }, swift: true }] };
+    await h.run({ packages: [reactNative(paths.root), mixed] });
+    expect(h.logs).toEqual([
+      "ℹ precheck — ios/App/Bridging.h imports the module MixedLib, which SwiftPM builds; checked by xtool-build",
+      "ℹ precheck — ios/App/AppDelegate.swift imports MixedLib, which SwiftPM builds: checked by xtool-build",
+    ]);
+    expect(h.compiled).toEqual([]);
   });
 
   it("runs no swiftc for a target without Swift files", async () => {

@@ -259,6 +259,46 @@ describe("precheckGraph", () => {
     ]);
   });
 
+  it("lists the modules of the targets SwiftPM builds from Swift", () => {
+    expect(graphHeaders(graph).swiftModules).toEqual(["RNLibSwift"]);
+
+    const lib = path.join(t, "swift-modules");
+    // A Swift target with an include folder (a synthesized map), a clang-only one, an Expo-style mixed target whose
+    // public headers folder is its whole folder, one whose `sources` list names its Swift, one whose Swift is excluded
+    // or in a dot folder, and a Swift-only target without headers.
+    write(path.join(lib, "Sources/X/Foo.swift"));
+    write(path.join(lib, "Sources/X/include/X.h"));
+    write(path.join(lib, "Sources/C/C.m"));
+    write(path.join(lib, "Sources/C/include/C.h"));
+    write(path.join(lib, "root/ios/Mix.swift"));
+    write(path.join(lib, "root/ios/Mix.h"));
+    write(path.join(lib, "root/ios/module.modulemap"), "module MixObjC {\n  header \"Mix.h\"\n}\n");
+    write(path.join(lib, "pager/ios/Pager.swift"));
+    write(path.join(lib, "pager/ios/Pager.h"));
+    write(path.join(lib, "Sources/E/E.m"));
+    write(path.join(lib, "Sources/E/include/E.h"));
+    write(path.join(lib, "Sources/E/Tests/ETests.swift"));
+    write(path.join(lib, "Sources/D/D.m"));
+    write(path.join(lib, "Sources/D/include/D.h"));
+    write(path.join(lib, "Sources/D/.build/Gen.swift"));
+    write(path.join(lib, "Sources/S/S.swift"));
+    const names = ["X", "C", "Mix", "Pager", "E", "D", "S"];
+    const app = { name: "App", type: "regular", dependencies: names.map((n) => ({ byName: [n, null] })) };
+    const targets = [
+      app,
+      { name: "X", type: "regular", dependencies: [] },
+      { name: "C", type: "regular", dependencies: [] },
+      { name: "Mix", type: "regular", path: "root/ios", publicHeadersPath: ".", dependencies: [] },
+      { name: "Pager", type: "regular", path: "pager", sources: ["ios/Pager.swift", "ios/Pager.h"], publicHeadersPath: "ios", dependencies: [] },
+      { name: "E", type: "regular", exclude: ["Tests"], dependencies: [] },
+      { name: "D", type: "regular", dependencies: [] },
+      { name: "S", type: "regular", dependencies: [] },
+    ];
+    const g = graphHeaders({ root: { name: "SwiftModules", path: lib, dependencies: [], products: [], targets }, packages: [] });
+    expect(g.modules).toEqual(expect.arrayContaining(["X", "C", "MixObjC", "Pager", "E", "D"]));
+    expect(g.swiftModules).toEqual(["X", "Mix", "MixObjC", "Pager", "S"]);
+  });
+
   it("runs dump-package with a scratch path outside the library", async () => {
     const ios = path.join(t, "ios-xtool");
     const scratch = path.join(t, "scratch");

@@ -173,8 +173,9 @@ export async function runPrecheck(
     const maps = placeImporterMaps(r);
     const includes = pass2(r, inputs);
     const waiting = waitingForMaps(r, includes, maps);
-    const swift = await swiftHop(r, inputs, waiting, maps);
-    const cFamily = await cFamilyHop(r, inputs, swift !== undefined, includes, waiting, maps);
+    const swiftBuilt = importsSwiftBuilt(r, inputs, includes, maps, waiting);
+    const swift = await swiftHop(r, inputs, waiting, swiftBuilt, maps);
+    const cFamily = await cFamilyHop(r, inputs, swift !== undefined, includes, new Set([...waiting, ...swiftBuilt.keys()]), maps);
     report(r, [...(swift ?? []), ...cFamily]);
   } catch (e) {
     write(`# stopped: ${e instanceof Error ? e.message : String(e)}`);
@@ -459,20 +460,59 @@ function waitingForMaps(r: Run, includes: Includes, maps: ImporterMaps): Set<str
   return all;
 }
 
+/** The SDK has module `m`: a framework, or a Swift module of its own. */
+const sdkHas = (sdk: string, m: string): boolean =>
+  isDir(path.join(sdk, "System", "Library", "Frameworks", `${m}.framework`)) || existsSync(path.join(sdk, "usr", "lib", "swift", `${m}.swiftmodule`));
+
+/**
+ * The compile roots, not already waiting for a module map, whose reach `@import`s a module SwiftPM builds from Swift
+ * (`graph.swiftModules`) or one no map declares (not a module of the graph's maps, of the SDK, or of an importer map
+ * Swift Build wrote): file → that module. clang would not find the module as Swift Build gives it, so none of them is
+ * compiled; one `ℹ` line per module names the first file, and the log lists them all. B1 never errors on `@import`.
+ */
+function importsSwiftBuilt(r: Run, inputs: PrecheckInputs, includes: Includes, maps: ImporterMaps, waiting: Set<string>): Map<string, string> {
+  const swiftBuilt = new Set(inputs.graph.swiftModules);
+  const modules = new Set(inputs.graph.modules);
+  const importer = new Set((r.app.pkg.expo?.clangImporter?.moduleMaps ?? []).map((m) => path.basename(m, ".modulemap")));
+  const placed = (m: string): boolean =>
+    !swiftBuilt.has(m) && (modules.has(m) || importer.has(m) || maps.missing.has(m) || sdkHas(inputs.toolchain.sdk, m));
+  const out = new Map<string, string>();
+  const byModule = new Map<string, string[]>();
+  for (const root of compileRoots(r)) {
+    if (waiting.has(root)) continue;
+    const module = includes
+      .reached(root)
+      .flatMap((f) => moduleImports(readText(f), AT_IMPORT))
+      .find((m) => !placed(m));
+    if (module === undefined) continue;
+    out.set(root, module);
+    byModule.set(module, [...(byModule.get(module) ?? []), root]);
+  }
+  for (const [module, files] of byModule) {
+    r.show(`ℹ precheck — ${r.name(files[0]!)} imports the module ${module}, which SwiftPM builds; checked by xtool-build`);
+    r.write(`# not compiled, imports the module ${module}: ${files.join(" ")}`);
+  }
+  return out;
+}
+
 /**
  * Hop 2: one `swiftc -typecheck` over the App's Swift files, writing `App-Swift.h`. Not run without Swift files, while
- * they wait for a module map, nor when a file imports a module neither the SDK nor the graph has (SwiftPM builds it):
- * one `ℹ` line, the first such import. Undefined when swiftc did not run.
+ * they wait for a module map, when a file imports a module the SDK does not have and the graph has only as clang's
+ * (SwiftPM builds it from Swift, or it is in no map), nor when the bridging header imports one (`swiftBuilt`): one
+ * `ℹ` line, the first such import. Undefined when swiftc did not run.
  */
-async function swiftHop(r: Run, inputs: PrecheckInputs, waiting: Set<string>, maps: ImporterMaps): Promise<Unit[] | undefined> {
+async function swiftHop(
+  r: Run,
+  inputs: PrecheckInputs,
+  waiting: Set<string>,
+  swiftBuilt: Map<string, string>,
+  maps: ImporterMaps,
+): Promise<Unit[] | undefined> {
   const files = Object.keys(r.app.origins).filter((f) => path.extname(f) === ".swift");
   if (files.length === 0 || files.some((f) => waiting.has(f))) return undefined;
-  const { sdk } = inputs.toolchain;
   const modules = new Set(inputs.graph.modules);
-  const known = (m: string): boolean =>
-    modules.has(m) ||
-    isDir(path.join(sdk, "System", "Library", "Frameworks", `${m}.framework`)) ||
-    existsSync(path.join(sdk, "usr", "lib", "swift", `${m}.swiftmodule`));
+  const fromSwift = new Set(inputs.graph.swiftModules);
+  const known = (m: string): boolean => (modules.has(m) && !fromSwift.has(m)) || sdkHas(inputs.toolchain.sdk, m);
   for (const file of files) {
     const unknown = moduleImports(readFileSync(file, "utf8"), SWIFT_IMPORT).find((m) => !known(m));
     if (unknown !== undefined) {
@@ -480,13 +520,21 @@ async function swiftHop(r: Run, inputs: PrecheckInputs, waiting: Set<string>, ma
       return undefined;
     }
   }
+  const bridging = r.app.pkg.app.bridgingHeader;
+  const throughBridging = bridging !== undefined ? swiftBuilt.get(bridging) : undefined;
+  if (throughBridging !== undefined) {
+    // swiftc reads the bridging header: the module is as far from it as from clang.
+    r.show(`ℹ precheck — ${r.name(files[0]!)} imports ${throughBridging}, which SwiftPM builds: checked by xtool-build`);
+    return undefined;
+  }
   const args = maps.drop(["-no-color-diagnostics", ...swiftcArgs(inputs, files, maps.missing)]);
   return withRetry(r, inputs, async () => [await compileOne(r, inputs.toolchain.swiftc, args, files)]);
 }
 
 /**
  * Hop 3: `clang -fsyntax-only` per C-family file, `os.availableParallelism()` at a time; the bridging header too when
- * swiftc did not read it. A file waiting for a module map is not compiled, nor one that imports, itself or through the
+ * swiftc did not read it. A file in `waiting` (for a module map, or importing a module SwiftPM builds from Swift) is
+ * not compiled, nor one that imports, itself or through the
  * copy's headers, a `-Swift.h` the precheck did not write: one `ℹ` line per such header.
  */
 async function cFamilyHop(
