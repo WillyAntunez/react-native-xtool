@@ -149,7 +149,7 @@ export interface Pass1Input {
   headerSearchPaths: string[];
   /** The target's `GCC_PREPROCESSOR_DEFINITIONS` entries. */
   defines: string[];
-  /** Base names of the headers the app target references, on disk or not (and its bridging header's). */
+  /** The headers the app target references, on disk or not (and its bridging header), by their paths from ios/. */
   appHeaders: string[];
   /** The project uses binary pods, whose headers pass 1 cannot see. */
   binaryPods: boolean;
@@ -166,6 +166,12 @@ export interface Pass1Result {
   checked: number;
 }
 
+/** A quote spelling without its leading `./` and `../` segments: the part a file's path must end with. */
+const pathTail = (spelling: string): string => spelling.replace(/^(?:\.\.?\/)+/, "");
+
+/** `file` (forward slashes) is `tail`, or ends with `/<tail>`. */
+const endsWithPath = (file: string, tail: string): boolean => file === tail || file.endsWith(`/${tail}`);
+
 /** "a, b or c" */
 function orList(items: readonly string[]): string {
   return items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} or ${items[items.length - 1]}`;
@@ -176,8 +182,10 @@ function orList(items: readonly string[]): string {
  * the copy exists. The include folders are `<sources>/include` (the forwards) then the header search paths; under
  * `sources` only the copy's planned files and forwards exist, elsewhere the disk answers. Only a certain include
  * counts (R6): resolved → `checked`; unresolved, an angle include → `pending`, and a quote include → `missing` only
- * with app-own evidence (its base name is one of `appHeaders`, or a file of that name, ignoring case, is under ios/)
- * and without binary pods, else `pending`: clang falls back to the angle and system folders, so the compile decides
+ * with app-own evidence and without binary pods, else `pending`. The evidence: one of `appHeaders`, or a file under
+ * ios/ (case ignored, so that a case-only twin gets its hint), whose path ends with the spelling, its leading `./`
+ * and `../` aside; for a spelling without a folder, its name alone. A header of that name in another folder is no
+ * evidence for a spelling with one (`SomeLib/Utils.h`): a library's forwards may hold it: clang falls back to the angle and system folders, so the compile decides
  * (an SDK, libc or library header). Uncertain includes and Xcode's generated Swift headers count nowhere.
  */
 export function appIncludesPass1(i: Pass1Input): Pass1Result {
@@ -200,10 +208,14 @@ export function appIncludesPass1(i: Pass1Input): Pass1Result {
   let iosFiles: Map<string, string[]> | undefined;
   /** The files under ios/ named `base`, ignoring case (the walk runs once, at the first quote miss). */
   const onDisk = (base: string): string[] => (iosFiles ??= iosFileIndex(path.join(i.root, "ios"))).get(base.toLowerCase()) ?? [];
-  const appHeaders = new Set(i.appHeaders);
+  /** The files under ios/ whose path ends with the spelling, case ignored (by name alone for one without a folder). */
+  const matching = (spelling: string): string[] => {
+    const tail = pathTail(spelling).toLowerCase();
+    return onDisk(path.posix.basename(spelling)).filter((f) => endsWithPath(f.split(path.sep).join("/").toLowerCase(), tail));
+  };
   const appOwn = (spelling: string): boolean => {
-    const base = path.posix.basename(spelling);
-    return appHeaders.has(base) || onDisk(base).length > 0;
+    const tail = pathTail(spelling);
+    return i.appHeaders.some((h) => endsWithPath(h.split(path.sep).join("/"), tail)) || matching(spelling).length > 0;
   };
 
   const listed = new Set(i.files.map((f) => f.source));
@@ -214,7 +226,7 @@ export function appIncludesPass1(i: Pass1Input): Pass1Result {
    */
   const hint = (spelling: string): string => {
     const base = path.posix.basename(spelling);
-    const files = onDisk(base);
+    const files = matching(spelling);
     const unlisted = files.find((f) => path.basename(f) === base && !listed.has(f));
     if (unlisted !== undefined) {
       return i.expo === true
@@ -279,7 +291,7 @@ function checkAppTarget(
       sources,
       headerSearchPaths: bare.headerSearchPaths,
       defines: bare.defines,
-      appHeaders: [...bare.headers, ...(bare.bridgingHeader ? [bare.bridgingHeader] : [])].map((h) => path.basename(h.relPath)),
+      appHeaders: [...bare.headers, ...(bare.bridgingHeader ? [bare.bridgingHeader] : [])].map((h) => h.relPath),
       binaryPods,
     };
   } else if (project.kind === "expo") {

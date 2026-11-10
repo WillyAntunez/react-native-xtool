@@ -513,7 +513,11 @@ nowhere; one under a condition B1 cannot evaluate is never an error. B1 runs twi
 
 1. **Pass 1, before anything changes**: in `doctor --project` and at the start of `build`, next to the early checks.
    It knows the app's own files and `HEADER_SEARCH_PATHS`. An app-own quote include that is missing (F2) is an error
-   with the file, the line, the header and where rn-xtool looked. An angle include into React Native's or a library's
+   with the file, the line, the header and where rn-xtool looked. A quote include is app-own when a header the app
+   target references, or a file under `ios/`, has a path that ends with the spelling (for a spelling without a folder,
+   its name; case ignored, so that a case-only twin is named): a header of that name in another folder is no evidence
+   for a spelling with a folder (`"SomeLib/Utils.h"`), which a library's headers may answer, and pass 1 leaves it to
+   the build. An angle include into React Native's or a library's
    headers is "not checked yet" while `ios/build/xcframeworks` and the scaffolds are not staged: one `ℹ` line with the
    count, in doctor only. The same pass checks the app target's shape (R6, rows 46 and 47): an xcconfig the target or
    the project names (`baseConfigurationReference`) that is not CocoaPods' generated `Pods-*.xcconfig` and sets a

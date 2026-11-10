@@ -991,7 +991,8 @@ compilers run at low priority (`nice`), as many at a time as the machine has cor
 - **"✖ ios/<Target>/AppDelegate.mm:3 imports "AppDelegate.h", which is not in ios/<Target>, the app target's headers
   or <header search paths>"**, followed by "✖ <n> include(s) of the app's own sources resolve nowhere (listed above):
   the build would stop compiling them": pass 1 found a quote include of one of the app's own headers (a header the
-  app target references, or a file of that name anywhere under `ios/`, case ignored) in none of the folders clang
+  app target references, or a file anywhere under `ios/`, case ignored, whose path ends with the spelling: for
+  `"Shared/Utils.h"`, a `Shared/Utils.h`, not a `Utils.h` in another folder) in none of the folders clang
   searches, in the order the line names them: the including file's folder, the app target's headers (the forwards in
   `Sources/App/include`) and `HEADER_SEARCH_PATHS`. `doctor --project` prints the same line as `✖ app-includes — …`
   and exits non-zero. The line ends with what `ios/` holds of that name:

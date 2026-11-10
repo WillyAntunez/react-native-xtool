@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { bareCopyLayout } from "../src/generate/bareSources.js";
 import {
@@ -176,7 +176,7 @@ async function pass1(root: string, o: { binaryPods?: boolean } = {}): Promise<Pa
     sources,
     headerSearchPaths: bare.headerSearchPaths,
     defines: bare.defines,
-    appHeaders: [...bare.headers, ...(bare.bridgingHeader ? [bare.bridgingHeader] : [])].map((h) => basename(h.relPath)),
+    appHeaders: [...bare.headers, ...(bare.bridgingHeader ? [bare.bridgingHeader] : [])].map((h) => h.relPath),
     binaryPods: o.binaryPods ?? false,
   });
 }
@@ -270,6 +270,53 @@ describe("appIncludesPass1", () => {
     writeFileSync(join(root, "ios", "ObjcApp", "Unlisted.h"), "// not in the Xcode project\n");
     addToAppDelegate(root, '#ifdef RCT_NEW_ARCH_ENABLED\n#import "Unlisted.h"\n#endif\n#if RCT_NEW_ARCH_ENABLED\n#import "Gone.h"\n#endif\n');
     expect(await pass1(root)).toEqual({ missing: [], pending: 4, checked: 2 });
+  });
+
+  it("needs evidence on the path for a spelling with a folder", async () => {
+    // An app file named Utils.h, or the app's AppDelegate.h, says nothing of SomeLib/: a library's forwards may hold it.
+    const root = objcApp("template");
+    writeFileSync(join(root, "ios", "ObjcApp", "Utils.h"), "// the app's own Utils.h\n");
+    addToAppDelegate(root, '#import "SomeLib/Utils.h"\n#import "SomeLib/AppDelegate.h"\n');
+    expect(await pass1(root)).toEqual({ missing: [], pending: 6, checked: 2 });
+  });
+
+  it("matches a folder spelling against the app's headers and ios/ by its path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "xt-incl-"));
+    tmps.push(root);
+    const ios = join(root, "ios");
+    const sources = join(root, "ios-xtool", "Sources", "App");
+    await mkdir(join(ios, "App", "Shared"), { recursive: true });
+    await writeFile(join(ios, "App", "X.m"), '#import "Shared/Utils.h"\n#import "Shared/utils.h"\n#import "../App/Shared/Utils.h"\n');
+    await writeFile(join(ios, "App", "Shared", "Utils.h"), "// utils\n");
+    const x = { path: join(sources, "X.m"), source: join(ios, "App", "X.m"), display: "ios/App/X.m" };
+    const utils = { path: join(sources, "Shared", "Utils.h"), source: join(ios, "App", "Shared", "Utils.h"), display: "ios/App/Shared/Utils.h" };
+    const input = (listed: boolean) => ({
+      root,
+      files: listed ? [x, utils] : [x],
+      forwards: listed ? new Map([["Utils.h", "Shared/Utils.h"]]) : new Map<string, string>(),
+      sources,
+      headerSearchPaths: [],
+      defines: [],
+      appHeaders: listed ? ["App/Shared/Utils.h"] : [],
+      binaryPods: false,
+    });
+    // Listed: the copy holds it next to X.m (the relative spelling lands there too); the case-only twin misses.
+    const head = (line: number, spelling: string) => `ios/App/X.m:${line} imports "${spelling}", which is not in ios/App or the app target's headers`;
+    expect(appIncludesPass1(input(true))).toEqual({
+      missing: [`${head(2, "Shared/utils.h")}; ios/App/Shared/Utils.h differs only in case (file names are case-sensitive on Linux)`],
+      pending: 0,
+      checked: 2,
+    });
+    // On disk, not listed: evidence on the path, and the hint names that file.
+    expect(appIncludesPass1(input(false))).toEqual({
+      missing: [
+        `${head(1, "Shared/Utils.h")}; ios/App/Shared/Utils.h exists but the app target does not list it (add it to the target)`,
+        `${head(2, "Shared/utils.h")}; ios/App/Shared/Utils.h differs only in case (file names are case-sensitive on Linux)`,
+        `${head(3, "../App/Shared/Utils.h")}; ios/App/Shared/Utils.h exists but the app target does not list it (add it to the target)`,
+      ],
+      pending: 0,
+      checked: 0,
+    });
   });
 
   it("names a header that differs only in case", async () => {
