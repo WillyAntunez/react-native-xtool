@@ -103,8 +103,9 @@ scaffolded libraries, CocoaPods binaries); [recipe.md](recipe.md) has every step
    files, and `clang -fsyntax-only` each C-family file with the generated manifest's flags, as many at a time as the
    machine has cores. When a Swift file imports a module SwiftPM builds from Swift (a Swift module such as `Expo`, or
    a library target that holds Swift files next to its Objective-C), the Swift files are left to `xtool-build`, and so
-   is a C-family file that `@import`s such a module or one no module map declares: on Expo the app's Swift files import such a module (`Expo`, or `ExpoModulesCore` in the
-   generated `ExpoModulesProvider.swift`), so they are always checked there. On errors it prints each include that
+   is a C-family file that `@import`s such a module or one no module map of the package graph declares (an SDK module
+   such as CommonCrypto is left to xtool-build too): on Expo the app's Swift files import such a module (`Expo`, or
+   `ExpoModulesCore` in the generated `ExpoModulesProvider.swift`), so they are always checked there. On errors it prints each include that
    resolves nowhere and the compilers' first ten errors, with their include stacks, and stops the build; every command
    line and all compiler output go to `ios-xtool/.precheck/precheck.log`. clang's module cache stays under
    `ios-xtool/.precheck/` between builds; the first precheck, and the first after `--clean` empties the cache, is slower

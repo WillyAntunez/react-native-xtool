@@ -541,6 +541,10 @@ function waitingForMaps(r: Run, includes: Includes, maps: ImporterMaps): Set<str
   return all;
 }
 
+/** Why the precheck cannot place module `m` that a file `@import`s: SwiftPM builds it from Swift, or no map declares it. */
+const whyUnplaced = (inputs: PrecheckInputs, m: string): string =>
+  inputs.graph.swiftModules.includes(m) ? "which SwiftPM builds" : "which no module map of the package graph declares";
+
 /** The SDK has module `m`: a framework, or a Swift module of its own. */
 const sdkHas = (sdk: string, m: string): boolean =>
   isDir(path.join(sdk, "System", "Library", "Frameworks", `${m}.framework`)) || existsSync(path.join(sdk, "usr", "lib", "swift", `${m}.swiftmodule`));
@@ -570,7 +574,7 @@ function importsSwiftBuilt(r: Run, inputs: PrecheckInputs, includes: Includes, m
     byModule.set(module, [...(byModule.get(module) ?? []), root]);
   }
   for (const [module, files] of byModule) {
-    r.show(`ℹ precheck — ${r.name(files[0]!)} imports the module ${module}, which SwiftPM builds; checked by xtool-build`);
+    r.show(`ℹ precheck — ${r.name(files[0]!)} imports the module ${module}, ${whyUnplaced(inputs, module)}; checked by xtool-build`);
     r.write(`# not compiled, imports the module ${module}: ${files.join(" ")}`);
   }
   return out;
@@ -603,9 +607,9 @@ async function swiftHop(
   }
   const bridging = r.app.pkg.app.bridgingHeader;
   const throughBridging = bridging !== undefined ? swiftBuilt.get(bridging) : undefined;
-  if (throughBridging !== undefined) {
+  if (bridging !== undefined && throughBridging !== undefined) {
     // swiftc reads the bridging header: the module is as far from it as from clang.
-    r.show(`ℹ precheck — ${r.name(files[0]!)} imports ${throughBridging}, which SwiftPM builds: checked by xtool-build`);
+    r.show(`ℹ precheck — ${r.name(bridging)} imports ${throughBridging}, ${whyUnplaced(inputs, throughBridging)}: checked by xtool-build`);
     return undefined;
   }
   const args = maps.drop(["-no-color-diagnostics", ...swiftcArgs(inputs, files, maps.missing)]);

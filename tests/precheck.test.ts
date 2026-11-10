@@ -288,7 +288,7 @@ describe("runPrecheck", () => {
     await h.run({ packages: [reactNative(paths.root), mixed] });
     expect(h.logs).toEqual([
       "ℹ precheck — ios/App/A.m imports the module MixedLib, which SwiftPM builds; checked by xtool-build",
-      "ℹ precheck — ios/App/X.m imports the module Nowhere, which SwiftPM builds; checked by xtool-build",
+      "ℹ precheck — ios/App/X.m imports the module Nowhere, which no module map of the package graph declares; checked by xtool-build",
     ]);
     // An SDK framework and a module of the graph's maps compile; every skipped file is in the log.
     expect(h.calls.filter((c) => c.startsWith("clang"))).toEqual(["clang Sdk.m"]);
@@ -307,9 +307,19 @@ describe("runPrecheck", () => {
     await h.run({ packages: [reactNative(paths.root), mixed] });
     expect(h.logs).toEqual([
       "ℹ precheck — ios/App/Bridging.h imports the module MixedLib, which SwiftPM builds; checked by xtool-build",
-      "ℹ precheck — ios/App/AppDelegate.swift imports MixedLib, which SwiftPM builds: checked by xtool-build",
+      "ℹ precheck — ios/App/Bridging.h imports MixedLib, which SwiftPM builds: checked by xtool-build",
     ]);
     expect(h.compiled).toEqual([]);
+
+    // A module no map declares (an SDK module such as CommonCrypto, which has no framework) is not one SwiftPM builds.
+    const sdk = handApp({ "AppDelegate.swift": "import UIKit\n", "Bridging.h": "@import CommonCrypto;\n" }, { mixed: false, bridgingHeader: "Bridging.h" });
+    const c = harness(sdk.paths, sdk.app);
+    await c.run();
+    expect(c.logs).toEqual([
+      "ℹ precheck — ios/App/Bridging.h imports the module CommonCrypto, which no module map of the package graph declares; checked by xtool-build",
+      "ℹ precheck — ios/App/Bridging.h imports CommonCrypto, which no module map of the package graph declares: checked by xtool-build",
+    ]);
+    expect(c.compiled).toEqual([]);
   });
 
   it("reads every import of a line with several", async () => {

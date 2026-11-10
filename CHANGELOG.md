@@ -31,10 +31,11 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   includes are resolved again with the App target's full include list, `swiftc -typecheck` checks the Swift files and
   `clang -fsyntax-only` each C-family file with the generated manifest's flags. When a Swift file imports a module
   SwiftPM builds from Swift (a Swift library, or one with Swift files next to its Objective-C), the Swift files are left
-  to `xtool-build`, and a C-family file that `@import`s such a module, or one no module map declares, is left to it too
-  ("ℹ precheck — <file> imports the module <M>, which SwiftPM builds; checked by xtool-build"); on Expo the app's Swift
-  files import such a module (`Expo`, or `ExpoModulesCore` in the generated `ExpoModulesProvider.swift`), so they are
-  always checked there. Errors stop the build before `xtool-build`, with one line per include that resolves nowhere and
+  to `xtool-build`, and a C-family file that `@import`s such a module, or one no module map of the package graph
+  declares (an SDK module such as CommonCrypto is left to xtool-build too), is left to it too ("ℹ precheck — <file>
+  imports the module <M>, which SwiftPM builds; checked by xtool-build", or "…, which no module map of the package
+  graph declares; …"); on Expo the app's Swift files import such a module (`Expo`, or `ExpoModulesCore` in the
+  generated `ExpoModulesProvider.swift`), so they are always checked there. Errors stop the build before `xtool-build`, with one line per include that resolves nowhere and
   the compilers' first ten errors with their include stacks (an error several files report counts once), and the stop
   names `rn-xtool build --skip-precheck` for a false one; so does every other stop of the step (SwiftPM's refusals, an
   unreadable xcframework, a full disk) except a missing toolchain, which names `rn-xtool setup`. A precheck that passes

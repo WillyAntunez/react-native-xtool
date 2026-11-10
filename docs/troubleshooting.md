@@ -1083,13 +1083,16 @@ includes with Swift Build's flags, and code generation and link errors still sho
   not recorded`.
 - **"ℹ precheck — <file> imports <module>, which SwiftPM builds: checked by xtool-build"**: a Swift file imports a
   module that exists only once SwiftPM builds it (a Swift library, or a library target with Swift files next to its
-  Objective-C, whose clang half alone the precheck could give `swiftc`), or the bridging header `@import`s one, so
-  `swiftc -typecheck` does not run and the Swift files are left to `xtool-build`. On Expo it is the usual line once Swift Build has written its module maps: the app's
+  Objective-C, whose clang half alone the precheck could give `swiftc`), or the bridging header `@import`s one (the
+  line then names the bridging header, and reads `which no module map of the package graph declares` for a module no
+  map of the graph declares, such as the SDK's `CommonCrypto`), so `swiftc -typecheck` does not run and the Swift
+  files are left to `xtool-build`. On Expo it is the usual line once Swift Build has written its module maps: the app's
   `AppDelegate.swift` imports `Expo`, or the generated `ExpoModulesProvider.swift` imports `ExpoModulesCore`. The
   C-family files are still checked. Nothing to do.
-- **"ℹ precheck — <file> imports the module <M>, which SwiftPM builds; checked by xtool-build"**: a C-family file, or
-  a header it includes, has `@import M;` for a module SwiftPM builds from Swift, or for one no module map of the
-  package declares, so clang would not find it as `xtool-build` does. That file is not compiled (nor the Swift files,
+- **"ℹ precheck — <file> imports the module <M>, which SwiftPM builds; checked by xtool-build"** (or `…, which no
+  module map of the package graph declares; …`): a C-family file, or a header it includes, has `@import M;` for a
+  module SwiftPM builds from Swift, or for one no module map of the package graph declares (an SDK module such as
+  `CommonCrypto` is left to `xtool-build` too), so the precheck cannot give clang the module as `xtool-build` does. That file is not compiled (nor the Swift files,
   when it is the bridging header); the line names the first such file, and `ios-xtool/.precheck/precheck.log` lists
   them all. The other C-family files are still checked. Nothing to do.
 - **"ℹ precheck — <files> import <header>, which the Swift check did not write: checked by xtool-build"**: these files

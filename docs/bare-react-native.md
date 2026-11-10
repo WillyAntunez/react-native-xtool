@@ -210,7 +210,8 @@ generated package, the includes are resolved again with the App target's full in
 the Swift files and `clang -fsyntax-only` each C-family file with the generated manifest's flags, so an error in the
 app's own sources stops the build before `xtool-build`. When a Swift file imports a module SwiftPM builds from Swift (a
 Swift library, or one with Swift files next to its Objective-C), the Swift files are left to `xtool-build`, and so is a
-C-family file that `@import`s such a module or one no module map declares. `build --skip-precheck` leaves that step out.
+C-family file that `@import`s such a module or one no module map of the package graph declares (an SDK module such as
+CommonCrypto is left to xtool-build too). `build --skip-precheck` leaves that step out.
 Each line and what to do:
 [troubleshooting.md](troubleshooting.md#precheck).
 
