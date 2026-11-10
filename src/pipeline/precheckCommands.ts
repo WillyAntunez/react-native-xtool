@@ -287,9 +287,10 @@ export function clangArgs(i: PrecheckInputs, file: string, unwritten: ReadonlySe
     ...(app.mixed ? ["-fmodule-name=App"] : []),
     // With C++ modules off the cache is unused, and clang warns about the flag.
     ...(cxx ? ["-fno-cxx-modules"] : [`-fmodules-cache-path=${i.moduleCache}`]),
+    // Swift Build's order: the graph's header folders, then the target's own flags (objc-088's `.resp`).
+    ...i.graph.headerDirs.filter((d) => !maps.folders.has(d)).flatMap((d) => ["-I", d]),
     ...defines.map((d) => `-D${d}`),
     ...withPrecheckHeaders(i, withoutMaps(target, maps.shadowed)),
-    ...i.graph.headerDirs.filter((d) => !maps.folders.has(d)).flatMap((d) => ["-I", d]),
     ...maps.maps.map((m) => `-fmodule-map-file=${m}`),
     file,
   ];
@@ -321,8 +322,6 @@ export function swiftcArgs(i: PrecheckInputs, files: string[], unwritten: Readon
     "-resource-dir",
     "-Xcc",
     path.join(i.toolchain.swiftResources, "clang"),
-    ...i.toolchain.swiftIncludes.flatMap((d) => ["-Isystem", d]),
-    ...developerFrameworks(i.toolchain.sdk).flatMap((d) => ["-F", d]),
     "-package-name",
     packageName(i),
     // Swift Build's Debug feature: `@DebugDescription` expands.
@@ -338,6 +337,9 @@ export function swiftcArgs(i: PrecheckInputs, files: string[], unwritten: Readon
     ...SWIFT_BUILD_DEFINES.swift.map((d) => `-D${d}`),
     ...[...new Set([...SWIFT_BUILD_DEFINES.importer, ...(app.mixed ? app.defines : [])])].flatMap((d) => ["-Xcc", `-D${d}`]),
     ...withPrecheckHeaders(i, withoutMaps(appSwiftArgs(app, expo), maps.shadowed)),
+    // After the target's own `-F`, as Swift Build orders them (expo-58-bridging's swiftDriver).
+    ...i.toolchain.swiftIncludes.flatMap((d) => ["-Isystem", d]),
+    ...developerFrameworks(i.toolchain.sdk).flatMap((d) => ["-F", d]),
     // The importer's only: Swift Build gives Swift no search path for a clang target's headers.
     ...i.graph.headerDirs.filter((d) => !maps.folders.has(d)).flatMap((d) => ["-Xcc", `-I${d}`]),
     ...maps.maps.flatMap((m) => ["-Xcc", `-fmodule-map-file=${m}`]),

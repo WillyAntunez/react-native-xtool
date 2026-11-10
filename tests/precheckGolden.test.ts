@@ -124,7 +124,8 @@ const IGNORED_PREFIX = /^(-W|-fmodules-prune-|-fbuild-session-file=|-fmodules-ca
  *   `<binary-headers>`; its `module.modulemap` dropped, as clang finds the copy's in that folder (same commands);
  * - the rest of Swift Build's `Products/<config>` folder and the App's `DerivedSources`: what other targets built and
  *   what Swift Build derives, none of it there before xtool-build (every swiftDriver's `-I`/`-F`/`-Xcc -I`; objc-088's
- *   `.resp` `-I`/`-F`) → dropped.
+ *   `.resp` `-I`/`-F`) → dropped. No reference has a framework-type binary target (whose framework Swift Build copies
+ *   there), so the drop hides no framework search path.
  */
 function normalisePath(p: string, moduleMap: boolean): string | null {
   if (moduleMap) {
@@ -211,6 +212,35 @@ export function compareFlags(ours: string[], theirs: string[]): { missing: strin
   return { missing: without(b, a), extra: without(a, b) };
 }
 
+/**
+ * The include folders `argv` names with the flags in `kinds` (`-I` for clang; `-I` and `-F` for swiftc, whose `-Xcc`
+ * values are its importer's), in order: `<flag> <normalised folder>`, each at its first place, dropped ones left out.
+ * clang searches them in this order, so a header two of them hold resolves to the first. With `graph`, the package
+ * graph's header folders are one `<flag> <graph>` block at the first one's place: Swift Build orders them by the package
+ * graph, which the fixtures do not hold (`inputs.json` has the folders, in rn-xtool's order), so only where the block
+ * stands is compared; `compareFlags` compares the folders it holds.
+ */
+function includeOrder(argv: string[], kinds: string[], graph: ReadonlySet<string> = new Set()): string[] {
+  const out: string[] = [];
+  for (let n = 0; n < argv.length; n++) {
+    const a = argv[n]!;
+    if (a === "-Xcc" || a === "-Isystem") {
+      n++;
+      continue;
+    }
+    const kind = kinds.find((k) => a === k || a.startsWith(k));
+    if (kind === undefined) continue;
+    const folder = a === kind ? argv[++n]! : a.slice(kind.length);
+    const p = normalisePath(folder, false);
+    if (p !== null) out.push(`${kind} ${graph.has(p) ? "<graph>" : p}`);
+  }
+  return [...new Set(out)];
+}
+
+/** The graph's header folders of `inputs`, normalised, and Swift Build's copy of the binary targets' headers. */
+const graphFolders = (inputs: PrecheckInputs): Set<string> =>
+  new Set(["<binary-headers>", ...inputs.graph.headerDirs.flatMap((d) => normalisePath(d, false) ?? [])]);
+
 /** `argv` with each `@<file>.resp` replaced by its arguments (one line, space-separated, from `responses/`). */
 function expandResponses(ref: string, argv: string[]): string[] {
   return argv.flatMap((a) => {
@@ -275,6 +305,7 @@ describe("the precheck's command lines against Swift Build's (row 39)", () => {
         // `builtin-SwiftDriver -- <swiftc> …`
         const theirs = expandResponses(ref, argv.slice(argv.indexOf("--") + 2));
         expect(compareFlags(swiftcArgs(inputs, swiftFiles), theirs)).toEqual({ missing: [], extra: [] });
+        expect(includeOrder(swiftcArgs(inputs, swiftFiles), ["-I", "-F"])).toEqual(includeOrder(theirs, ["-I", "-F"]));
       });
     }
     for (const task of commands.compileC) {
@@ -283,6 +314,7 @@ describe("the precheck's command lines against Swift Build's (row 39)", () => {
         const ours = clangArgs(inputs, file);
         const theirs = withoutSwiftTargetMaps(expandResponses(ref, task.args.slice(1)), ours, inputs);
         expect(compareFlags(ours, theirs)).toEqual({ missing: [], extra: [] });
+        expect(includeOrder(ours, ["-I"], graphFolders(inputs))).toEqual(includeOrder(theirs, ["-I"], graphFolders(inputs)));
       });
     }
   }

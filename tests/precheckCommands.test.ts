@@ -190,16 +190,10 @@ describe("the precheck's command lines", () => {
     expect(after(args, "-target")).toEqual(["arm64-apple-ios16.4"]);
     expect(after(args, "-sdk")).toEqual(["/t/sdk/iPhoneOS.sdk"]);
     const sdk = args.indexOf("-sdk");
-    expect(args.slice(sdk + 2, sdk + 10)).toEqual([
-      "-resource-dir",
-      "/t/sdk/swift",
-      "-Xcc",
-      "-resource-dir",
-      "-Xcc",
-      "/t/sdk/swift/clang",
-      "-Isystem",
-      "/t/sdk/Platform Lib",
-    ]);
+    expect(args.slice(sdk + 2, sdk + 8)).toEqual(["-resource-dir", "/t/sdk/swift", "-Xcc", "-resource-dir", "-Xcc", "/t/sdk/swift/clang"]);
+    // The triple's include paths and the developer frameworks come after the target's own flags, as in Swift Build.
+    expect(after(args, "-Isystem")).toEqual(["/t/sdk/Platform Lib"]);
+    expect(args.indexOf("-Isystem")).toBeGreaterThan(args.indexOf("-import-objc-header"));
     expect(after(args, "-F")).toEqual(["/t/Library/Frameworks", "/t/sdk/iPhoneOS.sdk/Developer/Library/Frameworks"]);
     expect(after(args, "-enable-experimental-feature")).toEqual(["DebugDescriptionMacro"]);
     // The generated package's identity, as SwiftPM spells it (`ios-xtool` → `ios_xtool`).
