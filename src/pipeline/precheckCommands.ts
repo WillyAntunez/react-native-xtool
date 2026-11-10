@@ -7,7 +7,7 @@ import type { GeneratedApp } from "../generate/iosXtool.js";
 import { appClangArgs, appIncludeDirs, appSwiftArgs } from "../generate/packageSwift.js";
 import { toolEnv } from "../tools/exec.js";
 import { IOS_MIN } from "../versions.js";
-import type { PrecheckGraph } from "./precheckGraph.js";
+import { c99name, type PrecheckGraph } from "./precheckGraph.js";
 import { PrecheckError } from "./precheckReport.js";
 
 /** The compilers and the iPhoneOS SDK `xtool dev build` uses, as the precheck runs them. */
@@ -123,6 +123,18 @@ export interface PrecheckInputs {
   moduleCache: string;
 }
 
+/**
+ * Swift's `-package-name`, as SwiftPM derives it: the generated package's identity (its folder's name, lower-cased; the
+ * precheck's folder is in it) as a C99 name, `ios_xtool`. `package` declarations need it.
+ */
+const packageName = (i: PrecheckInputs): string => c99name(path.basename(path.dirname(i.dir)).toLowerCase());
+
+/** The platform's and the SDK's developer frameworks (XCTest's), which Swift Build searches after the SDK's. */
+const developerFrameworks = (sdk: string): string[] => [
+  path.join(sdk, "..", "..", "Library", "Frameworks"),
+  path.join(sdk, "Developer", "Library", "Frameworks"),
+];
+
 /** Where the precheck's `swiftc` writes `App-Swift.h`, in place of Swift Build's folder. */
 const swiftHeaders = (i: PrecheckInputs): string => path.join(i.dir, "swift-headers");
 
@@ -141,7 +153,7 @@ function synthesizedFolder(headerDirs: string[], text: string): string | undefin
 
 /** The module maps of a command, one per module, and what the target's own flags and the graph's folders give up. */
 interface ModuleMaps {
-  /** The graph's maps on disk, then the synthesized maps that stand in. */
+  /** The graph's maps on disk, then the synthesized maps that stand in (after the target's own importer maps). */
   maps: string[];
   /** Swift Build's importer maps of a module a map on disk declares: left out of the target's flags. */
   shadowed: Set<string>;
@@ -150,11 +162,11 @@ interface ModuleMaps {
 }
 
 /**
- * The module maps, one per module (two maps of one module are a redefinition): the graph's on disk (`graphHeaders`
- * synthesizes none for a module they declare), then Swift Build's importer maps (`expo.clangImporter.moduleMaps`) for
- * the modules those do not declare, then a synthesized map for each module neither names. Swift Build gives the App no
- * header folder for a module whose map it writes (a mixed Swift and Objective-C target), so a synthesized map that gives
- * way takes its folder with it. A module in `unwritten`, whose importer map Swift Build has not written yet (the
+ * The module maps, one per module (two maps of one module are a redefinition). On the command line Swift Build's
+ * importer maps (`expo.clangImporter.moduleMaps`, in the target's own flags) come first, for the modules the graph's
+ * maps on disk do not declare; then the graph's on disk (`graphHeaders` synthesizes none for a module they declare);
+ * then a synthesized map for each module neither names. Swift Build gives the App no header folder for a module whose
+ * map it writes (a mixed Swift and Objective-C target), so a synthesized map that gives way takes its folder with it. A module in `unwritten`, whose importer map Swift Build has not written yet (the
  * precheck drops that map from the command), keeps its synthesized map and folder.
  */
 function moduleMaps(i: PrecheckInputs, unwritten: ReadonlySet<string>): ModuleMaps {
@@ -268,6 +280,7 @@ export function clangArgs(i: PrecheckInputs, file: string, unwritten: ReadonlySe
     TARGET,
     "-isysroot",
     i.toolchain.sdk,
+    ...developerFrameworks(i.toolchain.sdk).flatMap((d) => ["-iframework", d]),
     ...(objc ? ["-fobjc-arc"] : []),
     "-fmodules",
     // A file of the App target, as Swift Build compiles one; the bridging header is the importer's, which has none.
@@ -309,11 +322,9 @@ export function swiftcArgs(i: PrecheckInputs, files: string[], unwritten: Readon
     "-Xcc",
     path.join(i.toolchain.swiftResources, "clang"),
     ...i.toolchain.swiftIncludes.flatMap((d) => ["-Isystem", d]),
-    // The platform's and the SDK's developer frameworks (XCTest's), as Swift Build passes them.
-    "-F",
-    path.join(i.toolchain.sdk, "..", "..", "Library", "Frameworks"),
-    "-F",
-    path.join(i.toolchain.sdk, "Developer", "Library", "Frameworks"),
+    ...developerFrameworks(i.toolchain.sdk).flatMap((d) => ["-F", d]),
+    "-package-name",
+    packageName(i),
     // Swift Build's Debug feature: `@DebugDescription` expands.
     "-enable-experimental-feature",
     "DebugDescriptionMacro",

@@ -38,6 +38,10 @@ const PAIRED = new Set([
   "-Xfrontend",
   "-Xcc",
   "-enable-experimental-feature",
+  // `package` access needs it (Swift Build: `-package-name ios_xtool`).
+  "-package-name",
+  // The platform's and the SDK's developer frameworks, as Swift Build's clang gets them (objc-088's `.resp`).
+  "-iframework",
 ]);
 /** Compared flags with their value joined. */
 const JOINED = /^(-D|-U|-I|-F|-fmodule-map-file=|-std=|-fmodule-name=)/;
@@ -68,7 +72,6 @@ const IGNORED: Record<string, boolean> = {
   "-emit-module-path": true,
   "-dependency-scan-serialize-diagnostics-path": true,
   "-clang-build-session-file": true,
-  "-package-name": true,
   "-const-gather-protocols-list": true,
   "-emit-objc-header-path": true,
   "-working-directory": true,
@@ -90,7 +93,6 @@ const IGNORED: Record<string, boolean> = {
   "-experimental-emit-module-separately": false,
   "-disable-cmo": false,
   // clang: diagnostics, warnings, outputs and code generation; -fsyntax-only checks without them.
-  "-iframework": true,
   "-MT": true,
   "-MF": true,
   "--serialize-diagnostics": true,

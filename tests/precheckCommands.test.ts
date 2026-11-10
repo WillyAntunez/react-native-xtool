@@ -75,6 +75,7 @@ describe("the precheck's command lines", () => {
     expect(mm.some((a) => a.startsWith("-fmodules-cache-path="))).toBe(false);
     expect(mm.at(-1)).toBe("/p/app/ios-xtool/Sources/App/AppDelegate.mm");
     expect(mm).toContain("-fmodule-name=App");
+    expect(after(mm, "-iframework")).toEqual(["/t/Library/Frameworks", "/t/sdk/iPhoneOS.sdk/Developer/Library/Frameworks"]);
 
     const m = clangArgs(inputs(), "/p/app/ios-xtool/Sources/App/main.m");
     expect(after(m, "-x")).toEqual(["objective-c"]);
@@ -201,6 +202,8 @@ describe("the precheck's command lines", () => {
     ]);
     expect(after(args, "-F")).toEqual(["/t/Library/Frameworks", "/t/sdk/iPhoneOS.sdk/Developer/Library/Frameworks"]);
     expect(after(args, "-enable-experimental-feature")).toEqual(["DebugDescriptionMacro"]);
+    // The generated package's identity, as SwiftPM spells it (`ios-xtool` → `ios_xtool`).
+    expect(after(args, "-package-name")).toEqual(["ios_xtool"]);
     expect(after(args, "-swift-version")).toEqual(["5"]);
     expect(after(args, "-module-cache-path")).toEqual([CACHE]);
     expect(after(args, "-import-objc-header")).toEqual(["/p/app/ios-xtool/Sources/App/App-Bridging-Header.h"]);
@@ -407,6 +410,13 @@ describe.skipIf(!HAS_IOS_TOOLS)(
           const library = tool(tc.swiftc, swiftcArgs(i(false), [main]), { env: toolEnv(), timeout: SWIFT_TIMEOUT_MS });
           expect(library.stderr).toBe("");
           expect(library.status).toBe(0);
+
+          // A `package` declaration needs the package's name, as Swift Build passes it.
+          const pkg = path.join(t, "Access.swift");
+          writeFileSync(pkg, "package func packageOnly() {}\n");
+          const packageCheck = tool(tc.swiftc, swiftcArgs(i(false), [pkg]), { env: toolEnv(), timeout: SWIFT_TIMEOUT_MS });
+          expect(packageCheck.stderr).toBe("");
+          expect(packageCheck.status).toBe(0);
 
           // A bridging header's debug-only declaration, as React Native's headers keep theirs under DEBUG.
           const bridging = path.join(t, "Bridging.h");

@@ -189,8 +189,8 @@ const isDir = (p: string): boolean => {
   }
 };
 
-/** SwiftPM's C99 name of a target: its module name. */
-function c99name(name: string): string {
+/** SwiftPM's C99 name of a target (its module name) or of a package identity (Swift's `-package-name`). */
+export function c99name(name: string): string {
   const s = name.replace(/[^A-Za-z0-9_]/g, "_");
   return /^[0-9]/.test(s) ? `_${s}` : s;
 }
