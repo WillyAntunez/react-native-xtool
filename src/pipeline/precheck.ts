@@ -40,6 +40,8 @@ export interface PrecheckDeps {
   /** One compiler run; a non-zero exit resolves. `output` is stdout and stderr interleaved. */
   compile: (cmd: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv }) => Promise<{ code: number; output: string }>;
   toolchain: () => Promise<PrecheckToolchain>;
+  /** Opens `precheck.log` (emptied) and returns its append. */
+  logWriter: (file: string) => (text: string) => void;
 }
 
 /** The extensions clang compiles in the App target; any other copied file is a header, read only through an include. */
@@ -146,27 +148,35 @@ export async function runPrecheck(
   deps: Partial<PrecheckDeps> = {},
 ): Promise<void> {
   const dir = path.join(paths.iosXtool, ".precheck");
-  mkdirSync(dir, { recursive: true });
   const logFile = path.join(dir, "precheck.log");
-  const write = logWriter(logFile);
+  const d: PrecheckDeps = { swift: realSwift, compile: realCompile, toolchain: () => precheckToolchain(), logWriter, ...deps };
   const tmp = path.join(dir, "tmp");
+  let append: ((text: string) => void) | undefined;
+  const write = (text: string): void => append?.(text);
   const r: Run = {
     paths,
     app,
     opts,
-    deps: { swift: realSwift, compile: realCompile, toolchain: () => precheckToolchain(), ...deps },
+    deps: d,
     dir,
     logFile,
     tmp,
     env: { ...devEnv(paths.iosXtool), TMPDIR: tmp },
     write,
+    // The terminal first: a log that cannot be written (a full disk) does not hide the line.
     show: (line) => {
-      write(line);
       opts.log(line);
+      try {
+        write(line);
+      } catch {
+        // Only the log misses the line; a plain write that fails stops the run, naming the exit.
+      }
     },
     name: (file) => display(file, opts.root, app.origins),
   };
   try {
+    mkdirSync(dir, { recursive: true });
+    append = d.logWriter(logFile);
     rmSync(tmp, { recursive: true, force: true });
     mkdirSync(tmp, { recursive: true });
     const { toolchain, moduleCache } = await prepare(r);
@@ -179,10 +189,19 @@ export async function runPrecheck(
     const cFamily = await cFamilyHop(r, inputs, swift !== undefined, includes, new Set([...waiting, ...swiftBuilt.keys()]), maps);
     report(r, [...(swift ?? []), ...cFamily]);
   } catch (e) {
-    write(`# stopped: ${e instanceof Error ? e.message : String(e)}`);
+    // The log may be what failed (ENOSPC): the stop names the exit all the same.
+    try {
+      write(`# stopped: ${e instanceof Error ? e.message : String(e)}`);
+    } catch {
+      // Nothing more to keep.
+    }
     throw withExit(e);
   } finally {
-    rmSync(tmp, { recursive: true, force: true });
+    try {
+      rmSync(tmp, { recursive: true, force: true });
+    } catch {
+      // A leftover TMPDIR is removed by the next precheck; it must not replace the stop.
+    }
   }
 }
 

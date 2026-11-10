@@ -637,6 +637,49 @@ describe("runPrecheck", () => {
     expect((stop as Error).message).toMatch(/^precheck: 1 error\(s\) .*--skip-precheck and report it with rn-xtool doctor --report$/);
   });
 
+  it("names the exit when the log cannot be written", async () => {
+    const exit = "; if xtool-build builds this app, build with rn-xtool build --skip-precheck and report it with rn-xtool doctor --report";
+    const full = (): never => {
+      throw new Error("ENOSPC: no space left on device, write");
+    };
+    const { paths, app } = handApp({ "Native.m": "#import <UIKit/UIKit.h>\n" });
+
+    // The log write fails first (the disk fills): the stop line cannot be logged either.
+    const appendFails = await harness(paths, app)
+      .run({ deps: { logWriter: () => full } })
+      .catch((e: unknown) => e);
+    expect(appendFails).toBeInstanceOf(PrecheckError);
+    expect((appendFails as Error).message).toBe(`ENOSPC: no space left on device, write${exit}`);
+
+    // The log cannot be opened at all.
+    const openFails = await harness(paths, app)
+      .run({ deps: { logWriter: full } })
+      .catch((e: unknown) => e);
+    expect((openFails as Error).message).toBe(`ENOSPC: no space left on device, write${exit}`);
+
+    // Its folder cannot be made: ios-xtool/.precheck is a file.
+    rmSync(path.join(paths.iosXtool, ".precheck"), { recursive: true, force: true });
+    writeFileSync(path.join(paths.iosXtool, ".precheck"), "");
+    const mkdirFails = await harness(paths, app)
+      .run()
+      .catch((e: unknown) => e);
+    expect(mkdirFails).toBeInstanceOf(PrecheckError);
+    expect((mkdirFails as Error).message).toMatch(new RegExp(`${exit.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`));
+  });
+
+  it("shows the errors and the stop when the log fails while they are reported", async () => {
+    const { paths, app } = handApp({ "Native.m": "#import <UIKit/UIKit.h>\n" });
+    const logged: string[] = [];
+    const writer = () => (text: string) => {
+      if (text.startsWith("✖") || text.startsWith("# stopped")) throw new Error("ENOSPC: no space left on device, write");
+      logged.push(text);
+    };
+    const h = harness(paths, app, () => ({ code: 1, output: `${path.join(paths.sources, "Native.m")}:1:2: error: boom\n` }));
+    const thrown = await h.run({ deps: { logWriter: writer } }).catch((e: unknown) => e);
+    expect(h.logs).toEqual(["✖ precheck — ios/App/Native.m:1: boom"]);
+    expect((thrown as Error).message).toMatch(/^precheck: 1 error\(s\) .*--skip-precheck and report it with rn-xtool doctor --report$/);
+  });
+
   it("names a compiler that fails without a diagnostic", async () => {
     const { paths, app } = handApp({ "Native.m": "#import <UIKit/UIKit.h>\n" });
     const lines = Array.from({ length: 25 }, (_, n) => `line ${n + 1}`);
