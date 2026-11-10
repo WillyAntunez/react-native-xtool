@@ -1060,7 +1060,9 @@ includes with Swift Build's flags, and code generation and link errors still sho
   settings in the pbxproj (an `.xcconfig` that sets them prints the `⚠` line above).
 - **"✖ precheck — <files>: compiler exited <code> without a diagnostic rn-xtool could read"**, followed by the
   compiler's last 20 lines: the compiler failed without an error line rn-xtool reads. Those lines, and the whole
-  output in the log, say why.
+  output in the log, say why. Exit code 137 means the system stopped the compiler, usually because memory ran out: the
+  precheck runs as many compilers as the machine has cores, and the first one, with a cold module cache, needs the
+  most. Close other programs and build again; the stop names `--skip-precheck` for a build without the step.
 - An error in a header that several files include is printed and counted once, with the include stack of the first
   file that reported it.
 - **"✖ precheck: <n> error(s) in the app's own sources before xtool-build (the first ten are above; all of them in

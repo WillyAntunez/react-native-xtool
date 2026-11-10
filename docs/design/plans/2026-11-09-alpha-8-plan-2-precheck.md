@@ -1007,6 +1007,10 @@ then check that `@{u}` is `origin/feature/alpha-8-precheck`.
   `precheck` step (the plan's call, minimal).
 - **A precompile in `doctor`**: not built; the spec puts B2 in `build`, and `doctor` already fails on `swift` and
   `darwin-sdk` (row 41).
+- **Drift watch on Swift Build's flags** (row 40b, after the final review): deferred to a named task in alpha.9, plan
+  F2 / drift watch: after a successful `xtool-build`, read the App compile argv from the task store as Task 13 did and
+  run `compareFlags` against the precheck's; `⚠` on drift. Rows 49b (memory on a cold cache) and 49c (a full disk) are
+  accepted: both stop with a line naming `--skip-precheck`.
 
 ## Open questions for the owner
 
