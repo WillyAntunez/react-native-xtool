@@ -264,6 +264,14 @@ describe("appIncludesPass1", () => {
     expect(await pass1(root)).toEqual({ missing: [], pending: 4, checked: 2 });
   });
 
+  it("never errors on a branch on a macro the App target does not define", async () => {
+    // Swift Build compiles the App without RCT_NEW_ARCH_ENABLED: the include is uncertain, and the compile decides.
+    const root = objcApp("template");
+    writeFileSync(join(root, "ios", "ObjcApp", "Unlisted.h"), "// not in the Xcode project\n");
+    addToAppDelegate(root, '#ifdef RCT_NEW_ARCH_ENABLED\n#import "Unlisted.h"\n#endif\n#if RCT_NEW_ARCH_ENABLED\n#import "Gone.h"\n#endif\n');
+    expect(await pass1(root)).toEqual({ missing: [], pending: 4, checked: 2 });
+  });
+
   it("names a header that differs only in case", async () => {
     const root = objcApp("template");
     edit(root, "ios/ObjcApp/AppDelegate.mm", (t) => t.replace('#import "AppDelegate.h"', '#import "appdelegate.h"'));

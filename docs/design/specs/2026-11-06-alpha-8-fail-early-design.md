@@ -495,8 +495,11 @@ are not proposed again without new facts.
 
 **B1, the include resolution.** It reads the app target as `generate` will copy it (fact 13): every C-family source,
 every header the copy keeps, and the bridging header. For each file it strips comments, follows `#if`/`#ifdef`/
-`#elif`/`#else` with the target's defines, `RCT_NEW_ARCH_ENABLED=1`, `DEBUG=1` and the iOS values of `TARGET_OS_*`,
-and evaluates `__has_include` with the resolver itself. Each `#import`/`#include`:
+`#elif`/`#else` with the defines the compile gets: the target's own, the ones Swift Build gives every App compile
+(`SWIFT_PACKAGE` and `DEBUG=1`, which a C-family file and the bridging header both get) and the iOS values of
+`TARGET_OS_*` that clang predefines; it evaluates `__has_include` with the resolver itself. The App target as rn-xtool
+generates it does not define `RCT_NEW_ARCH_ENABLED`, so a condition on it is one B1 cannot evaluate, as is a condition
+on any other macro outside that list. Each `#import`/`#include`:
 
 - `"X.h"`: the including file's folder, then the app's headers by name (the forwards of fact 14), then the include
   paths in order;
@@ -756,6 +759,7 @@ USB, the disk, GitHub's mention parser, npm and the drift watch's runners.
 | 31 | B1, header map | a quote include of an app header that lives in another folder | nobody: resolved by name, as Xcode's header map and the forwards do | handle: test with headers at the root of the group tree and in the app folder |
 | 32 | B1 pass 1, before staging | an angle include into React Native's or a library's headers cannot be checked yet | user in doctor: one `ℹ` with the count, "checked at build" | handle |
 | 33 | B1, conditions | `__has_include` chains (codegen's `RCTAppDependencyProvider.h` shape), `#ifdef RCT_NEW_ARCH_ENABLED`, `#if TARGET_OS_OSX` | nobody for a branch not taken; a condition B1 cannot evaluate never makes an error | handle: tests per form |
+| 33b | B1, defines | a condition on a macro the generated App target does not define (`RCT_NEW_ARCH_ENABLED`) | nobody; the include is uncertain and the compile decides | handle: B1 assumes only the compile's defines (this wave) |
 | 34 | B1, text forms | an include in a comment or under `#if 0`; an include built from a macro | nobody | handle (comments, `#if 0`); accept (macro includes are not checked; B2 compiles them) |
 | 35 | B1, `@import` | a module B1 cannot place | nobody in B1; B2 compiles it | handle: B1 never errors on `@import` |
 | 36 | B1, generated headers | `App-Swift.h`, `<Module>-Swift.h` | nobody | accept: the build generates them; B2's hop 2 writes the App's |

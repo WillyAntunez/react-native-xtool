@@ -243,7 +243,7 @@ function languageOf(file: string): Language {
  * What Swift Build defines for a package target in a Debug build, besides the manifest's own settings: Swift's
  * conditions, its clang importer's macros, and a C-family file's macros (C++ adds libc++'s hardening mode).
  */
-const SWIFT_BUILD_DEFINES = {
+export const SWIFT_BUILD_DEFINES = {
   swift: ["SWIFT_PACKAGE", "DEBUG", "SWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE", "Xcode"],
   importer: ["SWIFT_PACKAGE", "DEBUG=1", "_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG"],
   clang: ["SWIFT_PACKAGE", "DEBUG=1", "OBJC_OLD_DISPATCH_PROTOTYPES=1", "Xcode"],

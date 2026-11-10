@@ -22,9 +22,15 @@ export interface ScanEnv {
   hasInclude(spelling: string, angle: boolean): boolean | undefined;
 }
 
-/** The defines B1 assumes: React Native's new architecture, a Debug build, and the iOS device values. */
+/**
+ * The defines B1 assumes: the ones every App compile of Swift Build gets (a C-family file and, through Swift's clang
+ * importer, the bridging header: `SWIFT_PACKAGE`, `DEBUG=1`), and the iOS device values clang predefines for the
+ * target. Nothing else: the App target as rn-xtool generates it defines no `RCT_NEW_ARCH_ENABLED`, so a condition on
+ * it, or on a macro only one of the two compiles gets (`Xcode`, `OBJC_OLD_DISPATCH_PROTOTYPES`), is one B1 cannot
+ * evaluate (R6). The App target's own defines come on top (`definesOf`).
+ */
 export const B1_DEFINES: ReadonlyMap<string, string> = new Map([
-  ["RCT_NEW_ARCH_ENABLED", "1"],
+  ["SWIFT_PACKAGE", "1"],
   ["DEBUG", "1"],
   ["TARGET_OS_MAC", "1"],
   ["TARGET_OS_IPHONE", "1"],

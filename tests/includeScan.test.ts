@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { SWIFT_BUILD_DEFINES } from "../src/pipeline/precheckCommands.js";
 import { B1_DEFINES, definesOf, scanIncludes, type ScanEnv } from "../src/project/includeScan.js";
 
 const env: ScanEnv = { defines: definesOf([]), hasInclude: () => undefined };
@@ -29,13 +30,28 @@ describe("scanIncludes", () => {
   });
 
   it("follows #ifdef/#elif/#else with the known defines", () => {
-    expect(found(lines(`#if RCT_NEW_ARCH_ENABLED`, `#import "New.h"`, `#endif`))).toEqual([["New.h", true]]);
+    expect(found(lines(`#if DEBUG`, `#import "Dbg.h"`, `#endif`))).toEqual([["Dbg.h", true]]);
+    expect(found(lines(`#ifdef SWIFT_PACKAGE`, `#import "Pkg.h"`, `#endif`))).toEqual([["Pkg.h", true]]);
     expect(found(lines(`#if TARGET_OS_OSX`, `#import <AppKit/AppKit.h>`, `#endif`))).toEqual([]);
     expect(
       found(lines(`#ifdef DEBUG`, `#import "Dbg.h"`, `#else`, `#import "Rel.h"`, `#endif`)),
     ).toEqual([["Dbg.h", true]]);
     const foo: ScanEnv = { defines: definesOf(["FOO=2"]), hasInclude: () => undefined };
     expect(found(lines(`#if FOO == 2`, `#import "Foo.h"`, `#endif`), foo)).toEqual([["Foo.h", true]]);
+  });
+
+  it("leaves a macro the generated App target does not define unknown", () => {
+    // Swift Build's App compile defines no RCT_NEW_ARCH_ENABLED: a branch on it is one B1 cannot evaluate.
+    expect(found(lines(`#ifdef RCT_NEW_ARCH_ENABLED`, `#import <RNMyAppSpec/RNMyAppSpec.h>`, `#endif`))).toEqual([
+      ["RNMyAppSpec/RNMyAppSpec.h", false],
+    ]);
+    expect(found(lines(`#if RCT_NEW_ARCH_ENABLED`, `#import "New.h"`, `#else`, `#import "Old.h"`, `#endif`))).toEqual([
+      ["New.h", false],
+      ["Old.h", false],
+    ]);
+    // The App target's own define still counts.
+    const arch: ScanEnv = { defines: definesOf(["RCT_NEW_ARCH_ENABLED=1"]), hasInclude: () => undefined };
+    expect(found(lines(`#ifdef RCT_NEW_ARCH_ENABLED`, `#import "New.h"`, `#endif`), arch)).toEqual([["New.h", true]]);
   });
 
   it("marks includes under a condition it cannot evaluate as uncertain", () => {
@@ -83,7 +99,7 @@ describe("scanIncludes", () => {
     const text =
       "\uFEFF" +
       '#import "A.h"\r\n#  import <B.h>\r\n' +
-      '#if defined(DEBUG) && \\\r\n    defined(RCT_NEW_ARCH_ENABLED)\r\n#import "C.h"\r\n#endif';
+      '#if defined(DEBUG) && \\\r\n    defined(SWIFT_PACKAGE)\r\n#import "C.h"\r\n#endif';
     expect(scanIncludes(text, env)).toEqual([
       { line: 1, spelling: "A.h", angle: false, certain: true },
       { line: 2, spelling: "B.h", angle: true, certain: true },
@@ -229,9 +245,9 @@ describe("scanIncludes", () => {
 });
 
 describe("definesOf", () => {
-  it("holds the iOS values", () => {
+  it("holds the compile's macros and the iOS values", () => {
     expect([...B1_DEFINES]).toEqual([
-      ["RCT_NEW_ARCH_ENABLED", "1"],
+      ["SWIFT_PACKAGE", "1"],
       ["DEBUG", "1"],
       ["TARGET_OS_MAC", "1"],
       ["TARGET_OS_IPHONE", "1"],
@@ -243,6 +259,23 @@ describe("definesOf", () => {
       ["TARGET_OS_VISION", "0"],
       ["TARGET_OS_SIMULATOR", "0"],
     ]);
+  });
+
+  it("assumes exactly the macros every App compile of Swift Build gets", () => {
+    // A C-family file gets SWIFT_BUILD_DEFINES.clang, the bridging header through Swift's clang importer gets
+    // SWIFT_BUILD_DEFINES.importer: B1 assumes the macros both give, with the same value, and no other one.
+    const pairs = (list: readonly string[]) =>
+      new Map(list.map((d) => (d.includes("=") ? [d.slice(0, d.indexOf("=")), d.slice(d.indexOf("=") + 1)] : [d, "1"])));
+    const clang = pairs(SWIFT_BUILD_DEFINES.clang);
+    const importer = pairs(SWIFT_BUILD_DEFINES.importer);
+    const both = [...clang].filter(([k, v]) => importer.get(k) === v);
+    expect(both.length).toBeGreaterThan(0);
+    for (const [k, v] of both) expect(B1_DEFINES.get(k)).toBe(v);
+    const compileMacros = new Set([...clang.keys(), ...importer.keys()]);
+    const assumed = [...B1_DEFINES.keys()].filter((k) => !k.startsWith("TARGET_OS_"));
+    expect(assumed.filter((k) => !compileMacros.has(k))).toEqual([]);
+    expect(assumed.sort()).toEqual(both.map(([k]) => k).sort());
+    expect(B1_DEFINES.has("RCT_NEW_ARCH_ENABLED")).toBe(false);
   });
 
   it("overlays the target's KEY and KEY=VALUE entries", () => {

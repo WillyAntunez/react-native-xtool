@@ -117,9 +117,11 @@ then check that `@{u}` is `origin/feature/alpha-8-precheck`.
   - `scanIncludes(text: string, env: ScanEnv): ScannedInclude[]` — `#include`, `#import` (and `#include_next`, always
     uncertain) in taken or unknown branches; `@import`, `#include MACRO` and anything in a false branch are not
     returned (rows 34, 35).
-  - `B1_DEFINES: ReadonlyMap<string, string>` — `RCT_NEW_ARCH_ENABLED=1`, `DEBUG=1` and the iOS values
-    `TARGET_OS_MAC=1`, `TARGET_OS_IPHONE=1`, `TARGET_OS_IOS=1`, `TARGET_OS_OSX=0`, `TARGET_OS_MACCATALYST=0`,
-    `TARGET_OS_TV=0`, `TARGET_OS_WATCH=0`, `TARGET_OS_VISION=0`, `TARGET_OS_SIMULATOR=0`.
+  - `B1_DEFINES: ReadonlyMap<string, string>` — the macros every App compile of Swift Build gets, `SWIFT_PACKAGE=1`
+    and `DEBUG=1`, and the iOS values `TARGET_OS_MAC=1`, `TARGET_OS_IPHONE=1`, `TARGET_OS_IOS=1`, `TARGET_OS_OSX=0`,
+    `TARGET_OS_MACCATALYST=0`, `TARGET_OS_TV=0`, `TARGET_OS_WATCH=0`, `TARGET_OS_VISION=0`, `TARGET_OS_SIMULATOR=0`;
+    no `RCT_NEW_ARCH_ENABLED`, which the generated App target does not define (row 33b). A test keeps it equal to the
+    macros `SWIFT_BUILD_DEFINES.clang` and `.importer` share.
   - `definesOf(targetDefines: readonly string[]): Map<string, string>` — `B1_DEFINES` overlaid with the target's
     `KEY`/`KEY=VALUE` (`KEY` alone is `1`).
 
@@ -135,7 +137,8 @@ then check that `@{u}` is `origin/feature/alpha-8-precheck`.
   });
   it("drops includes in comments and under #if 0", () => { /* `// #import "X.h"`, a block comment over two lines with
      an #import inside, `#if 0` … `#endif` → []; the line numbers after the block stay right */ });
-  it("follows #ifdef/#elif/#else with the known defines", () => { /* #if RCT_NEW_ARCH_ENABLED → taken; #if TARGET_OS_OSX
+  it("follows #ifdef/#elif/#else with the known defines", () => { /* #if DEBUG → taken; #ifdef RCT_NEW_ARCH_ENABLED →
+     uncertain (the generated App target does not define it); #if TARGET_OS_OSX
      → not returned; #ifdef DEBUG … #else #import "Rel.h" → only the DEBUG branch; target define FOO=2 and
      `#if FOO == 2` → taken */ });
   it("marks includes under a condition it cannot evaluate as uncertain", () => { /* #ifdef FB_SONARKIT_ENABLED,
@@ -149,7 +152,7 @@ then check that `@{u}` is `origin/feature/alpha-8-precheck`.
      a #pragma once file → certain */ });
   it("does not report an include built from a macro", () => { /* #include MY_HEADER → [] */ });
   it("reads CRLF, a BOM, spaced and continued directives", () => { /* "﻿#import \"A.h\"\r\n#  import <B.h>\r\n#if
-     defined(DEBUG) && \\\r\n    defined(RCT_NEW_ARCH_ENABLED)\r\n#import \"C.h\"\r\n#endif" → A.h line 1, B.h line 2,
+     defined(DEBUG) && \\\r\n    defined(SWIFT_PACKAGE)\r\n#import \"C.h\"\r\n#endif" → A.h line 1, B.h line 2,
      C.h line 5, all certain */ });
   ```
 
