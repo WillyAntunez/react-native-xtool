@@ -657,6 +657,30 @@ describe("runPrecheck", () => {
     expect(log).toContain("# pass 2: ios/App/Bridging.h searches");
   });
 
+  it("tells a header both compiles reach once, with the most severe verdict", async () => {
+    // Native.m (the target's order) reaches Fwd/Shared.h only under a condition the precheck cannot evaluate, and its
+    // "Shared.h" is React's copy; the bridging header (the importer's order) surely reads the app's Fwd/Shared.h.
+    const { paths, app } = handApp(
+      {
+        "Native.m": '#import "Shared.h"\n#ifdef SOME_FLAG\n#import "Fwd/Shared.h"\n#endif\n#import <UIKit/UIKit.h>\n',
+        "Bridging.h": '#import "Shared.h"\n',
+        "Fwd/Shared.h": '#import "AppOnly.h"\n',
+      },
+      { bridgingHeader: "Bridging.h" },
+    );
+    app.pkg.app.headerSearchPaths = [path.join(paths.sources, "Fwd")];
+    const h = harness(paths, app);
+    await expect(h.run({ packages: [reactNative(paths.root, { "Shared.h": "#import <UIKit/UIKit.h>\n" })] })).rejects.toThrow(/^precheck: 1 error\(s\)/);
+    const log = readFileSync(path.join(h.dir, "precheck.log"), "utf8");
+    const count = (root: string) => Number(new RegExp(`# pass 2: ${root} searches (\\d+) include folders`).exec(log)?.[1]);
+    // Both compiles judge the include: the target's as uncertain, the importer's as a miss.
+    expect(count("ios/App/Native\\.m")).toBeGreaterThan(0);
+    expect(h.logs).toEqual([
+      `✖ precheck — ios/App/Fwd/Shared.h:1 imports AppOnly.h, which is in none of the App target's ${count("ios/App/Bridging\\.h")} include folders (listed in ios-xtool/.precheck/precheck.log)`,
+    ]);
+    expect(h.compiled).toEqual([]);
+  });
+
   it("does not stop on a header only an uncertain condition includes", async () => {
     const { paths, app } = handApp({
       "Native.m": '#if __has_include(<Missing/Missing.h>)\n#import "Opt.h"\n#endif\n#import <UIKit/UIKit.h>\n',
