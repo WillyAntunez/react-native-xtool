@@ -8,7 +8,7 @@ import { appClangArgs, appIncludeDirs, appSwiftArgs } from "../generate/packageS
 import { toolEnv } from "../tools/exec.js";
 import { IOS_MIN } from "../versions.js";
 import { c99name, type PrecheckGraph } from "./precheckGraph.js";
-import { PrecheckError } from "./precheckReport.js";
+import { PrecheckToolchainError } from "./precheckReport.js";
 
 /** The compilers and the iPhoneOS SDK `xtool dev build` uses, as the precheck runs them. */
 export interface PrecheckToolchain {
@@ -67,7 +67,7 @@ async function versionText(bin: string, env: NodeJS.ProcessEnv): Promise<string>
 export async function precheckToolchain(env: NodeJS.ProcessEnv = toolEnv()): Promise<PrecheckToolchain> {
   const found = (tool: string): string => {
     const file = findOnPath(tool, env);
-    if (file === undefined) throw new PrecheckError(`precheck — ${tool} was not found on the Swift toolchain's PATH; run rn-xtool setup`);
+    if (file === undefined) throw new PrecheckToolchainError(`precheck — ${tool} was not found on the Swift toolchain's PATH; run rn-xtool setup`);
     return file;
   };
   const clang = found("clang");
@@ -76,7 +76,7 @@ export async function precheckToolchain(env: NodeJS.ProcessEnv = toolEnv()): Pro
   const bundle = sdkBundle();
   const sdkJson = path.join(bundle, "swift-sdk.json");
   const notFound = (where: string) =>
-    new PrecheckError(`precheck — the iPhoneOS SDK was not found in the Darwin SDK (${where}); run rn-xtool setup --xcode-xip <path>`);
+    new PrecheckToolchainError(`precheck — the iPhoneOS SDK was not found in the Darwin SDK (${where}); run rn-xtool setup --xcode-xip <path>`);
   type Triple = { sdkRootPath?: unknown; toolsetPaths?: unknown; swiftResourcesPath?: unknown; includeSearchPaths?: unknown };
   const triple = (readJson(sdkJson) as { targetTriples?: Record<string, Triple> } | undefined)?.targetTriples?.[IOS_TRIPLE];
   if (typeof triple?.sdkRootPath !== "string") throw notFound(sdkJson);
@@ -85,7 +85,7 @@ export async function precheckToolchain(env: NodeJS.ProcessEnv = toolEnv()): Pro
   // Unnamed: the path given is swift-sdk.json's, as for the SDK.
   const swiftResources = typeof triple.swiftResourcesPath === "string" ? path.resolve(bundle, triple.swiftResourcesPath) : undefined;
   if (swiftResources === undefined || !existsSync(swiftResources)) {
-    throw new PrecheckError(
+    throw new PrecheckToolchainError(
       `precheck — the Swift resources were not found in the Darwin SDK (${swiftResources ?? sdkJson}); run rn-xtool setup --xcode-xip <path>`,
     );
   }

@@ -1103,6 +1103,14 @@ compilers run at low priority (`nice`), as many at a time as the machine has cor
   entry point from the App library"**: a file of the App target is named `main`. See
   [Sources](bare-react-native.md#sources) for how rn-xtool copies a C-family `main` file and what to do with a
   `main.swift`.
+- **"✖ precheck — rn-xtool could not read the xcframework <name> (<path>): <reason>"**: a binary target of the package
+  is an xcframework whose `Info.plist` is missing or cannot be parsed, so the precheck cannot find its headers.
+  Rebuild or reinstall the library that ships it.
+- **"…; if xtool-build builds this app, build with rn-xtool build --skip-precheck and report it with rn-xtool doctor
+  --report"**: the end of every precheck stop other than the compilers' errors and a missing toolchain: the SwiftPM
+  and xcframework lines above, and anything else that stops the step (a full disk, `ENOSPC`, or an error in rn-xtool
+  itself). The first part says what failed; `ios-xtool/.precheck/precheck.log` ends with it on a `# stopped:` line.
+  When `xtool-build` builds the app without the step, the stop is false: build with `--skip-precheck` and report it.
 
 ### Podspec reader
 

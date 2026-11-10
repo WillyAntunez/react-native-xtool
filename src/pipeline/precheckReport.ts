@@ -3,6 +3,28 @@ export class PrecheckError extends Error {
   override name = "PrecheckError";
 }
 
+/**
+ * The toolchain or the Darwin SDK is incomplete (`precheckToolchain`): xtool-build fails the same way, so the stop names
+ * `rn-xtool setup` and not the way past the precheck.
+ */
+export class PrecheckToolchainError extends PrecheckError {}
+
+/** What every stop the precheck did not plan for ends with: the way past it, and how to report it. */
+export const PRECHECK_EXIT =
+  "; if xtool-build builds this app, build with rn-xtool build --skip-precheck and report it with rn-xtool doctor --report";
+
+/**
+ * The error a precheck stop throws: a `PrecheckToolchainError`, and a message that already names `--skip-precheck`,
+ * as they are; any other error, planned or not (rn-xtool's reading of SwiftPM's answers, `ENOSPC`, a bug), a
+ * `PrecheckError` whose message ends with `PRECHECK_EXIT`.
+ */
+export function withExit(e: unknown): unknown {
+  if (e instanceof PrecheckToolchainError) return e;
+  const message = e instanceof Error ? e.message : String(e);
+  if (message.includes("--skip-precheck")) return e;
+  return new PrecheckError(`${message}${PRECHECK_EXIT}`, { cause: e });
+}
+
 /** One compiler error: where it is, what it says, and the include stack clang printed before it. */
 export interface Diagnostic {
   /** "" when the compiler named no file (a driver error, swiftc's `<unknown>:0`). */

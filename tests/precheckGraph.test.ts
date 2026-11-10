@@ -348,6 +348,35 @@ describe("precheckGraph", () => {
     expect(g.unresolved).toEqual([]);
   });
 
+  it("names an xcframework whose Info.plist it cannot read", () => {
+    const lib = path.join(t, "broken-xcframework");
+    write(path.join(lib, "Broken.xcframework/Info.plist"), "<plist><dict><key>AvailableLibraries</key>");
+    write(path.join(lib, "Gone.xcframework/ios-arm64/Headers/Gone.h"));
+    const app = { name: "App", type: "regular", dependencies: [{ byName: ["Broken", null] }] };
+    const targets = (name: string) => [
+      { ...app, dependencies: [{ byName: [name, null] }] },
+      { name, type: "binary", path: `${name}.xcframework`, dependencies: [] },
+    ];
+    for (const name of ["Broken", "Gone"]) {
+      let err: unknown;
+      try {
+        graphHeaders({ root: { name: "Bin", path: lib, dependencies: [], products: [], targets: targets(name) }, packages: [] });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(PrecheckError);
+      expect((err as Error).message).toMatch(
+        new RegExp(`^precheck — rn-xtool could not read the xcframework ${name} \\(${path.join(lib, `${name}.xcframework`)}\\): `),
+      );
+    }
+    // A binary target that is no xcframework folder (a zip archive) gives no headers, as before.
+    const zip = graphHeaders({
+      root: { name: "Bin", path: lib, dependencies: [], products: [], targets: [{ ...app, dependencies: [{ byName: ["Z", null] }] }, { name: "Z", type: "binary", path: "Z.zip", dependencies: [] }] },
+      packages: [],
+    });
+    expect(zip.headerDirs).toEqual([]);
+  });
+
   it("lists the references it cannot place, without stopping", () => {
     const dir = path.join(t, "unplaced");
     const app = {

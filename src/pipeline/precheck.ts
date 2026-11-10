@@ -24,7 +24,7 @@ import {
   type PrecheckToolchain,
 } from "./precheckCommands.js";
 import { graphHeaders, planManifest, readPackageGraph, type SwiftRunner } from "./precheckGraph.js";
-import { parseDiagnostics, precheckErrorLines, precheckStop, STALE_MODULE_CACHE, type Diagnostic } from "./precheckReport.js";
+import { parseDiagnostics, precheckErrorLines, precheckStop, STALE_MODULE_CACHE, withExit, type Diagnostic } from "./precheckReport.js";
 
 export interface PrecheckOptions {
   root: string;
@@ -136,7 +136,8 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
 /**
  * Checks the app's own sources before xtool-build, in order: the module cache (emptied on `clean`, other keys
  * removed) and the toolchain; SwiftPM's plan and graph; pass 2; Swift; the C family; the report. Every command line
- * and all output go to `<dir>/precheck.log`; errors stop with `precheckStop`.
+ * and all output go to `<dir>/precheck.log`; errors stop with `precheckStop`, and any other stop but a missing
+ * toolchain names the way past the precheck too (`withExit`).
  */
 export async function runPrecheck(
   paths: ProjectPaths,
@@ -179,7 +180,7 @@ export async function runPrecheck(
     report(r, [...(swift ?? []), ...cFamily]);
   } catch (e) {
     write(`# stopped: ${e instanceof Error ? e.message : String(e)}`);
-    throw e;
+    throw withExit(e);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

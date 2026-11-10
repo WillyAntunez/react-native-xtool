@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { writeIosXtool, type GeneratedApp } from "../src/generate/iosXtool.js";
 import { projectPaths, swiftHeadersDir, type ProjectPaths } from "../src/paths.js";
 import { runPrecheck, type PrecheckDeps } from "../src/pipeline/precheck.js";
-import { moduleCacheKey, type PrecheckToolchain } from "../src/pipeline/precheckCommands.js";
+import { moduleCacheKey, precheckToolchain, type PrecheckToolchain } from "../src/pipeline/precheckCommands.js";
 import type { SwiftRunner } from "../src/pipeline/precheckGraph.js";
 import { PrecheckError } from "../src/pipeline/precheckReport.js";
 import { readProject } from "../src/project/index.js";
@@ -579,6 +579,39 @@ describe("runPrecheck", () => {
       "⚠ precheck — ios/App/Opt.h:1 imports Missing/Missing.h, which only a condition the precheck cannot evaluate includes; the compile decides",
     ]);
     expect(h.calls.filter((c) => c.startsWith("clang"))).toEqual(["clang Native.m"]);
+  });
+
+  it("names the exit on a stop it did not plan", async () => {
+    const exit = "; if xtool-build builds this app, build with rn-xtool build --skip-precheck and report it with rn-xtool doctor --report";
+    const { paths, app } = handApp({ "Native.m": "#import <UIKit/UIKit.h>\n" });
+    const thrown = await harness(paths, app)
+      .run({ deps: { swift: async () => { throw new Error("ENOSPC: no space left on device, write"); } } })
+      .catch((e: unknown) => e);
+    expect(thrown).toBeInstanceOf(PrecheckError);
+    expect((thrown as Error).message).toBe(`ENOSPC: no space left on device, write${exit}`);
+    // The log keeps the original message.
+    expect(readFileSync(path.join(paths.iosXtool, ".precheck", "precheck.log"), "utf8")).toContain(
+      "# stopped: ENOSPC: no space left on device, write\n",
+    );
+
+    // rn-xtool's own reading of SwiftPM's answers is not certain either.
+    const unread = await harness(paths, app)
+      .run({ deps: { swift: async () => ({ code: 1, stdout: "", stderr: "error: boom" }) } })
+      .catch((e: unknown) => e);
+    expect((unread as Error).message).toBe(`precheck — SwiftPM refused the generated package (ios-xtool/Package.swift):\nerror: boom${exit}`);
+
+    // A missing toolchain fails xtool-build the same way: its line names rn-xtool setup only.
+    const noClang = await harness(paths, app)
+      .run({ deps: { toolchain: () => precheckToolchain({ PATH: "" }) } })
+      .catch((e: unknown) => e);
+    expect(noClang).toBeInstanceOf(PrecheckError);
+    expect((noClang as Error).message).toBe("precheck — clang was not found on the Swift toolchain's PATH; run rn-xtool setup");
+
+    // A stop that names the exit already keeps its message.
+    const stop = await harness(paths, app, () => ({ code: 1, output: "error: x" }))
+      .run()
+      .catch((e: unknown) => e);
+    expect((stop as Error).message).toMatch(/^precheck: 1 error\(s\) .*--skip-precheck and report it with rn-xtool doctor --report$/);
   });
 
   it("names a compiler that fails without a diagnostic", async () => {

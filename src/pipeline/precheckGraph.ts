@@ -395,12 +395,22 @@ function hasSwiftSources(pkg: DumpedPackage, target: Target): boolean {
   return (target.sources ?? ["."]).some((s) => found(path.join(dir, s)));
 }
 
-/** A binary target's device slice `Headers` (the slice without a platform variant), when it is an xcframework with one. */
+/**
+ * A binary target's device slice `Headers` (the slice without a platform variant), when it is an xcframework with one.
+ * An xcframework whose `Info.plist` is missing or unreadable is a `PrecheckError` naming it; a binary target that is no
+ * xcframework folder (a zip archive) gives none.
+ */
 function binaryHeaders(pkg: DumpedPackage, target: Target): string | undefined {
-  if (typeof target.path !== "string") return undefined;
+  if (typeof target.path !== "string" || !target.path.endsWith(".xcframework")) return undefined;
   const xcframework = path.join(pkg.path, target.path);
-  if (!existsSync(path.join(xcframework, "Info.plist"))) return undefined;
-  const device = readXcframeworkSlices(xcframework).find((s) => s.SupportedPlatform === "ios" && s.SupportedPlatformVariant === undefined);
+  let slices: ReturnType<typeof readXcframeworkSlices>;
+  try {
+    slices = readXcframeworkSlices(xcframework);
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    throw new PrecheckError(`precheck — rn-xtool could not read the xcframework ${target.name} (${xcframework}): ${why}`);
+  }
+  const device = slices.find((s) => s.SupportedPlatform === "ios" && s.SupportedPlatformVariant === undefined);
   if (device === undefined) return undefined;
   const headers = path.join(xcframework, device.LibraryIdentifier, device.HeadersPath ?? "Headers");
   return isDir(headers) ? headers : undefined;
