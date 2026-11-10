@@ -7,6 +7,7 @@ import type { AppTargetInputs, ExpoPackageInputs } from "../src/generate/package
 import type { GeneratedApp } from "../src/generate/iosXtool.js";
 import {
   clangArgs,
+  compileIncludeDirs,
   moduleCacheKey,
   precheckIncludeDirs,
   precheckToolchain,
@@ -252,6 +253,25 @@ describe("the precheck's command lines", () => {
     const m = clangArgs(i, "/p/a/x.m");
     expect(m).toContain("-fmodule-name=App");
     expect(m).toContain("-DOBJC_OLD_DISPATCH_PROTOTYPES=1");
+  });
+
+  it("orders a file's include folders as the compile that reads it", () => {
+    const i = inputs();
+    const bridging = "/p/app/ios-xtool/Sources/App/App-Bridging-Header.h";
+    const graph = "/p/pkgs/React/include";
+    // A file of the target: the graph's folders first (objc-088's `.resp`).
+    expect(compileIncludeDirs(i, "/p/a/x.m")[0]).toBe(graph);
+    expect(after(clangArgs(i, "/p/a/x.m"), "-I")[0]).toBe(graph);
+    // The bridging header: the target's own first, as swiftc's importer gets them (expo-58-bridging's swiftDriver).
+    const own = compileIncludeDirs(i, bridging);
+    expect(own.slice(0, 2)).toEqual(["/p/app/ios/App", "/p/My Apps/inc"]);
+    expect(own.indexOf(graph)).toBeGreaterThan(1);
+    const line = clangArgs(i, bridging);
+    expect(line.indexOf("-I/p/My Apps/inc")).toBeLessThan(line.indexOf(graph));
+    const importer = after(swiftcArgs(i, ["/p/a/A.swift"]), "-Xcc").filter((a) => a.startsWith("-I"));
+    expect(importer.indexOf("-I/p/My Apps/inc")).toBeLessThan(importer.indexOf(`-I${graph}`));
+    // Every folder pass 2 searched before is still searched, after the line's own.
+    expect(new Set(compileIncludeDirs(i, bridging))).toEqual(new Set([...own, ...precheckIncludeDirs(i)]));
   });
 
   it("gives an Expo Swift-only target's bridging header the compile-interfaces frameworks", () => {

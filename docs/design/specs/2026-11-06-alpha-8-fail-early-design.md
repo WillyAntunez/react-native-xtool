@@ -531,9 +531,11 @@ nowhere; one under a condition B1 cannot evaluate is never an error. B1 runs twi
    `INFOPLIST_FILE`) gives `⚠ <xcconfig> sets <settings> for the app target; rn-xtool does not read xcconfig files`; a
    synchronized folder group in the app target is refused, naming the group.
 2. **Pass 2, in the precheck step** (below): the include list the manifest has just been given, plus the dependency
-   products' header folders, from the one include-list function B2 uses. A missing include is an error (F3) when it is
-   a quote include or its first path component names no target of the package graph; otherwise it is a `⚠` and B2
-   decides (R6, row 37).
+   products' header folders, from the one include-list function B2 uses, in the order of the compile that reads each
+   file: B2's line for a C-family file of the target names the graph's folders first, the bridging header's (Swift's
+   clang importer) the target's own first, so a header two folders hold is the copy that compile opens. A missing
+   include is an error (F3) when it is a quote include or its first path component names no target of the package
+   graph; otherwise it is a `⚠` and B2 decides (R6, row 37).
 
 **B2, the precheck.** A new `build` step, `precheck`, after `generate` and before `xtool-build`:
 

@@ -1039,9 +1039,11 @@ includes with Swift Build's flags, and code generation and link errors still sho
   ios-xtool/.precheck/precheck.log)"**: pass 2 looked for the header in the App target's include folders, the SDK,
   clang's own headers and the frameworks, and found it in none. The include is not behind a condition the precheck
   cannot evaluate, and its file is one the compile surely reads; an angle include stops only when its first path
-  component names no target of the package. The log lists the folders in order. Fix the include or the header search
-  path, or install the library that ships the header. The other misses are `⚠` lines, and the build goes on;
-  `xtool-build` decides them:
+  component names no target of the package. The log lists the folders in order, per compile: a C-family file of the
+  app searches the libraries' header folders before the app target's own, as Swift Build orders them, and the bridging
+  header the app target's own first, as Swift's clang importer does, so a header both hold is the copy that compile
+  opens. Fix the include or the header search path, or install the library that ships the header. The other misses
+  are `⚠` lines, and the build goes on; `xtool-build` decides them:
   - `⚠ precheck — <file>:<line> imports <spelling>, which nothing compiles; checked by xtool-build if it is ever
     included`: the include is in a header of the app that no compiled file includes.
   - `⚠ precheck — <file>:<line> imports <spelling>, which only a condition the precheck cannot evaluate includes; the

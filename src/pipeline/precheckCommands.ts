@@ -270,12 +270,6 @@ export function clangArgs(i: PrecheckInputs, file: string, unwritten: ReadonlySe
   const language = languageOf(file);
   const objc = language === "objective-c" || language === "objective-c++";
   const cxx = language === "c++" || language === "objective-c++";
-  const { app, expo } = i.app.pkg;
-  // A target without C-family sources has no `appClangArgs`: its one C-family file is the bridging header.
-  const importer = !app.mixed || file === app.bridgingHeader;
-  const target = importer ? importerArgs(appSwiftArgs(app, expo)) : appClangArgs(app, expo, cxx);
-  const defines = importer ? SWIFT_BUILD_DEFINES.importer : [...SWIFT_BUILD_DEFINES.clang, ...(cxx ? SWIFT_BUILD_DEFINES.cxx : [])];
-  const maps = moduleMaps(i, unwritten);
   return [
     "-fsyntax-only",
     "-x",
@@ -288,16 +282,51 @@ export function clangArgs(i: PrecheckInputs, file: string, unwritten: ReadonlySe
     ...(objc ? ["-fobjc-arc"] : []),
     "-fmodules",
     // A file of the App target, as Swift Build compiles one; the importer's bridging header gets none.
-    ...(importer ? [] : ["-fmodule-name=App"]),
+    ...(readByImporter(i, file) ? [] : ["-fmodule-name=App"]),
     // With C++ modules off the cache is unused, and clang warns about the flag.
     ...(cxx ? ["-fno-cxx-modules"] : [`-fmodules-cache-path=${i.moduleCache}`]),
-    // Swift Build's order: the graph's header folders, then the target's own flags (objc-088's `.resp`).
-    ...i.graph.headerDirs.filter((d) => !maps.folders.has(d)).flatMap((d) => ["-I", d]),
-    ...defines.map((d) => `-D${d}`),
-    ...withPrecheckHeaders(i, withoutMaps(target, maps.shadowed)),
-    ...maps.maps.map((m) => `-fmodule-map-file=${m}`),
+    ...searchArgs(i, file, cxx, unwritten),
     file,
   ];
+}
+
+/** Swift's clang importer reads `file`: the bridging header, the one C-family file of a target without C-family sources. */
+const readByImporter = (i: PrecheckInputs, file: string): boolean => !i.app.pkg.app.mixed || file === i.app.pkg.app.bridgingHeader;
+
+/**
+ * Where `clangArgs` tells clang to look for `file`'s headers and what it defines, in the line's order. A file of the
+ * target: the graph's header folders, then the defines and the target's own flags (Swift Build's order, objc-088's
+ * `.resp`). The bridging header: the importer's macros, the target's flags, then the graph's folders (swiftc's
+ * `-Xcc` order, expo-58-bridging's swiftDriver).
+ */
+function searchArgs(i: PrecheckInputs, file: string, cxx: boolean, unwritten: ReadonlySet<string>): string[] {
+  const { app, expo } = i.app.pkg;
+  const maps = moduleMaps(i, unwritten);
+  const graph = i.graph.headerDirs.filter((d) => !maps.folders.has(d)).flatMap((d) => ["-I", d]);
+  const own = (target: string[]): string[] => withPrecheckHeaders(i, withoutMaps(target, maps.shadowed));
+  const mapFlags = maps.maps.map((m) => `-fmodule-map-file=${m}`);
+  if (readByImporter(i, file)) {
+    return [...SWIFT_BUILD_DEFINES.importer.map((d) => `-D${d}`), ...own(importerArgs(appSwiftArgs(app, expo))), ...graph, ...mapFlags];
+  }
+  const defines = [...SWIFT_BUILD_DEFINES.clang, ...(cxx ? SWIFT_BUILD_DEFINES.cxx : [])];
+  return [...graph, ...defines.map((d) => `-D${d}`), ...own(appClangArgs(app, expo, cxx)), ...mapFlags];
+}
+
+/**
+ * The folders B1 pass 2 searches for the headers of `root` (a compile root) and of every file it reaches, in the order
+ * of the compile that reads it: the `-I` folders of `clangArgs`' line (`searchArgs`), then those of
+ * `precheckIncludeDirs` the line does not name (a folder whose module map Swift Build writes instead), which only
+ * answer what the line's own folders do not.
+ */
+export function compileIncludeDirs(i: PrecheckInputs, root: string, unwritten: ReadonlySet<string> = new Set()): string[] {
+  const args = searchArgs(i, root, false, unwritten);
+  const dirs: string[] = [];
+  for (let n = 0; n < args.length; n++) {
+    const a = args[n]!;
+    if (a === "-I") dirs.push(args[++n]!);
+    else if (a.startsWith("-I")) dirs.push(a.slice("-I".length));
+  }
+  return [...new Set([...dirs, ...precheckIncludeDirs(i)])];
 }
 
 /**

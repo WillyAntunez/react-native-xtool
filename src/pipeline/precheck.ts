@@ -15,6 +15,7 @@ import { runArgv } from "../tools/exec.js";
 import { devEnv } from "../tools/xtool.js";
 import {
   clangArgs,
+  compileIncludeDirs,
   moduleCacheKey,
   precheckIncludeDirs,
   precheckToolchain,
@@ -182,7 +183,7 @@ export async function runPrecheck(
     const { toolchain, moduleCache } = await prepare(r);
     const inputs = await readGraph(r, toolchain, moduleCache);
     const maps = placeImporterMaps(r);
-    const includes = pass2(r, inputs);
+    const includes = pass2(r, inputs, maps.missing);
     const waiting = waitingForMaps(r, includes, maps);
     const swiftBuilt = importsSwiftBuilt(r, inputs, includes, maps, waiting);
     const swift = await swiftHop(r, inputs, waiting, swiftBuilt, maps);
@@ -350,13 +351,25 @@ function systemHeaders(inputs: PrecheckInputs): SystemHeaders {
   return { has, resource: resource.length > 0 };
 }
 
-/** The copy's includes, resolved as pass 2 resolves them. */
-interface Includes {
+/** The copy's includes, resolved as one compile's include folders find them. */
+interface Resolver {
+  /** The include folders, in the compile's order (after the including file's folder for a quote include). */
+  includeDirs: string[];
   of: (file: string) => ResolvedInclude[];
   /** A spelling looked up as clang does: from `from`'s folder (quote), then the include folders. */
   lookup: (from: string, spelling: string, angle: boolean) => string | undefined;
   /** `file` and the copy's files its includes find, transitively (a `-Swift.h` forward in the copy followed). */
   reached: (file: string) => string[];
+  /** With `certain`, only the includes clang surely opens are followed. */
+  reach: (file: string, certain: boolean) => string[];
+}
+
+/** The copy's includes, resolved as pass 2 resolves them: each compile root in the order of the compile that reads it. */
+interface Includes {
+  /** The resolver of `root`'s compile. */
+  forRoot: (root: string) => Resolver;
+  /** `root` and the copy's files its includes find, transitively, as its compile finds them. */
+  reached: (root: string) => string[];
 }
 
 /** The files clang reads first: the C-family sources and the bridging header. */
@@ -365,21 +378,10 @@ function compileRoots(r: Run): string[] {
   return [...Object.keys(r.app.origins).filter((f) => C_FAMILY.has(path.extname(f))), ...(bridging !== undefined ? [bridging] : [])];
 }
 
-/**
- * B1 pass 2 over the copied files (Swift's aside) with the App target's include folders and defines. A certain miss
- * the system folders do not answer either, in a file the compile reaches through certain includes, is an error when it is a quote include, or
- * an angle include whose first path component is no target of the graph (and clang's own headers were found); the
- * errors stop the step before any compile. Any other certain miss is a `⚠`.
- */
-function pass2(r: Run, inputs: PrecheckInputs): Includes {
-  const includeDirs = precheckIncludeDirs(inputs);
-  r.write(`# pass 2: the App target's ${includeDirs.length} include folders, in order\n${includeDirs.map((d) => `  ${d}`).join("\n")}`);
+/** The includes of the copy's files as `includeDirs`, in that order, find them; each file resolved once, when first asked. */
+function resolver(r: Run, includeDirs: string[], files: string[]): Resolver {
   const scope: Omit<IncludeScope, "files"> = { exists: existsSync, includeDirs, defines: definesOf(r.app.pkg.app.defines) };
-  const files = Object.keys(r.app.origins).filter((f) => path.extname(f) !== ".swift");
-  const resolved = resolveIncludes({ ...scope, files: files.map((f) => ({ path: f, source: f, display: f })) });
-
-  const byFile = new Map<string, ResolvedInclude[]>(files.map((f) => [f, []]));
-  for (const inc of resolved) byFile.get(inc.file)!.push(inc);
+  const byFile = new Map<string, ResolvedInclude[]>();
   const of = (file: string): ResolvedInclude[] => {
     let found = byFile.get(file);
     if (found === undefined) {
@@ -388,11 +390,14 @@ function pass2(r: Run, inputs: PrecheckInputs): Includes {
     }
     return found;
   };
+  for (const inc of resolveIncludes({ ...scope, files: files.map((f) => ({ path: f, source: f, display: f })) })) {
+    byFile.set(inc.file, [...(byFile.get(inc.file) ?? []), inc]);
+  }
+  for (const f of files) if (!byFile.has(f)) byFile.set(f, []);
   const lookup = (from: string, spelling: string, angle: boolean): string | undefined => {
     if (path.isAbsolute(spelling)) return existsSync(spelling) ? spelling : undefined;
     return (angle ? includeDirs : [path.dirname(from), ...includeDirs]).map((d) => path.join(d, spelling)).find((p) => existsSync(p));
   };
-  /** With `certain`, only the includes clang surely opens are followed. */
   const reach = (file: string, certain: boolean): string[] => {
     const seen = new Set<string>();
     const visit = (f: string): void => {
@@ -407,34 +412,87 @@ function pass2(r: Run, inputs: PrecheckInputs): Includes {
     visit(file);
     return [...seen];
   };
-  const reached = (file: string): string[] => reach(file, false);
+  return { includeDirs, of, lookup, reached: (file) => reach(file, false), reach };
+}
+
+/**
+ * B1 pass 2 over the copied files (Swift's aside) with the App target's include folders and defines. Each compile root
+ * and the files it reaches are resolved in the order of the compile that reads it (`compileIncludeDirs`): a file of the
+ * target searches the graph's folders first, the bridging header the target's own, so a header both hold is the copy
+ * that compile opens. A certain miss the system folders do not answer either, in a file a compile reaches through
+ * certain includes, is an error when it is a quote include, or an angle include whose first path component is no
+ * target of the graph (and clang's own headers were found); the errors stop the step before any compile. Any other
+ * certain miss is a `⚠`.
+ */
+function pass2(r: Run, inputs: PrecheckInputs, unwritten: ReadonlySet<string>): Includes {
+  const files = Object.keys(r.app.origins).filter((f) => path.extname(f) !== ".swift");
+  const roots = compileRoots(r);
+  // One resolver per include order: the target's files share one, the bridging header has its own.
+  const byOrder = new Map<string, { resolver: Resolver; roots: string[] }>();
+  const rootResolver = new Map<string, Resolver>();
+  for (const root of roots) {
+    const dirs = compileIncludeDirs(inputs, root, unwritten);
+    const key = dirs.join("\0");
+    let group = byOrder.get(key);
+    if (group === undefined) {
+      group = { resolver: resolver(r, dirs, files), roots: [] };
+      byOrder.set(key, group);
+    }
+    group.roots.push(root);
+    rootResolver.set(root, group.resolver);
+  }
+  const groups = [...byOrder.values()];
+  const fallback = groups[0]?.resolver ?? resolver(r, precheckIncludeDirs(inputs), files);
+  for (const g of groups) {
+    const dirs = g.resolver.includeDirs;
+    r.write(`# pass 2: ${g.roots.map(r.name).join(", ")} searches ${dirs.length} include folders, in order\n${dirs.map((d) => `  ${d}`).join("\n")}`);
+  }
+  if (groups.length === 0) r.write("# pass 2: no compile reads the copy's files");
+  const forRoot = (root: string): Resolver => rootResolver.get(root) ?? fallback;
 
   // Errors only where clang surely reads the file: a header reached only through an uncertain include may never be.
-  const roots = compileRoots(r);
-  const compiled = new Set(roots.flatMap(reached));
-  const surely = new Set(roots.flatMap((f) => reach(f, true)));
+  const reach = groups.map((g) => ({
+    resolver: g.resolver,
+    compiled: new Set(g.roots.flatMap((f) => g.resolver.reach(f, false))),
+    surely: new Set(g.roots.flatMap((f) => g.resolver.reach(f, true))),
+  }));
   const system = systemHeaders(inputs);
   const targets = new Set(inputs.graph.targets);
   let errors = 0;
-  for (const inc of resolved) {
-    if (!inc.certain || inc.generated || inc.found !== undefined || system.has(inc.spelling)) continue;
-    const at = `${r.name(inc.file)}:${inc.line} imports ${inc.spelling}`;
-    const first = inc.spelling.split("/")[0]!;
-    if (!compiled.has(inc.file)) {
-      r.show(`⚠ precheck — ${at}, which nothing compiles; checked by xtool-build if it is ever included`);
-    } else if (!surely.has(inc.file)) {
-      r.show(`⚠ precheck — ${at}, which only a condition the precheck cannot evaluate includes; the compile decides`);
-    } else if (inc.angle && targets.has(first)) {
-      r.show(`⚠ precheck — ${at}, which rn-xtool did not find; ${first} is a target of the package, so the compile decides`);
-    } else if (inc.angle && !system.resource) {
-      r.show(`⚠ precheck — ${at}, which rn-xtool did not find; the compile decides`);
-    } else {
-      errors++;
-      r.show(`✖ precheck — ${at}, which is in none of the App target's ${includeDirs.length} include folders (listed in ${r.name(r.logFile)})`);
+  for (const file of files) {
+    const by = reach.filter((g) => g.compiled.has(file));
+    // Per include, the line of the compile that judges it most severely (a miss two compiles share is told once).
+    const verdicts = new Map<string, { rank: number; line: string; error: boolean }>();
+    for (const g of by.length > 0 ? by : [{ resolver: fallback, compiled: new Set<string>(), surely: new Set<string>() }]) {
+      for (const inc of g.resolver.of(file)) {
+        if (!inc.certain || inc.generated || inc.found !== undefined || system.has(inc.spelling)) continue;
+        const at = `${r.name(inc.file)}:${inc.line} imports ${inc.spelling}`;
+        const first = inc.spelling.split("/")[0]!;
+        let verdict: { rank: number; line: string; error: boolean };
+        if (!g.compiled.has(file)) {
+          verdict = { rank: 0, line: `⚠ precheck — ${at}, which nothing compiles; checked by xtool-build if it is ever included`, error: false };
+        } else if (!g.surely.has(file)) {
+          verdict = { rank: 1, line: `⚠ precheck — ${at}, which only a condition the precheck cannot evaluate includes; the compile decides`, error: false };
+        } else if (inc.angle && targets.has(first)) {
+          verdict = { rank: 2, line: `⚠ precheck — ${at}, which rn-xtool did not find; ${first} is a target of the package, so the compile decides`, error: false };
+        } else if (inc.angle && !system.resource) {
+          verdict = { rank: 2, line: `⚠ precheck — ${at}, which rn-xtool did not find; the compile decides`, error: false };
+        } else {
+          const count = g.resolver.includeDirs.length;
+          verdict = { rank: 3, line: `✖ precheck — ${at}, which is in none of the App target's ${count} include folders (listed in ${r.name(r.logFile)})`, error: true };
+        }
+        const key = `${inc.line}\0${inc.spelling}`;
+        const seen = verdicts.get(key);
+        if (seen === undefined || verdict.rank > seen.rank) verdicts.set(key, verdict);
+      }
+    }
+    for (const v of verdicts.values()) {
+      if (v.error) errors++;
+      r.show(v.line);
     }
   }
   if (errors > 0) throw precheckStop(errors, r.name(r.logFile));
-  return { of, lookup, reached };
+  return { forRoot, reached: (root) => forRoot(root).reached(root) };
 }
 
 const withoutComments = (text: string): string => text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/.*$/gm, "");
@@ -598,10 +656,11 @@ function swiftHeadersNotWritten(r: Run, includes: Includes): (file: string) => s
   const written = path.join(r.dir, "swift-headers");
   return (file) => {
     const missing = new Set<string>();
-    for (const f of includes.reached(file)) {
-      for (const inc of includes.of(f)) {
+    const resolver = includes.forRoot(file);
+    for (const f of resolver.reached(file)) {
+      for (const inc of resolver.of(f)) {
         if (!inc.generated) continue;
-        const found = includes.lookup(f, inc.spelling, inc.angle);
+        const found = resolver.lookup(f, inc.spelling, inc.angle);
         if (found === undefined || !(within(written, found) || within(r.paths.sources, found))) missing.add(inc.spelling);
       }
     }

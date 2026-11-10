@@ -591,6 +591,43 @@ describe("runPrecheck", () => {
     expect(h.calls.filter((c) => c.startsWith("clang"))).toEqual(["clang Native.m"]);
   });
 
+  it("resolves each file's includes in the order of the compile that reads it", async () => {
+    // Shared.h is both in the app's own folder (a search path of the target) and in React's headers.
+    const files = {
+      "Native.m": '#import "Shared.h"\n#import <UIKit/UIKit.h>\n',
+      "Bridging.h": '#import "Shared.h"\n',
+      "Fwd/Shared.h": '#import "AppOnly.h"\n',
+    };
+    const shared = { "Shared.h": "#import <UIKit/UIKit.h>\n" };
+    const withFwd = (o: { bridgingHeader?: string }) => {
+      const { paths, app } = handApp(files, o);
+      app.pkg.app.headerSearchPaths = [path.join(paths.sources, "Fwd")];
+      return { paths, app };
+    };
+
+    // clang searches the graph's folders before the target's own (Swift Build's order): Native.m reads React's copy.
+    const objc = withFwd({});
+    const h = harness(objc.paths, objc.app);
+    await h.run({ packages: [reactNative(objc.paths.root, shared)] });
+    expect(h.logs).toEqual([
+      "⚠ precheck — ios/App/Fwd/Shared.h:1 imports AppOnly.h, which nothing compiles; checked by xtool-build if it is ever included",
+    ]);
+    expect(h.calls.filter((c) => c.startsWith("clang"))).toEqual(["clang Native.m"]);
+
+    // Swift's clang importer searches the target's folders first: the bridging header reads the app's copy.
+    const bridged = withFwd({ bridgingHeader: "Bridging.h" });
+    const b = harness(bridged.paths, bridged.app);
+    await expect(b.run({ packages: [reactNative(bridged.paths.root, shared)] })).rejects.toThrow(/^precheck: 1 error\(s\)/);
+    expect(b.logs).toEqual([
+      expect.stringMatching(
+        /^✖ precheck — ios\/App\/Fwd\/Shared\.h:1 imports AppOnly\.h, which is in none of the App target's \d+ include folders \(listed in ios-xtool\/\.precheck\/precheck\.log\)$/,
+      ),
+    ]);
+    const log = readFileSync(path.join(b.dir, "precheck.log"), "utf8");
+    expect(log).toContain("# pass 2: ios/App/Native.m searches");
+    expect(log).toContain("# pass 2: ios/App/Bridging.h searches");
+  });
+
   it("does not stop on a header only an uncertain condition includes", async () => {
     const { paths, app } = handApp({
       "Native.m": '#if __has_include(<Missing/Missing.h>)\n#import "Opt.h"\n#endif\n#import <UIKit/UIKit.h>\n',
