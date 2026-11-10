@@ -1022,7 +1022,9 @@ then check that `@{u}` is `origin/feature/alpha-8-precheck`.
 3. **Pass 1's certainty for quote includes**: a missing quote include is an error only when no header of the installed
    `react-native` or of a dependency ends with that spelling and the project has no binary pods (Task 3); otherwise
    it waits for pass 2. The spec says "app-own" without a rule; this is the plan's. Superseded: the app-own rule
-   (ledger line 57) and, after the final review, path-matching evidence for spellings with a folder.
+   (ledger line 57) and, after the final review, path-matching evidence for spellings with a folder. Ruled after the
+   re-review: the `ios/` match ignores case (the app target's headers match case-sensitively), so a case-only twin is
+   evidence and keeps its hint; this narrows the old base-name rule (spec, B1 pass 1).
 4. **`run` has no `--skip-precheck`**: the spec gives it to `build`; after a false stop, `build --skip-precheck` then
    `run` uses that build. Add it to `run` too? Answered: `run` has it (Task 11).
 5. **The release**: 0.1.0-alpha.8 shipped with group A; this plan's entries go to `[Unreleased]`. Which version

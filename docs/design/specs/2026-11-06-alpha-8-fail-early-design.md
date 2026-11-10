@@ -518,7 +518,11 @@ nowhere; one under a condition B1 cannot evaluate is never an error. B1 runs twi
    references, or a file under `ios/`, has a path that ends with the spelling (for a spelling without a folder, its
    name; case ignored, so that a case-only twin is named): a header of that name in another folder is no evidence for a
    spelling with a folder (`"SomeLib/Utils.h"`), which a library's headers may answer, and pass 1 leaves it to the
-   build. With `--skip-precheck` (hop 6) these errors are `⚠` lines and the build goes on. An angle include into React
+   build. The match on the app target's headers is case-sensitive; the match on `ios/` ignores case, so a file whose
+   path differs from the spelling only in case counts as evidence and the miss names it with the case hint. This
+   narrows the earlier base-name rule (a `Utils.h` anywhere under `ios/` no longer makes `"SomeLib/Utils.h"` app-own);
+   a false `✖` from the case-insensitive match needs both a case-only twin under `ios/` and a library holding the exact
+   spelling, and otherwise clang on Linux fails on the same include. With `--skip-precheck` (hop 6) these errors are `⚠` lines and the build goes on. An angle include into React
    Native's or a library's headers is "not checked yet" while `ios/build/xcframeworks` and the scaffolds are not staged:
    one `ℹ` line with the count, in doctor only. The same pass checks the app target's shape (R6, rows 46 and 47): an
    xcconfig the target or the project names (`baseConfigurationReference`) that is not CocoaPods' generated
