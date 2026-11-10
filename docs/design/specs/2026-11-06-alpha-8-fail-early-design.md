@@ -556,10 +556,11 @@ nowhere; one under a condition B1 cannot evaluate is never an error. B1 runs twi
    without compiling, runs first and reports F1-like refusals (an executable App target, an invalid header layout).
 6. **The exit** (R2, row 39): `rn-xtool build --skip-precheck` skips hops 2–5 with `⚠ precheck skipped
    (--skip-precheck): errors in the app's own sources show in xtool-build`, and `doctor --report` says the last build
-   skipped it. B1 pass 1 still runs, but does not stop: each of its `✖` lines is printed as a `⚠` line with the same
-   text, then `⚠ <n> include(s) of the app's own sources resolve nowhere (listed above); checked by xtool-build
-   (--skip-precheck)`, and the build goes on to `xtool-build` (`run --skip-precheck` passes the flag to `build`).
-   `doctor --project` keeps them `✖`.
+   skipped it. B1 pass 1's stop names this exit (`; if xtool-build builds them, build with rn-xtool build
+   --skip-precheck and report it with rn-xtool doctor --report`). With the flag B1 pass 1 still runs, but does not
+   stop: each of its `✖` lines is printed as a `⚠` line with the same text, then `⚠ <n> include(s) of the app's own
+   sources resolve nowhere (listed above); checked by xtool-build (--skip-precheck)`, and the build goes on to
+   `xtool-build` (`run --skip-precheck` passes the flag to `build`). `doctor --project` keeps them `✖`.
 
 Both B1 and B2 run on bare projects and on an Expo project's bridging header ([library
 compatibility](2026-11-04-library-compat-design.md), goal 3.6); an Expo project's `AppDelegate.swift` imports `Expo`
@@ -765,7 +766,7 @@ USB, the disk, GitHub's mention parser, npm and the drift watch's runners.
 | 27 | A, reduced reader in use | the JavaScript evaluator's known limits remain on a machine without Ruby | user: the fixed `⚠` line on every build | accept: the line is the decision; C and the class checks run whatever the reader |
 | 28 | A, model fields | the regex path's internal fields (`__unresolved__`, `__header_dir_scopes__`) are absent from the shim's JSON | nobody: the consumer derives them from the layers | handle: the sweep compares the two models field by field |
 | 29 | A, rn-xtool's other readers | the early checks and the resource reader keep their TypeScript line readers, which may disagree with the shim (a dependency under a Ruby condition) | user: an early refusal for a pod the scaffold does not use, or none for one it does | defer to alpha.9, "one podspec model for every reader" (R5); the sweep lists the disagreements meanwhile |
-| 30 | B1 pass 1 | an app-own quote include resolves nowhere (F2) | user in `doctor --project` and seconds after `build` starts: `✖ <file>:<line> imports "AppDelegate.h", which is not <places the app target's copy searched>` (the files the target lists next to the including file, the app target's headers, the search paths: never a folder on disk that may hold the file) | handle: fixture of the root-group layout |
+| 30 | B1 pass 1 | an app-own quote include resolves nowhere (F2) | user in `doctor --project` and seconds after `build` starts: `✖ <file>:<line> imports "AppDelegate.h", which is not <places the app target's copy searched>` (the files the target lists next to the including file, the app target's headers, the search paths: never a folder on disk that may hold the file), then `<n> include(s) of the app's own sources resolve nowhere (listed above): the build would stop compiling them; if xtool-build builds them, build with rn-xtool build --skip-precheck and report it with rn-xtool doctor --report` | handle: fixture of the root-group layout |
 | 31 | B1, header map | a quote include of an app header that lives in another folder | nobody: resolved by name, as Xcode's header map and the forwards do | handle: test with headers at the root of the group tree and in the app folder |
 | 32 | B1 pass 1, before staging | an angle include into React Native's or a library's headers cannot be checked yet | user in doctor: one `ℹ` with the count, "checked at build" | handle |
 | 33 | B1, conditions | `__has_include` chains (codegen's `RCTAppDependencyProvider.h` shape), `#ifdef RCT_NEW_ARCH_ENABLED`, `#if TARGET_OS_OSX` | nobody for a branch not taken; a condition B1 cannot evaluate never makes an error | handle: tests per form |

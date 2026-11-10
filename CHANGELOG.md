@@ -13,7 +13,8 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   paths>") and, when `ios/` holds one, a file of that name that differs only in case ("file names are case-sensitive on
   Linux"), that the target does not list, or, on Expo, that is not copied ("exists, but rn-xtool copies only the
   bridging header of an Expo app"), then "<n> include(s) of the app's own sources resolve nowhere (listed above): the
-  build would stop compiling them". With `--skip-precheck` each line is a `⚠` line instead, followed by "⚠ <n>
+  build would stop compiling them; if xtool-build builds them, build with rn-xtool build --skip-precheck and report it
+  with rn-xtool doctor --report". With `--skip-precheck` each line is a `⚠` line instead, followed by "⚠ <n>
   include(s) of the app's own sources resolve nowhere (listed above); checked by xtool-build (--skip-precheck)", and the
   build goes on. In a project with CocoaPods binaries it never stops: every miss is left to the `precheck` step. A
   quote include with a folder (`"SomeLib/Utils.h"`) counts as the app's own only when a header of the app target, or a

@@ -408,7 +408,8 @@ then check that `@{u}` is `origin/feature/alpha-8-precheck`.
   - `BuildDeps.appTargetCheck: typeof appTargetCheck`. `build` logs each warning, then each error as `✖ <error>`, and
     with errors throws `new Error("<n> include(s) of the app's own sources resolve nowhere (listed above): the build
     would stop compiling them")` (plan's wording). `--skip-precheck` does not skip it (hop 6). Superseded after the
-    final review: with `--skip-precheck` the lines are `⚠` and the build goes on.
+    final review: with `--skip-precheck` the lines are `⚠` and the build goes on, and the stop ends with `; if
+    xtool-build builds them, build with rn-xtool build --skip-precheck and report it with rn-xtool doctor --report`.
 
 - [ ] **Step 1: Write the failing tests:**
 

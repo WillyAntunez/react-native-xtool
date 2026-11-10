@@ -992,7 +992,8 @@ includes with Swift Build's flags, and code generation and link errors still sho
 
 - **"✖ ios/<Target>/AppDelegate.mm:3 imports "AppDelegate.h", which is not among the files the app target lists next
   to ios/<Target>/AppDelegate.mm, in the app target's headers or in <header search paths>"**, followed by "✖ <n>
-  include(s) of the app's own sources resolve nowhere (listed above): the build would stop compiling them": pass 1
+  include(s) of the app's own sources resolve nowhere (listed above): the build would stop compiling them; if
+  xtool-build builds them, build with rn-xtool build --skip-precheck and report it with rn-xtool doctor --report": pass 1
   found a quote include of one of the app's own headers (a header the app target references, or a file anywhere under
   `ios/`, case ignored, whose path ends with the spelling: for `"Shared/Utils.h"`, a `Shared/Utils.h`, not a `Utils.h`
   in another folder) in none of the places clang searches in the app target's copy, in the order the line names them:

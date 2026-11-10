@@ -460,7 +460,12 @@ export async function build(
       return;
     }
     for (const error of check.errors) d.log(`✖ ${error}`);
-    if (n > 0) throw new Error(`${n} include(s) of the app's own sources resolve nowhere (listed above): the build would stop compiling them`);
+    if (n > 0) {
+      throw new Error(
+        `${n} include(s) of the app's own sources resolve nowhere (listed above): the build would stop compiling them; ` +
+          "if xtool-build builds them, build with rn-xtool build --skip-precheck and report it with rn-xtool doctor --report",
+      );
+    }
   };
   if (project.kind === "bare") checkAppTarget();
 

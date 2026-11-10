@@ -1212,7 +1212,10 @@ describe("build", () => {
           },
         }),
       ).rejects.toThrow(
-        "1 include(s) of the app's own sources resolve nowhere (listed above): the build would stop compiling them",
+        new Error(
+          "1 include(s) of the app's own sources resolve nowhere (listed above): the build would stop compiling them; " +
+            "if xtool-build builds them, build with rn-xtool build --skip-precheck and report it with rn-xtool doctor --report",
+        ),
       );
       expect(seen).toEqual([{ root: t.root, project: expect.objectContaining({ kind: "bare" }), binaryPods }]);
       expect(t.calls).toEqual([]);
@@ -1237,7 +1240,7 @@ describe("build", () => {
     const u = setup();
     await expect(
       build(u.root, {}, { ...u.deps, appTargetCheck: () => ({ errors: ["e1", "e2"], warnings: [], pending: 0, checked: 0 }) }),
-    ).rejects.toThrow("2 include(s) of the app's own sources resolve nowhere (listed above)");
+    ).rejects.toThrow(/resolve nowhere \(listed above\): the build would stop compiling them; if xtool-build builds them, build with rn-xtool build --skip-precheck and report it with rn-xtool doctor --report$/);
     expect(u.calls).toEqual(["prebuild"]);
     expect(u.logs.slice(-2)).toEqual(["✖ e1", "✖ e2"]);
   });
