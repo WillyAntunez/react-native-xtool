@@ -236,6 +236,24 @@ describe("the precheck's command lines", () => {
     expect(args.some((a) => a.startsWith("-fmodule-name="))).toBe(false);
   });
 
+  it("gives a mixed target's bridging header what Swift gives it, not a C-family file's flags", () => {
+    const i = inputs();
+    const bridging = clangArgs(i, "/p/app/ios-xtool/Sources/App/App-Bridging-Header.h");
+    // The importer's macros (expo-58-bridging's swiftDriver: -Xcc -D…), then the bridging header's own -Xcc -D.
+    expect(bridging.filter((a) => a.startsWith("-D"))).toEqual([
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG=1",
+      "-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG",
+      "-DCOCOAPODS=1",
+    ]);
+    expect(bridging.some((a) => a.startsWith("-fmodule-name="))).toBe(false);
+    expect(bridging).toContain("-I/p/My Apps/inc");
+    // A C-family file of the same target keeps the target's.
+    const m = clangArgs(i, "/p/a/x.m");
+    expect(m).toContain("-fmodule-name=App");
+    expect(m).toContain("-DOBJC_OLD_DISPATCH_PROTOTYPES=1");
+  });
+
   it("gives an Expo Swift-only target's bridging header the compile-interfaces frameworks", () => {
     const expo: ExpoPackageInputs = { compileInterfacesDir: "/p/app/ios-xtool/.expo/My Interfaces", jsiHeaders: false };
     const args = clangArgs(inputs({ mixed: false }, expo), "/p/app/ios-xtool/Sources/App/App-Bridging-Header.h");

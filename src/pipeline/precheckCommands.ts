@@ -260,17 +260,21 @@ function importerArgs(args: string[]): string[] {
 }
 
 /**
- * `clang -fsyntax-only` of one C-family file, as Swift Build compiles it in the App target. A target without C-family
- * sources has no `appClangArgs`: its one C-family file, the bridging header, gets what Swift's clang importer gets
- * (Swift Build's importer macros, the `-F` frameworks and the `-Xcc` values).
+ * `clang -fsyntax-only` of one C-family file, as Swift Build compiles it in the App target. The bridging header is
+ * not a file of the target: Swift's clang importer reads it, in a mixed target too, so it gets what the importer gets
+ * (expo-58-bridging's swiftDriver): Swift Build's importer macros (`-Xcc -DSWIFT_PACKAGE`, `-DDEBUG=1` and libc++'s
+ * hardening mode), the `-F` frameworks and the `-Xcc` values of `appSwiftArgs` (the target's own defines among them),
+ * and no `-fmodule-name=App`.
  */
 export function clangArgs(i: PrecheckInputs, file: string, unwritten: ReadonlySet<string> = new Set()): string[] {
   const language = languageOf(file);
   const objc = language === "objective-c" || language === "objective-c++";
   const cxx = language === "c++" || language === "objective-c++";
   const { app, expo } = i.app.pkg;
-  const target = app.mixed ? appClangArgs(app, expo, cxx) : importerArgs(appSwiftArgs(app, expo));
-  const defines = app.mixed ? [...SWIFT_BUILD_DEFINES.clang, ...(cxx ? SWIFT_BUILD_DEFINES.cxx : [])] : SWIFT_BUILD_DEFINES.importer;
+  // A target without C-family sources has no `appClangArgs`: its one C-family file is the bridging header.
+  const importer = !app.mixed || file === app.bridgingHeader;
+  const target = importer ? importerArgs(appSwiftArgs(app, expo)) : appClangArgs(app, expo, cxx);
+  const defines = importer ? SWIFT_BUILD_DEFINES.importer : [...SWIFT_BUILD_DEFINES.clang, ...(cxx ? SWIFT_BUILD_DEFINES.cxx : [])];
   const maps = moduleMaps(i, unwritten);
   return [
     "-fsyntax-only",
@@ -283,8 +287,8 @@ export function clangArgs(i: PrecheckInputs, file: string, unwritten: ReadonlySe
     ...developerFrameworks(i.toolchain.sdk).flatMap((d) => ["-iframework", d]),
     ...(objc ? ["-fobjc-arc"] : []),
     "-fmodules",
-    // A file of the App target, as Swift Build compiles one; the bridging header is the importer's, which has none.
-    ...(app.mixed ? ["-fmodule-name=App"] : []),
+    // A file of the App target, as Swift Build compiles one; the importer's bridging header gets none.
+    ...(importer ? [] : ["-fmodule-name=App"]),
     // With C++ modules off the cache is unused, and clang warns about the flag.
     ...(cxx ? ["-fno-cxx-modules"] : [`-fmodules-cache-path=${i.moduleCache}`]),
     // Swift Build's order: the graph's header folders, then the target's own flags (objc-088's `.resp`).
