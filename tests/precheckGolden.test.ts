@@ -216,28 +216,43 @@ export function compareFlags(ours: string[], theirs: string[]): { missing: strin
 }
 
 /**
- * The include folders `argv` names with the flags in `kinds` (`-I` for clang; `-I` and `-F` for swiftc, whose `-Xcc`
- * values are its importer's), in order: `<flag> <normalised folder>`, each at its first place, dropped ones left out.
- * clang searches them in this order, so a header two of them hold resolves to the first. With `graph`, the package
- * graph's header folders are one `<flag> <graph>` block at the first one's place: Swift Build orders them by the package
- * graph, which the fixtures do not hold (`inputs.json` has the folders, in rn-xtool's order), so only where the block
- * stands is compared; `compareFlags` compares the folders it holds.
+ * The include folders `argv` names with the flags in `kinds` (`-I` for clang; `-I` and `-F` for swiftc; `-Xcc -I` for
+ * swiftc's importer), in order: `<flag> <normalised folder>`, each at its first place, dropped ones left out. clang
+ * searches them in this order, so a header two of them hold resolves to the first. With `graph`, each run of the
+ * package graph's header folders is one `<flag> <graph>` at the run's place: Swift Build orders them by the package
+ * graph, which the fixtures do not hold (`inputs.json` has the folders, in rn-xtool's order), so the order inside a
+ * run is not compared, but a graph folder placed among the target's own folders still shows; `compareFlags` compares
+ * the folders a run holds.
  */
 function includeOrder(argv: string[], kinds: string[], graph: ReadonlySet<string> = new Set()): string[] {
+  const seen = new Set<string>();
   const out: string[] = [];
   for (let n = 0; n < argv.length; n++) {
     const a = argv[n]!;
-    if (a === "-Xcc" || a === "-Isystem") {
+    if (a === "-Isystem") {
       n++;
       continue;
     }
-    const kind = kinds.find((k) => a === k || a.startsWith(k));
-    if (kind === undefined) continue;
-    const folder = a === kind ? argv[++n]! : a.slice(kind.length);
+    let kind: string | undefined;
+    let folder: string | undefined;
+    if (a === "-Xcc") {
+      const value = argv[++n] ?? "";
+      if (kinds.includes("-Xcc -I") && value.startsWith("-I")) [kind, folder] = ["-Xcc -I", value.slice(2)];
+    } else {
+      kind = kinds.find((k) => !k.startsWith("-Xcc") && (a === k || a.startsWith(k)));
+      if (kind !== undefined) folder = a === kind ? argv[++n]! : a.slice(kind.length);
+    }
+    if (kind === undefined || folder === undefined) continue;
     const p = normalisePath(folder, false);
-    if (p !== null) out.push(`${kind} ${graph.has(p) ? "<graph>" : p}`);
+    if (p === null) continue;
+    const concrete = `${kind} ${p}`;
+    if (seen.has(concrete)) continue;
+    seen.add(concrete);
+    const entry = graph.has(p) ? `${kind} <graph>` : concrete;
+    if (entry.endsWith(" <graph>") && out.at(-1) === entry) continue;
+    out.push(entry);
   }
-  return [...new Set(out)];
+  return out;
 }
 
 /** The graph's header folders of `inputs`, normalised (its binary targets' as `withBinaryHeaders` names them). */
@@ -338,6 +353,8 @@ describe("the precheck's command lines against Swift Build's (row 39)", () => {
         const theirs = withBinaryHeaders(expandResponses(ref, argv.slice(argv.indexOf("--") + 2)), inputs);
         expect(compareFlags(swiftcArgs(inputs, swiftFiles), theirs)).toEqual({ missing: [], extra: [] });
         expect(includeOrder(swiftcArgs(inputs, swiftFiles), ["-I", "-F"])).toEqual(includeOrder(theirs, ["-I", "-F"]));
+        const importer = (argv: string[]) => includeOrder(argv, ["-Xcc -I"], graphFolders(inputs));
+        expect(importer(swiftcArgs(inputs, swiftFiles))).toEqual(importer(theirs));
       });
     }
     for (const task of commands.compileC) {
