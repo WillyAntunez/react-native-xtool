@@ -1084,9 +1084,9 @@ includes with Swift Build's flags, and code generation and link errors still sho
 - **"ℹ precheck — <file> imports <module>, which SwiftPM builds: checked by xtool-build"**: a Swift file imports a
   module that exists only once SwiftPM builds it (a Swift library, or a library target with Swift files next to its
   Objective-C, whose clang half alone the precheck could give `swiftc`), or the bridging header `@import`s one (the
-  line then names the bridging header, and reads `which no module map of the package graph declares` for a module no
-  map of the graph declares, such as the SDK's `CommonCrypto`), so `swiftc -typecheck` does not run and the Swift
-  files are left to `xtool-build`. On Expo it is the usual line once Swift Build has written its module maps: the app's
+  line then names the bridging header). For a module no map of the graph declares and the SDK has as no framework or
+  Swift module, such as the SDK's `CommonCrypto`, the line reads `which no module map of the package graph declares`
+  instead. Either way `swiftc -typecheck` does not run and the Swift files are left to `xtool-build`. On Expo it is the usual line once Swift Build has written its module maps: the app's
   `AppDelegate.swift` imports `Expo`, or the generated `ExpoModulesProvider.swift` imports `ExpoModulesCore`. The
   C-family files are still checked. Nothing to do.
 - **"ℹ precheck — <file> imports the module <M>, which SwiftPM builds; checked by xtool-build"** (or `…, which no

@@ -44,7 +44,8 @@ then check that `@{u}` is `origin/feature/alpha-8-precheck`.
 - Exact texts (spec): `✖ <file>:<line> imports "AppDelegate.h", which is not in <folders searched>` (row 30; after the
   final review, `which is not among the files the app target lists next to <file>, in the app target's headers or in
   <paths>`);
-  `ℹ precheck — <file> imports <module>, which SwiftPM builds: checked by xtool-build` (row 43);
+  `ℹ precheck — <file> imports <module>, which SwiftPM builds: checked by xtool-build` (row 43; `which no module map
+  of the package graph declares` for a module neither the graph's maps nor the SDK's frameworks and Swift modules have);
   `⚠ <xcconfig> sets <settings> for the app target; rn-xtool does not read xcconfig files` (row 46);
   `✖ precheck — <file>:<line>: <clang's message>` with clang's include stack, the first ten errors and the log file's
   path (hop 4); `⚠ precheck skipped (--skip-precheck): errors in the app's own sources show in xtool-build` (hop 6).

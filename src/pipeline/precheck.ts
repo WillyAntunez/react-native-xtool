@@ -541,7 +541,7 @@ function waitingForMaps(r: Run, includes: Includes, maps: ImporterMaps): Set<str
   return all;
 }
 
-/** Why the precheck cannot place module `m` that a file `@import`s: SwiftPM builds it from Swift, or no map declares it. */
+/** Why the precheck cannot place module `m` that a file imports: SwiftPM builds it from Swift, or no map declares it. */
 const whyUnplaced = (inputs: PrecheckInputs, m: string): string =>
   inputs.graph.swiftModules.includes(m) ? "which SwiftPM builds" : "which no module map of the package graph declares";
 
@@ -601,7 +601,7 @@ async function swiftHop(
   for (const file of files) {
     const unknown = moduleImports(readFileSync(file, "utf8"), SWIFT_IMPORT).find((m) => !known(m));
     if (unknown !== undefined) {
-      r.show(`ℹ precheck — ${r.name(file)} imports ${unknown}, which SwiftPM builds: checked by xtool-build`);
+      r.show(`ℹ precheck — ${r.name(file)} imports ${unknown}, ${whyUnplaced(inputs, unknown)}: checked by xtool-build`);
       return undefined;
     }
   }

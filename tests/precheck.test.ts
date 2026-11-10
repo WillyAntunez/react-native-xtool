@@ -44,6 +44,11 @@ function reactNative(root: string, extra: Record<string, string> = {}): FakePack
   };
 }
 
+/** Expo as the graph gives it: a target SwiftPM builds from Swift, with its clang half's headers. */
+function expoPackage(root: string): FakePackage {
+  return { name: "Expo", path: path.join(root, "expo"), targets: [{ name: "Expo", headers: { "Expo.h": "" }, swift: true }] };
+}
+
 /**
  * SwiftPM as the precheck asks it: `describe` plans App as a library; `show-dependencies` lists `packages`; the root's
  * App depends on every product of theirs (one per target). Each call is recorded by its subcommand.
@@ -258,7 +263,7 @@ describe("runPrecheck", () => {
       "Plain.m": "#import <UIKit/UIKit.h>\n",
     });
     const h = harness(paths, app);
-    await h.run();
+    await h.run({ packages: [reactNative(paths.root), expoPackage(paths.root)] });
     expect(h.logs).toEqual([
       "ℹ precheck — ios/App/AppDelegate.swift imports Expo, which SwiftPM builds: checked by xtool-build",
       "ℹ precheck — ios/App/Bridge.m import App-Swift.h, which the Swift check did not write: checked by xtool-build",
@@ -272,6 +277,20 @@ describe("runPrecheck", () => {
     const mixed: FakePackage = { name: "MixedLib", path: path.join(paths.root, "mixed"), targets: [{ name: "MixedLib", headers: { "MixedLib.h": "" }, swift: true }] };
     await h.run({ packages: [reactNative(paths.root), mixed] });
     expect(h.logs).toEqual(["ℹ precheck — ios/App/AppDelegate.swift imports MixedLib, which SwiftPM builds: checked by xtool-build"]);
+    expect(h.calls.filter((c) => c.startsWith("swiftc") || c.startsWith("clang"))).toEqual(["clang Plain.m"]);
+  });
+
+  it("says a Swift import of an SDK module without a framework is in no map", async () => {
+    const { paths, app } = handApp({ "AppDelegate.swift": "import UIKit\nimport CommonCrypto\n", "Plain.m": "#import <UIKit/UIKit.h>\n" });
+    // CommonCrypto as the SDK ships it: a clang module under usr/include, no framework folder, no .swiftmodule.
+    const sdk = path.join(paths.root, "sdk", "iPhoneOS.sdk");
+    write(path.join(sdk, "usr", "include", "CommonCrypto", "module.modulemap"), 'module CommonCrypto { header "CommonCrypto.h" }\n');
+    write(path.join(sdk, "usr", "include", "CommonCrypto", "CommonCrypto.h"), "");
+    const h = harness(paths, app);
+    await h.run();
+    expect(h.logs).toEqual([
+      "ℹ precheck — ios/App/AppDelegate.swift imports CommonCrypto, which no module map of the package graph declares: checked by xtool-build",
+    ]);
     expect(h.calls.filter((c) => c.startsWith("swiftc") || c.startsWith("clang"))).toEqual(["clang Plain.m"]);
   });
 
@@ -325,7 +344,7 @@ describe("runPrecheck", () => {
   it("reads every import of a line with several", async () => {
     const { paths, app } = handApp({ "AppDelegate.swift": "import UIKit; import Expo\n", "Plain.m": "#import <UIKit/UIKit.h>\n" });
     const h = harness(paths, app);
-    await h.run();
+    await h.run({ packages: [reactNative(paths.root), expoPackage(paths.root)] });
     expect(h.logs).toEqual(["ℹ precheck — ios/App/AppDelegate.swift imports Expo, which SwiftPM builds: checked by xtool-build"]);
     expect(h.calls.filter((c) => c.startsWith("swiftc"))).toEqual([]);
   });
@@ -469,7 +488,7 @@ describe("runPrecheck", () => {
       },
     };
     const h = harness(paths, app);
-    await h.run();
+    await h.run({ packages: [reactNative(paths.root), expoPackage(paths.root)] });
     const dir = path.join(paths.iosXtool, ".precheck", "swift-headers");
     expect(h.logs).toEqual([
       "ℹ precheck — ios/App/AppDelegate.swift imports Expo, which SwiftPM builds: checked by xtool-build",
