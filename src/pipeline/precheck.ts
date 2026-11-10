@@ -3,7 +3,7 @@
 // each translation unit's output parsed on its own. The flags come from `precheckCommands.ts`, the parsing from
 // `precheckReport.ts`: this file only runs the hops, in order, and says what it skipped.
 
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import path from "node:path";
 import { execa } from "execa";
@@ -230,9 +230,27 @@ interface ImporterMaps {
   skip: (files: string[]) => void;
 }
 
+/** A path a module map names: after `header` (any kind, `umbrella header` too), `umbrella`, or `extern module X`. */
+const MAP_PATH = /(\b(?:header|umbrella)\s+|\bextern\s+module\s+[A-Za-z_][A-Za-z0-9_]*\s+)"((?:[^"\\]|\\.)*)"/g;
+
+/**
+ * Swift Build's module map `text`, read from `map`, with each relative path it names made absolute against the map's
+ * own folder, so that the copy still names Swift Build's files (`header "ExpoUI-Swift.h"`); absolute paths stay. A path
+ * to the App's own Swift header (`app.from`) names the precheck's (`app.to`) instead. Nothing else changes.
+ */
+function withSwiftBuildPaths(text: string, map: string, app: { from: string; to: string }): string {
+  return text.replace(MAP_PATH, (whole, head: string, named: string) => {
+    if (named.includes("\\")) return whole;
+    const resolved = path.resolve(path.dirname(map), named);
+    if (resolved === app.from) return `${head}"${app.to}"`;
+    return path.isAbsolute(named) ? whole : `${head}"${resolved}"`;
+  });
+}
+
 /**
  * The precheck's Swift header folder, emptied (`App-Swift.h` is written anew), with Expo's importer module maps Swift
- * Build wrote copied in where the swapped flags name them. A map Swift Build has not written yet is dropped from the
+ * Build wrote copied in where the swapped flags name them, their paths still naming Swift Build's files
+ * (`withSwiftBuildPaths`). A map Swift Build has not written yet is dropped from the
  * command lines, with one `ℹ` line.
  */
 function placeImporterMaps(r: Run): ImporterMaps {
@@ -247,7 +265,7 @@ function placeImporterMaps(r: Run): ImporterMaps {
     const placed = path.join(to, path.relative(from, map));
     if (existsSync(map)) {
       mkdirSync(path.dirname(placed), { recursive: true });
-      copyFileSync(map, placed);
+      writeFileSync(placed, withSwiftBuildPaths(readFileSync(map, "utf8"), map, { from: path.join(from, "App-Swift.h"), to: path.join(to, "App-Swift.h") }));
     } else {
       placedMissing.add(placed);
       missing.add(path.basename(map, ".modulemap"));

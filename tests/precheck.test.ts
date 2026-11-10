@@ -402,6 +402,45 @@ describe("runPrecheck", () => {
     expect(readFileSync(path.join(dir, "ExpoModulesCore.modulemap"), "utf8")).toBe("module ExpoModulesCore {}\n");
   });
 
+  it("keeps the copied module maps' headers where Swift Build wrote them", async () => {
+    const { paths, app } = handApp({ "X.m": "#import <UIKit/UIKit.h>\n" });
+    const built = swiftHeadersDir(paths.iosXtool);
+    const maps = {
+      ExpoUI: path.join(built, "ExpoUI.modulemap"),
+      Folder: path.join(built, "Nested", "Folder.modulemap"),
+      AppUse: path.join(built, "AppUse.modulemap"),
+    };
+    write(path.join(built, "ExpoUI-Swift.h"), "// ExpoUI\n");
+    write(maps.ExpoUI, 'module ExpoUI {\n  header "ExpoUI-Swift.h"\n  requires objc\n}\n');
+    write(
+      maps.Folder,
+      'module Folder [system] {\n  umbrella "."\n  private header "../Priv.h"\n  textual header "T.h"\n  exclude header "E.h"\n' +
+        '  umbrella header "/abs/Folder.h"\n  extern module Ext "ext.modulemap"\n  link "Folder"\n  module * { export * }\n}\n',
+    );
+    write(maps.AppUse, 'module AppUse {\n  header "App-Swift.h"\n}\n');
+    app.pkg.expo = {
+      compileInterfacesDir: path.join(paths.expoDir, "compile-interfaces"),
+      jsiHeaders: true,
+      clangImporter: { swiftHeadersDir: built, includeDirs: [], moduleMaps: Object.values(maps) },
+    };
+    await harness(paths, app).run();
+    const copies = path.join(paths.iosXtool, ".precheck", "swift-headers");
+    const copy = (rel: string) => readFileSync(path.join(copies, rel), "utf8");
+    // A relative header names Swift Build's file, which the copy's folder does not hold.
+    expect(copy("ExpoUI.modulemap")).toBe(`module ExpoUI {\n  header "${path.join(built, "ExpoUI-Swift.h")}"\n  requires objc\n}\n`);
+    expect(existsSync(path.join(built, "ExpoUI-Swift.h"))).toBe(true);
+    // Every path form is rewritten against the map's own folder; absolute paths, `link` and the rest stay as they are.
+    const nested = path.join(built, "Nested");
+    expect(copy(path.join("Nested", "Folder.modulemap"))).toBe(
+      `module Folder [system] {\n  umbrella "${nested}"\n  private header "${path.join(built, "Priv.h")}"\n` +
+        `  textual header "${path.join(nested, "T.h")}"\n  exclude header "${path.join(nested, "E.h")}"\n` +
+        `  umbrella header "/abs/Folder.h"\n  extern module Ext "${path.join(nested, "ext.modulemap")}"\n  link "Folder"\n` +
+        "  module * { export * }\n}\n",
+    );
+    // The App's own Swift header is the one the precheck writes.
+    expect(copy("AppUse.modulemap")).toBe(`module AppUse {\n  header "${path.join(copies, "App-Swift.h")}"\n}\n`);
+  });
+
   it("names Swift Build's module map once it is there, the synthesized one before", async () => {
     const { paths, app } = handApp({ "X.m": "#import <UIKit/UIKit.h>\n" });
     const built = swiftHeadersDir(paths.iosXtool);
