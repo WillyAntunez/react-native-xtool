@@ -96,9 +96,10 @@ written with them.
   and video take their old-architecture branch. The shim models the helpers and gives one result on every machine with
   Ruby. The JavaScript evaluator stays as the fallback without Ruby.
 - **R2. An exit for each new stop that can block a working app** (rows 5 and 39). `RN_XTOOL_PODSPEC_READER=reduced`
-  forces the reduced reader for one run, and `rn-xtool build --skip-precheck` skips the precheck; each prints a `⚠`
-  line naming itself, and `doctor --report` records that it was used. A blocked user with no way out abandons the tool
-  before reporting; the report turns each use into a signal for the maintainers.
+  forces the reduced reader for one run, and `rn-xtool build --skip-precheck` skips the precheck and turns B1 pass 1's
+  errors into `⚠` lines; each prints a `⚠` line naming itself, and `doctor --report` records that it was used. A
+  blocked user with no way out abandons the tool before reporting; the report turns each use into a signal for the
+  maintainers.
 - **R3. A shim failure is never swallowed** (row 10): it stops `rn-spm` with the shim's text, also when an autolinking
   read hits it. The reader sweep covers every podspec of the Expo SDK 57 and 58 templates and of the reference apps,
   so Expo modules are proven before release.
@@ -511,20 +512,20 @@ on any other macro outside that list. Each `#import`/`#include`:
 An include is **missing** when it is unconditional (outside every `#if` group except include guards) and resolves
 nowhere; one under a condition B1 cannot evaluate is never an error. B1 runs twice:
 
-1. **Pass 1, before anything changes**: in `doctor --project` and at the start of `build`, next to the early checks.
-   It knows the app's own files and `HEADER_SEARCH_PATHS`. An app-own quote include that is missing (F2) is an error
-   with the file, the line, the header and where rn-xtool looked. A quote include is app-own when a header the app
-   target references, or a file under `ios/`, has a path that ends with the spelling (for a spelling without a folder,
-   its name; case ignored, so that a case-only twin is named): a header of that name in another folder is no evidence
-   for a spelling with a folder (`"SomeLib/Utils.h"`), which a library's headers may answer, and pass 1 leaves it to
-   the build. An angle include into React Native's or a library's
-   headers is "not checked yet" while `ios/build/xcframeworks` and the scaffolds are not staged: one `ℹ` line with the
-   count, in doctor only. The same pass checks the app target's shape (R6, rows 46 and 47): an xcconfig the target or
-   the project names (`baseConfigurationReference`) that is not CocoaPods' generated `Pods-*.xcconfig` and sets a
-   setting rn-xtool reads (`HEADER_SEARCH_PATHS`, `GCC_PREPROCESSOR_DEFINITIONS`, `CLANG_CXX_LANGUAGE_STANDARD`,
-   `SWIFT_OBJC_BRIDGING_HEADER`, `PRODUCT_MODULE_NAME`, `CODE_SIGN_ENTITLEMENTS`, `INFOPLIST_FILE`) gives
-   `⚠ <xcconfig> sets <settings> for the app target; rn-xtool does not read xcconfig files`; a synchronized folder group
-   in the app target is refused, naming the group.
+1. **Pass 1, before anything changes**: in `doctor --project` and at the start of `build`, next to the early checks. It
+   knows the app's own files and `HEADER_SEARCH_PATHS`. An app-own quote include that is missing (F2) is an error with
+   the file, the line, the header and where rn-xtool looked. A quote include is app-own when a header the app target
+   references, or a file under `ios/`, has a path that ends with the spelling (for a spelling without a folder, its
+   name; case ignored, so that a case-only twin is named): a header of that name in another folder is no evidence for a
+   spelling with a folder (`"SomeLib/Utils.h"`), which a library's headers may answer, and pass 1 leaves it to the
+   build. With `--skip-precheck` (hop 6) these errors are `⚠` lines and the build goes on. An angle include into React
+   Native's or a library's headers is "not checked yet" while `ios/build/xcframeworks` and the scaffolds are not staged:
+   one `ℹ` line with the count, in doctor only. The same pass checks the app target's shape (R6, rows 46 and 47): an
+   xcconfig the target or the project names (`baseConfigurationReference`) that is not CocoaPods' generated
+   `Pods-*.xcconfig` and sets a setting rn-xtool reads (`HEADER_SEARCH_PATHS`, `GCC_PREPROCESSOR_DEFINITIONS`,
+   `CLANG_CXX_LANGUAGE_STANDARD`, `SWIFT_OBJC_BRIDGING_HEADER`, `PRODUCT_MODULE_NAME`, `CODE_SIGN_ENTITLEMENTS`,
+   `INFOPLIST_FILE`) gives `⚠ <xcconfig> sets <settings> for the app target; rn-xtool does not read xcconfig files`; a
+   synchronized folder group in the app target is refused, naming the group.
 2. **Pass 2, in the precheck step** (below): the include list the manifest has just been given, plus the dependency
    products' header folders, from the one include-list function B2 uses. A missing include is an error (F3) when it is
    a quote include or its first path component names no target of the package graph; otherwise it is a `⚠` and B2
@@ -553,9 +554,12 @@ nowhere; one under a condition B1 cannot evaluate is never an error. B1 runs twi
    and the log file's path. Warnings are not printed: `xtool-build` prints them once.
 5. **Manifest planning** (R6, row 54): `swift package describe --type json` in `ios-xtool/`, which plans the package
    without compiling, runs first and reports F1-like refusals (an executable App target, an invalid header layout).
-6. **The exit** (R2, row 39): `rn-xtool build --skip-precheck` skips hops 2–5 with
-   `⚠ precheck skipped (--skip-precheck): errors in the app's own sources show in xtool-build`, and `doctor --report`
-   says the last build skipped it. B1 pass 1 still runs.
+6. **The exit** (R2, row 39): `rn-xtool build --skip-precheck` skips hops 2–5 with `⚠ precheck skipped
+   (--skip-precheck): errors in the app's own sources show in xtool-build`, and `doctor --report` says the last build
+   skipped it. B1 pass 1 still runs, but does not stop: each of its `✖` lines is printed as a `⚠` line with the same
+   text, then `⚠ <n> include(s) of the app's own sources resolve nowhere (listed above); checked by xtool-build
+   (--skip-precheck)`, and the build goes on to `xtool-build` (`run --skip-precheck` passes the flag to `build`).
+   `doctor --project` keeps them `✖`.
 
 Both B1 and B2 run on bare projects and on an Expo project's bridging header ([library
 compatibility](2026-11-04-library-compat-design.md), goal 3.6); an Expo project's `AppDelegate.swift` imports `Expo`

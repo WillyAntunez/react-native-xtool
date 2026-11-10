@@ -978,15 +978,16 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
 `build` checks the app target's own sources twice before `xtool-build` compiles them. Pass 1 runs before the `patches`
 step (on Expo, once `expo prebuild` has written `ios/`), and in `doctor --project`, with file reads only: it resolves
 the `#import` and `#include` lines of the app target's C-family sources, headers and bridging header (on Expo, the
-bridging header alone) as the generated App target compiles them. No flag skips it. The `precheck` step, between
-`generate` and `xtool-build`, has SwiftPM plan the generated package, reads the header folders and module maps of its
-dependency graph, resolves the includes again with the App target's full include list (pass 2), and runs
-`swiftc -typecheck` over the Swift files and `clang -fsyntax-only` over each C-family file with the generated
-manifest's flags. Every command line and all compiler output go to `ios-xtool/.precheck/precheck.log`, which each
-precheck writes anew. clang's module cache is `ios-xtool/.precheck/ModuleCache`, kept for one React Native version and
-toolchain at a time; `build --clean` (and `run --clean`) empties it. The first precheck of a project, and the first
-after the cache is emptied, is slower than the next ones while clang builds React Native's modules into the cache; the
-compilers run at low priority (`nice`), as many at a time as the machine has cores.
+bridging header alone) as the generated App target compiles them; with `--skip-precheck` it prints its misses as `⚠`
+lines and does not stop. The `precheck` step, between `generate` and `xtool-build`, has SwiftPM plan the generated
+package, reads the header folders and module maps of its dependency graph, resolves the includes again with the App
+target's full include list (pass 2), and runs `swiftc -typecheck` over the Swift files and `clang -fsyntax-only` over
+each C-family file with the generated manifest's flags. Every command line and all compiler output go to
+`ios-xtool/.precheck/precheck.log`, which each precheck writes anew. clang's module cache is
+`ios-xtool/.precheck/ModuleCache`, kept for one React Native version and toolchain at a time; `build --clean` (and `run
+--clean`) empties it. The first precheck of a project, and the first after the cache is emptied, is slower than the next
+ones while clang builds React Native's modules into the cache; the compilers run at low priority (`nice`), as many at a
+time as the machine has cores.
 
 - **"✖ ios/<Target>/AppDelegate.mm:3 imports "AppDelegate.h", which is not in ios/<Target>, the app target's headers
   or <header search paths>"**, followed by "✖ <n> include(s) of the app's own sources resolve nowhere (listed above):
@@ -1011,7 +1012,10 @@ compilers run at low priority (`nice`), as many at a time as the machine has cor
   stops on these only. An angle include (`#import <React/RCTBridge.h>`), a quote include of a header that is not the
   app's (the SDK's, a library's) and every miss in a project with CocoaPods binaries are left to the `precheck` step;
   `doctor --project` counts them in `ℹ app-includes — <n> includes into React Native's or the libraries' headers:
-  checked at build`.
+  checked at build`. When a miss is not real (Xcode, or `xtool-build`, finds the header), `rn-xtool build
+  --skip-precheck` (or `run --skip-precheck`) prints each of these lines with `⚠` instead, then "⚠ <n> include(s) of
+  the app's own sources resolve nowhere (listed above); checked by xtool-build (--skip-precheck)", and the build goes
+  on; report it with `rn-xtool doctor --report`. `doctor --project` still prints them as `✖`.
 - **"⚠ <file> sets <settings> for the app target; rn-xtool does not read xcconfig files"** (`⚠ app-target — …` in
   `doctor --project`): the Debug configuration of the app target or of the project is based on an `.xcconfig`, other
   than CocoaPods' `Pods-*.xcconfig`, that sets, itself or through its `#include` lines, one of the settings rn-xtool
@@ -1063,9 +1067,10 @@ compilers run at low priority (`nice`), as many at a time as the machine has cor
   precheck again; once the app is installed, `rn-xtool run` skips the build while nothing changed. Report the false
   stop with the block of `rn-xtool doctor --report` and the stop's lines ([Reporting a problem](#reporting-a-problem)).
 - **"⚠ precheck skipped (--skip-precheck): errors in the app's own sources show in xtool-build"**: printed right after
-  `generate` by a build with `--skip-precheck`, which still runs pass 1. `rn-xtool doctor --report` then reads
-  `precheck: skipped with --skip-precheck (last build)`; after a build that ran the step, stopped or not, it reads
-  `precheck: run (last build)`, and before any build of this release reached `generate`, `precheck: not recorded`.
+  `generate` by a build with `--skip-precheck`, which still runs pass 1 (its misses as `⚠` lines). `rn-xtool doctor
+  --report` then reads `precheck: skipped with --skip-precheck (last build)`; after a build that ran the step, stopped
+  or not, it reads `precheck: run (last build)`, and before any build of this release reached `generate`, `precheck:
+  not recorded`.
 - **"ℹ precheck — <file> imports <module>, which SwiftPM builds: checked by xtool-build"**: a Swift file imports a
   module that exists only once SwiftPM builds it (a Swift library, or a library target with Swift files next to its
   Objective-C, whose clang half alone the precheck could give `swiftc`), or the bridging header `@import`s one, so

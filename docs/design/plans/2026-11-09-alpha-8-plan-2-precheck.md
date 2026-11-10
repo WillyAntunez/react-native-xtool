@@ -405,7 +405,8 @@ then check that `@{u}` is `origin/feature/alpha-8-precheck`.
     check named `app-includes` or `app-target` with the status of its mark, after `patches` and before `known-limits`.
   - `BuildDeps.appTargetCheck: typeof appTargetCheck`. `build` logs each warning, then each error as `✖ <error>`, and
     with errors throws `new Error("<n> include(s) of the app's own sources resolve nowhere (listed above): the build
-    would stop compiling them")` (plan's wording). `--skip-precheck` does not skip it (hop 6).
+    would stop compiling them")` (plan's wording). `--skip-precheck` does not skip it (hop 6). Superseded after the
+    final review: with `--skip-precheck` the lines are `⚠` and the build goes on.
 
 - [ ] **Step 1: Write the failing tests:**
 
@@ -1013,9 +1014,10 @@ then check that `@{u}` is `origin/feature/alpha-8-precheck`.
    need it first); plan F2 overlays it for the drift watch. Confirm.
 3. **Pass 1's certainty for quote includes**: a missing quote include is an error only when no header of the installed
    `react-native` or of a dependency ends with that spelling and the project has no binary pods (Task 3); otherwise
-   it waits for pass 2. The spec says "app-own" without a rule; this is the plan's.
+   it waits for pass 2. The spec says "app-own" without a rule; this is the plan's. Superseded: the app-own rule
+   (ledger line 57) and, after the final review, path-matching evidence for spellings with a folder.
 4. **`run` has no `--skip-precheck`**: the spec gives it to `build`; after a false stop, `build --skip-precheck` then
-   `run` uses that build. Add it to `run` too?
+   `run` uses that build. Add it to `run` too? Answered: `run` has it (Task 11).
 5. **The release**: 0.1.0-alpha.8 shipped with group A; this plan's entries go to `[Unreleased]`. Which version
    carries group B?
 

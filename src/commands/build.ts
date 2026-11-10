@@ -447,17 +447,20 @@ export async function build(
     precheck: !skipPrecheck,
   });
   const planned = (name: string): boolean => steps.includes(name);
-  // B1 pass 1, which no flag skips: an app-own include that resolves nowhere stops the build in seconds, not in
-  // xtool-build. Bare: before any step; Expo: once prebuild wrote ios/.
+  // B1 pass 1: an app-own include that resolves nowhere stops the build in seconds, not in xtool-build; with
+  // --skip-precheck its lines are warnings and xtool-build decides (the state records the skipped precheck). Bare:
+  // before any step; Expo: once prebuild wrote ios/.
   const checkAppTarget = (): void => {
     const check = d.appTargetCheck({ root: paths.root, project, binaryPods: podRoots.length > 0 });
     for (const line of check.warnings) d.log(line);
-    for (const error of check.errors) d.log(`✖ ${error}`);
-    if (check.errors.length > 0) {
-      throw new Error(
-        `${check.errors.length} include(s) of the app's own sources resolve nowhere (listed above): the build would stop compiling them`,
-      );
+    const n = check.errors.length;
+    if (skipPrecheck) {
+      for (const error of check.errors) d.log(`⚠ ${error}`);
+      if (n > 0) d.log(`⚠ ${n} include(s) of the app's own sources resolve nowhere (listed above); checked by xtool-build (--skip-precheck)`);
+      return;
     }
+    for (const error of check.errors) d.log(`✖ ${error}`);
+    if (n > 0) throw new Error(`${n} include(s) of the app's own sources resolve nowhere (listed above): the build would stop compiling them`);
   };
   if (project.kind === "bare") checkAppTarget();
 

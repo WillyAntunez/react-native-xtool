@@ -113,16 +113,17 @@ scaffolded libraries, CocoaPods binaries); [recipe.md](recipe.md) has every step
 8. `xtool` builds, signs and installs the app; Metro serves JS to the phone over Wi‑Fi. With CocoaPods binaries,
    rn-xtool checks the packed `App.app` before anything installs it.
 
-The app's own includes are also checked earlier, with file reads only, and no flag skips that check (pass 1): before
-the `patches` step (on Expo, once `expo prebuild` has written `ios/`), rn-xtool resolves the `#import` and `#include`
-lines of the app target's own files as the generated App target compiles them, and a quote include of one of the
-app's own headers that resolves nowhere stops the build seconds after it starts. It reads `#if` and `#ifdef` with the
-macros the App compile defines: `SWIFT_PACKAGE`, `DEBUG=1`, the target's own `GCC_PREPROCESSOR_DEFINITIONS` and the
-iOS values of `TARGET_OS_*`. The generated App target does not define `RCT_NEW_ARCH_ENABLED`, so an include under a
-condition on it, or on any other macro, is left to the compile. In a project with CocoaPods binaries,
-whose headers pass 1 cannot see, it never stops: every miss is left to the `precheck` step. On Expo the one app file it
-reads is the bridging header. `doctor --project` runs the same check as its `app-includes` line, on a machine without
-a toolchain too. Includes into React Native's or the libraries' headers are left to the `precheck` step.
+The app's own includes are also checked earlier, with file reads only (pass 1): before the `patches` step (on Expo, once
+`expo prebuild` has written `ios/`), rn-xtool resolves the `#import` and `#include` lines of the app target's own files
+as the generated App target compiles them, and a quote include of one of the app's own headers that resolves nowhere
+stops the build seconds after it starts (with `--skip-precheck`, a `⚠` line that does not stop it). It reads `#if` and
+`#ifdef` with the macros the App compile defines: `SWIFT_PACKAGE`, `DEBUG=1`, the target's own
+`GCC_PREPROCESSOR_DEFINITIONS` and the iOS values of `TARGET_OS_*`. The generated App target does not define
+`RCT_NEW_ARCH_ENABLED`, so an include under a condition on it, or on any other macro, is left to the compile. In a
+project with CocoaPods binaries, whose headers pass 1 cannot see, it never stops: every miss is left to the `precheck`
+step. On Expo the one app file it reads is the bridging header. `doctor --project` runs the same check as its
+`app-includes` line, on a machine without a toolchain too. Includes into React Native's or the libraries' headers are
+left to the `precheck` step.
 
 Bare React Native projects follow the same steps with a few differences (no `expo prebuild`, no injection into your
 Xcode project, ExpoModulesJSI only with Expo modules): see [bare-react-native.md](bare-react-native.md).

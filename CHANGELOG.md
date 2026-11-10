@@ -9,12 +9,13 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 - `build` stops seconds after it starts, before the `patches` step (on Expo, once `expo prebuild` has written `ios/`),
   when a file of the app target has a quote include of one of the app's own headers that resolves nowhere, instead of
   minutes later in `xtool-build`: one `✖` line per include, naming the file and line, the folders searched and, when
-  `ios/` holds one, a file of that name that differs only in case ("file names are case-sensitive on Linux"), that
-  the target does not list, or, on Expo, that is not copied ("exists, but rn-xtool copies only the bridging header of
-  an Expo app"), then "<n> include(s) of the app's own sources resolve nowhere (listed above): the build would stop
-  compiling them". No flag skips it. In a project with CocoaPods binaries it never stops: every miss is left to the
-  `precheck` step. On Expo it reads the bridging header. See
-  [troubleshooting.md](docs/troubleshooting.md#precheck).
+  `ios/` holds one, a file of that name that differs only in case ("file names are case-sensitive on Linux"), that the
+  target does not list, or, on Expo, that is not copied ("exists, but rn-xtool copies only the bridging header of an
+  Expo app"), then "<n> include(s) of the app's own sources resolve nowhere (listed above): the build would stop
+  compiling them". With `--skip-precheck` each line is a `⚠` line instead, followed by "⚠ <n> include(s) of the app's
+  own sources resolve nowhere (listed above); checked by xtool-build (--skip-precheck)", and the build goes on. In a
+  project with CocoaPods binaries it never stops: every miss is left to the `precheck` step. On Expo it reads the
+  bridging header. See [troubleshooting.md](docs/troubleshooting.md#precheck).
 - A bare React Native app target that takes its files from an Xcode 16 synchronized folder is refused by `build`
   and `doctor --project`: "The app target <name> takes its files from the synchronized folder <folder> (an Xcode 16
   folder group); rn-xtool reads only the files a target lists. Convert the folder to a group (Xcode: Convert to
@@ -24,18 +25,18 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 - The `precheck` build step, between `generate` and `xtool-build`: SwiftPM plans the generated package, the app's
   includes are resolved again with the App target's full include list, `swiftc -typecheck` checks the Swift files and
   `clang -fsyntax-only` each C-family file with the generated manifest's flags. When a Swift file imports a module
-  SwiftPM builds from Swift (a Swift library, or one with Swift files next to its Objective-C), the Swift files are
-  left to `xtool-build`, and a C-family file that `@import`s such a module, or one no module map declares, is left to
-  it too ("ℹ precheck — <file> imports the module <M>, which SwiftPM builds; checked by xtool-build"); on Expo the app's Swift files import such a module (`Expo`,
-  or `ExpoModulesCore` in the generated `ExpoModulesProvider.swift`), so they are always checked there. Errors stop the
-  build before `xtool-build`, with one line per include that resolves nowhere and the compilers' first ten errors with
-  their include stacks, and the stop names `rn-xtool build --skip-precheck` for a false one. Every command and its
-  output go to `ios-xtool/.precheck/precheck.log`. The first precheck is slower while clang builds React Native's
-  modules into the module cache, which `--clean` empties. See
+  SwiftPM builds from Swift (a Swift library, or one with Swift files next to its Objective-C), the Swift files are left
+  to `xtool-build`, and a C-family file that `@import`s such a module, or one no module map declares, is left to it too
+  ("ℹ precheck — <file> imports the module <M>, which SwiftPM builds; checked by xtool-build"); on Expo the app's Swift
+  files import such a module (`Expo`, or `ExpoModulesCore` in the generated `ExpoModulesProvider.swift`), so they are
+  always checked there. Errors stop the build before `xtool-build`, with one line per include that resolves nowhere and
+  the compilers' first ten errors with their include stacks, and the stop names `rn-xtool build --skip-precheck` for a
+  false one. Every command and its output go to `ios-xtool/.precheck/precheck.log`. The first precheck is slower while
+  clang builds React Native's modules into the module cache, which `--clean` empties. See
   [how-it-works.md](docs/how-it-works.md#the-build-step-by-step).
 - `--skip-precheck` on `build` and `run` leaves the `precheck` step out, with "⚠ precheck skipped (--skip-precheck):
   errors in the app's own sources show in xtool-build"; the check of the app's own includes at the start of `build`
-  still runs.
+  still runs, and prints its misses as `⚠` lines without stopping.
 - `rn-xtool doctor --project` checks the app's own includes as `build` does, without a toolchain: `app-includes` lines
   (`✖` per include that resolves nowhere, `ℹ` for those left to the `precheck` step, `✔` when they resolve).
 - A `⚠` line, at `build` and as `app-target` in `doctor --project`, for an `.xcconfig` other than CocoaPods' that the

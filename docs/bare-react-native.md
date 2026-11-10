@@ -203,15 +203,15 @@ Before the first step, `build` resolves the `#import` and `#include` lines of th
 and bridging header as the generated App target compiles them, with file reads only (pass 1): a quote include of one of
 the app's own headers that resolves nowhere stops the build seconds after it starts, naming the file, the folders
 searched and, when `ios/` holds one, a file of that name that differs only in case or that the target does not list. In
-a project with CocoaPods binaries it never stops: every miss is left to the `precheck` step. No flag skips it, and
-`doctor --project` runs the same check as its `app-includes` line. Includes into React Native's or the libraries'
-headers are left to the `precheck` step: SwiftPM plans the generated package, the includes are resolved again with the
-App target's full include list, `swiftc -typecheck` checks the Swift files and `clang -fsyntax-only` each C-family file
-with the generated manifest's flags, so an error in the app's own sources stops the build before `xtool-build`. When a
-Swift file imports a module SwiftPM builds from Swift (a Swift library, or one with Swift files next to its
-Objective-C), the Swift files are left to `xtool-build`, and so is a C-family file that `@import`s such a module or one
-no module map declares.
-`build --skip-precheck` leaves that step out. Each line and what to do:
+a project with CocoaPods binaries it never stops: every miss is left to the `precheck` step. With `--skip-precheck` it
+prints its misses as `⚠` lines and the build goes on, and `doctor --project` runs the same check as its `app-includes`
+line. Includes into React Native's or the libraries' headers are left to the `precheck` step: SwiftPM plans the
+generated package, the includes are resolved again with the App target's full include list, `swiftc -typecheck` checks
+the Swift files and `clang -fsyntax-only` each C-family file with the generated manifest's flags, so an error in the
+app's own sources stops the build before `xtool-build`. When a Swift file imports a module SwiftPM builds from Swift (a
+Swift library, or one with Swift files next to its Objective-C), the Swift files are left to `xtool-build`, and so is a
+C-family file that `@import`s such a module or one no module map declares. `build --skip-precheck` leaves that step out.
+Each line and what to do:
 [troubleshooting.md](troubleshooting.md#precheck).
 
 ## What is read from `project.pbxproj`

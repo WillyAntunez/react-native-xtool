@@ -1284,6 +1284,24 @@ describe("build", () => {
     }
   });
 
+  it("softens pass-1 misses to warnings with --skip-precheck", async () => {
+    const error = 'ios/main.m:9 imports "AppDelegate.h", which is not in ios or the app target\'s headers';
+    for (const kind of ["expo", "bare"] as const) {
+      const t = setup({ hasIos: true, project: { kind } });
+      const appTargetCheck = () => ({ errors: [error, "e2"], warnings: [], pending: 0, checked: 0 });
+      await build(t.root, { skipPrecheck: true }, { ...t.deps, appTargetCheck });
+      expect(t.logs.filter((l) => l.startsWith("✖"))).toEqual([]);
+      const at = t.logs.indexOf(`⚠ ${error}`);
+      expect(t.logs.slice(at, at + 3)).toEqual([
+        `⚠ ${error}`,
+        "⚠ e2",
+        "⚠ 2 include(s) of the app's own sources resolve nowhere (listed above); checked by xtool-build (--skip-precheck)",
+      ]);
+      expect(t.calls.slice(-2)).toEqual(["generate", "xtool-build"]);
+      expect(await readState(join(t.root, "ios-xtool"))).toMatchObject({ precheck: "skipped" });
+    }
+  });
+
   it("cleans ios/build and ios-xtool instead of prebuilding a bare project", async () => {
     const t = setup({ hasIos: true, project: { kind: "bare" } });
     await build(t.root, { clean: true }, t.deps);
