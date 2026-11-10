@@ -746,8 +746,9 @@ describe("detectCapabilities", () => {
       '#import <React/RCTBridgeModule.h>\n#import "LibApp-Shared.h"\n',
     );
     expect((await detect(dir)).appTarget).toEqual([
-      '✖ app-includes — ios/LibApp/LibApp-Bridging-Header.h:2 imports "LibApp-Shared.h", which is not in ios/LibApp or the ' +
-        "app target's headers; ios/LibApp/LibApp-Shared.h exists, but rn-xtool copies only the bridging header of an Expo app",
+      '✖ app-includes — ios/LibApp/LibApp-Bridging-Header.h:2 imports "LibApp-Shared.h", which is not among the files ' +
+        "rn-xtool copies next to ios/LibApp/LibApp-Bridging-Header.h or in the app target's headers; " +
+        "ios/LibApp/LibApp-Shared.h exists, but rn-xtool copies only the bridging header of an Expo app",
       "ℹ app-includes — 1 includes into React Native's or the libraries' headers: checked at build",
     ]);
     // A setting naming a missing file stops the build's check too: an error line, not silence.

@@ -219,7 +219,6 @@ export function appIncludesPass1(i: Pass1Input): Pass1Result {
   };
 
   const listed = new Set(i.files.map((f) => f.source));
-  const byDisplay = new Map(i.files.map((f) => [f.display, f]));
   /**
    * What ios/ holds of that name: a file the target does not list (on Expo, one generate does not copy), else one
    * whose name differs only in case.
@@ -239,13 +238,13 @@ export function appIncludesPass1(i: Pass1Input): Pass1Result {
   const missingLine = (r: ResolvedInclude): string => {
     const head = `${r.file}:${r.line} imports "${r.spelling}"`;
     if (path.isAbsolute(r.spelling)) return `${head}, which does not exist`;
-    const file = byDisplay.get(r.file)!;
-    const folders = [
-      fromRoot(i.root, path.dirname(file.source)),
-      "the app target's headers",
-      ...i.headerSearchPaths.map((d) => fromRoot(i.root, d)),
+    // Where the app target's copy looked: never a folder on disk, which may hold the file the target does not list.
+    const places = [
+      `among the files ${i.expo === true ? "rn-xtool copies" : "the app target lists"} next to ${r.file}`,
+      "in the app target's headers",
+      ...i.headerSearchPaths.map((d) => `in ${fromRoot(i.root, d)}`),
     ];
-    return `${head}, which is not in ${orList(folders)}${hint(r.spelling)}`;
+    return `${head}, which is not ${orList(places)}${hint(r.spelling)}`;
   };
 
   const out: Pass1Result = { missing: [], pending: 0, checked: 0 };

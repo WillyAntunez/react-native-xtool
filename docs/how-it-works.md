@@ -108,7 +108,9 @@ scaffolded libraries, CocoaPods binaries); [recipe.md](recipe.md) has every step
    resolves nowhere and the compilers' first ten errors, with their include stacks, and stops the build; every command
    line and all compiler output go to `ios-xtool/.precheck/precheck.log`. clang's module cache stays under
    `ios-xtool/.precheck/` between builds; the first precheck, and the first after `--clean` empties the cache, is slower
-   while clang builds React Native's modules. `--skip-precheck` on `build` and `run` leaves the step out
+   while clang builds React Native's modules. A precheck that passes does not promise that `xtool-build` does: it
+   checks syntax and includes with Swift Build's flags, and code generation and link errors still show in
+   `xtool-build`. `--skip-precheck` on `build` and `run` leaves the step out
    ([troubleshooting.md](troubleshooting.md#precheck)).
 8. `xtool` builds, signs and installs the app; Metro serves JS to the phone over Wi‑Fi. With CocoaPods binaries,
    rn-xtool checks the packed `App.app` before anything installs it.

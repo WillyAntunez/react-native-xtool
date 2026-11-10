@@ -987,15 +987,18 @@ each C-family file with the generated manifest's flags. Every command line and a
 `ios-xtool/.precheck/ModuleCache`, kept for one React Native version and toolchain at a time; `build --clean` (and `run
 --clean`) empties it. The first precheck of a project, and the first after the cache is emptied, is slower than the next
 ones while clang builds React Native's modules into the cache; the compilers run at low priority (`nice`), as many at a
-time as the machine has cores.
+time as the machine has cores. A precheck that passes does not promise that `xtool-build` does: it checks syntax and
+includes with Swift Build's flags, and code generation and link errors still show in `xtool-build`.
 
-- **"✖ ios/<Target>/AppDelegate.mm:3 imports "AppDelegate.h", which is not in ios/<Target>, the app target's headers
-  or <header search paths>"**, followed by "✖ <n> include(s) of the app's own sources resolve nowhere (listed above):
-  the build would stop compiling them": pass 1 found a quote include of one of the app's own headers (a header the
-  app target references, or a file anywhere under `ios/`, case ignored, whose path ends with the spelling: for
-  `"Shared/Utils.h"`, a `Shared/Utils.h`, not a `Utils.h` in another folder) in none of the folders clang
-  searches, in the order the line names them: the including file's folder, the app target's headers (the forwards in
-  `Sources/App/include`) and `HEADER_SEARCH_PATHS`. `doctor --project` prints the same line as `✖ app-includes — …`
+- **"✖ ios/<Target>/AppDelegate.mm:3 imports "AppDelegate.h", which is not among the files the app target lists next
+  to ios/<Target>/AppDelegate.mm, in the app target's headers or in <header search paths>"**, followed by "✖ <n>
+  include(s) of the app's own sources resolve nowhere (listed above): the build would stop compiling them": pass 1
+  found a quote include of one of the app's own headers (a header the app target references, or a file anywhere under
+  `ios/`, case ignored, whose path ends with the spelling: for `"Shared/Utils.h"`, a `Shared/Utils.h`, not a `Utils.h`
+  in another folder) in none of the places clang searches in the app target's copy, in the order the line names them:
+  the files the target lists next to the including file, the app target's headers (the forwards in
+  `Sources/App/include`) and `HEADER_SEARCH_PATHS`. On Expo the first place reads "among the files rn-xtool copies
+  next to <bridging header>". `doctor --project` prints the same line as `✖ app-includes — …`
   and exits non-zero. The line ends with what `ios/` holds of that name:
   - `; <path> differs only in case (file names are case-sensitive on Linux)`: a Mac finds the file, Linux does not.
     Rename the file, or change the include, so both spell the name the same way.
@@ -1058,6 +1061,8 @@ time as the machine has cores.
 - **"✖ precheck — <files>: compiler exited <code> without a diagnostic rn-xtool could read"**, followed by the
   compiler's last 20 lines: the compiler failed without an error line rn-xtool reads. Those lines, and the whole
   output in the log, say why.
+- An error in a header that several files include is printed and counted once, with the include stack of the first
+  file that reported it.
 - **"✖ precheck: <n> error(s) in the app's own sources before xtool-build (the first ten are above; all of them in
   ios-xtool/.precheck/precheck.log). If xtool-build compiles these files, this is a false stop: build with rn-xtool
   build --skip-precheck and report it with rn-xtool doctor --report"**: the stop after the lines above. Fix the errors
@@ -1648,7 +1653,7 @@ checks, so it also runs on a machine without Swift or xtool. Run it from the pro
   persisted scaffold pins at another version than the pod table (`patches/<file> pins AppAuth 3.0.0, the config says
   3.1.0; delete it so rn-xtool regenerates it …`) or does not pin although the library's podspec maps it.
 - **app-includes**: pass 1 of the [precheck](#precheck) over the app target's own sources, as `build` runs it before
-  the `patches` step: `✖ app-includes — <file>:<line> imports "<spelling>", which is not in …` for each include of one
+  the `patches` step: `✖ app-includes — <file>:<line> imports "<spelling>", which is not …` for each include of one
   of the app's own headers that resolves nowhere (the line `build` stops on),
   `ℹ app-includes — <n> includes into React Native's or the libraries' headers: checked at build` for the includes
   left to the `precheck` step, and `✔ app-includes — <n> includes of the app's own sources resolve` when there is no

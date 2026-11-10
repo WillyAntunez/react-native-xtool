@@ -212,8 +212,8 @@ describe("appIncludesPass1", () => {
     writeFileSync(join(root, "ios-xtool", "Sources", "App", "AppDelegate.h"), "// stale\n");
     expect(await pass1(root)).toEqual({
       missing: [
-        `ios/AppDelegate.mm:7 imports "AppDelegate.h", which is not in ios or the app target's headers`,
-        `ios/main.m:9 imports "AppDelegate.h", which is not in ios or the app target's headers`,
+        `ios/AppDelegate.mm:7 imports "AppDelegate.h", which is not among the files the app target lists next to ios/AppDelegate.mm or in the app target's headers`,
+        `ios/main.m:9 imports "AppDelegate.h", which is not among the files the app target lists next to ios/main.m or in the app target's headers`,
       ],
       pending: 2,
       checked: 0,
@@ -301,7 +301,8 @@ describe("appIncludesPass1", () => {
       binaryPods: false,
     });
     // Listed: the copy holds it next to X.m (the relative spelling lands there too); the case-only twin misses.
-    const head = (line: number, spelling: string) => `ios/App/X.m:${line} imports "${spelling}", which is not in ios/App or the app target's headers`;
+    const head = (line: number, spelling: string) =>
+      `ios/App/X.m:${line} imports "${spelling}", which is not among the files the app target lists next to ios/App/X.m or in the app target's headers`;
     expect(appIncludesPass1(input(true))).toEqual({
       missing: [`${head(2, "Shared/utils.h")}; ios/App/Shared/Utils.h differs only in case (file names are case-sensitive on Linux)`],
       pending: 0,
@@ -323,7 +324,8 @@ describe("appIncludesPass1", () => {
     const root = objcApp("template");
     edit(root, "ios/ObjcApp/AppDelegate.mm", (t) => t.replace('#import "AppDelegate.h"', '#import "appdelegate.h"'));
     expect((await pass1(root)).missing).toEqual([
-      `ios/ObjcApp/AppDelegate.mm:7 imports "appdelegate.h", which is not in ios/ObjcApp or the app target's headers; ` +
+      `ios/ObjcApp/AppDelegate.mm:7 imports "appdelegate.h", which is not among the files the app target lists next to ` +
+        "ios/ObjcApp/AppDelegate.mm or in the app target's headers; " +
         "ios/ObjcApp/AppDelegate.h differs only in case (file names are case-sensitive on Linux)",
     ]);
   });
@@ -331,9 +333,10 @@ describe("appIncludesPass1", () => {
   it("names a header whose file name on disk differs only in case", async () => {
     const root = objcApp("root-group");
     renameSync(join(root, "ios", "AppDelegate.h"), join(root, "ios", "appdelegate.h"));
-    const tail = "which is not in ios or the app target's headers; ios/appdelegate.h differs only in case (file names are case-sensitive on Linux)";
+    const tail = "or in the app target's headers; ios/appdelegate.h differs only in case (file names are case-sensitive on Linux)";
+    const line = (file: string, n: number) => `${file}:${n} imports "AppDelegate.h", ${"which is not among the files the app target lists next to"} ${file} ${tail}`;
     expect(await pass1(root)).toEqual({
-      missing: [`ios/AppDelegate.mm:7 imports "AppDelegate.h", ${tail}`, `ios/main.m:9 imports "AppDelegate.h", ${tail}`],
+      missing: [line("ios/AppDelegate.mm", 7), line("ios/main.m", 9)],
       pending: 2,
       checked: 0,
     });
@@ -344,7 +347,9 @@ describe("appIncludesPass1", () => {
     writeFileSync(join(root, "ios", "ObjcApp", "Unlisted.h"), "// not in the Xcode project\n");
     addToAppDelegate(root, '#import "Unlisted.h"\n');
     expect((await pass1(root)).missing).toEqual([
-      `ios/ObjcApp/AppDelegate.mm:10 imports "Unlisted.h", which is not in ios/ObjcApp or the app target's headers; ` +
+      // The head names where the app target's copy looked; the tail, the file on disk it does not list.
+      `ios/ObjcApp/AppDelegate.mm:10 imports "Unlisted.h", which is not among the files the app target lists next to ` +
+        "ios/ObjcApp/AppDelegate.mm or in the app target's headers; " +
         "ios/ObjcApp/Unlisted.h exists but the app target does not list it (add it to the target)",
     ]);
   });
@@ -362,8 +367,8 @@ describe("appIncludesPass1", () => {
     writeFileSync(join(root, "ios", "Vendor Kit", "include", "VendorKit.h"), "// vendor\n");
     addToAppDelegate(root, '#import "VendorKit.h"\n');
     expect((await pass1(root)).missing).toEqual([
-      `ios/ObjcApp/AppDelegate.mm:10 imports "VendorKit.h", which is not in ios/ObjcApp, the app target's headers or ` +
-        "ios/Vendor Kit; ios/Vendor Kit/include/VendorKit.h exists but the app target does not list it (add it to the target)",
+      `ios/ObjcApp/AppDelegate.mm:10 imports "VendorKit.h", which is not among the files the app target lists next to ` +
+        "ios/ObjcApp/AppDelegate.mm, in the app target's headers or in ios/Vendor Kit; ios/Vendor Kit/include/VendorKit.h exists but the app target does not list it (add it to the target)",
     ]);
   });
 });

@@ -312,6 +312,29 @@ describe("runPrecheck", () => {
     expect(h.compiled).toEqual([]);
   });
 
+  it("reads every import of a line with several", async () => {
+    const { paths, app } = handApp({ "AppDelegate.swift": "import UIKit; import Expo\n", "Plain.m": "#import <UIKit/UIKit.h>\n" });
+    const h = harness(paths, app);
+    await h.run();
+    expect(h.logs).toEqual(["ℹ precheck — ios/App/AppDelegate.swift imports Expo, which SwiftPM builds: checked by xtool-build"]);
+    expect(h.calls.filter((c) => c.startsWith("swiftc"))).toEqual([]);
+  });
+
+  it("counts a header error several files report once", async () => {
+    const { paths, app } = handApp({ "A.m": '#import "Shared.h"\n', "B.m": '#import "Shared.h"\n', "Shared.h": "int x\n" });
+    const shared = path.join(paths.sources, "Shared.h");
+    const h = harness(paths, app, (_tool, file) => {
+      const from = path.join(paths.sources, file);
+      return { code: 1, output: `In file included from ${from}:1:\n${shared}:1:6: error: expected ';' after top level declarator\n1 error generated.\n` };
+    });
+    const err = await h.run().catch((e: unknown) => e);
+    expect((err as Error).message).toMatch(/^precheck: 1 error\(s\) /);
+    expect(h.logs).toEqual([
+      "✖ precheck — ios/App/Shared.h:1: expected ';' after top level declarator",
+      "  In file included from ios/App/A.m:1:",
+    ]);
+  });
+
   it("runs no swiftc for a target without Swift files", async () => {
     const { paths, app } = await generated(objcApp("template"));
     const h = harness(paths, app);

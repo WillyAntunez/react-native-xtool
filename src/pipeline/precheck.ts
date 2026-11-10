@@ -433,10 +433,13 @@ const SWIFT_IMPORT =
 /** `@import M;` and `@import M.Sub;` in a C-family file. */
 const AT_IMPORT = /^\s*@import\s+([A-Za-z_]\w*)/;
 
-/** The modules `text` imports, one per line `pattern` matches (comments aside). */
+/**
+ * The modules `text` imports, one per statement `pattern` matches (comments aside): lines split at `;` too, so that
+ * `import UIKit; import Expo` is two (a `;` inside a string on an import line is not looked for).
+ */
 function moduleImports(text: string, pattern: RegExp): string[] {
   return withoutComments(text)
-    .split(/\r?\n/)
+    .split(/\r?\n|;/)
     .flatMap((line) => {
       const m = pattern.exec(line);
       return m ? [m[1]!] : [];
@@ -605,16 +608,23 @@ async function withRetry(r: Run, inputs: PrecheckInputs, hop: () => Promise<Unit
 }
 
 /**
- * Each run's errors, its output parsed on its own; a run that failed without a diagnostic counts as one error, shown
- * with its last lines. Any error: the lines, then the stop.
+ * Each run's errors, its output parsed on its own; one error several runs report (a header's, through each file that
+ * includes it) counts once, with the first run's include stack. A run that failed without a diagnostic counts as one
+ * error, shown with its last lines. Any error: the lines, then the stop.
  */
 function report(r: Run, units: Unit[]): void {
   const diags: Diagnostic[] = [];
+  const seen = new Set<string>();
   const silent: string[] = [];
   let failures = 0;
   for (const unit of units) {
     const found = parseDiagnostics(unit.output);
-    diags.push(...found);
+    for (const d of found) {
+      const key = `${d.file}\0${d.line}\0${d.message}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      diags.push(d);
+    }
     if (unit.code === 0 || found.length > 0) continue;
     failures++;
     silent.push(

@@ -41,7 +41,9 @@ then check that `@{u}` is `origin/feature/alpha-8-precheck`.
   one the Darwin SDK bundle names (`sdkBundle()/swift-sdk.json`, triple `arm64-apple-ios`, `sdkRootPath`).
 - This plan does NOT touch `vendor/rn-spm/spm/` or `patches/react-native+0.88.{0,1}.patch`. If a task seems to need
   it, stop and add it to "Open questions for the owner"; plan around it.
-- Exact texts (spec): `✖ <file>:<line> imports "AppDelegate.h", which is not in <folders searched>` (row 30);
+- Exact texts (spec): `✖ <file>:<line> imports "AppDelegate.h", which is not in <folders searched>` (row 30; after the
+  final review, `which is not among the files the app target lists next to <file>, in the app target's headers or in
+  <paths>`);
   `ℹ precheck — <file> imports <module>, which SwiftPM builds: checked by xtool-build` (row 43);
   `⚠ <xcconfig> sets <settings> for the app target; rn-xtool does not read xcconfig files` (row 46);
   `✖ precheck — <file>:<line>: <clang's message>` with clang's include stack, the first ten errors and the log file's

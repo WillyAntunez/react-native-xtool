@@ -216,6 +216,20 @@ describe("precheckGraph", () => {
     ]);
   });
 
+  it("prefers the flat umbrella header, as SwiftPM does", () => {
+    const lib = path.join(t, "flat-first");
+    write(path.join(lib, "Sources/Both/include/Both.h"));
+    write(path.join(lib, "Sources/Both/include/Both/Both.h"));
+    const app = { name: "App", type: "regular", dependencies: [{ byName: ["Both", null] }] };
+    const g = graphHeaders({
+      root: { name: "Flat", path: lib, dependencies: [], products: [], targets: [app, { name: "Both", type: "regular", dependencies: [] }] },
+      packages: [],
+    });
+    expect(g.synthesized).toEqual([
+      { module: "Both", text: `module Both {\n    umbrella header "${lib}/Sources/Both/include/Both.h"\n    export *\n}\n` },
+    ]);
+  });
+
   it("synthesizes no module map for a module a map on disk declares", () => {
     // Two maps of one module are a redefinition: the one on disk is the module's.
     const lib = path.join(t, "declared");

@@ -215,12 +215,13 @@ export function c99name(name: string): string {
 
 /**
  * The module map SwiftPM synthesizes for a clang target's public headers folder `include` without one:
- * `<c99name>/<c99name>.h`, else `<c99name>.h`, as the umbrella header; else the folder as the umbrella.
+ * `<c99name>.h`, else `<c99name>/<c99name>.h`, as the umbrella header (SwiftPM looks for the flat one first); else
+ * the folder as the umbrella.
  */
 function synthesizedModuleMap(module: string, include: string): string {
-  const nested = path.join(include, module, `${module}.h`);
   const flat = path.join(include, `${module}.h`);
-  const umbrella = existsSync(nested) ? `umbrella header "${nested}"` : existsSync(flat) ? `umbrella header "${flat}"` : `umbrella "${include}"`;
+  const nested = path.join(include, module, `${module}.h`);
+  const umbrella = existsSync(flat) ? `umbrella header "${flat}"` : existsSync(nested) ? `umbrella header "${nested}"` : `umbrella "${include}"`;
   return `module ${module} {\n    ${umbrella}\n    export *\n}\n`;
 }
 

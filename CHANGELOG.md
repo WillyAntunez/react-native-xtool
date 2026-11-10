@@ -8,14 +8,15 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 ### Changed
 - `build` stops seconds after it starts, before the `patches` step (on Expo, once `expo prebuild` has written `ios/`),
   when a file of the app target has a quote include of one of the app's own headers that resolves nowhere, instead of
-  minutes later in `xtool-build`: one `✖` line per include, naming the file and line, the folders searched and, when
-  `ios/` holds one, a file of that name that differs only in case ("file names are case-sensitive on Linux"), that the
-  target does not list, or, on Expo, that is not copied ("exists, but rn-xtool copies only the bridging header of an
-  Expo app"), then "<n> include(s) of the app's own sources resolve nowhere (listed above): the build would stop
-  compiling them". With `--skip-precheck` each line is a `⚠` line instead, followed by "⚠ <n> include(s) of the app's
-  own sources resolve nowhere (listed above); checked by xtool-build (--skip-precheck)", and the build goes on. In a
-  project with CocoaPods binaries it never stops: every miss is left to the `precheck` step. On Expo it reads the
-  bridging header. See [troubleshooting.md](docs/troubleshooting.md#precheck).
+  minutes later in `xtool-build`: one `✖` line per include, naming the file and line, the places the app target's copy
+  searched ("which is not among the files the app target lists next to <file>, in the app target's headers or in <search
+  paths>") and, when `ios/` holds one, a file of that name that differs only in case ("file names are case-sensitive on
+  Linux"), that the target does not list, or, on Expo, that is not copied ("exists, but rn-xtool copies only the
+  bridging header of an Expo app"), then "<n> include(s) of the app's own sources resolve nowhere (listed above): the
+  build would stop compiling them". With `--skip-precheck` each line is a `⚠` line instead, followed by "⚠ <n>
+  include(s) of the app's own sources resolve nowhere (listed above); checked by xtool-build (--skip-precheck)", and the
+  build goes on. In a project with CocoaPods binaries it never stops: every miss is left to the `precheck` step. On Expo
+  it reads the bridging header. See [troubleshooting.md](docs/troubleshooting.md#precheck).
 - A bare React Native app target that takes its files from an Xcode 16 synchronized folder is refused by `build`
   and `doctor --project`: "The app target <name> takes its files from the synchronized folder <folder> (an Xcode 16
   folder group); rn-xtool reads only the files a target lists. Convert the folder to a group (Xcode: Convert to
