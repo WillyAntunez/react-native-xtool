@@ -30,6 +30,8 @@ export interface DumpedPackage {
     sources?: string[];
     /** The manifest's `exclude`, relative to the target's folder. */
     exclude?: string[];
+    /** The paths of the manifest's `resources`, relative to the target's folder. */
+    resources?: string[];
     dependencies: unknown[];
   }[];
 }
@@ -158,10 +160,18 @@ function dumpedPackage(json: unknown, dir: string): DumpedPackage | undefined {
         ...(typeof t.publicHeadersPath === "string" ? { publicHeadersPath: t.publicHeadersPath } : {}),
         ...(Array.isArray(t.sources) ? { sources: t.sources.filter((x): x is string => typeof x === "string") } : {}),
         ...(Array.isArray(t.exclude) ? { exclude: t.exclude.filter((x): x is string => typeof x === "string") } : {}),
+        ...(Array.isArray(t.resources) ? { resources: resourcePaths(t.resources) } : {}),
         dependencies: Array.isArray(t.dependencies) ? t.dependencies : [],
       })),
   };
 }
+
+/** The paths of dump-package's `resources` (`{ path, rule }` each). */
+const resourcePaths = (list: unknown[]): string[] =>
+  list.flatMap((r) => {
+    const at = (r as { path?: unknown } | null)?.path;
+    return typeof at === "string" ? [at] : [];
+  });
 
 /** `fn` over `items`, at most `limit` at a time; results in `items`' order. */
 async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
@@ -371,27 +381,36 @@ const sourceDir = (pkg: DumpedPackage, target: Target): string => path.join(pkg.
 
 /**
  * The target compiles a Swift file: one of its `sources` is a `.swift` file or a folder holding one, or, without
- * `sources`, its folder holds one. Not looked in: dot folders, its `exclude` entries and the folders of the package's
- * other targets inside its own. Its public headers folder counts (an Expo mixed target's is its whole folder).
+ * `sources`, its folder holds one. Not looked in: dot folders, its `exclude` and `resources` entries and the folders
+ * of the package's other targets inside its own. A symbolic link to a folder is followed, as SwiftPM follows it, each
+ * folder once (a link back up the tree ends there). Its public headers folder counts (an Expo mixed target's is its
+ * whole folder).
  */
 function hasSwiftSources(pkg: DumpedPackage, target: Target): boolean {
   const dir = sourceDir(pkg, target);
   const skipped = new Set([
-    ...(target.exclude ?? []).map((e) => path.join(dir, e)),
+    ...[...(target.exclude ?? []), ...(target.resources ?? [])].map((e) => path.join(dir, e)),
     ...pkg.targets.filter((t) => t !== target && t.type !== "binary").map((t) => sourceDir(pkg, t)).filter((d) => d !== dir),
   ]);
+  const skippedReal = new Set([...skipped].map(realPath));
+  const walked = new Set<string>();
   const found = (p: string): boolean => {
     if (skipped.has(p)) return false;
-    if (p.endsWith(".swift") && !isDir(p)) return existsSync(p);
+    if (!isDir(p)) return p.endsWith(".swift") && existsSync(p);
+    const real = realPath(p);
+    if (walked.has(real) || (p !== dir && skippedReal.has(real))) return false;
+    walked.add(real);
     let entries: Dirent[];
     try {
       entries = readdirSync(p, { withFileTypes: true });
     } catch {
       return false;
     }
-    return entries.some((e) =>
-      e.isDirectory() ? !e.name.startsWith(".") && found(path.join(p, e.name)) : e.name.endsWith(".swift") && !skipped.has(path.join(p, e.name)),
-    );
+    return entries.some((e) => {
+      const child = path.join(p, e.name);
+      const folder = e.isDirectory() || (e.isSymbolicLink() && isDir(child));
+      return folder ? !e.name.startsWith(".") && found(child) : e.name.endsWith(".swift") && !skipped.has(child);
+    });
   };
   return (target.sources ?? ["."]).some((s) => found(path.join(dir, s)));
 }

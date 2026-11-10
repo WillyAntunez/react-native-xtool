@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -311,6 +311,41 @@ describe("precheckGraph", () => {
     const g = graphHeaders({ root: { name: "SwiftModules", path: lib, dependencies: [], products: [], targets }, packages: [] });
     expect(g.modules).toEqual(expect.arrayContaining(["X", "C", "MixObjC", "Pager", "E", "D"]));
     expect(g.swiftModules).toEqual(["X", "Mix", "MixObjC", "Pager", "S"]);
+  });
+
+  it("follows symlinked folders and leaves resources out when it looks for Swift", async () => {
+    const lib = path.join(t, "swift-links");
+    // L's Swift is in a folder outside the target, linked in; Loop links to itself; R's only Swift file is a resource.
+    write(path.join(lib, "Sources/L/L.m"));
+    write(path.join(lib, "Sources/L/include/L.h"));
+    write(path.join(lib, "elsewhere/LSwift.swift"));
+    symlinkSync(path.join(lib, "elsewhere"), path.join(lib, "Sources/L/Swift"));
+    write(path.join(lib, "Sources/Loop/Loop.m"));
+    write(path.join(lib, "Sources/Loop/include/Loop.h"));
+    symlinkSync(path.join(lib, "Sources/Loop"), path.join(lib, "Sources/Loop/again"));
+    write(path.join(lib, "Sources/R/R.m"));
+    write(path.join(lib, "Sources/R/include/R.h"));
+    write(path.join(lib, "Sources/R/Assets/Template.swift"));
+    const names = ["L", "Loop", "R"];
+    const targets = [
+      { name: "App", type: "regular", dependencies: names.map((n) => ({ byName: [n, null] })) },
+      { name: "L", type: "regular", dependencies: [] },
+      { name: "Loop", type: "regular", dependencies: [] },
+      { name: "R", type: "regular", resources: ["Assets"], dependencies: [] },
+    ];
+    const g = graphHeaders({ root: { name: "SwiftLinks", path: lib, dependencies: [], products: [], targets }, packages: [] });
+    expect(g.modules).toEqual(expect.arrayContaining(["L", "Loop", "R"]));
+    expect(g.swiftModules).toEqual(["L"]);
+
+    // dump-package names a resource by its path and rule.
+    const ios = path.join(t, "ios-xtool");
+    const dump = JSON.parse(fixture("dump-AppXtool.json", t)) as { targets: Record<string, unknown>[] };
+    dump.targets[0]!.resources = [{ path: "Assets", rule: { process: {} } }, { path: "Info.plist", rule: { copy: {} } }];
+    const swift = fakeSwift(t, (args) =>
+      args[1] === "dump-package" && args[args.indexOf("--package-path") + 1] === ios ? { code: 0, stdout: JSON.stringify(dump), stderr: "" } : undefined,
+    );
+    const read = await readPackageGraph(ios, path.join(t, "scratch-resources"), swift.run);
+    expect(read.root.targets[0]!.resources).toEqual(["Assets", "Info.plist"]);
   });
 
   it("runs dump-package with a scratch path outside the library", async () => {
