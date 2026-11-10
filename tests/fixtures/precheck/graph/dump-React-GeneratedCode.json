@@ -1,0 +1,118 @@
+{
+  "dependencies": [
+    {
+      "fileSystem": [
+        {
+          "identity": "xcframeworks",
+          "nameForTargetDependencyResolutionOnly": "ReactNative",
+          "path": "/home/me/app/ios/build/xcframeworks",
+          "productFilter": null
+        }
+      ]
+    }
+  ],
+  "name": "React-GeneratedCode",
+  "packageKind": {
+    "root": [
+      "/home/me/app/ios/build/generated/ios"
+    ]
+  },
+  "products": [
+    {
+      "name": "ReactCodegen",
+      "settings": [],
+      "targets": [
+        "ReactCodegen"
+      ],
+      "type": {
+        "library": [
+          "automatic"
+        ]
+      }
+    },
+    {
+      "name": "ReactAppDependencyProvider",
+      "settings": [],
+      "targets": [
+        "ReactAppDependencyProvider"
+      ],
+      "type": {
+        "library": [
+          "automatic"
+        ]
+      }
+    },
+    {
+      "name": "ReactAppHeaders",
+      "settings": [],
+      "targets": [
+        "ReactAppHeaders"
+      ],
+      "type": {
+        "library": [
+          "automatic"
+        ]
+      }
+    }
+  ],
+  "targets": [
+    {
+      "dependencies": [
+        {
+          "product": [
+            "ReactHeaders",
+            "ReactNative",
+            null,
+            null
+          ]
+        }
+      ],
+      "exclude": [],
+      "name": "ReactCodegen",
+      "packageAccess": true,
+      "path": "ReactCodegen",
+      "resources": [],
+      "settings": [],
+      "type": "regular"
+    },
+    {
+      "dependencies": [
+        {
+          "byName": [
+            "ReactCodegen",
+            null
+          ]
+        }
+      ],
+      "exclude": [],
+      "name": "ReactAppDependencyProvider",
+      "packageAccess": true,
+      "path": "ReactAppDependencyProvider",
+      "resources": [],
+      "settings": [],
+      "type": "regular"
+    },
+    {
+      "dependencies": [
+        {
+          "product": [
+            "ReactHeaders",
+            "ReactNative",
+            null,
+            null
+          ]
+        }
+      ],
+      "exclude": [],
+      "name": "ReactAppHeaders",
+      "packageAccess": true,
+      "path": "ReactAppHeaders",
+      "resources": [],
+      "settings": [],
+      "type": "regular"
+    }
+  ],
+  "toolsVersion": {
+    "_version": "6.0.0"
+  }
+}

@@ -46,8 +46,8 @@ Swift file) and 20 native libraries builds, installs over USB and launches on a 
 2026-11-06; its features are not checked yet, [details](docs/bare-react-native.md#react-native-085)).
 
 `rn-xtool doctor --project` shows which line your project is on and what rn-xtool finds in it (the SwiftPM scripts
-and prebuilt artifacts it would use, Expo's plugin and modules, podspec features), without the toolchain, login and
-device checks ([details](docs/troubleshooting.md#doctor---project)).
+and prebuilt artifacts it would use, Expo's plugin and modules, podspec features, the app's own includes), without
+the toolchain, login and device checks ([details](docs/troubleshooting.md#doctor---project)).
 
 CocoaPods is not needed: the `Podfile` is ignored. Any library with a podspec is tried automatically (CocoaPods-only
 ones get a generated `Package.swift`, and the pods they depend on come from SwiftPM packages or, for pods of prebuilt
@@ -155,10 +155,10 @@ Details, every message and what to do: [docs/troubleshooting.md](docs/troublesho
 | `setup [--xcode-xip <path>] [--wifi [--yes] [--udid <udid>]]` | Installs Swift via swiftly, the xtool AppImage and the Darwin SDK. Idempotent. `--wifi` is the one-time USB step for Wi‑Fi installs: it caches the pair record and, with `--yes`, enables Wi‑Fi connections on the iPhone. |
 | `auth [args...]` | Runs `xtool auth <args>` (`auth login`, `auth logout`); with no arguments, `xtool auth status`. |
 | `doctor [--project] [--report]` | Checks toolchain, SDK, login, connected device, Wi‑Fi install readiness and project. Exits non-zero on problems. `--project` checks only the project in the current folder: its version gates, what rn-xtool finds in it and the setups it cannot build yet. `--report` prints the same checks as one block to paste into a GitHub issue, with your home folder, Apple ID, Team ID, bundle identifiers, UDIDs, device names, IP and MAC addresses replaced by placeholders, and makes no network request ([details](docs/troubleshooting.md#reporting-a-problem)). |
-| `build [--clean]` | Prebuild if `ios/` is missing (Expo only), patches, RN/Expo SwiftPM pipeline, ExpoModulesJSI (Expo modules only), generates `ios-xtool/`, `xtool dev build`. `--clean` re-runs `expo prebuild --clean` for Expo; for bare it removes `ios/build` and `ios-xtool` and leaves the rest of `ios/` alone. |
+| `build [--clean] [--skip-precheck]` | Prebuild if `ios/` is missing (Expo only), patches, RN/Expo SwiftPM pipeline, ExpoModulesJSI (Expo modules only), generates `ios-xtool/`, checks the app's own sources (`precheck`), `xtool dev build`. `--clean` re-runs `expo prebuild --clean` for Expo; for bare it removes `ios/build` and `ios-xtool` and leaves the rest of `ios/` alone. `--skip-precheck` leaves the `precheck` step out, and the check of the app's own includes at build start warns instead of stopping ([details](docs/troubleshooting.md#precheck)). |
 | `install [--network [ip] [--udid <udid>] [--pair-record <file>]]` | Signs and installs the app on the USB-connected iPhone (over Wi‑Fi without the cable with `--network`, see [docs/wifi-install.md](docs/wifi-install.md)), then prints, for apps with expo-dev-client, the Metro URL with a link and QR code that open the app on it, and the first-run checklist. |
 | `start [--clear]` | Starts Metro (`npx expo start`; `npx react-native start` for bare) on the port and LAN IP the app was built for. Tells you to rebuild if either changed; clears the Metro cache when dependencies changed (or with `--clear`). With expo-dev-client it announces Metro to the dev launcher under the installed app's bundle id. |
-| `run [--clean] [--force] [--network [ip]]` | `build` and `install` when dependencies changed (or with `--force`), then `start`. `--network` installs over Wi‑Fi. |
+| `run [--clean] [--force] [--network [ip]] [--skip-precheck]` | `build` and `install` when dependencies changed (or with `--force`), then `start`. `--network` installs over Wi‑Fi; `--skip-precheck` goes to `build`. |
 
 ## Configuration
 

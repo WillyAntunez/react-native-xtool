@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { build, buildSteps, chooseMetroPort, restagePods, type BuildDeps } from "../src/commands/build.js";
 import { projectPaths } from "../src/paths.js";
 import { postPackPods } from "../src/pods/postPack.js";
+import { PrecheckError } from "../src/pipeline/precheckReport.js";
 import { loadConfig as realLoadConfig } from "../src/config.js";
 import { jsiRnHeaderDirs } from "../src/pipeline/jsi.js";
 import { fixLibraryManifests } from "../src/pipeline/manifests.js";
@@ -25,14 +26,14 @@ const bareFlags = { kind: "bare" as const, hasExpoModules: false, hasExpoConstan
 describe("buildSteps", () => {
   it("runs pods first and pod-binaries right before rn-spm, only with binary pods", () => {
     expect(buildSteps({ ...bareFlags, rnArtifacts: true, hasIos: true, clean: true, pods: true })).toEqual([
-      "pods", "clean", "patches", "rn-artifacts", "pod-binaries", "rn-spm", "frameworks", "generate", "xtool-build",
+      "pods", "clean", "patches", "rn-artifacts", "pod-binaries", "rn-spm", "frameworks", "generate", "precheck", "xtool-build",
     ]);
     expect(buildSteps({ ...expoFlags, hasIos: false, clean: false, pods: true })).toEqual([
-      "pods", "prebuild", "patches", "pod-binaries", "rn-spm", "jsi", "app-config", "frameworks", "generate", "xtool-build",
+      "pods", "prebuild", "patches", "pod-binaries", "rn-spm", "jsi", "app-config", "frameworks", "generate", "precheck", "xtool-build",
     ]);
     const sdk57 = { ...expoFlags, expoPlugin: "vendored" as const, rnArtifacts: true, hasIos: true, clean: false };
     expect(buildSteps({ ...sdk57, pods: true })).toEqual([
-      "pods", "patches", "rn-artifacts", "jsi", "pod-binaries", "rn-spm", "app-config", "frameworks", "generate", "xtool-build",
+      "pods", "patches", "rn-artifacts", "jsi", "pod-binaries", "rn-spm", "app-config", "frameworks", "generate", "precheck", "xtool-build",
     ]);
   });
   it("plans today's steps for a project without binary pods", () => {
@@ -50,7 +51,7 @@ describe("buildSteps", () => {
   });
   it("omits prebuild when ios/ exists", () => {
     expect(buildSteps({ ...expoFlags, hasIos: true, clean: false })).toEqual([
-      "patches", "rn-spm", "jsi", "app-config", "frameworks", "generate", "xtool-build",
+      "patches", "rn-spm", "jsi", "app-config", "frameworks", "generate", "precheck", "xtool-build",
     ]);
   });
   it("uses prebuild --clean when clean", () => {
@@ -65,23 +66,23 @@ describe("buildSteps", () => {
   });
   it("bare pure: no prebuild, jsi or app-config", () => {
     expect(buildSteps({ ...bareFlags, hasIos: false, clean: false })).toEqual([
-      "patches", "rn-spm", "frameworks", "generate", "xtool-build",
+      "patches", "rn-spm", "frameworks", "generate", "precheck", "xtool-build",
     ]);
   });
   it("bare --clean cleans instead of prebuilding", () => {
     const steps = buildSteps({ ...bareFlags, hasIos: true, clean: true });
-    expect(steps).toEqual(["clean", "patches", "rn-spm", "frameworks", "generate", "xtool-build"]);
+    expect(steps).toEqual(["clean", "patches", "rn-spm", "frameworks", "generate", "precheck", "xtool-build"]);
   });
   it("bare hybrid: jsi with expo modules, app-config only with expo-constants", () => {
     const hybrid = { ...bareFlags, hasExpoModules: true, hasIos: true, clean: false };
-    expect(buildSteps(hybrid)).toEqual(["patches", "rn-spm", "jsi", "frameworks", "generate", "xtool-build"]);
+    expect(buildSteps(hybrid)).toEqual(["patches", "rn-spm", "jsi", "frameworks", "generate", "precheck", "xtool-build"]);
     expect(buildSteps({ ...hybrid, hasExpoConstants: true })).toEqual([
-      "patches", "rn-spm", "jsi", "app-config", "frameworks", "generate", "xtool-build",
+      "patches", "rn-spm", "jsi", "app-config", "frameworks", "generate", "precheck", "xtool-build",
     ]);
   });
   it("bare vendored: rn-artifacts between patches and rn-spm", () => {
     expect(buildSteps({ ...bareFlags, rnArtifacts: true, hasIos: true, clean: false })).toEqual([
-      "patches", "rn-artifacts", "rn-spm", "frameworks", "generate", "xtool-build",
+      "patches", "rn-artifacts", "rn-spm", "frameworks", "generate", "precheck", "xtool-build",
     ]);
   });
   it("expo 58 (installed plugin) never gets rn-artifacts", () => {
@@ -90,15 +91,28 @@ describe("buildSteps", () => {
   it("expo 57: jsi before rn-spm, with rn-artifacts", () => {
     const sdk57 = { ...expoFlags, expoPlugin: "vendored" as const, rnArtifacts: true, hasIos: true, clean: false };
     expect(buildSteps(sdk57)).toEqual([
-      "patches", "rn-artifacts", "jsi", "rn-spm", "app-config", "frameworks", "generate", "xtool-build",
+      "patches", "rn-artifacts", "jsi", "rn-spm", "app-config", "frameworks", "generate", "precheck", "xtool-build",
     ]);
     expect(buildSteps({ ...sdk57, rnArtifacts: false })).toEqual([
-      "patches", "jsi", "rn-spm", "app-config", "frameworks", "generate", "xtool-build",
+      "patches", "jsi", "rn-spm", "app-config", "frameworks", "generate", "precheck", "xtool-build",
     ]);
+  });
+  it("plans precheck between generate and xtool-build", () => {
+    const sdk57 = { ...expoFlags, expoPlugin: "vendored" as const, rnArtifacts: true };
+    for (const flags of [expoFlags, bareFlags, sdk57]) {
+      for (const [hasIos, clean, pods] of [[true, false, false], [false, false, true], [true, true, false]] as const) {
+        const input = { ...flags, hasIos, clean, pods };
+        expect(buildSteps(input).slice(-3)).toEqual(["generate", "precheck", "xtool-build"]);
+        expect(buildSteps({ ...input, precheck: true })).toEqual(buildSteps(input));
+        const without = buildSteps({ ...input, precheck: false });
+        expect(without).not.toContain("precheck");
+        expect(without).toEqual(buildSteps(input).filter((s) => s !== "precheck"));
+      }
+    }
   });
   it("expo 57 --clean re-creates artifacts and JSI headers before rn-spm", () => {
     expect(buildSteps({ ...expoFlags, expoPlugin: "vendored", rnArtifacts: true, hasIos: true, clean: true })).toEqual([
-      "prebuild --clean", "patches", "rn-artifacts", "jsi", "rn-spm", "app-config", "frameworks", "generate", "xtool-build",
+      "prebuild --clean", "patches", "rn-artifacts", "jsi", "rn-spm", "app-config", "frameworks", "generate", "precheck", "xtool-build",
     ]);
   });
 });
@@ -114,6 +128,7 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
   };
   const writeIosXtool = vi.fn(async () => {
     calls.push("generate");
+    return { pkg: {}, origins: {} } as never;
   });
   const deps: BuildDeps = {
     loadConfig: async () => ({ metroPort: 8081, ...over.cfg }),
@@ -179,6 +194,8 @@ function setup(over: { isPortFree?: (p: number) => Promise<boolean>; isMetroRunn
     },
     codegenClasses: async () => [],
     emptyTargets: over.emptyTargets ?? (() => []),
+    appTargetCheck: () => ({ errors: [], warnings: [], pending: 0, checked: 0 }),
+    precheck: rec("precheck"),
     log: (s) => logs.push(s),
   };
   return { root, calls, logs, deps, writeIosXtool };
@@ -683,7 +700,7 @@ describe("build", () => {
   it("runs rn-artifacts for a bare project on vendored scripts", async () => {
     const t = setup({ project: { kind: "bare", rnScripts: "vendored", rnVersion: "0.86.3", hasExpoModules: false, hasExpoConstants: false } });
     await build(t.root, {}, t.deps);
-    expect(t.calls).toEqual(["patches", "rn-artifacts", "rn-spm", "frameworks", "generate", "xtool-build"]);
+    expect(t.calls).toEqual(["patches", "rn-artifacts", "rn-spm", "frameworks", "generate", "precheck", "xtool-build"]);
     expect(t.logs).toContain("▸ rn-artifacts");
   });
   it("passes the prepared artifacts root to runRnSpm", async () => {
@@ -850,7 +867,7 @@ describe("build", () => {
   it("builds the JSI framework for a bare project with expo modules, app-config only with expo-constants", async () => {
     const t = setup({ project: { kind: "bare", hasExpoModules: true, hasExpoConstants: false } });
     await build(t.root, {}, t.deps);
-    expect(t.calls).toEqual(["patches", "rn-spm", "jsi", "frameworks", "generate", "xtool-build"]);
+    expect(t.calls).toEqual(["patches", "rn-spm", "jsi", "frameworks", "generate", "precheck", "xtool-build"]);
     const ctx = (t.writeIosXtool.mock.calls[0] as unknown[])[0] as { frameworks: { name: string }[] };
     expect(ctx.frameworks.map((f) => f.name)).toEqual(["A", "ExpoModulesJSI"]);
     const u = setup({ project: { kind: "bare", hasExpoModules: true, hasExpoConstants: true } });
@@ -1178,6 +1195,116 @@ describe("build", () => {
     );
     expect(t.calls).toEqual([]);
   });
+  it("stops a bare build on an app-own include before any step", async () => {
+    const error = 'ios/main.m:9 imports "AppDelegate.h", which is not in ios or the app target\'s headers';
+    const xcconfig = "⚠ ios/Config/App.xcconfig sets HEADER_SEARCH_PATHS for the app target; rn-xtool does not read xcconfig files";
+    for (const binaryPods of [false, true]) {
+      const t = setup({ hasIos: true, project: { kind: "bare" } });
+      const seen: unknown[] = [];
+      const pod = { library: "lib", libraryVersion: "1.0.0", dependency: "Pod", requirements: [] };
+      await expect(
+        build(t.root, { clean: true }, {
+          ...t.deps,
+          binaryPodCandidates: () => (binaryPods ? [pod] : []),
+          appTargetCheck: (input) => {
+            seen.push(input);
+            return { errors: [error], warnings: [xcconfig], pending: 4, checked: 0 };
+          },
+        }),
+      ).rejects.toThrow(
+        new Error(
+          "1 include(s) of the app's own sources resolve nowhere (listed above): the build would stop compiling them; " +
+            "if xtool-build builds them, build with rn-xtool build --skip-precheck and report it with rn-xtool doctor --report",
+        ),
+      );
+      expect(seen).toEqual([{ root: t.root, project: expect.objectContaining({ kind: "bare" }), binaryPods }]);
+      expect(t.calls).toEqual([]);
+      expect(t.logs.some((l) => l.startsWith("▸ "))).toBe(false);
+      expect(t.logs.slice(-2)).toEqual([xcconfig, `✖ ${error}`]);
+    }
+  });
+
+  it("checks an Expo app's bridging header after prebuild", async () => {
+    const t = setup();
+    const seen: string[][] = [];
+    await build(t.root, {}, {
+      ...t.deps,
+      appTargetCheck: () => {
+        seen.push([...t.calls]);
+        return { errors: [], warnings: ["⚠ w"], pending: 1, checked: 0 };
+      },
+    });
+    expect(seen).toEqual([["prebuild"]]);
+    expect(t.logs.indexOf("⚠ w")).toBeGreaterThan(t.logs.indexOf("✔ prebuild (0.0s)"));
+    expect(t.logs.indexOf("⚠ w")).toBeLessThan(t.logs.indexOf("▸ patches"));
+    const u = setup();
+    await expect(
+      build(u.root, {}, { ...u.deps, appTargetCheck: () => ({ errors: ["e1", "e2"], warnings: [], pending: 0, checked: 0 }) }),
+    ).rejects.toThrow(/resolve nowhere \(listed above\): the build would stop compiling them; if xtool-build builds them, build with rn-xtool build --skip-precheck and report it with rn-xtool doctor --report$/);
+    expect(u.calls).toEqual(["prebuild"]);
+    expect(u.logs.slice(-2)).toEqual(["✖ e1", "✖ e2"]);
+  });
+
+  it("runs the precheck with the generated app and stops before xtool-build", async () => {
+    const app = { pkg: { name: "App" }, origins: { "main.m": "ios/main.m" } } as never;
+    const t = setup({ project: { rnVersion: "0.88.2" } });
+    const seen: unknown[] = [];
+    const precheck: BuildDeps["precheck"] = async (paths, generated, opts) => {
+      t.calls.push("precheck");
+      seen.push([paths.root, generated, opts.root, opts.rnVersion, opts.clean]);
+      opts.log("✖ ios/main.m:3: error: boom");
+      throw new PrecheckError("1 error in the app's own sources");
+    };
+    await expect(
+      build(t.root, { clean: true }, { ...t.deps, writeIosXtool: async () => (t.calls.push("generate"), app), precheck }),
+    ).rejects.toThrow(PrecheckError);
+    expect(t.calls.slice(-2)).toEqual(["generate", "precheck"]);
+    expect(seen).toEqual([[t.root, app, t.root, "0.88.2", true]]);
+    expect(t.logs).toContain("✖ ios/main.m:3: error: boom");
+    const state = await readState(join(t.root, "ios-xtool"));
+    expect(state?.depsFingerprint).toBeUndefined();
+    expect(state?.precheck).toBe("run");
+
+    const ok = setup();
+    await build(ok.root, {}, ok.deps);
+    expect(ok.calls.slice(-3)).toEqual(["generate", "precheck", "xtool-build"]);
+    expect(await readState(join(ok.root, "ios-xtool"))).toMatchObject({ precheck: "run", depsFingerprint: "fp-test" });
+  });
+
+  it("skips the precheck with --skip-precheck and says so", async () => {
+    const skipped = "⚠ precheck skipped (--skip-precheck): errors in the app's own sources show in xtool-build";
+    for (const kind of ["expo", "bare"] as const) {
+      const t = setup({ hasIos: true, project: { kind } });
+      const appTargetCheck = vi.fn(() => ({ errors: [], warnings: [], pending: 0, checked: 0 }));
+      await build(t.root, { skipPrecheck: true }, { ...t.deps, appTargetCheck });
+      expect(t.calls).not.toContain("precheck");
+      expect(t.calls.slice(-2)).toEqual(["generate", "xtool-build"]);
+      expect(t.logs.filter((l) => l === skipped)).toHaveLength(1);
+      expect(t.logs.indexOf(skipped)).toBeGreaterThan(t.logs.findIndex((l) => l.startsWith("✔ generate (")));
+      expect(t.logs.indexOf(skipped)).toBeLessThan(t.logs.indexOf("▸ xtool-build"));
+      expect(appTargetCheck).toHaveBeenCalledTimes(1);
+      expect(await readState(join(t.root, "ios-xtool"))).toMatchObject({ precheck: "skipped", depsFingerprint: "fp-test" });
+    }
+  });
+
+  it("softens pass-1 misses to warnings with --skip-precheck", async () => {
+    const error = 'ios/main.m:9 imports "AppDelegate.h", which is not in ios or the app target\'s headers';
+    for (const kind of ["expo", "bare"] as const) {
+      const t = setup({ hasIos: true, project: { kind } });
+      const appTargetCheck = () => ({ errors: [error, "e2"], warnings: [], pending: 0, checked: 0 });
+      await build(t.root, { skipPrecheck: true }, { ...t.deps, appTargetCheck });
+      expect(t.logs.filter((l) => l.startsWith("✖"))).toEqual([]);
+      const at = t.logs.indexOf(`⚠ ${error}`);
+      expect(t.logs.slice(at, at + 3)).toEqual([
+        `⚠ ${error}`,
+        "⚠ e2",
+        "⚠ 2 include(s) of the app's own sources resolve nowhere (listed above); checked by xtool-build (--skip-precheck)",
+      ]);
+      expect(t.calls.slice(-2)).toEqual(["generate", "xtool-build"]);
+      expect(await readState(join(t.root, "ios-xtool"))).toMatchObject({ precheck: "skipped" });
+    }
+  });
+
   it("cleans ios/build and ios-xtool instead of prebuilding a bare project", async () => {
     const t = setup({ hasIos: true, project: { kind: "bare" } });
     await build(t.root, { clean: true }, t.deps);

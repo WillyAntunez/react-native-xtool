@@ -581,6 +581,15 @@ describe("run", () => {
     expect(calls).toEqual(["build:true", "install", "start"]);
   });
 
+  it("passes --skip-precheck through to build", async () => {
+    const build = vi.fn(async () => {});
+    const { overrides } = fresh({ readState: async () => undefined, build });
+    await runCommand("/p", { skipPrecheck: true }, overrides);
+    expect(build).toHaveBeenCalledWith("/p", { clean: undefined, skipPrecheck: true });
+    await runCommand("/p", {}, overrides);
+    expect(build).toHaveBeenLastCalledWith("/p", { clean: undefined, skipPrecheck: undefined });
+  });
+
   it("reinstalls when a different iPhone is connected over USB", async () => {
     const { calls, overrides } = fresh({
       readState: async () => ({ ...state, installedUdid: "00008030-0000000000000001" }),

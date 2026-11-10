@@ -97,8 +97,37 @@ scaffolded libraries, CocoaPods binaries); [recipe.md](recipe.md) has every step
    - the resource bundles of the CocoaPods binaries and of scaffolded libraries, under `Resources/`, and, with
      CocoaPods binaries, their link flags on the App target ([CocoaPods binaries](#cocoapods-binaries)).
 6. Gives CocoaPods-only libraries a `Package.swift` (see [below](#cocoapods-only-libraries)).
-7. `xtool` builds, signs and installs the app; Metro serves JS to the phone over Wi‑Fi. With CocoaPods binaries,
+7. The `precheck` step checks the app's own sources before `xtool-build` compiles them. SwiftPM plans the generated
+   package (`swift package describe`), and rn-xtool reads the header folders and module maps of its dependency graph;
+   the app's includes are resolved again with the App target's full include list; `swiftc -typecheck` checks the Swift
+   files, and `clang -fsyntax-only` each C-family file with the generated manifest's flags, as many at a time as the
+   machine has cores. When a Swift file imports a module SwiftPM builds from Swift (a Swift module such as `Expo`, or
+   a library target that holds Swift files next to its Objective-C), the Swift files are left to `xtool-build`, and so
+   is a C-family file that `@import`s such a module or one no module map of the package graph declares (an SDK module
+   such as CommonCrypto is left to xtool-build too): on Expo the app's Swift files import such a module (`Expo`, or
+   `ExpoModulesCore` in the generated `ExpoModulesProvider.swift`), so they are always checked there. On errors it prints each include that
+   resolves nowhere and the compilers' first ten errors, with their include stacks, and stops the build; every command
+   line and all compiler output go to `ios-xtool/.precheck/precheck.log` (after a write to it fails, on a full disk,
+   the log may miss the lines that follow; the terminal does not). clang's module cache stays under
+   `ios-xtool/.precheck/` between builds; the first precheck, and the first after `--clean` empties the cache, is slower
+   while clang builds React Native's modules. A precheck that passes does not promise that `xtool-build` does: it
+   checks syntax and includes with Swift Build's flags, and code generation and link errors still show in
+   `xtool-build`. `--skip-precheck` on `build` and `run` leaves the step out
+   ([troubleshooting.md](troubleshooting.md#precheck)).
+8. `xtool` builds, signs and installs the app; Metro serves JS to the phone over Wi‑Fi. With CocoaPods binaries,
    rn-xtool checks the packed `App.app` before anything installs it.
+
+The app's own includes are also checked earlier, with file reads only (pass 1): before the `patches` step (on Expo, once
+`expo prebuild` has written `ios/`), rn-xtool resolves the `#import` and `#include` lines of the app target's own files
+as the generated App target compiles them, and a quote include of one of the app's own headers that resolves nowhere
+stops the build seconds after it starts (with `--skip-precheck`, a `⚠` line that does not stop it). It reads `#if` and
+`#ifdef` with the macros the App compile defines: `SWIFT_PACKAGE`, `DEBUG=1`, the target's own
+`GCC_PREPROCESSOR_DEFINITIONS` and the iOS values of `TARGET_OS_*`. The generated App target does not define
+`RCT_NEW_ARCH_ENABLED`, so an include under a condition on it, or on any other macro, is left to the compile. In a
+project with CocoaPods binaries, whose headers pass 1 cannot see, it never stops: every miss is left to the `precheck`
+step. On Expo the one app file it reads is the bridging header. `doctor --project` runs the same check as its
+`app-includes` line, on a machine without a toolchain too. Includes into React Native's or the libraries' headers are
+left to the `precheck` step.
 
 Bare React Native projects follow the same steps with a few differences (no `expo prebuild`, no injection into your
 Xcode project, ExpoModulesJSI only with Expo modules): see [bare-react-native.md](bare-react-native.md).
@@ -613,6 +642,11 @@ is about 99 MB with 8 embedded frameworks.
 
 A bare React Native 0.85.0 app with 20 native libraries, its scaffolds made again (2026-11-06): `rn-spm` 578 s,
 `frameworks` 35 s, `xtool-build` 273 s.
+
+The `precheck` step (2026-11-10, two series on a loaded machine), with the module cache cold (`build --clean`) and then
+warm (the next `build`): a bare React Native 0.88.1 app 8.6–11.1 s and 1.8–2.9 s, the Expo SDK 58 app 7.7–7.8 s and
+3.3–6.7 s (its Swift files are left to `xtool-build`; most of the warm time is SwiftPM planning the package), the Expo
+SDK 57 app 3.0 s and 0.6 s, an Objective-C 0.88.1 app 6.9 s cold.
 
 ## Further reading
 

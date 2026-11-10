@@ -11,7 +11,7 @@ import { install, type InstallOptions } from "./install.js";
 import { start, startDecision } from "./start.js";
 
 export interface RunDeps {
-  build: (root: string, opts: { clean?: boolean }) => Promise<void>;
+  build: (root: string, opts: { clean?: boolean; skipPrecheck?: boolean }) => Promise<void>;
   install: (root: string, opts: InstallOptions) => Promise<void>;
   start: (root: string, opts: { clear?: boolean }) => Promise<void>;
   readState: (iosXtoolDir: string) => Promise<BuildState | undefined>;
@@ -43,7 +43,7 @@ const realDeps: RunDeps = {
 
 export async function run(
   root: string,
-  opts: { clean?: boolean; force?: boolean } & InstallOptions,
+  opts: { clean?: boolean; force?: boolean; skipPrecheck?: boolean } & InstallOptions,
   overrides: Partial<RunDeps> = {},
 ): Promise<void> {
   const d: RunDeps = { ...realDeps, ...overrides };
@@ -52,7 +52,7 @@ export async function run(
     rebuilt = false;
     d.log("Native app is up to date (nothing changed since the last build); skipping build and install.");
   } else {
-    await d.build(root, { clean: opts.clean });
+    await d.build(root, { clean: opts.clean, skipPrecheck: opts.skipPrecheck });
     // `--network [ip]` (and its --udid / --pair-record) go straight to install.
     await d.install(root, { network: opts.network, udid: opts.udid, pairRecord: opts.pairRecord });
   }

@@ -10,6 +10,20 @@ export interface CopiedBareTarget {
   headerSearchPaths: string[];
   /** Top-level entries of the staged resources directory (files, `.lproj` and `.bundle` dirs), sorted. */
   resources: string[];
+  /** Each copied code file's copy path → its source path. */
+  origins: Record<string, string>;
+}
+
+/** Where the copy of a bare app target puts its code; every path relative to Sources/App. */
+export interface BareCopyLayout {
+  /** One entry per copied code file, in the order Swift sources, C-family sources, headers, bridging header. */
+  files: { file: TargetFile; dest: string }[];
+  /** A header's base name → the `dest` its `include/` forward imports (the first header of a name wins). */
+  forwards: Map<string, string>;
+  /** Headers the project references that do not exist: not copied. */
+  missingHeaders: TargetFile[];
+  /** `<ProductModuleName>-Swift.h` when `include/` holds a forward of that name to `App-Swift.h`. */
+  swiftHeaderForward?: string;
 }
 
 const INCLUDE_DIR = "include";
@@ -35,22 +49,19 @@ async function copyListed(file: TargetFile, dest: string): Promise<void> {
 }
 
 /**
- * Copies the app target's code into `sourcesDir` (Sources/App), keeping its layout under the
- * target folder (`ios/<Target>/Native/X.m` → `Native/X.m`; files elsewhere in ios/ keep their
- * path from ios/), with one forwarding header per header in `include/` so `#import "X.h"` resolves
- * from any folder as Xcode's header maps allow, plus `<ProductModuleName>-Swift.h` forwarding to `App-Swift.h`
- * in a mixed target. A header the project references that does not exist is skipped with a note. A C-family `main.m`
- * (any `main.<ext>`) is copied as `AppMain.<ext>` in its folder, so SwiftPM keeps App a library target. Resources are
- * staged flat in `resourcesDir`, laid out as Xcode copies them to the bundle root (xtool.yml lists each top-level entry).
+ * Where `copyBareTarget` puts the app target's code under Sources/App: the layout under the target folder
+ * (`ios/<Target>/Native/X.m` → `Native/X.m`; files elsewhere in ios/ keep their path from ios/), a C-family `main.m`
+ * (any `main.<ext>`) as `AppMain.<ext>` in its folder, one `include/` forward per header name, as Xcode's header maps
+ * allow `#import "X.h"` from any folder, plus `<ProductModuleName>-Swift.h` forwarding to `App-Swift.h` in a mixed target.
+ * A referenced header that does not exist is left out. Throws for a file outside ios/, a file landing in `include/`
+ * and two files landing on one path.
  */
-export async function copyBareTarget(
+export function bareCopyLayout(
   bare: BareTargetContent,
   iosDir: string,
   iosTargetDir: string,
-  sourcesDir: string,
-  resourcesDir: string,
-  log: (s: string) => void,
-): Promise<CopiedBareTarget> {
+  exists: (p: string) => boolean = existsSync,
+): BareCopyLayout {
   const targetRel = path.relative(iosDir, iosTargetDir).split(path.sep).join("/");
   const place = (file: TargetFile): string => {
     if (path.posix.isAbsolute(file.relPath) || file.relPath.split("/").includes("..")) {
@@ -76,58 +87,86 @@ export async function copyBareTarget(
   const code = [...bare.swiftSources, ...bare.cSources, ...bare.headers, ...(bare.bridgingHeader ? [bare.bridgingHeader] : [])];
   const cSources = new Set(bare.cSources);
   const headers = new Set(bare.headers);
-  const codeDest = new Map<TargetFile, string>();
+  const files: BareCopyLayout["files"] = [];
+  const missingHeaders: TargetFile[] = [];
   for (const file of code) {
     // Xcode builds with a referenced header missing until a source imports it; so does the generated target.
-    if (headers.has(file) && !existsSync(file.absPath)) {
-      log(`ℹ Skipped ${file.relPath}: the Xcode project references this header, but the file does not exist`);
+    if (headers.has(file) && !exists(file.absPath)) {
+      missingHeaders.push(file);
       continue;
     }
     let dest = place(file);
+    if (cSources.has(file)) dest = path.posix.join(path.posix.dirname(dest), compiledName(dest));
+    if (dest.split("/")[0] === INCLUDE_DIR) {
+      throw new Error(`${file.relPath} would land in Sources/App/${INCLUDE_DIR}/, which holds the generated header forwards; rename its folder`);
+    }
+    if (claim(dest, file)) files.push({ file, dest });
+  }
+
+  const forwards = new Map<string, string>();
+  for (const { file, dest } of files) {
     const base = path.posix.basename(dest);
-    const name = cSources.has(file) ? compiledName(dest) : base;
-    if (name !== base) {
-      dest = path.posix.join(path.posix.dirname(dest), name);
+    if (headers.has(file) && !forwards.has(base)) forwards.set(base, dest);
+  }
+
+  // Xcode names the generated Swift header after the module (BareDemo-Swift.h); the SwiftPM target is App.
+  const swiftHeader = `${bare.productModuleName}-Swift.h`;
+  const swiftHeaderForward = bare.mixed && bare.productModuleName !== "App" && !forwards.has(swiftHeader) ? swiftHeader : undefined;
+  return { files, forwards, missingHeaders, swiftHeaderForward };
+}
+
+/**
+ * Copies the app target's code into `sourcesDir` (Sources/App) as `bareCopyLayout` places it, writing the `include/`
+ * forwards, and says so for each renamed `main.<ext>`, skipped header and header name clash: `main.m` is copied as
+ * `AppMain.m` so SwiftPM keeps App a library target. Resources are staged flat in `resourcesDir`, laid out as Xcode
+ * copies them to the bundle root (xtool.yml lists each top-level entry).
+ */
+export async function copyBareTarget(
+  bare: BareTargetContent,
+  iosDir: string,
+  iosTargetDir: string,
+  sourcesDir: string,
+  resourcesDir: string,
+  log: (s: string) => void,
+): Promise<CopiedBareTarget> {
+  const layout = bareCopyLayout(bare, iosDir, iosTargetDir);
+  const origins: Record<string, string> = {};
+  for (const { file, dest } of layout.files) {
+    const name = path.posix.basename(dest);
+    if (name !== path.posix.basename(file.relPath)) {
       log(
         `ℹ ${file.relPath} is compiled as ${name}: SwiftPM takes a target with a file named main for an executable, ` +
           "and xtool links the app's entry point from the App library",
       );
     }
-    if (dest.split("/")[0] === INCLUDE_DIR) {
-      throw new Error(`${file.relPath} would land in Sources/App/${INCLUDE_DIR}/, which holds the generated header forwards; rename its folder`);
-    }
-    codeDest.set(file, dest);
-    if (claim(dest, file)) await copyListed(file, path.join(sourcesDir, dest));
+    origins[path.join(sourcesDir, dest)] = file.absPath;
+    await copyListed(file, path.join(sourcesDir, dest));
+  }
+  for (const file of layout.missingHeaders) {
+    log(`ℹ Skipped ${file.relPath}: the Xcode project references this header, but the file does not exist`);
   }
 
-  const forwarded = new Map<string, string>();
+  const ownerOf = new Map(layout.files.map(({ file, dest }) => [dest, file.relPath]));
+  const missing = new Set(layout.missingHeaders);
   for (const header of bare.headers) {
-    const dest = codeDest.get(header);
-    if (dest === undefined) continue;
-    const base = path.posix.basename(dest);
-    const first = forwarded.get(base);
-    if (first !== undefined) {
+    if (missing.has(header)) continue;
+    const base = path.posix.basename(header.relPath);
+    const first = ownerOf.get(layout.forwards.get(base)!)!;
+    if (first !== header.relPath) {
       log(`ℹ Two app headers are named ${base} (${first}, ${header.relPath}): #import "${base}" finds ${first}`);
       continue;
     }
-    forwarded.set(base, header.relPath);
     const shim = path.join(sourcesDir, INCLUDE_DIR, base);
     await mkdir(path.dirname(shim), { recursive: true });
-    await writeFile(shim, `#import "../${dest}"\n`);
+    await writeFile(shim, `#import "../${layout.forwards.get(base)}"\n`);
   }
 
-  // Xcode names the generated Swift header after the module (BareDemo-Swift.h); the SwiftPM target is App.
-  let swiftHeaderForward = false;
-  if (bare.mixed && bare.productModuleName !== "App") {
+  if (layout.swiftHeaderForward !== undefined) {
+    await mkdir(path.join(sourcesDir, INCLUDE_DIR), { recursive: true });
+    await writeFile(path.join(sourcesDir, INCLUDE_DIR, layout.swiftHeaderForward), `#import "App-Swift.h"\n`);
+  } else if (bare.mixed && bare.productModuleName !== "App") {
     const name = `${bare.productModuleName}-Swift.h`;
-    const owner = forwarded.get(name);
-    if (owner !== undefined) {
-      log(`ℹ The app header ${owner} is named like Xcode's generated Swift header: #import "${name}" finds it, not App-Swift.h`);
-    } else {
-      await mkdir(path.join(sourcesDir, INCLUDE_DIR), { recursive: true });
-      await writeFile(path.join(sourcesDir, INCLUDE_DIR, name), `#import "App-Swift.h"\n`);
-      swiftHeaderForward = true;
-    }
+    log(`ℹ The app header ${ownerOf.get(layout.forwards.get(name)!)} is named like Xcode's generated Swift header: #import "${name}" finds it, not App-Swift.h`);
   }
 
   const staged = new Map<string, string>();
@@ -152,12 +191,14 @@ export async function copyBareTarget(
     log(`ℹ Build settings of the app target not carried over: ${bare.ignoredSettings.join(", ")}`);
   }
 
+  const bridging = bare.bridgingHeader && layout.files.find(({ file }) => file.relPath === bare.bridgingHeader!.relPath);
   return {
-    bridgingHeader: bare.bridgingHeader ? path.join(sourcesDir, codeDest.get(bare.bridgingHeader)!) : undefined,
+    bridgingHeader: bridging ? path.join(sourcesDir, bridging.dest) : undefined,
     headerSearchPaths: [
-      ...(forwarded.size > 0 || swiftHeaderForward ? [path.join(sourcesDir, INCLUDE_DIR)] : []),
+      ...(layout.forwards.size > 0 || layout.swiftHeaderForward !== undefined ? [path.join(sourcesDir, INCLUDE_DIR)] : []),
       ...bare.headerSearchPaths,
     ],
     resources: [...new Set([...staged.keys()].map((d) => d.split("/")[0]!))].sort(),
+    origins,
   };
 }

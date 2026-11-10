@@ -1,0 +1,38 @@
+{
+  "dependencies": [],
+  "name": "Bar",
+  "packageKind": {
+    "root": [
+      "/home/me/app/alias/b/ios"
+    ]
+  },
+  "products": [
+    {
+      "name": "BarLib",
+      "settings": [],
+      "targets": [
+        "BarLib"
+      ],
+      "type": {
+        "library": [
+          "automatic"
+        ]
+      }
+    }
+  ],
+  "targets": [
+    {
+      "dependencies": [],
+      "exclude": [],
+      "name": "BarLib",
+      "packageAccess": true,
+      "path": "Sources/BarLib",
+      "resources": [],
+      "settings": [],
+      "type": "regular"
+    }
+  ],
+  "toolsVersion": {
+    "_version": "6.0.0"
+  }
+}

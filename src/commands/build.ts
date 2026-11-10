@@ -4,10 +4,11 @@ import { join, relative } from "node:path";
 import { depsFingerprint } from "../deps.js";
 import { configFileOf, loadConfig, type ExpoXtoolConfig, type PodEntry } from "../config.js";
 import { readFlavoredFrameworks, stageFrameworks, type RuntimeFramework } from "../frameworks.js";
-import { hasDevSupport, writeIosXtool } from "../generate/iosXtool.js";
+import { hasDevSupport, writeIosXtool, type GeneratedApp } from "../generate/iosXtool.js";
 import { detectLanIp, detectLanRoute, findFreePort, isMetroRunning, isPortFree, suspiciousLanRoute, tunnelWarning, type LanRoute } from "../net.js";
 import { projectPaths, type ProjectPaths } from "../paths.js";
 import { generateAppConfig } from "../pipeline/appConfig.js";
+import { runPrecheck, type PrecheckOptions } from "../pipeline/precheck.js";
 import { buildExpoModulesJsi, jsiRnHeaderDirs, type JsiRnHeaders } from "../pipeline/jsi.js";
 import { fixLibraryManifests } from "../pipeline/manifests.js";
 import { applyPatches } from "../pipeline/patches.js";
@@ -37,6 +38,7 @@ import {
   type EarlyFailure,
   type LibraryCheckOptions,
 } from "../project/earlyChecks.js";
+import { appTargetCheck } from "../project/appIncludes.js";
 import { entitlementLines, readEntitlements, type AppEntitlements } from "../project/entitlements.js";
 import { mergedPodTable, type PodBinary, type PodTable } from "../project/podTable.js";
 import {
@@ -67,6 +69,7 @@ export const BUILD_STEP_NAMES = [
   "app-config",
   "frameworks",
   "generate",
+  "precheck",
   "xtool-build",
 ] as const;
 
@@ -84,6 +87,8 @@ export interface BuildPlanInput {
   expoPlugin: ExpoPlugin;
   /** Binary CocoaPods pods to resolve: `pods` first, `pod-binaries` right before rn-spm. */
   pods?: boolean;
+  /** The check of the app's own sources before xtool-build; `false` (`--skip-precheck`) leaves it out. */
+  precheck?: boolean;
 }
 
 /** Whether `installed` is xtool's signed form of `bundleIdentifier`: XTL-<one segment>.<bundleIdentifier>, exactly. */
@@ -107,6 +112,10 @@ export function buildSteps(state: BuildPlanInput): string[] {
 }
 
 function plainSteps(state: BuildPlanInput): string[] {
+  return kindSteps(state).filter((s) => s !== "precheck" || state.precheck !== false);
+}
+
+function kindSteps(state: BuildPlanInput): string[] {
   if (state.kind === "expo") {
     const vendored = state.expoPlugin === "vendored";
     const steps: string[] = BUILD_STEP_NAMES.filter(
@@ -228,6 +237,10 @@ export interface BuildDeps {
   codegenClasses: (root: string, appBundle: string) => Promise<string[]>;
   /** The app's CODE_SIGN_ENTITLEMENTS file (Debug); throws an EntitlementsError when xtool could not sign with it. */
   readEntitlements: (project: ProjectInfo, iosDir: string) => AppEntitlements | undefined;
+  /** B1 pass 1: the app's own includes that resolve nowhere, and the xcconfig warnings (bare before any step, Expo after prebuild). */
+  appTargetCheck: typeof appTargetCheck;
+  /** B1 pass 2: compiles the generated App target's own sources; a `PrecheckError` stops the build before xtool-build. */
+  precheck: (paths: ProjectPaths, app: GeneratedApp, opts: PrecheckOptions) => Promise<void>;
   log: (s: string) => void;
 }
 
@@ -275,6 +288,8 @@ const realDeps: BuildDeps = {
     return emptyTargetsOf(table, [...scaffoldedPods(root, table, opts).values()].flat());
   },
   readEntitlements,
+  appTargetCheck,
+  precheck: (paths, app, opts) => runPrecheck(paths, app, opts),
   log: (s) => console.log(s),
 };
 
@@ -365,11 +380,12 @@ export async function restagePods(
 
 export async function build(
   root: string,
-  opts: { clean?: boolean },
+  opts: { clean?: boolean; skipPrecheck?: boolean },
   overrides: Partial<BuildDeps> = {},
 ): Promise<void> {
   const d: BuildDeps = { ...realDeps, ...overrides };
   const clean = opts.clean === true;
+  const skipPrecheck = opts.skipPrecheck === true;
   const paths = projectPaths(root);
   let previousState: BuildState | undefined;
   try {
@@ -428,8 +444,30 @@ export async function build(
     rnArtifacts: (project.rnScripts === "vendored" || vendoredExpo) && !config.rnArtifactsDir,
     expoPlugin: project.expoPlugin,
     pods: podRoots.length > 0,
+    precheck: !skipPrecheck,
   });
   const planned = (name: string): boolean => steps.includes(name);
+  // B1 pass 1: an app-own include that resolves nowhere stops the build in seconds, not in xtool-build; with
+  // --skip-precheck its lines are warnings and xtool-build decides (the state records the skipped precheck). Bare:
+  // before any step; Expo: once prebuild wrote ios/.
+  const checkAppTarget = (): void => {
+    const check = d.appTargetCheck({ root: paths.root, project, binaryPods: podRoots.length > 0 });
+    for (const line of check.warnings) d.log(line);
+    const n = check.errors.length;
+    if (skipPrecheck) {
+      for (const error of check.errors) d.log(`⚠ ${error}`);
+      if (n > 0) d.log(`⚠ ${n} include(s) of the app's own sources resolve nowhere (listed above); checked by xtool-build (--skip-precheck)`);
+      return;
+    }
+    for (const error of check.errors) d.log(`✖ ${error}`);
+    if (n > 0) {
+      throw new Error(
+        `${n} include(s) of the app's own sources resolve nowhere (listed above): the build would stop compiling them; ` +
+          "if xtool-build builds them, build with rn-xtool build --skip-precheck and report it with rn-xtool doctor --report",
+      );
+    }
+  };
+  if (project.kind === "bare") checkAppTarget();
 
   // Before anything changes in the project: an unreachable host, a changed file or a short disk stops here.
   const table = mergedPodTable(config.pods);
@@ -463,6 +501,7 @@ export async function build(
   // cannot sign at all.
   const entitlements = d.readEntitlements(project, paths.ios);
   if (entitlements !== undefined) for (const line of entitlementLines(entitlements, project.bundleIdentifier)) d.log(line);
+  if (project.kind === "expo") checkAppTarget();
   // The app config icon this prebuild turned into the icon set; without a prebuild, the last one's record stays.
   // With no record (the user ran expo prebuild, or the state predates it), the current icon is recorded silently,
   // so a later change warns.
@@ -574,9 +613,10 @@ export async function build(
       }),
     ...(emptyTargets.length > 0 && { emptyTargets }),
     ...(postPack !== undefined && { postPack }),
+    precheck: planned("precheck") ? "run" : "skipped",
   };
-  await step("generate", async () => {
-    await d.writeIosXtool({
+  const app = await step("generate", async () => {
+    const generated = await d.writeIosXtool({
       project,
       paths,
       frameworks,
@@ -589,7 +629,14 @@ export async function build(
       ...(resourceBundles.length > 0 ? { resourceBundles } : {}),
     });
     await writeState(paths.iosXtool, state);
+    return generated;
   });
+  // B1 pass 2: an error in the app's own sources stops here in seconds, not minutes into xtool-build.
+  if (planned("precheck")) {
+    await step("precheck", () => d.precheck(paths, app, { root: paths.root, rnVersion: project.rnVersion, clean, log: d.log }));
+  } else {
+    d.log("⚠ precheck skipped (--skip-precheck): errors in the app's own sources show in xtool-build");
+  }
   await step("xtool-build", () => d.devBuild(d.xtoolBin(config), paths.iosXtool));
   // A failure leaves the state without the fingerprint, so the next run builds again.
   if (postPack !== undefined) await d.postPack(paths.appBundle, postPack);

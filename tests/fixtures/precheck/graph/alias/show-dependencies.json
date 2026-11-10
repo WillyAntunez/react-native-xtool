@@ -1,0 +1,23 @@
+{
+  "identity": "a",
+  "name": "AppXtool",
+  "url": "/home/me/app/alias/a",
+  "version": "unspecified",
+  "path": "/home/me/app/alias/a",
+  "traits": [
+    "default"
+  ],
+  "dependencies": [
+    {
+      "identity": "ios",
+      "name": "Bar",
+      "url": "/home/me/app/alias/b/ios",
+      "version": "unspecified",
+      "path": "/home/me/app/alias/b/ios",
+      "traits": [
+        "default"
+      ],
+      "dependencies": []
+    }
+  ]
+}

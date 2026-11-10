@@ -110,54 +110,83 @@ function cDefine(entry: string): string {
   return eq < 0 ? `.define(${lit(entry)})` : `.define(${lit(entry.slice(0, eq))}, to: ${lit(entry.slice(eq + 1))})`;
 }
 
-function expoSwiftSettings(expo: ExpoPackageInputs): string {
-  const importer = expo.clangImporter;
-  const importerFlags = importer
-    ? [
-        `-I${importer.swiftHeadersDir}`,
-        ...importer.includeDirs.map((d) => `-I${d}`),
-        ...importer.moduleMaps.map((m) => `-fmodule-map-file=${m}`),
-      ].flatMap((f) => ["-Xcc", f])
-    : [];
-  return `                // CocoaPods sets these for the app; ExpoModulesProvider.swift registers debug-only
-                // modules (expo-dev-launcher, expo-dev-menu) under EXPO_CONFIGURATION_DEBUG.
-                .define("EXPO_CONFIGURATION_DEBUG", .when(configuration: .debug)),
-                .define("EXPO_CONFIGURATION_RELEASE", .when(configuration: .release)),
-${settingLines([flags(["-F", expo.compileInterfacesDir]), ...(importerFlags.length ? [flags(importerFlags)] : [])])}`;
-}
-
-/** Swift reads the bridging header with the target's include paths and defines, as Xcode passes them. */
-function appSwiftSettings(app: AppTargetInputs): string {
-  if (!app.bridgingHeader) return "";
-  const clang = [...app.headerSearchPaths.map((p) => `-I${p}`), ...app.defines.map((d) => `-D${d}`)];
-  return settingLines([flags(["-import-objc-header", app.bridgingHeader, ...clang.flatMap((f) => ["-Xcc", f])])]);
-}
-
-/** Swift builds a scaffolded library's module from its headers in each importer, the App too: give it what it needs. */
-function importerSwiftSettings(app: AppTargetInputs): string {
-  const paths = app.importerPaths ?? [];
-  return paths.length ? settingLines([flags(paths.flatMap((p) => ["-Xcc", `-I${p}`]))]) : "";
+/** The App target's include dirs, in search order: the app's own and bare ones, Swift's header dir, Expo's importer dirs. */
+export function appIncludeDirs(app: AppTargetInputs, expo?: ExpoPackageInputs): string[] {
+  return [...app.headerSearchPaths, app.swiftHeadersDir, ...(expo?.clangImporter?.includeDirs ?? [])];
 }
 
 /**
- * Objective-C/C++ settings; `-I swiftHeadersDir` lets them `#import "App-Swift.h"`. In a hybrid project that header
- * does `@import Expo;`, so they also get what Swift's clang importer gets (as clang flags, without `-Xcc`): the
+ * What the manifest's `cSettings` (`cxx` false) or `cxxSettings` (`cxx` true) give the compiler; `[]` for a Swift-only
+ * target. `-I swiftHeadersDir` lets Objective-C `#import "App-Swift.h"`. In a hybrid project that header does
+ * `@import Expo;`, so they also get what Swift's clang importer gets (as clang flags, without `-Xcc`): the
  * compile-interfaces frameworks (`<ExpoModulesCore/Platform.h>`) and the importer's include dirs and module maps.
  * Swift Build does not apply the package's `cxxLanguageStandard` to a mixed target, so its ObjC++/C++ files get the
  * standard as `-std=` (C++ only: on a C/Objective-C file the flag is rejected) or compile with clang's default and
  * fail on React Native's C++20 headers.
  */
+export function appClangArgs(app: AppTargetInputs, expo: ExpoPackageInputs | undefined, cxx: boolean): string[] {
+  if (!app.mixed) return [];
+  return [
+    ...app.defines.map((d) => `-D${d}`),
+    ...appIncludeDirs(app, expo).flatMap((p) => ["-I", p]),
+    ...(expo?.clangImporter?.moduleMaps ?? []).map((m) => `-fmodule-map-file=${m}`),
+    ...(expo ? ["-F", expo.compileInterfacesDir] : []),
+    ...(cxx ? [cxxStandardFlag(app.cxxStandard)] : []),
+  ];
+}
+
+/** The App's Swift unsafe flags, one group per manifest line. */
+function appSwiftFlagGroups(app: AppTargetInputs, expo: ExpoPackageInputs | undefined): string[][] {
+  const xcc = (list: string[]) => list.flatMap((f) => ["-Xcc", f]);
+  const importer = expo?.clangImporter;
+  return [
+    expo ? ["-F", expo.compileInterfacesDir] : [],
+    importer
+      ? xcc([
+          `-I${importer.swiftHeadersDir}`,
+          ...importer.includeDirs.map((d) => `-I${d}`),
+          ...importer.moduleMaps.map((m) => `-fmodule-map-file=${m}`),
+        ])
+      : [],
+    // Swift reads the bridging header with the target's include paths and defines, as Xcode passes them.
+    app.bridgingHeader
+      ? ["-import-objc-header", app.bridgingHeader, ...xcc([...app.headerSearchPaths.map((p) => `-I${p}`), ...app.defines.map((d) => `-D${d}`)])]
+      : [],
+    // Swift builds a scaffolded library's module from its headers in each importer, the App too: give it what it needs.
+    xcc((app.importerPaths ?? []).map((p) => `-I${p}`)),
+  ].filter((group) => group.length > 0);
+}
+
+/** What the manifest's `swiftSettings` give the compiler in a Debug build. */
+export function appSwiftArgs(app: AppTargetInputs, expo: ExpoPackageInputs | undefined): string[] {
+  return ["-DDEBUG", ...(expo ? ["-DEXPO_CONFIGURATION_DEBUG"] : []), ...appSwiftFlagGroups(app, expo).flat()];
+}
+
+/** The App's `swiftSettings` entries: {@link appSwiftArgs} with the defines per configuration. */
+function appSwiftSettings(app: AppTargetInputs, expo: ExpoPackageInputs | undefined): string {
+  const expoDefines = expo
+    ? `                // CocoaPods sets these for the app; ExpoModulesProvider.swift registers debug-only
+                // modules (expo-dev-launcher, expo-dev-menu) under EXPO_CONFIGURATION_DEBUG.
+                .define("EXPO_CONFIGURATION_DEBUG", .when(configuration: .debug)),
+                .define("EXPO_CONFIGURATION_RELEASE", .when(configuration: .release)),
+`
+    : "";
+  return `                .define("DEBUG", .when(configuration: .debug)),
+${expoDefines}${settingLines(appSwiftFlagGroups(app, expo).map(flags))}`;
+}
+
+/**
+ * The App's `cSettings` and `cxxSettings`, from {@link appClangArgs}: SwiftPM spells its leading `-D` arguments as
+ * `.define`, the rest as one line of flags; C++'s own arguments follow on a line of their own.
+ */
 function appClangSettings(app: AppTargetInputs, expo: ExpoPackageInputs | undefined): string {
   if (!app.mixed) return "";
-  const importer = expo?.clangImporter;
-  const includes = [
-    ...[...app.headerSearchPaths, app.swiftHeadersDir, ...(importer?.includeDirs ?? [])].flatMap((p) => ["-I", p]),
-    ...(importer?.moduleMaps ?? []).map((m) => `-fmodule-map-file=${m}`),
-    ...(expo ? ["-F", expo.compileInterfacesDir] : []),
-  ];
-  const shared = [...app.defines.map(cDefine), flags(includes)];
+  const c = appClangArgs(app, expo, false);
+  const defines = app.defines.length;
+  const shared = [...c.slice(0, defines).map((d) => cDefine(d.slice("-D".length))), flags(c.slice(defines))];
+  const cxxOnly = appClangArgs(app, expo, true).slice(c.length);
   const section = (name: string, lines: string[]) => `            ${name}: [\n${settingLines(lines)}            ],\n`;
-  return section("cSettings", shared) + section("cxxSettings", [...shared, flags([cxxStandardFlag(app.cxxStandard)])]);
+  return section("cSettings", shared) + section("cxxSettings", [...shared, flags(cxxOnly)]);
 }
 
 export function renderPackageSwift(i: PackageSwiftInput): RenderedPackageSwift {
@@ -223,8 +252,7 @@ ${jsiPackage}    ],
 ${jsiProduct}${devSupportDependency}            ],
             path: "Sources/App",
 ${appClangSettings(app, expo)}            swiftSettings: [
-                .define("DEBUG", .when(configuration: .debug)),
-${expo ? expoSwiftSettings(expo) : ""}${appSwiftSettings(app)}${importerSwiftSettings(app)}            ],
+${appSwiftSettings(app, expo)}            ],
             linkerSettings: [
                 .linkedLibrary("c++"),
                 .unsafeFlags([${linkerFlags.map(lit).join(", ")}]),

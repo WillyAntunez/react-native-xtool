@@ -1,0 +1,90 @@
+{
+  "dependencies": [],
+  "name": "ReactNative",
+  "packageKind": {
+    "root": [
+      "/home/me/app/ios/build/xcframeworks"
+    ]
+  },
+  "products": [
+    {
+      "name": "ReactHeaders",
+      "settings": [],
+      "targets": [
+        "ReactHeaders"
+      ],
+      "type": {
+        "library": [
+          "automatic"
+        ]
+      }
+    },
+    {
+      "name": "ReactNativeHeaders",
+      "settings": [],
+      "targets": [
+        "ReactNativeHeaders"
+      ],
+      "type": {
+        "library": [
+          "automatic"
+        ]
+      }
+    },
+    {
+      "name": "ReactNativeDependenciesHeaders",
+      "settings": [],
+      "targets": [
+        "ReactNativeDependenciesHeaders"
+      ],
+      "type": {
+        "library": [
+          "automatic"
+        ]
+      }
+    }
+  ],
+  "targets": [
+    {
+      "dependencies": [
+        {
+          "byName": [
+            "ReactNativeHeaders",
+            null
+          ]
+        }
+      ],
+      "exclude": [],
+      "name": "ReactHeaders",
+      "packageAccess": true,
+      "path": "ReactHeadersTarget",
+      "publicHeadersPath": "include",
+      "resources": [],
+      "settings": [],
+      "type": "regular"
+    },
+    {
+      "dependencies": [],
+      "exclude": [],
+      "name": "ReactNativeHeaders",
+      "packageAccess": false,
+      "path": "ReactNativeHeaders.xcframework",
+      "resources": [],
+      "settings": [],
+      "type": "binary"
+    },
+    {
+      "dependencies": [],
+      "exclude": [],
+      "name": "ReactNativeDependenciesHeaders",
+      "packageAccess": false,
+      "path": "ReactNativeDependenciesHeaders.xcframework",
+      "resources": [],
+      "settings": [],
+      "type": "binary"
+    }
+  ],
+  "toolsVersion": {
+    "_version": "6.0.0"
+  }
+}

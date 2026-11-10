@@ -1,0 +1,57 @@
+{
+  "dependencies": [
+    {
+      "fileSystem": [
+        {
+          "identity": "rn-lib",
+          "path": "/home/me/app/node_modules/rn-lib",
+          "productFilter": null
+        }
+      ]
+    }
+  ],
+  "name": "Autolinked",
+  "packageKind": {
+    "root": [
+      "/home/me/app/ios/build/generated/autolinking"
+    ]
+  },
+  "products": [
+    {
+      "name": "Autolinked",
+      "settings": [],
+      "targets": [
+        "AutolinkedAggregate"
+      ],
+      "type": {
+        "library": [
+          "automatic"
+        ]
+      }
+    }
+  ],
+  "targets": [
+    {
+      "dependencies": [
+        {
+          "product": [
+            "RNLib",
+            "rn-lib",
+            null,
+            null
+          ]
+        }
+      ],
+      "exclude": [],
+      "name": "AutolinkedAggregate",
+      "packageAccess": true,
+      "path": "AutolinkedAggregate",
+      "resources": [],
+      "settings": [],
+      "type": "regular"
+    }
+  ],
+  "toolsVersion": {
+    "_version": "6.0.0"
+  }
+}

@@ -1,0 +1,216 @@
+{
+  "app": {
+    "pkg": {
+      "iosDir": "/home/me/bare-087/ios",
+      "frameworks": [
+        {
+          "id": "react",
+          "name": "React",
+          "executable": "React",
+          "searchPath": "/home/me/bare-087/ios/build/xcframeworks/debug/React.xcframework/ios-arm64",
+          "frameworkDir": "/home/me/bare-087/ios/build/xcframeworks/debug/React.xcframework/ios-arm64/React.framework"
+        },
+        {
+          "id": "react-native-dependencies",
+          "name": "ReactNativeDependencies",
+          "executable": "ReactNativeDependencies",
+          "searchPath": "/home/me/bare-087/ios/build/xcframeworks/debug/ReactNativeDependencies.xcframework/ios-arm64",
+          "frameworkDir": "/home/me/bare-087/ios/build/xcframeworks/debug/ReactNativeDependencies.xcframework/ios-arm64/ReactNativeDependencies.framework"
+        },
+        {
+          "id": "hermes",
+          "name": "hermesvm",
+          "executable": "hermesvm",
+          "searchPath": "/home/me/bare-087/ios/build/xcframeworks/debug/hermes-engine.xcframework/ios-arm64",
+          "frameworkDir": "/home/me/bare-087/ios/build/xcframeworks/debug/hermes-engine.xcframework/ios-arm64/hermesvm.framework"
+        }
+      ],
+      "iosMin": "16.4",
+      "app": {
+        "mixed": false,
+        "defines": [
+          "DEBUG=1"
+        ],
+        "headerSearchPaths": [
+          "/home/me/bare-087/ios/build/xcframeworks/ReactHeadersTarget/include/React",
+          "/home/me/bare-087/ios/build/xcframeworks/ReactNativeHeaders.xcframework/ios-arm64/Headers/CoreModules",
+          "/home/me/bare-087/ios/build/xcframeworks/ReactNativeHeaders.xcframework/ios-arm64/Headers/RCTAnimation",
+          "/home/me/bare-087/ios/build/xcframeworks/ReactNativeHeaders.xcframework/ios-arm64/Headers/RCTBlob",
+          "/home/me/bare-087/ios/build/xcframeworks/ReactNativeHeaders.xcframework/ios-arm64/Headers/RCTDeprecation",
+          "/home/me/bare-087/ios/build/xcframeworks/ReactNativeHeaders.xcframework/ios-arm64/Headers/RCTImage",
+          "/home/me/bare-087/ios/build/xcframeworks/ReactNativeHeaders.xcframework/ios-arm64/Headers/RCTSettings",
+          "/home/me/bare-087/ios/build/xcframeworks/ReactNativeHeaders.xcframework/ios-arm64/Headers/RCTSwiftUIWrapper",
+          "/home/me/bare-087/ios/build/xcframeworks/ReactNativeHeaders.xcframework/ios-arm64/Headers/RCTText",
+          "/home/me/bare-087/ios/build/xcframeworks/ReactNativeHeaders.xcframework/ios-arm64/Headers/RCTVibration",
+          "/home/me/bare-087/ios/build/xcframeworks/ReactNativeHeaders.xcframework/ios-arm64/Headers/ReactCommon",
+          "/home/me/bare-087/ios/build/xcframeworks/ReactNativeHeaders.xcframework/ios-arm64/Headers/React_RCTAppDelegate",
+          "/home/me/bare-087/ios/build/xcframeworks/ReactNativeHeaders.xcframework/ios-arm64/Headers/reactperflogger",
+          "/home/me/bare-087/ios/build/xcframeworks/ReactNativeHeaders.xcframework/ios-arm64/Headers/yoga"
+        ],
+        "cxxStandard": "c++20",
+        "swiftHeadersDir": "/home/me/bare-087/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos",
+        "importerPaths": [
+          "/home/me/bare-087/node_modules/react-native-gesture-handler/apple/Handlers",
+          "/home/me/bare-087/node_modules/react-native-gesture-handler/apple",
+          "/home/me/bare-087/node_modules/react-native-gesture-handler/shared/runtime",
+          "/home/me/bare-087/node_modules/react-native-gesture-handler/shared/shadowNodes/react/renderer/components/rngesturehandler_codegen",
+          "/home/me/bare-087/node_modules/react-native-gesture-handler/.",
+          "/home/me/bare-087/node_modules/react-native-svg/common/cpp",
+          "/home/me/bare-087/node_modules/react-native-svg/apple/Brushes",
+          "/home/me/bare-087/node_modules/react-native-svg/apple/Elements",
+          "/home/me/bare-087/node_modules/react-native-svg/apple/Filters/MetalCI",
+          "/home/me/bare-087/node_modules/react-native-svg/apple/Filters",
+          "/home/me/bare-087/node_modules/react-native-svg/apple",
+          "/home/me/bare-087/node_modules/react-native-svg/apple/Shapes",
+          "/home/me/bare-087/node_modules/react-native-svg/apple/Text",
+          "/home/me/bare-087/node_modules/react-native-svg/apple/Utils",
+          "/home/me/bare-087/node_modules/react-native-svg/apple/ViewManagers",
+          "/home/me/bare-087/node_modules/react-native-svg/common/cpp/react/renderer/components/rnsvg",
+          "/home/me/bare-087/node_modules/react-native-svg/.",
+          "/home/me/bare-087/node_modules/react-native-svg/include",
+          "/home/me/bare-087/node_modules/react-native-screens/common/cpp",
+          "/home/me/bare-087/node_modules/react-native-screens/common/cpp/react/renderer/components/rnscreens",
+          "/home/me/bare-087/node_modules/react-native-screens/common/cpp/react/renderer/components/rnscreens/utils",
+          "/home/me/bare-087/node_modules/react-native-screens/cpp",
+          "/home/me/bare-087/node_modules/react-native-screens/ios",
+          "/home/me/bare-087/node_modules/react-native-screens/ios/bridging",
+          "/home/me/bare-087/node_modules/react-native-screens/ios/conversion",
+          "/home/me/bare-087/node_modules/react-native-screens/ios/events",
+          "/home/me/bare-087/node_modules/react-native-screens/ios/helpers/container",
+          "/home/me/bare-087/node_modules/react-native-screens/ios/helpers/image",
+          "/home/me/bare-087/node_modules/react-native-screens/ios/helpers/scroll-view",
+          "/home/me/bare-087/node_modules/react-native-screens/ios/integrations",
+          "/home/me/bare-087/node_modules/react-native-screens/ios/safe-area",
+          "/home/me/bare-087/node_modules/react-native-screens/ios/stubs",
+          "/home/me/bare-087/node_modules/react-native-screens/ios/tabs",
+          "/home/me/bare-087/node_modules/react-native-screens/ios/tabs/bottom-accessory",
+          "/home/me/bare-087/node_modules/react-native-screens/ios/tabs/extensions",
+          "/home/me/bare-087/node_modules/react-native-screens/ios/tabs/host",
+          "/home/me/bare-087/node_modules/react-native-screens/ios/tabs/screen",
+          "/home/me/bare-087/node_modules/react-native-screens/ios/utils",
+          "/home/me/bare-087/node_modules/react-native-screens/ios/utils/extensions",
+          "/home/me/bare-087/node_modules/react-native-screens/.",
+          "/home/me/bare-087/node_modules/react-native-screens/include",
+          "/home/me/bare-087/node_modules/react-native-webview/apple",
+          "/home/me/bare-087/node_modules/react-native-webview/."
+        ]
+      },
+      "devSupport": true
+    },
+    "origins": {
+      "/home/me/bare-087/ios-xtool/Sources/App/AppDelegate.swift": "/home/me/bare-087/ios/BareDemo/AppDelegate.swift"
+    }
+  },
+  "graph": {
+    "headerDirs": [
+      "/home/me/bare-087/ios/build/xcframeworks/ReactHeadersTarget/include",
+      "/home/me/bare-087/ios/build/xcframeworks/ReactNativeHeaders.xcframework/ios-arm64/Headers",
+      "/home/me/bare-087/ios/build/xcframeworks/ReactNativeDependenciesHeaders.xcframework/ios-arm64/Headers",
+      "/home/me/bare-087/ios/build/generated/ios/ReactCodegen",
+      "/home/me/bare-087/ios/build/generated/ios/ReactAppHeaders",
+      "/home/me/bare-087/ios/build/generated/ios/ReactAppDependencyProvider",
+      "/home/me/bare-087/ios/build/generated/autolinking/libs/RNGestureHandler/include",
+      "/home/me/bare-087/ios/build/generated/autolinking/libs/ReactNativeSafeAreaContext/ios",
+      "/home/me/bare-087/ios/build/generated/autolinking/libs/RNScreens/ios",
+      "/home/me/bare-087/ios/build/generated/autolinking/libs/RNSVG/apple",
+      "/home/me/bare-087/ios/build/generated/autolinking/libs/ReactNativeWebview/apple",
+      "/home/me/bare-087/ios-xtool/Sources/RNXtoolDevSupport/include"
+    ],
+    "moduleMaps": [
+      "/home/me/bare-087/ios/build/xcframeworks/ReactHeadersTarget/include/module.modulemap",
+      "/home/me/bare-087/ios/build/xcframeworks/ReactNativeHeaders.xcframework/ios-arm64/Headers/module.modulemap",
+      "/home/me/bare-087/ios/build/generated/ios/ReactAppHeaders/module.modulemap",
+      "/home/me/bare-087/ios/build/generated/autolinking/libs/RNScreens/ios/module.modulemap"
+    ],
+    "synthesized": [
+      {
+        "module": "ReactCodegen",
+        "text": "module ReactCodegen {\n    umbrella \"/home/me/bare-087/ios/build/generated/ios/ReactCodegen\"\n    export *\n}\n"
+      },
+      {
+        "module": "ReactAppDependencyProvider",
+        "text": "module ReactAppDependencyProvider {\n    umbrella \"/home/me/bare-087/ios/build/generated/ios/ReactAppDependencyProvider\"\n    export *\n}\n"
+      },
+      {
+        "module": "RNGestureHandler",
+        "text": "module RNGestureHandler {\n    umbrella header \"/home/me/bare-087/ios/build/generated/autolinking/libs/RNGestureHandler/include/RNGestureHandler/RNGestureHandler.h\"\n    export *\n}\n"
+      },
+      {
+        "module": "ReactNativeSafeAreaContext",
+        "text": "module ReactNativeSafeAreaContext {\n    umbrella \"/home/me/bare-087/ios/build/generated/autolinking/libs/ReactNativeSafeAreaContext/ios\"\n    export *\n}\n"
+      },
+      {
+        "module": "RNSVG",
+        "text": "module RNSVG {\n    umbrella \"/home/me/bare-087/ios/build/generated/autolinking/libs/RNSVG/apple\"\n    export *\n}\n"
+      },
+      {
+        "module": "ReactNativeWebview",
+        "text": "module ReactNativeWebview {\n    umbrella \"/home/me/bare-087/ios/build/generated/autolinking/libs/ReactNativeWebview/apple\"\n    export *\n}\n"
+      },
+      {
+        "module": "RNXtoolDevSupport",
+        "text": "module RNXtoolDevSupport {\n    umbrella header \"/home/me/bare-087/ios-xtool/Sources/RNXtoolDevSupport/include/RNXtoolDevSupport.h\"\n    export *\n}\n"
+      }
+    ],
+    "targets": [
+      "App",
+      "RNXtoolDevSupport",
+      "ReactHeaders",
+      "ReactNativeHeaders",
+      "ReactNativeDependenciesHeaders",
+      "ReactCodegen",
+      "ReactAppDependencyProvider",
+      "ReactAppHeaders",
+      "AutolinkedAggregate",
+      "Autolinked",
+      "RNGestureHandler",
+      "ReactNativeSafeAreaContext",
+      "RNScreens",
+      "RNSVG",
+      "ReactNativeWebview"
+    ],
+    "modules": [
+      "React",
+      "CoreModules",
+      "RCTAnimation",
+      "RCTBlob",
+      "RCTDeprecation",
+      "RCTImage",
+      "RCTSettings",
+      "RCTSwiftUIWrapper",
+      "RCTText",
+      "RCTVibration",
+      "ReactCommon",
+      "React_RCTAppDelegate",
+      "ReactNativeHeaders_react",
+      "reactperflogger",
+      "yoga",
+      "ReactAppHeaders",
+      "RNScreens",
+      "ReactCodegen",
+      "ReactAppDependencyProvider",
+      "RNGestureHandler",
+      "ReactNativeSafeAreaContext",
+      "RNSVG",
+      "ReactNativeWebview",
+      "RNXtoolDevSupport"
+    ],
+    "unresolved": []
+  },
+  "toolchain": {
+    "clang": "/home/me/.local/share/swiftly/bin/clang",
+    "swiftc": "/home/me/.local/share/swiftly/bin/swiftc",
+    "sdk": "/home/me/.swiftpm/swift-sdks/darwin.artifactbundle/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS27.1.sdk",
+    "swiftResources": "/home/me/.swiftpm/swift-sdks/darwin.artifactbundle/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift",
+    "swiftIncludes": [
+      "/home/me/.swiftpm/swift-sdks/darwin.artifactbundle/Developer/Platforms/iPhoneOS.platform/Developer/usr/lib"
+    ],
+    "swiftExtra": [
+      "-Xfrontend",
+      "-enable-cross-import-overlays"
+    ],
+    "versions": "clang version 21.0.0 (https://github.com/swiftlang/llvm-project.git 51091bd668a61591b761afe08e2776476e20ff1c)\nTarget: x86_64-unknown-linux-gnu\nThread model: posix\nInstalledDir: /home/me/.local/share/swiftly/toolchains/6.4.1/usr/bin\nSwift version 6.4.1 (swift-6.4.1-RELEASE)\nTarget: x86_64-unknown-linux-gnu\nepoch=4,darwinTools=1.1.0,oam=1.4.1"
+  },
+  "dir": "/home/me/bare-087/ios-xtool/.precheck",
+  "moduleCache": "/home/me/bare-087/ios-xtool/.precheck/ModuleCache/rn0.87.1-b534cbed0fc4"
+}

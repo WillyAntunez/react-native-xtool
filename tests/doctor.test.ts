@@ -773,6 +773,33 @@ describe("doctor --project", () => {
     expect(r.ok).toBe(true);
   });
 
+  it("--project reports the app's includes", async () => {
+    const error = 'ios/main.m:9 imports "AppDelegate.h", which is not in ios or the app target\'s headers';
+    const xcconfig = "ios/Config/App.xcconfig sets HEADER_SEARCH_PATHS for the app target; rn-xtool does not read xcconfig files";
+    const pending = "4 includes into React Native's or the libraries' headers: checked at build";
+    const run = (appTarget: string[]) =>
+      doctorWithProbes(
+        { ...good, capabilities: async () => ({ ...expo58Caps, orphanPatches: ["⚠ patches/x+1.0.0.patch is for x."], limits: [], appTarget }) },
+        "/proj",
+        { projectOnly: true },
+      );
+    const r = await run([`✖ app-includes — ${error}`, `⚠ app-target — ${xcconfig}`, `ℹ app-includes — ${pending}`]);
+    expect(r.checks.filter((c) => c.name.startsWith("app-"))).toEqual([
+      { name: "app-includes", status: "fail", detail: error },
+      { name: "app-target", status: "warn", detail: xcconfig },
+      { name: "app-includes", status: "info", detail: pending },
+    ]);
+    // After patches, before known-limits.
+    expect(r.checks.map((c) => c.name).slice(-5)).toEqual(["patches", "app-includes", "app-target", "app-includes", "known-limits"]);
+    expect(renderReport(r.checks)).toContain(`✖ app-includes — ${error}`);
+    expect(r.ok).toBe(false);
+    const resolved = "2 includes of the app's own sources resolve";
+    expect((await run([`✔ app-includes — ${resolved}`])).checks.filter((c) => c.name.startsWith("app-"))).toEqual([
+      { name: "app-includes", status: "ok", detail: resolved },
+    ]);
+    expect((await run([])).checks.some((c) => c.name.startsWith("app-"))).toBe(false);
+  });
+
   it("--project prints an exclude line per entry", async () => {
     const info = "exclude — left out of this iOS build: react-native-vision-camera (rn-xtool.config.json). JavaScript that uses it must check that it is there; see https://example.invalid";
     const warn = "exclude names lodash, which is not a native iOS dependency of this project; ignored";

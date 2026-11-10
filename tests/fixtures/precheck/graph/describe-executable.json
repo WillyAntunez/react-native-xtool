@@ -1,0 +1,86 @@
+{
+  "dependencies": [
+    {
+      "identity": "xcframeworks",
+      "path": "/home/me/app/ios/build/xcframeworks",
+      "type": "fileSystem"
+    },
+    {
+      "identity": "ios",
+      "path": "/home/me/app/ios/build/generated/ios",
+      "type": "fileSystem"
+    },
+    {
+      "identity": "autolinking",
+      "path": "/home/me/app/ios/build/generated/autolinking",
+      "type": "fileSystem"
+    },
+    {
+      "identity": "unreached-lib",
+      "path": "/home/me/app/node_modules/unreached-lib",
+      "type": "fileSystem"
+    }
+  ],
+  "manifest_display_name": "AppXtool",
+  "name": "AppXtool",
+  "path": "/home/me/app/ios-xtool",
+  "platforms": [
+    {
+      "name": "ios",
+      "version": "15.1"
+    }
+  ],
+  "products": [
+    {
+      "name": "App",
+      "targets": [
+        "App"
+      ],
+      "type": {
+        "library": [
+          "automatic"
+        ]
+      }
+    }
+  ],
+  "targets": [
+    {
+      "c99name": "RNXtoolDevSupport",
+      "module_type": "ClangTarget",
+      "name": "RNXtoolDevSupport",
+      "path": "Sources/RNXtoolDevSupport",
+      "product_memberships": [
+        "App"
+      ],
+      "sources": [
+        "RNXtoolDevSupport.m"
+      ],
+      "type": "library"
+    },
+    {
+      "c99name": "App",
+      "module_type": "SwiftTarget",
+      "name": "App",
+      "path": "Sources/App",
+      "product_dependencies": [
+        "ReactHeaders",
+        "ReactNativeHeaders",
+        "ReactNativeDependenciesHeaders",
+        "ReactCodegen",
+        "ReactAppDependencyProvider",
+        "Autolinked"
+      ],
+      "product_memberships": [
+        "App"
+      ],
+      "sources": [
+        "main.swift"
+      ],
+      "target_dependencies": [
+        "RNXtoolDevSupport"
+      ],
+      "type": "executable"
+    }
+  ],
+  "tools_version": "6.0"
+}

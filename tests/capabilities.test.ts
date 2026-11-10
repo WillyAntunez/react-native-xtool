@@ -14,6 +14,7 @@ import { fakeExpo57Modules } from "./support/expo57.js";
 import { fakeExpo58Modules } from "./support/expo58.js";
 import { makeFakeSlot088 } from "./support/fakeSlots.js";
 import { fakeRnScripts } from "./support/rnScripts.js";
+import { objcApp } from "./support/objcApp.js";
 import { plistOf, withEntitlements } from "./support/entitlements.js";
 import { useGitSpecCache } from "./support/podsCache.js";
 import { troubleshootingUrl } from "../src/docs.js";
@@ -674,6 +675,88 @@ describe("detectCapabilities", () => {
       rel: "ios/HelloWorld/HelloWorld.entitlements",
       lines: ["⚠ aps-environment is not available on a free team; the build continues without it; push notifications fail at runtime."],
     });
+  });
+
+  it("reads the app target's includes without a toolchain", async () => {
+    // No swift, clang or xtool: pass 1 reads files only.
+    vi.stubEnv("PATH", "");
+    const root = objcApp("root-group");
+    const pending = "ℹ app-includes — 4 includes into React Native's or the libraries' headers: checked at build";
+    const resolved = "✔ app-includes — 2 includes of the app's own sources resolve";
+    expect((await detect(root)).appTarget).toEqual([pending, resolved]);
+    // ios/Config/App.xcconfig, in the main group, as the target's Debug base.
+    const pbxproj = path.join(root, "ios", "ObjcApp.xcodeproj", "project.pbxproj");
+    const ref = "C50000000000000000000A01";
+    let src = await readFile(pbxproj, "utf8");
+    for (const [from, to] of [
+      ["/* End PBXFileReference section */", `\t\t${ref} = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/App.xcconfig; sourceTree = "<group>"; };\n$&`],
+      ["83CBB9F61A601CBA00E9B192 = {\n\t\t\tisa = PBXGroup;\n\t\t\tchildren = (\n", `$&\t\t\t\t${ref},\n`],
+      ["baseConfigurationReference = 3B4392A12AC88292D35C810B /* Pods-ObjcApp.debug.xcconfig */;", `baseConfigurationReference = ${ref};`],
+    ] as const) {
+      expect(src).toContain(from);
+      src = src.replace(from, to);
+    }
+    await writeFile(pbxproj, src);
+    await mkdir(path.join(root, "ios", "Config"));
+    await writeFile(path.join(root, "ios", "Config", "App.xcconfig"), "HEADER_SEARCH_PATHS = $(inherited) Vendor\n");
+    expect((await detect(root)).appTarget).toEqual([
+      "⚠ app-target — ios/Config/App.xcconfig sets HEADER_SEARCH_PATHS for the app target; rn-xtool does not read xcconfig files",
+      pending,
+      resolved,
+    ]);
+  });
+
+  it("gives no app-target line when the project cannot be read", async () => {
+    // The app target takes its files from a synchronized folder: the project line names it.
+    const root = objcApp("template");
+    const pbxproj = path.join(root, "ios", "ObjcApp.xcodeproj", "project.pbxproj");
+    const synced = "C60000000000000000000A01";
+    const src = (await readFile(pbxproj, "utf8"))
+      .replace(
+        "/* Begin PBXGroup section */",
+        "/* Begin PBXFileSystemSynchronizedRootGroup section */\n" +
+          `\t\t${synced} /* ObjcApp */ = {isa = PBXFileSystemSynchronizedRootGroup; path = ObjcApp; sourceTree = "<group>"; };\n` +
+          "/* End PBXFileSystemSynchronizedRootGroup section */\n\n/* Begin PBXGroup section */",
+      )
+      .replace("\t\t\t\t13B07FAE1A68108700A75B9A /* ObjcApp */,\n\t\t\t\t83CBBA001A601CBA00E9B192", `\t\t\t\t${synced} /* ObjcApp */,\n\t\t\t\t83CBBA001A601CBA00E9B192`)
+      .replace("\t\t\tdependencies = (\n\t\t\t);\n", `$&\t\t\tfileSystemSynchronizedGroups = (\n\t\t\t\t${synced} /* ObjcApp */,\n\t\t\t);\n`);
+    expect(src.match(new RegExp(synced, "g"))).toHaveLength(3);
+    await writeFile(pbxproj, src);
+    expect((await detect(root)).appTarget).toEqual([]);
+  });
+
+  it("reads an Expo app's bridging header once expo prebuild wrote it", async () => {
+    const dir = await expo58();
+    expect((await detect(dir)).appTarget).toEqual([]);
+    await mkdir(path.join(dir, "ios", "LibApp.xcodeproj"), { recursive: true });
+    await cp(path.join(fixtures, "pbxproj", "expo-libapp.pbxproj"), path.join(dir, "ios", "LibApp.xcodeproj", "project.pbxproj"));
+    await mkdir(path.join(dir, "ios", "LibApp"));
+    // A config plugin's imports: the library's header and React Native's, both left to the build.
+    await writeFile(
+      path.join(dir, "ios", "LibApp", "LibApp-Bridging-Header.h"),
+      '#import <React/RCTBridgeModule.h>\n#import "RNAppAuthAuthorizationFlowManager.h"\n',
+    );
+    expect((await detect(dir)).appTarget).toEqual([
+      "ℹ app-includes — 2 includes into React Native's or the libraries' headers: checked at build",
+    ]);
+    // A header next to it in ios/ is not copied: the build stops, and the line says why.
+    await writeFile(path.join(dir, "ios", "LibApp", "LibApp-Shared.h"), "// shared\n");
+    await writeFile(
+      path.join(dir, "ios", "LibApp", "LibApp-Bridging-Header.h"),
+      '#import <React/RCTBridgeModule.h>\n#import "LibApp-Shared.h"\n',
+    );
+    expect((await detect(dir)).appTarget).toEqual([
+      '✖ app-includes — ios/LibApp/LibApp-Bridging-Header.h:2 imports "LibApp-Shared.h", which is not among the files ' +
+        "rn-xtool copies next to ios/LibApp/LibApp-Bridging-Header.h or in the app target's headers; " +
+        "ios/LibApp/LibApp-Shared.h exists, but rn-xtool copies only the bridging header of an Expo app",
+      "ℹ app-includes — 1 includes into React Native's or the libraries' headers: checked at build",
+    ]);
+    // A setting naming a missing file stops the build's check too: an error line, not silence.
+    await rm(path.join(dir, "ios", "LibApp", "LibApp-Bridging-Header.h"));
+    expect((await detect(dir)).appTarget).toEqual([
+      "✖ app-includes — SWIFT_OBJC_BRIDGING_HEADER in ios/LibApp.xcodeproj names LibApp/LibApp-Bridging-Header.h, which " +
+        "does not exist. Run rn-xtool build --clean to run expo prebuild again.",
+    ]);
   });
 
   it("leaves the React Native fields out without react-native", async () => {

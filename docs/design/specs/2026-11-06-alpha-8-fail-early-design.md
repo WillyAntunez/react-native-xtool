@@ -96,9 +96,10 @@ written with them.
   and video take their old-architecture branch. The shim models the helpers and gives one result on every machine with
   Ruby. The JavaScript evaluator stays as the fallback without Ruby.
 - **R2. An exit for each new stop that can block a working app** (rows 5 and 39). `RN_XTOOL_PODSPEC_READER=reduced`
-  forces the reduced reader for one run, and `rn-xtool build --skip-precheck` skips the precheck; each prints a `⚠`
-  line naming itself, and `doctor --report` records that it was used. A blocked user with no way out abandons the tool
-  before reporting; the report turns each use into a signal for the maintainers.
+  forces the reduced reader for one run, and `rn-xtool build --skip-precheck` skips the precheck and turns B1 pass 1's
+  errors into `⚠` lines; each prints a `⚠` line naming itself, and `doctor --report` records that it was used. A
+  blocked user with no way out abandons the tool before reporting; the report turns each use into a signal for the
+  maintainers.
 - **R3. A shim failure is never swallowed** (row 10): it stops `rn-spm` with the shim's text, also when an autolinking
   read hits it. The reader sweep covers every podspec of the Expo SDK 57 and 58 templates and of the reference apps,
   so Expo modules are proven before release.
@@ -495,8 +496,11 @@ are not proposed again without new facts.
 
 **B1, the include resolution.** It reads the app target as `generate` will copy it (fact 13): every C-family source,
 every header the copy keeps, and the bridging header. For each file it strips comments, follows `#if`/`#ifdef`/
-`#elif`/`#else` with the target's defines, `RCT_NEW_ARCH_ENABLED=1`, `DEBUG=1` and the iOS values of `TARGET_OS_*`,
-and evaluates `__has_include` with the resolver itself. Each `#import`/`#include`:
+`#elif`/`#else` with the defines the compile gets: the target's own, the ones Swift Build gives every App compile
+(`SWIFT_PACKAGE` and `DEBUG=1`, which a C-family file and the bridging header both get) and the iOS values of
+`TARGET_OS_*` that clang predefines; it evaluates `__has_include` with the resolver itself. The App target as rn-xtool
+generates it does not define `RCT_NEW_ARCH_ENABLED`, so a condition on it is one B1 cannot evaluate, as is a condition
+on any other macro outside that list. Each `#import`/`#include`:
 
 - `"X.h"`: the including file's folder, then the app's headers by name (the forwards of fact 14), then the include
   paths in order;
@@ -508,20 +512,31 @@ and evaluates `__has_include` with the resolver itself. Each `#import`/`#include
 An include is **missing** when it is unconditional (outside every `#if` group except include guards) and resolves
 nowhere; one under a condition B1 cannot evaluate is never an error. B1 runs twice:
 
-1. **Pass 1, before anything changes**: in `doctor --project` and at the start of `build`, next to the early checks.
-   It knows the app's own files and `HEADER_SEARCH_PATHS`. An app-own quote include that is missing (F2) is an error
-   with the file, the line, the header and where rn-xtool looked. An angle include into React Native's or a library's
-   headers is "not checked yet" while `ios/build/xcframeworks` and the scaffolds are not staged: one `ℹ` line with the
-   count, in doctor only. The same pass checks the app target's shape (R6, rows 46 and 47): an xcconfig the target or
-   the project names (`baseConfigurationReference`) that is not CocoaPods' generated `Pods-*.xcconfig` and sets a
-   setting rn-xtool reads (`HEADER_SEARCH_PATHS`, `GCC_PREPROCESSOR_DEFINITIONS`, `CLANG_CXX_LANGUAGE_STANDARD`,
-   `SWIFT_OBJC_BRIDGING_HEADER`, `PRODUCT_MODULE_NAME`, `CODE_SIGN_ENTITLEMENTS`, `INFOPLIST_FILE`) gives
-   `⚠ <xcconfig> sets <settings> for the app target; rn-xtool does not read xcconfig files`; a synchronized folder group
-   in the app target is refused, naming the group.
+1. **Pass 1, before anything changes**: in `doctor --project` and at the start of `build`, next to the early checks. It
+   knows the app's own files and `HEADER_SEARCH_PATHS`. An app-own quote include that is missing (F2) is an error with
+   the file, the line, the header and where rn-xtool looked. A quote include is app-own when a header the app target
+   lists (its headers and its bridging header, by path under `ios/`; on Expo, the bridging header's name), or a file
+   under `ios/`, has a path that ends with the spelling (for a spelling without a folder, its name; case ignored, so
+   that a case-only twin is named): a header of that name in another folder is no evidence for a spelling with a folder
+   (`"SomeLib/Utils.h"`), which a library's headers may answer, and pass 1 leaves it to the build. The match on the
+   headers the app target lists is case-sensitive; the match on the files under `ios/` ignores case, so a file whose
+   path differs from the spelling only in case counts as evidence and the miss names it with the case hint. This
+   narrows the earlier base-name rule (a `Utils.h` anywhere under `ios/` no longer makes `"SomeLib/Utils.h"` app-own);
+   a false `✖` from the case-insensitive match needs both a case-only twin under `ios/` and a library holding the exact
+   spelling, and otherwise clang on Linux fails on the same include. With `--skip-precheck` (hop 6) these errors are `⚠` lines and the build goes on. An angle include into React
+   Native's or a library's headers is "not checked yet" while `ios/build/xcframeworks` and the scaffolds are not staged:
+   one `ℹ` line with the count, in doctor only. The same pass checks the app target's shape (R6, rows 46 and 47): an
+   xcconfig the target or the project names (`baseConfigurationReference`) that is not CocoaPods' generated
+   `Pods-*.xcconfig` and sets a setting rn-xtool reads (`HEADER_SEARCH_PATHS`, `GCC_PREPROCESSOR_DEFINITIONS`,
+   `CLANG_CXX_LANGUAGE_STANDARD`, `SWIFT_OBJC_BRIDGING_HEADER`, `PRODUCT_MODULE_NAME`, `CODE_SIGN_ENTITLEMENTS`,
+   `INFOPLIST_FILE`) gives `⚠ <xcconfig> sets <settings> for the app target; rn-xtool does not read xcconfig files`; a
+   synchronized folder group in the app target is refused, naming the group.
 2. **Pass 2, in the precheck step** (below): the include list the manifest has just been given, plus the dependency
-   products' header folders, from the one include-list function B2 uses. A missing include is an error (F3) when it is
-   a quote include or its first path component names no target of the package graph; otherwise it is a `⚠` and B2
-   decides (R6, row 37).
+   products' header folders, from the one include-list function B2 uses, in the order of the compile that reads each
+   file: B2's line for a C-family file of the target names the graph's folders first, the bridging header's (Swift's
+   clang importer) the target's own first, so a header two folders hold is the copy that compile opens. A missing
+   include is an error (F3) when it is a quote include or its first path component names no target of the package
+   graph; otherwise it is a `⚠` and B2 decides (R6, row 37).
 
 **B2, the precheck.** A new `build` step, `precheck`, after `generate` and before `xtool-build`:
 
@@ -536,17 +551,23 @@ nowhere; one under a condition B1 cannot evaluate is never an error. B1 runs twi
 2. **Swift first.** `swiftc -typecheck` on the App's Swift files with `-import-objc-header` and the same `-Xcc` paths,
    writing `App-Swift.h` into `ios-xtool/.precheck/` (`-emit-objc-header-path`) for the next hop. When a Swift file
    imports a module SwiftPM builds from Swift (Expo, `ExpoModulesCore`, any Swift library target), the Swift part is
-   not checked: one `ℹ` line names the file and the module (row 43).
+   not checked: one `ℹ` line names the file and the module (row 43). A module counts as one SwiftPM builds from Swift
+   when its target has a Swift source, even when the graph also has a clang module map for it (a mixed target).
 3. **C-family next.** `clang -fsyntax-only` on each `.m`, `.mm`, `.c`, `.cc`, `.cpp` of the App, in parallel, with
-   `nice`. A file that imports `App-Swift.h` is checked only when hop 2 wrote it.
+   `nice`. A file that imports `App-Swift.h` is checked only when hop 2 wrote it. A file whose reach `@import`s a
+   module SwiftPM builds from Swift, or one no map declares, is not compiled: one `ℹ` line per module (row 43b).
 4. **Report.** An error stops the build before `xtool-build`: `✖ precheck — <file>:<line>: <clang's message>` with
    clang's include stack (F4's error is in a React Native header; the cause is the app's flags), the first ten errors,
    and the log file's path. Warnings are not printed: `xtool-build` prints them once.
 5. **Manifest planning** (R6, row 54): `swift package describe --type json` in `ios-xtool/`, which plans the package
    without compiling, runs first and reports F1-like refusals (an executable App target, an invalid header layout).
-6. **The exit** (R2, row 39): `rn-xtool build --skip-precheck` skips hops 2–5 with
-   `⚠ precheck skipped (--skip-precheck): errors in the app's own sources show in xtool-build`, and `doctor --report`
-   says the last build skipped it. B1 pass 1 still runs.
+6. **The exit** (R2, row 39): `rn-xtool build --skip-precheck` skips hops 2–5 with `⚠ precheck skipped
+   (--skip-precheck): errors in the app's own sources show in xtool-build`, and `doctor --report` says the last build
+   skipped it. B1 pass 1's stop names this exit (`; if xtool-build builds them, build with rn-xtool build
+   --skip-precheck and report it with rn-xtool doctor --report`). With the flag B1 pass 1 still runs, but does not
+   stop: each of its `✖` lines is printed as a `⚠` line with the same text, then `⚠ <n> include(s) of the app's own
+   sources resolve nowhere (listed above); checked by xtool-build (--skip-precheck)`, and the build goes on to
+   `xtool-build` (`run --skip-precheck` passes the flag to `build`). `doctor --project` keeps them `✖`.
 
 Both B1 and B2 run on bare projects and on an Expo project's bridging header ([library
 compatibility](2026-11-04-library-compat-design.md), goal 3.6); an Expo project's `AppDelegate.swift` imports `Expo`
@@ -752,10 +773,11 @@ USB, the disk, GitHub's mention parser, npm and the drift watch's runners.
 | 27 | A, reduced reader in use | the JavaScript evaluator's known limits remain on a machine without Ruby | user: the fixed `⚠` line on every build | accept: the line is the decision; C and the class checks run whatever the reader |
 | 28 | A, model fields | the regex path's internal fields (`__unresolved__`, `__header_dir_scopes__`) are absent from the shim's JSON | nobody: the consumer derives them from the layers | handle: the sweep compares the two models field by field |
 | 29 | A, rn-xtool's other readers | the early checks and the resource reader keep their TypeScript line readers, which may disagree with the shim (a dependency under a Ruby condition) | user: an early refusal for a pod the scaffold does not use, or none for one it does | defer to alpha.9, "one podspec model for every reader" (R5); the sweep lists the disagreements meanwhile |
-| 30 | B1 pass 1 | an app-own quote include resolves nowhere (F2) | user in `doctor --project` and seconds after `build` starts: `✖ <file>:<line> imports "AppDelegate.h", which is not in <folders searched>` | handle: fixture of the root-group layout |
+| 30 | B1 pass 1 | an app-own quote include resolves nowhere (F2) | user in `doctor --project` and seconds after `build` starts: `✖ <file>:<line> imports "AppDelegate.h", which is not <places the app target's copy searched>` (the files the target lists next to the including file, the app target's headers, the search paths: never a folder on disk that may hold the file), then `<n> include(s) of the app's own sources resolve nowhere (listed above): the build would stop compiling them; if xtool-build builds them, build with rn-xtool build --skip-precheck and report it with rn-xtool doctor --report` | handle: fixture of the root-group layout |
 | 31 | B1, header map | a quote include of an app header that lives in another folder | nobody: resolved by name, as Xcode's header map and the forwards do | handle: test with headers at the root of the group tree and in the app folder |
 | 32 | B1 pass 1, before staging | an angle include into React Native's or a library's headers cannot be checked yet | user in doctor: one `ℹ` with the count, "checked at build" | handle |
 | 33 | B1, conditions | `__has_include` chains (codegen's `RCTAppDependencyProvider.h` shape), `#ifdef RCT_NEW_ARCH_ENABLED`, `#if TARGET_OS_OSX` | nobody for a branch not taken; a condition B1 cannot evaluate never makes an error | handle: tests per form |
+| 33b | B1, defines | a condition on a macro the generated App target does not define (`RCT_NEW_ARCH_ENABLED`) | nobody; the include is uncertain and the compile decides | handle: B1 assumes only the compile's defines (this wave) |
 | 34 | B1, text forms | an include in a comment or under `#if 0`; an include built from a macro | nobody | handle (comments, `#if 0`); accept (macro includes are not checked; B2 compiles them) |
 | 35 | B1, `@import` | a module B1 cannot place | nobody in B1; B2 compiles it | handle: B1 never errors on `@import` |
 | 36 | B1, generated headers | `App-Swift.h`, `<Module>-Swift.h` | nobody | accept: the build generates them; B2's hop 2 writes the App's |
@@ -763,15 +785,19 @@ USB, the disk, GitHub's mention parser, npm and the drift watch's runners.
 | 38 | B1, where it runs | `doctor --project` and the drift watch have no toolchain | nobody | handle: B1 is TypeScript over files only (fact 18) |
 | 39 | B2, command lines | rn-xtool's flags differ from Swift Build's and the precheck stops a file that `xtool-build` compiles | user: a false stop, whose text names `--skip-precheck` | handle: a golden test against the App target's response files of the bare 0.85–0.88 references, the Objective-C fixture and an Expo 58 app with a bridging header, captured on the owner's machine one build at a time and normalised (home folders become `/home/me`) before they enter `tests/fixtures/` (R12); `rn-xtool build --skip-precheck` skips it, printed with `⚠` and recorded in `doctor --report` (R2) |
 | 40 | B2, false pass | the flags differ the other way | user at `xtool-build`, as today | accept |
+| 40b | B2, toolchain drift | a newer Swift Build passes other defines, language mode or search paths than the capture of 2026-11-09 (swiftly 6.4.1) | user: false stops naming `--skip-precheck` until rn-xtool updates | defer: drift watch task (alpha.9): after a successful `xtool-build`, read the App compile argv from the task store, as the response-file capture did, and compare it with the precheck's (`compareFlags`); `⚠` on drift |
 | 41 | B2, toolchain | `clang`, `swiftc` or the iPhoneOS SDK cannot be found | user: a stop naming the tool and `rn-xtool setup` | handle; doctor already fails on `swift` and `darwin-sdk` |
 | 42 | B2, module cache | a stale cache after a React Native or toolchain change ("module file out of date") | user: a stop, or nothing after the retry | handle: the cache is keyed by React Native version and toolchain; one retry without it; `--clean` removes it |
-| 43 | B2, Swift modules | a Swift file imports a module SwiftPM builds from Swift (Expo, `ExpoModulesCore`) | user: `ℹ precheck — <file> imports <module>, which SwiftPM builds: checked by xtool-build` | accept: an Expo app's `AppDelegate.swift` is never prechecked; handle the line |
+| 43 | B2, Swift modules | a Swift file imports a module whose target SwiftPM builds from Swift (Expo, `ExpoModulesCore`, a mixed target), or one no map of the graph declares and the SDK has as no framework or Swift module (`CommonCrypto`) | user: `ℹ precheck — <file> imports <module>, which SwiftPM builds: checked by xtool-build` (`which no module map of the package graph declares` for a module of the second kind; through the bridging header: the line names it) | accept: an Expo app's `AppDelegate.swift` is never prechecked; handle the line: a module is known to Swift only when the graph's maps declare it and its target has no Swift sources, or the SDK has it |
+| 43b | B2, C-family `@import` | a C-family file, or the bridging header through its includes, `@import`s a module whose target SwiftPM builds from Swift, or one no map declares | user: `ℹ precheck — <file> imports the module <M>, which SwiftPM builds; checked by xtool-build` (`which no module map of the package graph declares` for such a module, an SDK one like `CommonCrypto` included), one line per module; the log lists every such file | handle (this wave): the file is not compiled, nor are the Swift files when it is the bridging header; B1 never errors on `@import` (row 35) |
 | 44 | B2, clang modules | Swift imports a clang target without a module map on disk (`ReactAppDependencyProvider`, `ReactCodegen`; SwiftPM synthesises theirs at build) | nobody: synthesised by SwiftPM's rule into `.precheck/`, or the file skipped with `ℹ` | handle: never an error; the builder picks synthesis or skip |
 | 45 | B2, `App-Swift.h` | an Objective-C file imports the App's Swift header and hop 2 did not write it | user: one `ℹ` naming the files not checked | handle |
 | 46 | B, target shape: xcconfig | `HEADER_SEARCH_PATHS`, defines, the C++ standard or another setting rn-xtool reads come from an xcconfig (`baseConfigurationReference`); the manifest lacks them, and B mirrors the manifest, so the errors look like rn-xtool's | user: `⚠ <xcconfig> sets HEADER_SEARCH_PATHS, … for the app target; rn-xtool does not read xcconfig files` at doctor and build start | handle (R6): the `⚠` only, and only for an xcconfig that is not CocoaPods' generated `Pods-*.xcconfig` and sets a setting rn-xtool reads; reading xcconfigs is a later block |
 | 47 | B, target shape: synchronized folders | an Xcode 16 synchronized folder group holds the app's sources; nothing is in the Sources phase | user: a refusal at doctor and build start naming the group | handle (R6): the refusal; reading such groups is a later block |
 | 48 | B, per-file flags | the app target's per-file `COMPILER_FLAGS` (`-fno-objc-arc`) are not read | user at precheck or `xtool-build`, the same way | accept: the trial's ruling; B2 uses the manifest's flags |
 | 49 | B2, time | the first precheck builds React Native's clang modules into its cache | user: a slower first build | accept: measured in the proof; parallel and `nice` |
+| 49b | B2, memory | `availableParallelism()` niced clangs on a cold cache exhaust memory; a killed clang reads `compiler exited 137 without a diagnostic` | user: a stop naming `--skip-precheck` | accept: troubleshooting says, present tense, that exit code 137 means the system stopped the compiler, usually for memory |
+| 49c | B2, disk | the disk fills during the precheck (`ENOSPC`) | user: a stop naming `--skip-precheck` (every stop of the step but a missing toolchain names it); the terminal and the stop never lose a line, and `ios-xtool/.precheck/precheck.log` may miss the lines after a failed write | accept |
 | 50 | B2, location | the error is in a library header (F4: `hash_combine.h`) while the cause is the app's flags | user: clang's include stack, starting at the app's file | handle |
 | 51 | B2, warnings | the app's warnings | user at `xtool-build`, once | accept: the precheck prints errors only |
 | 52 | B2, beyond syntax | a file passes `-fsyntax-only` and fails at code generation or link | user at `xtool-build`, as today | accept |

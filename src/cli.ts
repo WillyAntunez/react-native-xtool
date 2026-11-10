@@ -68,9 +68,10 @@ export function buildProgram(): Command {
     .command("build")
     .description("Prebuild if needed (Expo), run the SwiftPM pipeline and build with xtool")
     .option("--clean", "re-run expo prebuild --clean (Expo) or remove ios/build and ios-xtool (bare)")
+    .option("--skip-precheck", "skip the check of the app's own sources before xtool-build")
     .action(
-      action(async (o: { clean?: boolean }) => {
-        await build(process.cwd(), { clean: o.clean });
+      action(async (o: { clean?: boolean; skipPrecheck?: boolean }) => {
+        await build(process.cwd(), { clean: o.clean, skipPrecheck: o.skipPrecheck });
       }),
     );
   program
@@ -90,9 +91,17 @@ export function buildProgram(): Command {
     .option("--network [ip]", "install over Wi‑Fi (see install --network)")
     .option("--udid <udid>", "which paired iPhone to use over Wi‑Fi")
     .option("--pair-record <file>", "pair record to use over Wi‑Fi")
+    .option("--skip-precheck", "skip the check of the app's own sources before xtool-build")
     .action(
       action(
-        async (o: { clean?: boolean; force?: boolean; network?: boolean | string; udid?: string; pairRecord?: string }) => {
+        async (o: {
+          clean?: boolean;
+          force?: boolean;
+          network?: boolean | string;
+          udid?: string;
+          pairRecord?: string;
+          skipPrecheck?: boolean;
+        }) => {
           if (!o.network && (o.udid || o.pairRecord)) throw new Error("--udid and --pair-record need --network");
           await run(process.cwd(), o);
         },

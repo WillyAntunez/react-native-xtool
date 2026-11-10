@@ -12,6 +12,7 @@ import { DEFAULT_CONFIG, loadConfig, type ExpoXtoolConfig } from "../config.js";
 import { projectPaths } from "../paths.js";
 import { podspecReportLines, readPodspecReads } from "../pipeline/podspecReads.js";
 import { MissingBundleIdentifierError } from "../project/index.js";
+import { readState, type BuildState } from "../state.js";
 import { packageRoot } from "../tools/exec.js";
 import { doctorWithProbes, realProbes, renderReport, type DoctorProbes, type DoctorReport } from "./doctor.js";
 
@@ -255,14 +256,22 @@ function projectLine(r: DoctorReport, inProject: boolean): string {
   return parts.length > 0 ? parts.join(", ") : "unknown (see the project line)";
 }
 
+/** Whether the last build ran the check of the app's own sources or skipped it with `--skip-precheck` (R2). */
+export function precheckReportLine(state: BuildState | undefined): string {
+  if (state?.precheck === "run") return "precheck: run (last build)";
+  if (state?.precheck === "skipped") return "precheck: skipped with --skip-precheck (last build)";
+  return "precheck: not recorded";
+}
+
 /**
  * The block, fenced as text, before redaction. `podspecLines` are the last `rn-spm`'s reader and `ENV` names
- * (`podspecReportLines`): the report is the only place outside the reads file that names them (R2, R4).
+ * (`podspecReportLines`): the report is the only place outside the reads file that names them (R2, R4). `precheckLine` is
+ * `precheckReportLine`'s.
  */
 export function renderIssueReport(
   r: DoctorReport,
   env: ReportEnv,
-  opts: { projectOnly: boolean; nodeVersion: string; inProject: boolean; podspecLines: string[] },
+  opts: { projectOnly: boolean; nodeVersion: string; inProject: boolean; podspecLines: string[]; precheckLine: string },
 ): string {
   const detail = (name: string): string => r.checks.find((c) => c.name === name)?.detail ?? "not checked";
   const tool = (name: string): string => (opts.projectOnly ? "not checked (--project)" : detail(name));
@@ -276,6 +285,7 @@ export function renderIssueReport(
     // doctor --project checks Ruby too.
     `ruby: ${detail("ruby")}`,
     ...opts.podspecLines,
+    opts.precheckLine,
     `os: ${env.os}, ${env.arch}`,
     `project: ${projectLine(r, opts.inProject)}`,
     renderReport(r.checks),
@@ -341,11 +351,13 @@ export async function doctorReport(
       // Without a project there is no reads file.
       const project = inProject ? projectPaths(root ?? process.cwd()) : undefined;
       const reads = project !== undefined ? readPodspecReads(project.podspecReads) : [];
+      const state = project !== undefined ? await readState(project.iosXtool).catch(() => undefined) : undefined;
       const text = renderIssueReport(r, env, {
         projectOnly,
         nodeVersion: probes.nodeVersion(),
         inProject,
         podspecLines: podspecReportLines(reads, project?.root ?? ""),
+        precheckLine: precheckReportLine(state),
       });
       return `${redact(text, { home, seen })}\n${REVIEW_LINE}`;
     });

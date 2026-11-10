@@ -5,7 +5,8 @@ its rulings R1–R13. This file lists the task groups and the failure-walk rows 
 exactly one owner. The tasks, their tests and the execution order are written next.
 
 Plans: [plan 1, the podspec reader](2026-11-06-alpha-8-plan-1-podspec-reader.md) covers group A (rows 1–28), F1 (rows
-104–108), F3 (rows 112–115) and records row 29 as deferred.
+104–108), F3 (rows 112–115) and records row 29 as deferred; [plan 2, the precheck](2026-11-09-alpha-8-plan-2-precheck.md)
+covers group B (rows 30–55), with the response-file capture (R12) as its Task 13.
 
 Two gates come before the groups that depend on them:
 

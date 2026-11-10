@@ -1,0 +1,58 @@
+{
+  "dependencies": [
+    {
+      "fileSystem": [
+        {
+          "identity": "ios",
+          "nameForTargetDependencyResolutionOnly": "Foo",
+          "path": "/home/me/app/alias/b/ios",
+          "productFilter": null
+        }
+      ]
+    }
+  ],
+  "name": "AppXtool",
+  "packageKind": {
+    "root": [
+      "/home/me/app/alias/a"
+    ]
+  },
+  "products": [
+    {
+      "name": "App",
+      "settings": [],
+      "targets": [
+        "App"
+      ],
+      "type": {
+        "library": [
+          "automatic"
+        ]
+      }
+    }
+  ],
+  "targets": [
+    {
+      "dependencies": [
+        {
+          "product": [
+            "BarLib",
+            "Foo",
+            null,
+            null
+          ]
+        }
+      ],
+      "exclude": [],
+      "name": "App",
+      "packageAccess": true,
+      "path": "Sources/App",
+      "resources": [],
+      "settings": [],
+      "type": "regular"
+    }
+  ],
+  "toolsVersion": {
+    "_version": "6.0.0"
+  }
+}
