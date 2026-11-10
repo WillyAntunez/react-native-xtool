@@ -634,6 +634,10 @@ is about 99 MB with 8 embedded frameworks.
 A bare React Native 0.85.0 app with 20 native libraries, its scaffolds made again (2026-11-06): `rn-spm` 578 s,
 `frameworks` 35 s, `xtool-build` 273 s.
 
+The `precheck` step (2026-11-10), with the module cache cold (`build --clean`) and then warm (the next `build`): a bare
+React Native 0.88.1 app 11.1 s and 2.9 s, the Expo SDK 58 app 7.7 s and 3.3 s (its Swift files are left to
+`xtool-build`).
+
 ## Further reading
 
 - [recipe.md](recipe.md): the full technical recipe, with file locations.
