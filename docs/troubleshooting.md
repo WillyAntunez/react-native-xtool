@@ -1129,6 +1129,8 @@ includes with Swift Build's flags, and code generation and link errors still sho
   --report"**: the end of every precheck stop other than the compilers' errors and a missing toolchain: the SwiftPM
   and xcframework lines above, and anything else that stops the step (a full disk, `ENOSPC`, or an error in rn-xtool
   itself). The first part says what failed; `ios-xtool/.precheck/precheck.log` ends with it on a `# stopped:` line.
+  After a write to the log fails (a full disk), the log may miss the lines that follow, that `# stopped:` line among
+  them; the terminal and the stop lose none.
   When `xtool-build` builds the app without the step, the stop is false: build with `--skip-precheck` and report it.
 
 ### Podspec reader

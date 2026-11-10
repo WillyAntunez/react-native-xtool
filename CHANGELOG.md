@@ -40,7 +40,8 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   names `rn-xtool build --skip-precheck` for a false one; so does every other stop of the step (SwiftPM's refusals, an
   unreadable xcframework, a full disk) except a missing toolchain, which names `rn-xtool setup`. A precheck that passes
   does not promise that `xtool-build` does: code generation and link errors still show there. Every command and its
-  output go to `ios-xtool/.precheck/precheck.log`. The first precheck is slower while clang builds React Native's
+  output go to `ios-xtool/.precheck/precheck.log`; after a write to it fails (a full disk), the log may miss the lines
+  that follow, while the terminal and the stop lose none. The first precheck is slower while clang builds React Native's
   modules into the module cache, which `--clean` empties. See
   [how-it-works.md](docs/how-it-works.md#the-build-step-by-step).
 - `--skip-precheck` on `build` and `run` leaves the `precheck` step out, with "⚠ precheck skipped (--skip-precheck):

@@ -515,10 +515,11 @@ nowhere; one under a condition B1 cannot evaluate is never an error. B1 runs twi
 1. **Pass 1, before anything changes**: in `doctor --project` and at the start of `build`, next to the early checks. It
    knows the app's own files and `HEADER_SEARCH_PATHS`. An app-own quote include that is missing (F2) is an error with
    the file, the line, the header and where rn-xtool looked. A quote include is app-own when a header the app target
-   references, or a file under `ios/`, has a path that ends with the spelling (for a spelling without a folder, its
-   name; case ignored, so that a case-only twin is named): a header of that name in another folder is no evidence for a
-   spelling with a folder (`"SomeLib/Utils.h"`), which a library's headers may answer, and pass 1 leaves it to the
-   build. The match on the app target's headers is case-sensitive; the match on `ios/` ignores case, so a file whose
+   lists (its headers and its bridging header, by path under `ios/`; on Expo, the bridging header's name), or a file
+   under `ios/`, has a path that ends with the spelling (for a spelling without a folder, its name; case ignored, so
+   that a case-only twin is named): a header of that name in another folder is no evidence for a spelling with a folder
+   (`"SomeLib/Utils.h"`), which a library's headers may answer, and pass 1 leaves it to the build. The match on the
+   headers the app target lists is case-sensitive; the match on the files under `ios/` ignores case, so a file whose
    path differs from the spelling only in case counts as evidence and the miss names it with the case hint. This
    narrows the earlier base-name rule (a `Utils.h` anywhere under `ios/` no longer makes `"SomeLib/Utils.h"` app-own);
    a false `✖` from the case-insensitive match needs both a case-only twin under `ios/` and a library holding the exact
@@ -796,7 +797,7 @@ USB, the disk, GitHub's mention parser, npm and the drift watch's runners.
 | 48 | B, per-file flags | the app target's per-file `COMPILER_FLAGS` (`-fno-objc-arc`) are not read | user at precheck or `xtool-build`, the same way | accept: the trial's ruling; B2 uses the manifest's flags |
 | 49 | B2, time | the first precheck builds React Native's clang modules into its cache | user: a slower first build | accept: measured in the proof; parallel and `nice` |
 | 49b | B2, memory | `availableParallelism()` niced clangs on a cold cache exhaust memory; a killed clang reads `compiler exited 137 without a diagnostic` | user: a stop naming `--skip-precheck` | accept: troubleshooting says, present tense, that exit code 137 means the system stopped the compiler, usually for memory |
-| 49c | B2, disk | the disk fills during the precheck (`ENOSPC`) | user: a stop naming `--skip-precheck` (every stop of the step but a missing toolchain names it) | accept |
+| 49c | B2, disk | the disk fills during the precheck (`ENOSPC`) | user: a stop naming `--skip-precheck` (every stop of the step but a missing toolchain names it); the terminal and the stop never lose a line, and `ios-xtool/.precheck/precheck.log` may miss the lines after a failed write | accept |
 | 50 | B2, location | the error is in a library header (F4: `hash_combine.h`) while the cause is the app's flags | user: clang's include stack, starting at the app's file | handle |
 | 51 | B2, warnings | the app's warnings | user at `xtool-build`, once | accept: the precheck prints errors only |
 | 52 | B2, beyond syntax | a file passes `-fsyntax-only` and fails at code generation or link | user at `xtool-build`, as today | accept |

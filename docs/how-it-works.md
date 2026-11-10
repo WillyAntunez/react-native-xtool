@@ -107,7 +107,8 @@ scaffolded libraries, CocoaPods binaries); [recipe.md](recipe.md) has every step
    such as CommonCrypto is left to xtool-build too): on Expo the app's Swift files import such a module (`Expo`, or
    `ExpoModulesCore` in the generated `ExpoModulesProvider.swift`), so they are always checked there. On errors it prints each include that
    resolves nowhere and the compilers' first ten errors, with their include stacks, and stops the build; every command
-   line and all compiler output go to `ios-xtool/.precheck/precheck.log`. clang's module cache stays under
+   line and all compiler output go to `ios-xtool/.precheck/precheck.log` (after a write to it fails, on a full disk,
+   the log may miss the lines that follow; the terminal does not). clang's module cache stays under
    `ios-xtool/.precheck/` between builds; the first precheck, and the first after `--clean` empties the cache, is slower
    while clang builds React Native's modules. A precheck that passes does not promise that `xtool-build` does: it
    checks syntax and includes with Swift Build's flags, and code generation and link errors still show in
