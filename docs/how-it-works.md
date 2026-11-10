@@ -102,12 +102,13 @@ scaffolded libraries, CocoaPods binaries); [recipe.md](recipe.md) has every step
    the app's includes are resolved again with the App target's full include list; `swiftc -typecheck` checks the Swift
    files, and `clang -fsyntax-only` each C-family file with the generated manifest's flags, as many at a time as the
    machine has cores. When a Swift file imports a module SwiftPM builds (a Swift module such as `Expo`), the Swift files
-   are left to `xtool-build`: on Expo the app's `AppDelegate.swift` imports `Expo`, so its Swift files are always
-   checked there. On errors it prints each include that resolves nowhere and the compilers' first ten errors, with their
-   include stacks, and stops the build; every command line and all compiler output go to
-   `ios-xtool/.precheck/precheck.log`. clang's module cache stays under `ios-xtool/.precheck/` between builds; the first
-   precheck, and the first after `--clean` empties the cache, is slower while clang builds React Native's modules.
-   `--skip-precheck` on `build` and `run` leaves the step out ([troubleshooting.md](troubleshooting.md#precheck)).
+   are left to `xtool-build`: on Expo the app's Swift files import such a module (`Expo`, or `ExpoModulesCore` in the
+   generated `ExpoModulesProvider.swift`), so they are always checked there. On errors it prints each include that
+   resolves nowhere and the compilers' first ten errors, with their include stacks, and stops the build; every command
+   line and all compiler output go to `ios-xtool/.precheck/precheck.log`. clang's module cache stays under
+   `ios-xtool/.precheck/` between builds; the first precheck, and the first after `--clean` empties the cache, is slower
+   while clang builds React Native's modules. `--skip-precheck` on `build` and `run` leaves the step out
+   ([troubleshooting.md](troubleshooting.md#precheck)).
 8. `xtool` builds, signs and installs the app; Metro serves JS to the phone over Wi‑Fi. With CocoaPods binaries,
    rn-xtool checks the packed `App.app` before anything installs it.
 
