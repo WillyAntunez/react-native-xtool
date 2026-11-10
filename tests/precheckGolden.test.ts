@@ -119,9 +119,10 @@ const IGNORED_PREFIX = /^(-W|-fmodules-prune-|-fbuild-session-file=|-fmodules-ca
  * - Swift Build's `GeneratedModuleMaps-<platform>` and the precheck's `swift-headers` → `<swift-headers>` (brief);
  * - a module map under `.build`, the precheck's synthesized one and its copy of Swift Build's importer map in
  *   `swift-headers` (expo-58-bridging's swiftDriver: the copy is the same file) → `<modulemap:<module>>` (brief);
- * - a binary target's xcframework `Headers` and Swift Build's `Products/<config>/include`, where Swift Build copies
- *   those headers (every swiftDriver: `-Xcc -I…/Products/Debug-iphoneos/include`; objc-088's `.resp` files) →
- *   `<binary-headers>`; its `module.modulemap` dropped, as clang finds the copy's in that folder (same commands);
+ * - a binary target's xcframework `Headers` → `<binary-headers:<xcframework>>`, one per binary target; Swift Build's
+ *   `Products/<config>/include`, where it copies those headers (every swiftDriver: `-Xcc -I…/Products/Debug-iphoneos/
+ *   include`; objc-088's `.resp` files), stands for each of them (`withBinaryHeaders`); the xcframework's
+ *   `module.modulemap` dropped, as clang finds the copy's in that folder (same commands);
  * - the rest of Swift Build's `Products/<config>` folder and the App's `DerivedSources`: what other targets built and
  *   what Swift Build derives, none of it there before xtool-build (every swiftDriver's `-I`/`-F`/`-Xcc -I`; objc-088's
  *   `.resp` `-I`/`-F`) → dropped. No reference has a framework-type binary target (whose framework Swift Build copies
@@ -135,7 +136,8 @@ function normalisePath(p: string, moduleMap: boolean): string | null {
     const generated = /\/(?:\.build\/.*|\.precheck\/swift-headers)\/([^/]+)\.modulemap$/.exec(p);
     if (generated) return `<modulemap:${generated[1]}>`;
   }
-  if (/\/\.build\/out\/Products\/[^/]+\/include$/.test(p) || /\.xcframework\/[^/]+\/Headers$/.test(p)) return "<binary-headers>";
+  const binary = /\/([^/]+)\.xcframework\/[^/]+\/Headers$/.exec(p);
+  if (binary) return `<binary-headers:${binary[1]}>`;
   if (/\/\.build\/out\/Products\/[^/]+(\/|$)/.test(p) || /\/App-t\.build\/DerivedSources(-normal)?(\/|$)/.test(p)) return null;
   return p
     .replace(/\/ios-xtool\/\.build\/out\/Intermediates\.noindex\/GeneratedModuleMaps-[^/]+/, "/<swift-headers>")
@@ -169,7 +171,8 @@ function normaliseFlag(flag: string, value?: string): string | null {
 
 /**
  * The compared flags of an argv, normalised and each once; `?<flag>` for one neither compared nor ignored. A
- * `-fmodule-map-file=` is kept per map, so two maps of one module show as two.
+ * `-fmodule-map-file=` is kept per map, so two maps of one module show as two, and a binary target's header folder per
+ * flag, so a binary target named twice, or left out, shows.
  */
 function flags(argv: string[]): string[] {
   const out: string[] = [];
@@ -187,7 +190,7 @@ function flags(argv: string[]): string[] {
   }
   const seen = new Set<string>();
   return out.filter((f) => {
-    if (f.includes("-fmodule-map-file=<modulemap:")) return true;
+    if (f.includes("-fmodule-map-file=<modulemap:") || f.includes("<binary-headers:")) return true;
     if (seen.has(f)) return false;
     seen.add(f);
     return true;
@@ -237,9 +240,33 @@ function includeOrder(argv: string[], kinds: string[], graph: ReadonlySet<string
   return [...new Set(out)];
 }
 
-/** The graph's header folders of `inputs`, normalised, and Swift Build's copy of the binary targets' headers. */
-const graphFolders = (inputs: PrecheckInputs): Set<string> =>
-  new Set(["<binary-headers>", ...inputs.graph.headerDirs.flatMap((d) => normalisePath(d, false) ?? [])]);
+/** The graph's header folders of `inputs`, normalised (its binary targets' as `withBinaryHeaders` names them). */
+const graphFolders = (inputs: PrecheckInputs): Set<string> => new Set(inputs.graph.headerDirs.flatMap((d) => normalisePath(d, false) ?? []));
+
+/**
+ * Swift Build's `argv` with its `Products/<config>/include` (`-I<dir>`, `-I <dir>`, `-Xcc -I<dir>`) named once per
+ * binary target of the graph whose headers it copies there: the xcframework `Headers` folders of `inputs.graph`.
+ */
+function withBinaryHeaders(argv: string[], inputs: PrecheckInputs): string[] {
+  const binaries = inputs.graph.headerDirs.filter((d) => /\.xcframework\/[^/]+\/Headers$/.test(d));
+  const products = /\/\.build\/out\/Products\/[^/]+\/include$/;
+  const out: string[] = [];
+  for (let n = 0; n < argv.length; n++) {
+    const a = argv[n]!;
+    if (a === "-Xcc" && argv[n + 1]?.startsWith("-I") && products.test(argv[n + 1]!.slice(2))) {
+      out.push(...binaries.flatMap((d) => ["-Xcc", `-I${d}`]));
+      n++;
+    } else if (a === "-I" && products.test(argv[n + 1] ?? "")) {
+      out.push(...binaries.flatMap((d) => ["-I", d]));
+      n++;
+    } else if (a.startsWith("-I") && products.test(a.slice(2))) {
+      out.push(...binaries.map((d) => `-I${d}`));
+    } else {
+      out.push(a);
+    }
+  }
+  return out;
+}
 
 /** `argv` with each `@<file>.resp` replaced by its arguments (one line, space-separated, from `responses/`). */
 function expandResponses(ref: string, argv: string[]): string[] {
@@ -293,6 +320,11 @@ const refs = readdirSync(GOLDEN).filter((r) => existsSync(path.join(GOLDEN, r, "
 describe("the precheck's command lines against Swift Build's (row 39)", () => {
   it("has all six references", () => {
     expect(refs.sort()).toEqual(["bare-085", "bare-086", "bare-087", "bare-088", "expo-58-bridging", "objc-088"]);
+    // Each reference compares at least one command: an empty commands.json would pass its tests vacuously.
+    for (const ref of refs) {
+      const { swiftDriver, compileC } = JSON.parse(readFileSync(path.join(GOLDEN, ref, "commands.json"), "utf8")) as Commands;
+      expect(swiftDriver.length + compileC.length, ref).toBeGreaterThan(0);
+    }
   });
 
   for (const ref of refs) {
@@ -303,7 +335,7 @@ describe("the precheck's command lines against Swift Build's (row 39)", () => {
     for (const argv of commands.swiftDriver) {
       it(`${ref}: swiftc gets Swift Build's flags`, () => {
         // `builtin-SwiftDriver -- <swiftc> …`
-        const theirs = expandResponses(ref, argv.slice(argv.indexOf("--") + 2));
+        const theirs = withBinaryHeaders(expandResponses(ref, argv.slice(argv.indexOf("--") + 2)), inputs);
         expect(compareFlags(swiftcArgs(inputs, swiftFiles), theirs)).toEqual({ missing: [], extra: [] });
         expect(includeOrder(swiftcArgs(inputs, swiftFiles), ["-I", "-F"])).toEqual(includeOrder(theirs, ["-I", "-F"]));
       });
@@ -312,7 +344,7 @@ describe("the precheck's command lines against Swift Build's (row 39)", () => {
       const file = task.args[task.args.indexOf("-c") + 1]!;
       it(`${ref}: ${path.basename(file)} gets Swift Build's flags`, () => {
         const ours = clangArgs(inputs, file);
-        const theirs = withoutSwiftTargetMaps(expandResponses(ref, task.args.slice(1)), ours, inputs);
+        const theirs = withBinaryHeaders(withoutSwiftTargetMaps(expandResponses(ref, task.args.slice(1)), ours, inputs), inputs);
         expect(compareFlags(ours, theirs)).toEqual({ missing: [], extra: [] });
         expect(includeOrder(ours, ["-I"], graphFolders(inputs))).toEqual(includeOrder(theirs, ["-I"], graphFolders(inputs)));
       });
