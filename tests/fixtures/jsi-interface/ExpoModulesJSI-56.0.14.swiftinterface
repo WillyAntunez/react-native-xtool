@@ -1,0 +1,32 @@
+// swift-interface-format-version: 1.0
+// swift-compiler-version: Swift version 6.4.1 (swift-6.4.1-RELEASE)
+// swift-module-flags: -target arm64-apple-ios16.4 -enable-objc-interop -enable-library-evolution -language-mode 6 -Onone -enable-upcoming-feature NonisolatedNonsendingByDefault -enable-upcoming-feature InferIsolatedConformances -enable-experimental-feature DebugDescriptionMacro -module-name ExpoModulesJSI -package-name apple
+// swift-module-flags-ignorable: -no-verify-emitted-module-interface -formal-cxx-interoperability-mode=swift-6 -interface-compiler-version 6.4.1
+@available(*, unavailable)
+extension Swift::Optional : Swift::Copyable where Wrapped : _ConstraintThatIsNotPartOfTheAPIOfThisLibrary {}
+@available(*, unavailable)
+extension Swift::Optional :  where Wrapped : _ConstraintThatIsNotPartOfTheAPIOfThisLibrary {}
+@available(*, unavailable)
+extension Swift::Array : Swift::Copyable where Element : _ConstraintThatIsNotPartOfTheAPIOfThisLibrary {}
+@available(*, unavailable)
+extension Swift::Array :  where Element : _ConstraintThatIsNotPartOfTheAPIOfThisLibrary {}
+@available(*, unavailable)
+extension Swift::Dictionary : Swift::Copyable where Key : _ConstraintThatIsNotPartOfTheAPIOfThisLibrary {}
+@available(*, unavailable)
+extension Swift::Dictionary :  where Key : _ConstraintThatIsNotPartOfTheAPIOfThisLibrary {}
+@available(*, unavailable)
+extension ExpoModulesJSI::JavaScriptRef : Swift::Copyable where T : _ConstraintThatIsNotPartOfTheAPIOfThisLibrary {}
+@available(*, unavailable)
+extension ExpoModulesJSI::JavaScriptRef :  where T : _ConstraintThatIsNotPartOfTheAPIOfThisLibrary {}
+extension ExpoModulesJSI::JavaScriptRuntime.ExpoModulesJSI::SchedulerPriority : Swift::Equatable {}
+extension ExpoModulesJSI::JavaScriptRuntime.ExpoModulesJSI::SchedulerPriority : Swift::Hashable {}
+extension ExpoModulesJSI::JavaScriptRuntime.ExpoModulesJSI::SchedulerPriority : Swift::RawRepresentable {}
+extension ExpoModulesJSI::JavaScriptTypedArray.ExpoModulesJSI::Kind : Swift::Equatable {}
+extension ExpoModulesJSI::JavaScriptTypedArray.ExpoModulesJSI::Kind : Swift::Hashable {}
+extension ExpoModulesJSI::JavaScriptTypedArray.ExpoModulesJSI::Kind : Swift::RawRepresentable {}
+extension ExpoModulesJSI::JavaScriptValue.ExpoModulesJSI::Kind : Swift::Equatable {}
+extension ExpoModulesJSI::JavaScriptValue.ExpoModulesJSI::Kind : Swift::Hashable {}
+extension ExpoModulesJSI::JavaScriptValue.ExpoModulesJSI::Kind : Swift::RawRepresentable {}
+
+@usableFromInline
+internal protocol _ConstraintThatIsNotPartOfTheAPIOfThisLibrary {}

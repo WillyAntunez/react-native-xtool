@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { readableJsiInterface } from "./jsiInterface.js";
 import { EMPTY_AR_ARCHIVE, headersXcframeworkInfoPlist, swapIn, type XcframeworkLibrary } from "./rnArtifacts.js";
 
 /**
@@ -122,6 +123,8 @@ export function nativeStateHeaders(jsiDir: string, jsiVersion: string): { dir: s
 /**
  * Writes `ExpoModulesJSIHeaders.xcframework` for expo-modules-jsi `jsiVersion` from its build's `objectsDir` and the
  * package's public `NativeState.h` with the headers it includes (under `jsiDir`, see {@link nativeStateHeaders}).
+ * Throws UnreadableInterfaceError, before anything is written, when the build's interface holds a line no Swift
+ * compiler can parse (see {@link readableJsiInterface}).
  * Returns "current" without writing when the stamp matches this generator, version and interface. Otherwise the tree
  * is assembled beside the destination, the stamp deleted, the tree swapped in whole, and the stamp written last: a
  * failed run never leaves a stamped partial tree, and one that fails before the swap leaves the previous tree and its
@@ -145,9 +148,10 @@ export async function writeJsiHeadersXcframework(i: {
 
   const dest = jsiHeadersXcframeworkDir(i.precompiledRoot);
   const stampFile = path.join(headersDir(i.precompiledRoot), STAMP);
-  const interfaceSha256 = createHash("sha256")
-    .update(await readFile(path.join(i.objectsDir, SWIFT_INTERFACE)))
-    .digest("hex");
+  const rawInterface = await readFile(path.join(i.objectsDir, SWIFT_INTERFACE));
+  // Before the stamp check: a tree stamped before this guard existed may hold an unreadable interface.
+  const swiftInterface = readableJsiInterface(rawInterface.toString("utf8"), i.jsiVersion);
+  const interfaceSha256 = createHash("sha256").update(rawInterface).digest("hex");
   const stamp: JsiHeadersStamp = { generatorVersion: JSI_HEADERS_GENERATOR_VERSION, jsiVersion: i.jsiVersion, interfaceSha256 };
   const prev = await readStamp(stampFile);
   if (
@@ -176,7 +180,7 @@ export async function writeJsiHeadersXcframework(i: {
     // Only the device slice gets an interface: rn-xtool builds for devices alone.
     const swiftmodule = path.join(tmp, "ios-arm64", "ExpoModulesJSI.swiftmodule");
     await mkdir(swiftmodule, { recursive: true });
-    await copyFile(path.join(i.objectsDir, SWIFT_INTERFACE), path.join(swiftmodule, "arm64-apple-ios.swiftinterface"));
+    await writeFile(path.join(swiftmodule, "arm64-apple-ios.swiftinterface"), swiftInterface);
     await writeFile(path.join(tmp, "Info.plist"), headersXcframeworkInfoPlist(NAME, SLICES, { archive: ARCHIVE }));
     await writeFile(path.join(tmp, "expo-package.json"), JSON.stringify({ name: "expo-modules-jsi", version: i.jsiVersion }) + "\n");
     await rm(stampFile, { force: true });

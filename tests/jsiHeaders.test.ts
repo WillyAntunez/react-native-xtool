@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -11,6 +12,7 @@ import {
   jsiObjectsDir,
   writeJsiHeadersXcframework,
 } from "../src/pipeline/jsiHeaders.js";
+import { UnreadableInterfaceError } from "../src/pipeline/jsiInterface.js";
 import {
   FAKE_NATIVE_STATE,
   FAKE_NATIVE_STATE_FLAT,
@@ -332,6 +334,28 @@ describe("writeJsiHeadersXcframework", () => {
     expect(
       readFileSync(path.join(s.xcframework, "ios-arm64", "ExpoModulesJSI.swiftmodule", "arm64-apple-ios.swiftinterface"), "utf8"),
     ).toBe("// changed interface\n");
+  });
+
+  it("stops at the jsi step on an unreadable interface, leaving no stamped tree", async () => {
+    const s = setup("56.0.14", "flat");
+    writeFileSync(
+      path.join(s.objectsDir, "ExpoModulesJSI.swiftinterface"),
+      "// swift-compiler-version: Swift version 6.4.1 (swift-6.4.1-RELEASE)\nextension Swift::Set :  where Element : SomethingElse {}\n",
+    );
+    await expect(writeJsiHeadersXcframework(s.input)).rejects.toThrow(UnreadableInterfaceError);
+    expectNothingWritten(s);
+  });
+
+  it("refuses an unreadable interface even when the stamp says the tree is current", async () => {
+    const s = setup();
+    expect(await writeJsiHeadersXcframework(s.input)).toBe("written");
+    const stamp = JSON.parse(readFileSync(s.stamp, "utf8")) as { interfaceSha256: string };
+    const bad = "extension Swift::Set :  where Element : SomethingElse {}\n";
+    writeFileSync(path.join(s.objectsDir, "ExpoModulesJSI.swiftinterface"), bad);
+    // A stamp that already names the unreadable interface, as a tree written before the guard existed would.
+    stamp.interfaceSha256 = createHash("sha256").update(bad).digest("hex");
+    writeFileSync(s.stamp, JSON.stringify(stamp));
+    await expect(writeJsiHeadersXcframework(s.input)).rejects.toThrow(UnreadableInterfaceError);
   });
 
   it("a missing build output names it", async () => {
