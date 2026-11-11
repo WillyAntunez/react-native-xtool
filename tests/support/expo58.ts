@@ -1,11 +1,13 @@
 /**
  * Fake `node_modules` for an Expo SDK 58 project (or a hybrid app on its set), laid out the way npm installs the
- * 58.0.21 set: one `package.json` per package, plus the macros Linux binary. Only the layout matters; the gate
- * resolves each package and reads its version.
+ * 58.0.21 set: one `package.json` per package (expo-file-system and expo-font Expo modules too), plus the macros Linux
+ * binary. Only the layout matters; the gate resolves each package and reads its version.
  */
 import { mkdir, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import type { ExpoPinName } from "../../src/versions.js";
+import { writeExpoModuleFiles } from "./expo57.js";
 import { fakeRnScripts, shapeForVersion } from "./rnScripts.js";
 
 /** The SDK 58 floor, in table order, written out here so the tests do not read it from the code under test. */
@@ -54,6 +56,8 @@ async function writePackage(dir: string, name: string, version: string): Promise
   const pkg: Record<string, unknown> = { name, version };
   // expo-modules-core 58.0.28's own ranges: G2 quotes the jsi one, G3 finds the macros through it.
   if (name === "expo-modules-core") pkg.dependencies = { "expo-modules-jsi": "~58.0.21", "expo-modules-macros": MACROS_VERSION };
+  // expo 58.0.21 depends on both Expo modules the set pins, so autolinking reaches them through it.
+  if (name === "expo") pkg.dependencies = { "expo-file-system": "~58.0.13", "expo-font": "~58.0.11" };
   // expo-modules-macros 0.27.1's binary packages: G3 names the one for the host, at this version.
   if (name === "expo-modules-macros") {
     pkg.optionalDependencies = Object.fromEntries(
@@ -61,6 +65,20 @@ async function writePackage(dir: string, name: string, version: string): Promise
     );
   }
   await writeFile(path.join(dir, "package.json"), JSON.stringify(pkg));
+  if (name === "expo-file-system") await writeExpoModuleFiles(dir, "ExpoFileSystem");
+  if (name === "expo-font") await writeExpoModuleFiles(dir, "ExpoFont");
+}
+
+/**
+ * Gives the fake expo-modules-autolinking at `<dir>/node_modules` a CLI that runs rn-xtool's own (its package.json, and
+ * so its version, stay the fake's): the stand-in for the app's autolinking, which the SDK 58 plugin runs. Without it
+ * the fake has no CLI and the gate falls back to its own rule.
+ */
+export async function realAutolinkingCli(dir: string): Promise<void> {
+  const real = createRequire(import.meta.url).resolve("expo-modules-autolinking/bin/expo-modules-autolinking.js");
+  const bin = path.join(dir, "node_modules", "expo-modules-autolinking", "bin");
+  await mkdir(bin, { recursive: true });
+  await writeFile(path.join(bin, "expo-modules-autolinking.js"), `require(${JSON.stringify(real)});\n`);
 }
 
 /**

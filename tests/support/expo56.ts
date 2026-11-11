@@ -1,7 +1,7 @@
 /**
  * Fake `node_modules` for an Expo SDK 56 project, laid out the way npm installs the 56.0.24 set: every package at the
  * top level, expo-file-system and expo-font included (SDK 57 and 58 nest those two under `expo`). One `package.json`
- * per pinned package, nothing else.
+ * per pinned package, and the Expo module files of expo-file-system and expo-font (`fakeExpoModules`).
  */
 import type { ExpoPinName } from "../../src/versions.js";
 import { fakeExpoModules } from "./expo57.js";

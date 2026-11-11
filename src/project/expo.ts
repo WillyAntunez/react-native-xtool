@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -56,11 +57,16 @@ function packageDirFrom(from: string, pkg: string): string | undefined {
 
 /**
  * Where the build resolves a pinned Expo package: expo and react-native from the root; expo-modules-core from expo;
- * expo-file-system and expo-font where autolinking links them (`linkedExpoDependencyDir`); expo-modules-jsi from
- * core; expo-modules-autolinking from the root and else from expo (npx's order).
+ * expo-file-system and expo-font where autolinking links them (`autolinked`, the answer of `autolinkedModuleDirs`;
+ * without one, `linkedExpoDependencyDir`'s rule); expo-modules-jsi from core; expo-modules-autolinking from the root
+ * and else from expo (npx's order).
  * The one copy of this chain: the gate and the JSI build use it.
  */
-export function expoPackageDir(root: string, pkg: ExpoPinName): string | undefined {
+export function expoPackageDir(
+  root: string,
+  pkg: ExpoPinName,
+  autolinked?: ReadonlyMap<string, string>,
+): string | undefined {
   const from = (parent: ExpoPinName): string | undefined => {
     const dir = expoPackageDir(root, parent);
     return dir === undefined ? undefined : packageDirFrom(dir, pkg);
@@ -75,10 +81,77 @@ export function expoPackageDir(root: string, pkg: ExpoPinName): string | undefin
       return from("expo");
     case "expo-file-system":
     case "expo-font":
-      return linkedExpoDependencyDir(root, pkg, from("expo"));
+      return autolinked !== undefined ? autolinked.get(pkg) : linkedExpoDependencyDir(root, pkg, from("expo"));
     case "expo-modules-jsi":
       return from("expo-modules-core");
   }
+}
+
+/** The pins whose copy is the one expo-modules-autolinking links, not one Node resolves. */
+const AUTOLINKED_PINS: readonly ExpoPinName[] = ["expo-file-system", "expo-font"];
+
+/**
+ * The expo-modules-autolinking CLI the build's Expo plugin runs (its cli.js resolves it from its own folder): for the
+ * vendored plugin (SDK 56, 57) rn-xtool's copy; for the installed one the copy expo's `scripts/spm` (where expo's
+ * react-native.config.js declares the plugin) resolves. Undefined when it cannot be found.
+ */
+function autolinkingCli(root: string, sdk: number): string | undefined {
+  const expoDir = expoPluginFor(sdk) === "vendored" ? undefined : expoPackageDir(root, "expo");
+  const pluginDir =
+    expoPluginFor(sdk) === "vendored" ? path.dirname(vendoredExpoPlugin()) : expoDir && path.join(expoDir, "scripts", "spm");
+  if (pluginDir === undefined) return undefined;
+  try {
+    return createRequire(path.join(pluginDir, "noop.js")).resolve("expo-modules-autolinking/bin/expo-modules-autolinking.js", {
+      paths: [pluginDir],
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+/** The nearest folder at or above `dir` that holds a package.json (the plugin's findModuleRoot); `dir` when none. */
+function moduleRootOf(dir: string): string {
+  for (let at = dir; path.dirname(at) !== at; at = path.dirname(at)) {
+    if (existsSync(path.join(at, "package.json"))) return at;
+  }
+  return dir;
+}
+
+/**
+ * The package folder of each Expo module the build links for Apple, asked of the build's own autolinking: the plugin's
+ * `resolve --platform apple --json` (vendor/expo-spm/spm/cli.js), run the same way (from the root, no options:
+ * autolinking reads searchPaths, nativeModulesDir and exclude from the app's package.json itself). A module's folder is
+ * the one above its podspec that holds a package.json, as the plugin finds it. Undefined when the CLI cannot run (not
+ * found, a non-zero exit, no answer within a minute, output that is not its JSON): the caller then falls back to
+ * `linkedExpoDependencyDir`'s rule, and the build's own autolinking step reports the failure.
+ */
+function autolinkedModuleDirs(root: string, sdk: number): ReadonlyMap<string, string> | undefined {
+  const cli = autolinkingCli(root, sdk);
+  if (cli === undefined) return undefined;
+  const run = spawnSync(process.execPath, [cli, "resolve", "--platform", "apple", "--json"], {
+    cwd: root,
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    timeout: 60_000,
+  });
+  if (run.error !== undefined || run.status !== 0) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(run.stdout);
+  } catch {
+    return undefined;
+  }
+  // Older CLIs print the bare module list.
+  const modules: unknown = Array.isArray(parsed) ? parsed : (parsed as { modules?: unknown } | null)?.modules;
+  if (!Array.isArray(modules)) return undefined;
+  const dirs = new Map<string, string>();
+  for (const module of modules as { packageName?: unknown; pods?: { podspecDir?: unknown }[] }[]) {
+    const podspecDir = module?.pods?.[0]?.podspecDir;
+    if (typeof module?.packageName === "string" && typeof podspecDir === "string") {
+      dirs.set(module.packageName, moduleRootOf(podspecDir));
+    }
+  }
+  return dirs;
 }
 
 /** The names a package.json makes autolinking follow: dependencies, non-optional peers, and at the root devDependencies. */
@@ -92,10 +165,12 @@ function followedDependencies(pkg: Record<string, any> | undefined, isRoot: bool
 }
 
 /**
- * The copy of `pkg` (a dependency of expo) the expo-modules-autolinking CLI links, which keeps the copy it reaches
- * shallowest in the dependency tree and, on a tie, the one with fewer `node_modules` in its path. Expo's copy
- * (`viaExpo`) is reached at depth 1. The copy the root resolves wins over it when it differs and the app lists `pkg`
- * itself (depth 0), or a package the app lists depends on `pkg` and resolves that same copy (depth 1, shorter path).
+ * The fallback rule for the copy of `pkg` (a dependency of expo) autolinking links, used when its CLI cannot run.
+ * Autolinking keeps the copy it reaches shallowest in the dependency tree and, on a tie, the one with fewer
+ * `node_modules` in its path; the rule weighs two copies only. Expo's copy (`viaExpo`) is reached at depth 1. The copy
+ * the root resolves wins over it when it differs and the app lists `pkg` itself (depth 0), or a package the app lists
+ * depends on `pkg` and resolves that same copy (depth 1, shorter path). Other copies (a local library's own, one
+ * nested under another dependency, one searchPaths scans) and autolinking's default exclusions are not modelled.
  */
 function linkedExpoDependencyDir(root: string, pkg: ExpoPinName, viaExpo: string | undefined): string | undefined {
   const top = packageDirFrom(root, pkg);
@@ -124,12 +199,13 @@ function versionAt(dir: string | undefined): string | undefined {
 }
 
 /**
- * The installed version of each package the SDK pins, read where the build resolves it (undefined: not installed);
- * `{}` when the SDK pins nothing.
+ * The installed version of each package the SDK pins, read where the build resolves it (undefined: not installed, or
+ * for expo-file-system and expo-font not linked by autolinking); `{}` when the SDK pins nothing.
  */
 export function readExpoPins(root: string, sdk: number): Partial<Record<ExpoPinName, string | undefined>> {
   const names = Object.keys(expoPinsFor(sdk) ?? {}) as ExpoPinName[];
-  return Object.fromEntries(names.map((name) => [name, versionAt(expoPackageDir(root, name))]));
+  const autolinked = names.some((name) => AUTOLINKED_PINS.includes(name)) ? autolinkedModuleDirs(root, sdk) : undefined;
+  return Object.fromEntries(names.map((name) => [name, versionAt(expoPackageDir(root, name, autolinked))]));
 }
 
 /** The version of the expo installed at the root; undefined when expo is not installed. */
