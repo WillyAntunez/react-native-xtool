@@ -41,7 +41,8 @@ export async function buildExpoModulesJsi(
       if (statSync(dir, { throwIfNoEntry: false })?.isDirectory() !== true) {
         throw new Error(
           `ExpoModulesJSI needs React Native's headers at ${dir}, which does not exist. ` +
-            "rnArtifactsDir must hold adapted 0.86.3 slots, as rn-xtool's rn-artifacts step writes them.",
+            "rnArtifactsDir must hold the adapted slots of the project's React Native version, as rn-xtool's rn-artifacts " +
+            "step writes them.",
         );
       }
     }

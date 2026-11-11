@@ -534,7 +534,7 @@ export async function build(
   const buildJsi = (): Promise<RuntimeFramework> => {
     if (!vendoredExpo) return d.buildJsi(paths);
     if (artifactsRoot === undefined) {
-      throw new Error("internal error: the SDK 57 jsi step has no React Native artifacts (rn-artifacts was not planned and rnArtifactsDir is unset)");
+      throw new Error("internal error: the vendored-plugin jsi step has no React Native artifacts (rn-artifacts was not planned and rnArtifactsDir is unset)");
     }
     return d.buildJsi(paths, { rnHeaders: jsiRnHeaderDirs(artifactsRoot), headersXcframework: true });
   };

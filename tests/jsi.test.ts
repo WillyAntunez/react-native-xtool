@@ -44,7 +44,7 @@ describe("ExpoModulesJSI React Native header overrides", () => {
     const paths = projectPaths(root);
     await expect(buildExpoModulesJsi(paths, { rnHeaders: jsiRnHeaderDirs(slots) })).rejects.toThrow(
       `ExpoModulesJSI needs React Native's headers at ${slots}/debug/ReactNativeHeaders.xcframework/ios-arm64/Headers, which does not exist. ` +
-        "rnArtifactsDir must hold adapted 0.86.3 slots, as rn-xtool's rn-artifacts step writes them.",
+        "rnArtifactsDir must hold the adapted slots of the project's React Native version, as rn-xtool's rn-artifacts step writes them.",
     );
     expect(runMock).not.toHaveBeenCalled();
   });
@@ -55,7 +55,7 @@ describe("ExpoModulesJSI React Native header overrides", () => {
     mkdirSync(h.react, { recursive: true });
     await expect(buildExpoModulesJsi(projectPaths(mkTmp()), { rnHeaders: h })).rejects.toThrow(
       `ExpoModulesJSI needs React Native's headers at ${h.dependencies}, which does not exist. ` +
-        "rnArtifactsDir must hold adapted 0.86.3 slots, as rn-xtool's rn-artifacts step writes them.",
+        "rnArtifactsDir must hold the adapted slots of the project's React Native version, as rn-xtool's rn-artifacts step writes them.",
     );
     expect(runMock).not.toHaveBeenCalled();
   });
