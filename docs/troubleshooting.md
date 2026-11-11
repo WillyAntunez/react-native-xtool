@@ -973,6 +973,29 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   read-only, often after `sudo npm install`. Make it writable (reinstall without `sudo`), or apply the portable
   manifest yourself.
 
+### Unreadable ExpoModulesJSI interface
+
+On Expo SDK 56 and 57 rn-xtool builds ExpoModulesJSI itself, at the `jsi` step, and reads the
+`ExpoModulesJSI.swiftinterface` that build writes before anything else uses it. The step stops with "The
+ExpoModulesJSI.swiftinterface built for expo-modules-jsi <version> (<compiler>) has <n> lines no Swift compiler can
+parse, for example line <line>: <text>. Every module that imports ExpoModulesJSI would fail to compile. See <this
+section>, and report it at https://github.com/WillyAntunez/react-native-xtool/issues with the output of
+`rn-xtool doctor --report`." when an `extension` line of that interface has an empty place in its list of protocols:
+nothing after the colon (`extension Swift::Optional :  where …`, `extension X: {`), or nothing before or between its
+commas (`: , P`, `P,  where`, `P, {`). Swift prints these for conformances it leaves out of the interface, and no Swift
+compiler reads them back, the one that wrote them included. Without the check the step would pass, and every module
+that imports ExpoModulesJSI would fail later, at `xtool-build`, with `expected type` errors.
+
+- When the message also says "It was written by Swift <version>, and this rn-xtool release was verified with Swift
+  6.4: a newer or older Swift is the likely cause.", the Swift in use prints the interface differently from the one
+  rn-xtool was checked with. `rn-xtool setup` installs Swift 6.4 through swiftly.
+- When a package of the SDK's set changed (a newer expo-modules-jsi or expo-modules-core than the verified ones, which
+  the `⚠ Newer than the Expo SDK <n> set …` line names), hold the set on the verified versions with the npm
+  `"overrides"` block (see [Newer than the verified versions](#newer-than-the-verified-versions)), run `npm install`,
+  and build again.
+- Either way, report it with the output of `rn-xtool doctor --report` (see
+  [Reporting a problem](#reporting-a-problem)): the message names the first line the check stopped on.
+
 ### Precheck
 
 `build` checks the app target's own sources twice before `xtool-build` compiles them. Pass 1 runs before the `patches`
