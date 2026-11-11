@@ -5,9 +5,9 @@ import path from "node:path";
 import { EMPTY_AR_ARCHIVE, headersXcframeworkInfoPlist, swapIn, type XcframeworkLibrary } from "./rnArtifacts.js";
 
 /**
- * Expo SDK 57's npm packages ship no `ExpoModulesJSIHeaders.xcframework`, which the vendored Expo 58 SwiftPM plugin
- * reads from `EXPO_PRECOMPILED_MODULES_PATH`. This module makes it from rn-xtool's own ExpoModulesJSI build, in the
- * layout of 58's published tarball.
+ * The npm packages of the SDKs on the vendored Expo plugin ship no `ExpoModulesJSIHeaders.xcframework`, which that
+ * plugin (Expo 58's SwiftPM plugin) reads from `EXPO_PRECOMPILED_MODULES_PATH`. This module makes it from rn-xtool's
+ * own ExpoModulesJSI build, in the layout of 58's published tarball.
  */
 
 /** Bumped whenever the synthesised layout changes, so older trees are rewritten. */

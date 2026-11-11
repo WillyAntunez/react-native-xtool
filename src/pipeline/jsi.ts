@@ -30,7 +30,7 @@ export function jsiEnv(h?: JsiRnHeaders): Record<string, string> {
 /**
  * Builds ExpoModulesJSI.framework into `paths.jsiOut`. `rnHeaders` points the build at React Native headers outside
  * `ios/build/xcframeworks` (checked before building); `headersXcframework` then writes ExpoModulesJSIHeaders.xcframework
- * under `paths.expoPrecompiled` (SDK 57, which does not ship it).
+ * under `paths.expoPrecompiled` (the vendored Expo plugin's SDKs, which do not ship it).
  */
 export async function buildExpoModulesJsi(
   paths: ProjectPaths,

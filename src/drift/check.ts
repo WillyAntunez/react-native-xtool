@@ -64,7 +64,7 @@ function farHunk(output: string): { hunk: string; offset: string } | undefined {
 }
 
 /**
- * Dry-runs each bundled patch the build would stage (`lineOnly`: the vendored SDK 57 plugin) against the project,
+ * Dry-runs each bundled patch the build would stage (`lineOnly`: the vendored Expo plugin) against the project,
  * without context fuzz (`-F0`) and without prompting (`-f`). A patch that does not apply forward but reverses cleanly is
  * already applied (a project rn-xtool built before) and counts as ok. GNU patch finds a hunk at any offset, but
  * patch-package looks only 20 lines either way, so a hunk placed further away counts as not applying.

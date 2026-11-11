@@ -99,7 +99,7 @@ export function rnSpmArgs(
  * Bare apps run RN's SwiftPM steps through our driver instead of `setup-apple-spm.js add|update`:
  * same codegen, autolinking and artifact steps, minus the injection into the user's xcodeproj
  * (which `add` refuses anyway on a CocoaPods-integrated pbxproj). Only `ios/build/` is written.
- * Expo SDK 57 (the vendored Expo plugin) runs the driver too, with Expo's autolinking config command.
+ * Expo on the vendored plugin runs the driver too, with Expo's autolinking config command.
  * Expo SDK 58 (kind "expo", the installed plugin) gets the same config command, for its scaffold step.
  * With the config's `exclude`, every kind gets its config command wrapped by the exclude filter (configCommandFor).
  */
@@ -519,7 +519,7 @@ export async function runRnSpm(
   const runner = deps.runner ?? streamingRunner;
   const log = deps.log ?? ((s: string) => console.log(s));
   const rnDir = deps.rnDir ?? resolveRnDir(paths);
-  // Bare apps and Expo SDK 57 never run `setup-apple-spm.js add|update`: only the driver.
+  // Bare apps and Expo on the vendored plugin never run `setup-apple-spm.js add|update`: only the driver.
   const driver = opts.kind === "bare" || opts.expoPlugin === "vendored";
   const rnArgs = driver ? rnSpmGenerateArgs(paths, opts, rnDir) : rnSpmArgs(paths, opts, rnDir);
   // Every run gets the table: the scaffold step reads it, whichever project kind runs it.

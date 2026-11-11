@@ -116,7 +116,7 @@ export function installedVersion(projectRoot: string, pkg: string): string | und
  * Bundled patch files whose package is installed in the project (bare RN has no expo packages), sorted.
  * Each package gets the patch for its installed version when one is bundled, else the highest one of the installed
  * version's release line (react-native 0.88.2 gets the 0.88.1 patch). Packages other than react-native then fall back
- * to the highest version (which then fails to apply with the "pin" message); with `lineOnly` (the vendored SDK 57
+ * to the highest version (which then fails to apply with the "pin" message); with `lineOnly` (the vendored Expo
  * plugin) that fallback is left out, so another SDK's patch is never staged. A react-native without a patch of its line
  * is not patched, and the caller decides whether that is fine (vendored scripts) or a stop (see rnPatchMismatch).
  */
@@ -757,7 +757,7 @@ const execPatchPackage: PatchExec = (cmd, args, cwd) =>
 /**
  * patch-package is idempotent for already-applied patches and exits non-zero on failure.
  * Applies rn-xtool's bundled patches first, then the project's own `patches/` when present.
- * With the vendored Expo plugin (SDK 57) only bundled patches of the installed release line are staged.
+ * With the vendored Expo plugin only bundled patches of the installed release line are staged.
  * The order does not matter: the project's patches only hold library Package.swift files.
  */
 export async function applyPatches(

@@ -80,7 +80,7 @@ export interface BuildPlanInput {
   hasExpoModules: boolean;
   hasExpoConstants: boolean;
   /**
-   * Vendored SwiftPM scripts (bare) or the vendored Expo plugin (SDK 57), without a user-supplied `rnArtifactsDir`:
+   * Vendored SwiftPM scripts (bare) or the vendored Expo plugin, without a user-supplied `rnArtifactsDir`:
    * rn-xtool prepares the artifacts.
    */
   rnArtifacts: boolean;
@@ -99,7 +99,7 @@ function signedIdOf(installed: string, bundleIdentifier: string): boolean {
 
 /**
  * Expo: every step but rn-artifacts, with `expo prebuild` first when `ios/` is missing or on `--clean`.
- * Expo on the vendored plugin (SDK 57) also gets rn-artifacts (when planned), and jsi moves before rn-spm
+ * Expo on the vendored plugin also gets rn-artifacts (when planned), and jsi moves before rn-spm
  * because the plugin needs the JSI headers.
  * Bare: never prebuild (`--clean` removes the build outputs instead), rn-artifacts only for the
  * vendored scripts, ExpoModulesJSI only with Expo modules set up, app-config only with expo-constants.
@@ -432,7 +432,7 @@ export async function build(
     return result;
   };
 
-  // SDK 57: the vendored Expo plugin builds against RN's prebuilt artifacts and needs the JSI headers first.
+  // The vendored Expo plugin builds against RN's prebuilt artifacts and needs the JSI headers first.
   const vendoredExpo = project.kind === "expo" && project.expoPlugin === "vendored";
   const podRoots = d.binaryPodCandidates(root, libraryChecks);
   const steps = buildSteps({
