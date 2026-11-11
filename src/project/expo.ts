@@ -198,29 +198,74 @@ function versionAt(dir: string | undefined): string | undefined {
   return typeof version === "string" ? version : undefined;
 }
 
+const isObject = (x: unknown): x is Record<string, unknown> => x != null && typeof x === "object";
+
+/**
+ * The package names the app's package.json tells expo-modules-autolinking to leave out for Apple, read as autolinking
+ * reads them (`parsePackageJsonOptions` in its commands/autolinkingOptions.js, the same in 56.0.24, 58.0.15 and
+ * 58.0.16): `expo.autolinking.apple`, else `expo.autolinking.ios`, when it is an object, is spread over
+ * `expo.autolinking`, so its `exclude` replaces the top-level one; the strings of the resulting `exclude` list.
+ * The package.json is the first one at or above `root`, as the CLI run from the root finds it.
+ */
+function autolinkingExclusions(root: string): ReadonlySet<string> {
+  let pkg: Record<string, any> | undefined;
+  for (let dir = root; pkg === undefined && path.dirname(dir) !== dir; dir = path.dirname(dir)) {
+    if (existsSync(path.join(dir, "package.json"))) pkg = packageJsonAt(dir) ?? {};
+  }
+  const autolinking = isObject(pkg?.expo) && isObject(pkg.expo.autolinking) ? pkg.expo.autolinking : null;
+  const platform = isObject(autolinking?.apple) ? autolinking.apple : isObject(autolinking?.ios) ? autolinking.ios : null;
+  const exclude: unknown = { ...autolinking, ...platform }.exclude;
+  return new Set(Array.isArray(exclude) ? exclude.filter((x): x is string => typeof x === "string") : []);
+}
+
 /**
  * The installed version of each package the SDK pins, read where the build resolves it (undefined: not installed, or
- * for expo-file-system and expo-font not linked by autolinking); `{}` when the SDK pins nothing. `unlinked`: the
- * autolinked pins autolinking's CLI left out of its answer although a copy is installed (by `linkedExpoDependencyDir`'s
- * rule), as `expo.autolinking.exclude` does. Such a module is not linked, so its precompiled framework is never
- * embedded and the gate has nothing to check.
+ * for expo-file-system and expo-font not linked by autolinking); `{}` when the SDK pins nothing. Of the autolinked
+ * pins autolinking's CLI left out of its answer although a copy is installed (by `linkedExpoDependencyDir`'s rule):
+ * `unlinked`, those the app excludes (`autolinkingExclusions`), which the build does not link, so their precompiled
+ * framework is never embedded and the gate has nothing to check; `notLinked`, the others, with their copy's folder:
+ * autolinking leaves them out for another reason (no expo-module.config.json, or one that names no Apple platform),
+ * and the app would build and then fail at launch.
  */
 function readPins(
   root: string,
   sdk: number,
-): { pins: Partial<Record<ExpoPinName, string | undefined>>; unlinked: ReadonlySet<ExpoPinName> } {
+): {
+  pins: Partial<Record<ExpoPinName, string | undefined>>;
+  unlinked: ReadonlySet<ExpoPinName>;
+  notLinked: ReadonlyMap<ExpoPinName, string>;
+} {
   const names = Object.keys(expoPinsFor(sdk) ?? {}) as ExpoPinName[];
   const autolinked = names.some((name) => AUTOLINKED_PINS.includes(name)) ? autolinkedModuleDirs(root, sdk) : undefined;
   const pins = Object.fromEntries(names.map((name) => [name, versionAt(expoPackageDir(root, name, autolinked))]));
   const unlinked = new Set<ExpoPinName>();
+  const notLinked = new Map<ExpoPinName, string>();
   if (autolinked !== undefined) {
     const expoDir = expoPackageDir(root, "expo");
+    const excluded = autolinkingExclusions(root);
     for (const name of names.filter((n) => AUTOLINKED_PINS.includes(n) && !autolinked.has(n))) {
       const viaExpo = expoDir === undefined ? undefined : packageDirFrom(expoDir, name);
-      if (versionAt(linkedExpoDependencyDir(root, name, viaExpo)) !== undefined) unlinked.add(name);
+      const copy = linkedExpoDependencyDir(root, name, viaExpo);
+      if (versionAt(copy) === undefined) continue;
+      if (excluded.has(name)) unlinked.add(name);
+      else notLinked.set(name, copy!);
     }
   }
-  return { pins, unlinked };
+  return { pins, unlinked, notLinked };
+}
+
+/** An installed pin autolinking does not link although the app does not exclude it: the app would fail at launch. */
+function checkLinkedPins(root: string, notLinked: ReadonlyMap<ExpoPinName, string>): void {
+  const [first] = notLinked;
+  if (first === undefined) return;
+  const [name, copy] = first;
+  const where = path.relative(realpathSync(root), realpathSync(copy));
+  throw new Error(
+    `${name} is installed (${where}) but Expo's autolinking does not link it for iOS, and the app does not exclude it: ` +
+      'the build would succeed and the app would fail at launch with "Cannot find native module". Autolinking leaves ' +
+      "out a module without an expo-module.config.json or whose config names no Apple platform: reinstall it " +
+      `(\`rm -rf ${where} && npm install\`), or, if the app does not use it, list it in expo.autolinking.exclude in package.json.`,
+  );
 }
 
 /** {@link readPins}' versions: what the gate and the drift watch read. */
@@ -383,8 +428,9 @@ function checkTopLevelJsi(root: string, checks: PinCheck[]): void {
 }
 
 /**
- * The gate on an SDK's pinned packages (no-op when the SDK pins nothing), each step throwing: G1 the pins (but
- * expo-file-system or expo-font when installed and not linked, see {@link readPins}), G2 one
+ * The gate on an SDK's pinned packages (no-op when the SDK pins nothing), each step throwing: an installed
+ * expo-file-system or expo-font that autolinking does not link and the app does not exclude; G1 the pins (but
+ * expo-file-system or expo-font when installed and excluded, see {@link readPins}), G2 one
  * expo-modules-jsi (the top-level copy), G3 the macros Linux binary (of the copy the Expo plugin uses: core's, else,
  * for the vendored plugin, rn-xtool's). Then the packages newer than the verified set are reported through `log`.
  * `kind` "bare" (a hybrid app) changes only G1's react-native remedy.
@@ -395,9 +441,10 @@ export function checkExpoPackages(
   log?: (line: string) => void,
   opts: { kind?: ProjectKind } = {},
 ): void {
-  const { pins, unlinked } = readPins(root, sdk);
+  const { pins, unlinked, notLinked } = readPins(root, sdk);
   const checks = checkPins(sdk, pins);
   if (checks === undefined) return;
+  checkLinkedPins(root, notLinked);
   checkExpoPinVersions(root, sdk, checks, opts.kind ?? "expo", unlinked);
   checkTopLevelJsi(root, checks);
   const pluginDir = expoPluginFor(sdk) === "vendored" ? path.dirname(vendoredExpoPlugin()) : undefined;

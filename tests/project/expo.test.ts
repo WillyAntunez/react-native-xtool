@@ -50,6 +50,13 @@ async function addToPackageJson(dir: string, entries: Record<string, unknown>, f
 /** A patch two below `version`'s: "56.0.7" → "56.0.5". */
 const twoBelow = (version: string): string => version.replace(/\d+$/, (n) => String(Number(n) - 2));
 
+/** The refusal of a pinned module that is installed, not excluded, and still not linked by autolinking. */
+const NOT_LINKED = (name: string, where: string) =>
+  `${name} is installed (${where}) but Expo's autolinking does not link it for iOS, and the app does not exclude it: ` +
+  'the build would succeed and the app would fail at launch with "Cannot find native module". Autolinking leaves out ' +
+  "a module without an expo-module.config.json or whose config names no Apple platform: reinstall it " +
+  `(\`rm -rf ${where} && npm install\`), or, if the app does not use it, list it in expo.autolinking.exclude in package.json.`;
+
 describe("readExpoProject", () => {
   it("reads the fixture project", async () => {
     const dir = await tempProject();
@@ -343,6 +350,36 @@ describe("Expo SDK 56", () => {
     const log = vi.fn();
     await expect(readExpoProject(dir, { log })).resolves.toMatchObject({ sdkVersion: 56 });
     expect(log).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["expo-font", "ios", { ios: { exclude: ["expo-font"] } }],
+    ["expo-font", "apple", { apple: { exclude: ["expo-font"] } }],
+    ["expo-file-system", "apple over ios", { apple: { exclude: ["expo-file-system"] }, ios: { exclude: [] } }],
+  ] as const)("skips the %s pin expo.autolinking.%s.exclude leaves unlinked on SDK 56", async (name, _form, autolinking) => {
+    const older = twoBelow(EXPO56_PINS[name]!);
+    const dir = await expo56({ [name]: older });
+    await addToPackageJson(dir, { autolinking }, "expo");
+    await expect(readExpoProject(dir)).resolves.toMatchObject({ sdkVersion: 56 });
+  });
+
+  it("gates a pin a platform list takes back out of the exclusions on SDK 56", async () => {
+    // Autolinking's Apple list replaces the top-level one: expo-font is linked again, so it is gated.
+    const older = twoBelow(EXPO56_PINS["expo-font"]!);
+    const dir = await expo56({ "expo-font": older });
+    await addToPackageJson(dir, { autolinking: { exclude: ["expo-font"], ios: { exclude: [] } } }, "expo");
+    await expect(readExpoProject(dir)).rejects.toThrow(PIN_ERROR(`expo-font ${older}`));
+  });
+
+  it.each([
+    ["no expo-module.config.json", null],
+    ["no Apple platform", JSON.stringify({ platforms: ["android"] })],
+  ])("refuses an installed expo-font autolinking does not link (%s) on SDK 56", async (_why, config) => {
+    const dir = await expo56();
+    const file = path.join(dir, "node_modules", "expo-font", "expo-module.config.json");
+    if (config === null) await rm(file);
+    else await writeFile(file, config);
+    await expect(readExpoProject(dir)).rejects.toThrow(NOT_LINKED("expo-font", "node_modules/expo-font"));
   });
 
   it.each(["expo-file-system", "expo-font"] as const)("gates the %s copy the app lists on SDK 56", async (name) => {
@@ -888,6 +925,18 @@ describe("Expo SDK 58 gate", () => {
     await realAutolinkingCli(missing);
     await addToPackageJson(missing, { autolinking: { exclude: [name] } }, "expo");
     await expect(readExpoProject(missing)).rejects.toThrow(PIN_ERROR(`${name} not installed`));
+  });
+
+  it("refuses an installed expo-file-system autolinking does not link on SDK 58", async () => {
+    const dir = await expo58();
+    await realAutolinkingCli(dir);
+    // npm nests SDK 58's copy under expo.
+    const copy = "node_modules/expo/node_modules/expo-file-system";
+    await writeFile(path.join(dir, copy, "expo-module.config.json"), JSON.stringify({ platforms: ["android"] }));
+    await expect(readExpoProject(dir)).rejects.toThrow(NOT_LINKED("expo-file-system", copy));
+    // Excluded, it is skipped.
+    await addToPackageJson(dir, { autolinking: { apple: { exclude: ["expo-file-system"] } } }, "expo");
+    await expect(readExpoProject(dir)).resolves.toMatchObject({ sdkVersion: 58 });
   });
 
   describe("a file:-linked local library with its own expo-font (D)", () => {

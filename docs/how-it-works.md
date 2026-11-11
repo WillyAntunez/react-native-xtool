@@ -186,8 +186,12 @@ expo-modules-autolinking 58.0.16, expo-file-system 58.0.13 and expo-font 58.0.11
 resolves it. For expo-file-system and expo-font that is the copy expo-modules-autolinking links: the check asks the
 same autolinking CLI the Expo plugin runs (`resolve --platform apple --json`, from the project root), so autolinking's
 own choice decides, with the app's `expo.autolinking` settings in package.json. A package autolinking does not link
-is not checked when a copy is installed, as when `expo.autolinking.exclude` lists it: the build never embeds its
-precompiled framework. One that is neither linked nor installed counts as missing. When that CLI cannot run, the
+is not checked when a copy is installed and the app excludes it (`expo.autolinking.exclude`, or the `exclude` of
+`expo.autolinking.apple`, else of `expo.autolinking.ios`, which replaces the top-level list, as autolinking reads
+them): the build never embeds its precompiled framework. Installed and not excluded, it stops the check: autolinking
+leaves out a module without an `expo-module.config.json` or whose config names no Apple platform, and the app would
+build and then fail at launch with "Cannot find native module". One that is neither linked nor installed counts as
+missing. When that CLI cannot run, the
 check falls back to a two-copy rule (the top-level copy when the app, or a package the app lists, depends on it, else
 the copy under `expo`, where npm nests them), and the build's own autolinking step reports the failure. `doctor` and
 `build` check the set before anything is built:

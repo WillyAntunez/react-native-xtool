@@ -1416,9 +1416,15 @@ messages and the two hybrid ones at the end, and print the sixth and go on; the 
   SDK's release line, missing (`not installed`), or, for react-native, not 0.88.1. Each is read where the build
   resolves it: expo-modules-core from `expo`, expo-modules-jsi from expo-modules-core, expo-file-system and expo-font
   where expo-modules-autolinking links them, as its own CLI answers (`resolve --platform apple --json`, the question
-  the Expo plugin asks). When autolinking links no copy of expo-file-system or expo-font but one is installed (as
-  when `expo.autolinking.exclude` lists it), the build never embeds its precompiled framework, so the check skips
-  it; with no copy installed it is `not installed`. When that CLI cannot run, the check takes the
+  the Expo plugin asks). When autolinking links no copy of expo-file-system or expo-font but one is installed and the
+  app excludes it (`expo.autolinking.exclude`, or the `exclude` list of `expo.autolinking.apple`, else of
+  `expo.autolinking.ios`, which replaces the top-level one), the build never embeds its precompiled framework, so the
+  check skips it; with no copy installed it is `not installed`. Installed and not excluded, the check stops first
+  with "<package> is installed (<path>) but Expo's autolinking does not link it for iOS, and the app does not exclude
+  it: …": autolinking leaves out a module without an `expo-module.config.json` or whose config names no Apple
+  platform (a damaged install, most often), and the app would build and then fail at launch with "Cannot find native
+  module". Reinstall the package (`rm -rf <path> && npm install`), or list it in `expo.autolinking.exclude` if the
+  app does not use it. When that CLI cannot run, the check takes the
   top-level copy when the app, or a package the app lists, depends on it, else the copy under `node_modules/expo`,
   where npm nests them (an exclusion is not read then). The remedy follows the
   order of [Moving to the 58.0.21 set](#moving-to-the-58021-set), and adapts to the project:
