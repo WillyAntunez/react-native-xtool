@@ -5,9 +5,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildVars, defaultBundleIdentifier, MissingBundleIdentifierError, readExpoProject } from "../../src/project/index.js";
 import { VersionGateError } from "../../src/project/detect.js";
-import { expoIconPath, expoMacrosBinaryError, expoPackageDir, readExpoPins } from "../../src/project/expo.js";
+import { checkExpoPackages, expoIconPath, expoMacrosBinaryError, expoPackageDir, readExpoPins } from "../../src/project/expo.js";
 import { checkPins, expoPinPolicyFor, expoPinsFor, expoPluginFor } from "../../src/versions.js";
-import { vendoredExpoPlugin } from "../../src/pipeline/rnSpm.js";
 import { EXPO56_PINS, fakeExpo56Modules } from "../support/expo56.js";
 import { EXPO57_PINS, fakeExpo57Modules } from "../support/expo57.js";
 import { EXPO58_PINS, fakeExpo58Modules } from "../support/expo58.js";
@@ -354,20 +353,21 @@ describe("Expo SDK 56", () => {
   });
 
   it("checks the expo-modules-macros copy the vendored plugin finds on SDK 56", async () => {
-    // expo-modules-core 56.0.27 depends on the macOS-only @expo/expo-modules-macros-plugin, so G3 checks rn-xtool's copy.
+    // expo-modules-core 56.0.27 depends on the macOS-only @expo/expo-modules-macros-plugin, so G3 checks rn-xtool's copy
+    // (the vendored plugin's fallback; the installed plugin would ask core for one). The SDK 56 row decides the path.
     const root = await expo56();
-    expect(
-      expoMacrosBinaryError({
-        root,
-        pluginDir: path.dirname(vendoredExpoPlugin()),
-        arch: "riscv64",
-        resolve: () => {
-          throw new Error("x");
-        },
-      }),
-    ).toBe(
-      "expo-modules-macros 0.22.0 has no Linux binary for riscv64 (@expo/modules-macros-linux-riscv64); reinstall react-native-xtool without --omit=optional.",
-    );
+    const arch = Object.getOwnPropertyDescriptor(process, "arch")!;
+    Object.defineProperty(process, "arch", { ...arch, value: "riscv64" });
+    try {
+      expect(() => checkExpoPackages(root, 56)).toThrow(
+        new Error(
+          "expo-modules-macros 0.22.0 has no Linux binary for riscv64 (@expo/modules-macros-linux-riscv64); reinstall " +
+            "react-native-xtool without --omit=optional.",
+        ),
+      );
+    } finally {
+      Object.defineProperty(process, "arch", arch);
+    }
   });
 });
 

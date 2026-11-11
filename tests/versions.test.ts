@@ -163,6 +163,13 @@ describe("supported lines", () => {
     );
   });
 
+  it("keeps the Expo rows in strictly ascending SDK order", () => {
+    // expoPluginFor and supportedExpoList take the last Expo row as the newest SDK.
+    const sdks = SUPPORTED_LINES.flatMap((l) => (l.kind === "expo" ? [l.sdk] : []));
+    expect(sdks.length).toBeGreaterThan(1);
+    expect(sdks.every((sdk, i) => i === 0 || sdk > sdks[i - 1]!)).toBe(true);
+  });
+
   it("lists the supported Expo SDKs from the table", () => {
     expect(supportedExpoList()).toBe(
       "SDK 56 (expo 56.0.24 or newer 56.x), SDK 57 (expo 57.0.31 or newer 57.x) and SDK 58 or newer",
