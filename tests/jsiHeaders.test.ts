@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import * as plist from "plist";
@@ -155,6 +155,70 @@ describe("writeJsiHeadersXcframework", () => {
     expectNothingWritten(s);
   });
 
+  it("names the header that holds an include that is not there", async () => {
+    const s = setup("56.0.14", "flat");
+    writeFileSync(path.join(s.include, "RetainedSwiftPointer.h"), `${FAKE_RETAINED_POINTER}#include "Missing.h"\n`);
+    await expect(writeJsiHeadersXcframework(s.input)).rejects.toThrow(
+      `RetainedSwiftPointer.h of expo-modules-jsi 56.0.14 includes "Missing.h", which is not next to it in ${s.include}; ` +
+        "cannot make ExpoModulesJSIHeaders.xcframework.",
+    );
+    expectNothingWritten(s);
+  });
+
+  it.each([
+    ["a relative path out of the folder", () => "../Outside.h"],
+    ["an absolute path", (s: ReturnType<typeof setup>) => path.join(s.dir, "Outside.h")],
+  ])("refuses an include that points outside the folder: %s", async (_how, include) => {
+    const s = setup("56.0.14", "flat");
+    // The header exists where the include points, so only the folder check stops the copy.
+    writeFileSync(path.join(s.include, "..", "Outside.h"), "#pragma once\n");
+    writeFileSync(path.join(s.dir, "Outside.h"), "#pragma once\n");
+    writeFileSync(path.join(s.include, "RetainedSwiftPointer.h"), `${FAKE_RETAINED_POINTER}#include "${include(s)}"\n`);
+    const before = listFiles(s.dir);
+    await expect(writeJsiHeadersXcframework(s.input)).rejects.toThrow(
+      `RetainedSwiftPointer.h of expo-modules-jsi 56.0.14 includes "${include(s)}", which points outside ${s.include}; ` +
+        "cannot make ExpoModulesJSIHeaders.xcframework.",
+    );
+    expectNothingWritten(s);
+    expect(listFiles(s.dir)).toEqual(before);
+  });
+
+  it("resolves an include next to the header that holds it, in a nested folder", async () => {
+    const s = setup("56.0.14", "flat");
+    writeFileSync(path.join(s.include, "NativeState.h"), `${FAKE_NATIVE_STATE_FLAT}#include "detail/Inner.h"\n`);
+    mkdirSync(path.join(s.include, "detail"));
+    writeFileSync(path.join(s.include, "detail", "Inner.h"), '#pragma once\n#include "Leaf.h"\n');
+    writeFileSync(path.join(s.include, "detail", "Leaf.h"), "// detail/Leaf.h\n");
+    // A header of the same name next to NativeState.h is not the one detail/Inner.h includes.
+    writeFileSync(path.join(s.include, "Leaf.h"), "// Leaf.h\n");
+    expect(await writeJsiHeadersXcframework(s.input)).toBe("written");
+    const headers = path.join(s.xcframework, "ios-arm64", "Headers", "ExpoModulesJSI");
+    expect(listFiles(headers)).toEqual(
+      ["ExpoModulesJSI-Swift.h", "NativeState.h", "RetainedSwiftPointer.h", "detail/Inner.h", "detail/Leaf.h", "module.modulemap"].sort(),
+    );
+    expect(readFileSync(path.join(headers, "detail", "Leaf.h"), "utf8")).toBe("// detail/Leaf.h\n");
+  });
+
+  it("names a nested header's include that is not next to it", async () => {
+    const s = setup("56.0.14", "flat");
+    writeFileSync(path.join(s.include, "NativeState.h"), `${FAKE_NATIVE_STATE_FLAT}#include "detail/Inner.h"\n`);
+    mkdirSync(path.join(s.include, "detail"));
+    writeFileSync(path.join(s.include, "detail", "Inner.h"), '#pragma once\n#include "RetainedSwiftPointer.h"\n');
+    await expect(writeJsiHeadersXcframework(s.input)).rejects.toThrow(
+      `detail/Inner.h of expo-modules-jsi 56.0.14 includes "RetainedSwiftPointer.h", which is not next to it in ` +
+        `${path.join(s.include, "detail")}; cannot make ExpoModulesJSIHeaders.xcframework.`,
+    );
+    expectNothingWritten(s);
+  });
+
+  it("follows #import as #include", async () => {
+    const s = setup("56.0.14", "flat");
+    writeFileSync(path.join(s.include, "NativeState.h"), `${FAKE_NATIVE_STATE_FLAT}#import "Imported.h"\n`);
+    writeFileSync(path.join(s.include, "Imported.h"), "#pragma once\n");
+    expect(await writeJsiHeadersXcframework(s.input)).toBe("written");
+    expect(listFiles(path.join(s.xcframework, "ios-arm64", "Headers", "ExpoModulesJSI"))).toContain("Imported.h");
+  });
+
   it("follows quoted includes transitively, each once", async () => {
     const s = setup("56.0.14", "flat");
     writeFileSync(path.join(s.include, "RetainedSwiftPointer.h"), `${FAKE_RETAINED_POINTER}#include "Extra.h"\n`);
@@ -237,7 +301,7 @@ describe("writeJsiHeadersXcframework", () => {
     const nativeState = path.join(s.include, "Public", "NativeState.h");
     rmSync(nativeState);
     await expect(writeJsiHeadersXcframework(s.input)).rejects.toThrow(
-      `The ExpoModulesJSI build produced no NativeState.h (expected in ${s.include}/Public or ${s.include}); cannot make ExpoModulesJSIHeaders.xcframework for expo-modules-jsi 57.1.3.`,
+      `expo-modules-jsi 57.1.3 ships no NativeState.h (looked in ${s.include}/Public and ${s.include}); cannot make ExpoModulesJSIHeaders.xcframework.`,
     );
     expectNothingWritten(s);
 

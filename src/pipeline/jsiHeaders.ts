@@ -83,15 +83,19 @@ function quotedIncludes(text: string): string[] {
  * The public C++ headers of expo-modules-jsi `jsiVersion` at `jsiDir`: `dir` is
  * `<jsiDir>/apple/Sources/ExpoModulesJSI-Cxx/include/Public` when it holds NativeState.h (jsi 57 and newer), else
  * `…/include` (jsi 56); `files` is "NativeState.h", then each header it includes with quotes, transitively, found in
- * `dir`, in include order, each once. Throws when NativeState.h is in neither, or a quoted include is not in `dir`.
+ * `dir`, in include order, each once. Throws when NativeState.h is in neither, or a quoted include points outside
+ * `dir` or is not next to the header that includes it; the error names that header.
+ * Read as text: a quoted include inside a comment or an `#if 0` block is followed too (and fails closed when it is
+ * not there), and an angle-bracket include is never copied.
  */
 export function nativeStateHeaders(jsiDir: string, jsiVersion: string): { dir: string; files: string[] } {
   const include = path.join(jsiDir, "apple", "Sources", "ExpoModulesJSI-Cxx", "include");
   const dir = [path.join(include, "Public"), include].find((d) => isFile(path.join(d, NATIVE_STATE)));
   if (dir === undefined) {
+    // The package's own header, not a build output: jsi 57 and newer keep it in include/Public, jsi 56 in include.
     throw new Error(
-      `The ExpoModulesJSI build produced no ${NATIVE_STATE} (expected in ${include}/Public or ${include}); ` +
-        `cannot make ${NAME}.xcframework for expo-modules-jsi ${jsiVersion}.`,
+      `expo-modules-jsi ${jsiVersion} ships no ${NATIVE_STATE} (looked in ${include}/Public and ${include}); ` +
+        `cannot make ${NAME}.xcframework.`,
     );
   }
   const files: string[] = [];
@@ -102,10 +106,10 @@ export function nativeStateHeaders(jsiDir: string, jsiVersion: string): { dir: s
       // As the compiler does: next to the including header first. Only headers inside `dir` are copied.
       const found = path.relative(dir, path.resolve(dir, path.dirname(rel), name));
       const outside = found === ".." || found.startsWith(`..${path.sep}`) || path.isAbsolute(found);
+      const where = outside ? `points outside ${dir}` : `is not next to it in ${path.join(dir, path.dirname(rel))}`;
       if (outside || !isFile(path.join(dir, found))) {
         throw new Error(
-          `${NATIVE_STATE} of expo-modules-jsi ${jsiVersion} includes "${name}", which is not next to it in ${dir}; ` +
-            `cannot make ${NAME}.xcframework.`,
+          `${rel} of expo-modules-jsi ${jsiVersion} includes "${name}", which ${where}; cannot make ${NAME}.xcframework.`,
         );
       }
       visit(found);

@@ -250,7 +250,8 @@ differences:
   assembled beside the destination and swapped in whole; the stamp `.rn-xtool-jsi-headers.json` (generator version,
   jsi version, sha256 of the interface) is written last and skips the rewrite when it matches. A missing input stops the
   step: `The ExpoModulesJSI build produced no <file> (expected in <dir>); cannot make ExpoModulesJSIHeaders.xcframework
-  for expo-modules-jsi 57.1.3.`
+  for expo-modules-jsi 57.1.3.` for the build's two files, and `expo-modules-jsi 57.1.3 ships no NativeState.h (looked
+  in <include>/Public and <include>); cannot make ExpoModulesJSIHeaders.xcframework.` for the package's header.
 - **Section 7**: no SceneDelegate in the template (above). The rest of `ios-xtool/` is generated as for SDK 58.
 
 ## Open risks
