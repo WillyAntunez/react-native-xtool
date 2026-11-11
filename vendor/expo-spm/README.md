@@ -8,7 +8,7 @@ of its own. SDK 58 and newer keep using the plugin installed in the app.
 - Modifications, in order:
   1. rn-xtool's fixes to Expo's plugin, applied with `patches/expo+58.0.21.patch` (`patch -p4`,
      run in the extracted `scripts/`), the same patch rn-xtool applies to SDK 58 apps.
-  2. Six vendored-only edits (P1-P6) in `rn-xtool-edits.patch` (`patch -p1`, run in this
+  2. Seven vendored-only edits (P1-P7) in `rn-xtool-edits.patch` (`patch -p1`, run in this
      directory). SDK 58 never runs them:
      - P1 (`plugin.js`): `expo-modules-macros` is resolved from expo-modules-core, then from this
        copy, so rn-xtool's `expo-modules-macros` 0.22.0 is used when core lacks it (SDK 57).
@@ -53,6 +53,28 @@ of its own. SDK 58 and newer keep using the plugin installed in the app.
          outer subspec's flags. A subspec whose directory contains an earlier subspec's is not split
          either: the earlier subspec keeps its own files, and the rest stays in the module's target
          without the flags.
+     - P7 (`podspec.js`, `plugin.js`): each generated package's iOS floor is the highest of the
+       module's `spm.config.json` floor, the iOS deployment target its podspec declares, and core's
+       floor, which takes core's own podspec the same way. A floor is never lowered. CocoaPods builds
+       each pod for its podspec's target and raises every Expo pod to core's; upstream reads only
+       `spm.config.json`, so a module without one (expo-router 56) or a core whose
+       `spm.config.json` says less than its podspec (core 56: `iOS(.v16)`, the podspec 16.4) got a
+       lower floor than the packages it imports, which SwiftPM refuses. `readPodspecFacts` returns
+       `iosDeploymentTarget` (the highest over the pod's podspecs), `podspecIosDeploymentTarget` and
+       `podIdentity` are exported for the tests. SDK 58's plugin does not read podspec platforms;
+       its core's `spm.config.json` already says what its podspec does. Limits (the podspec is read
+       as text, never run):
+       - Read: `<s>.platforms = { :ios => '<v>', … }` (one line or several, `ios: '<v>'` too),
+         `<s>.ios.deployment_target = '<v>'` and `<s>.platform = :ios, '<v>'`, where `<s>` is the
+         `Pod::Spec.new do |<s>|` receiver and `<v>` a quoted dotted version.
+       - Not read, the module then keeping the other floors: a value that is not a quoted version
+         (a variable such as `min_ios_version_supported`, a call, interpolation, `.freeze`), a hash
+         with anything after its closing brace (`.merge(…)`), a `subspec`, `app_spec` or
+         `test_spec` block's own platforms, and a podspec without a `Pod::Spec.new do |<s>|` line. A
+         module that needs more than those floors then fails at `xtool-build`.
+       - A declaration inside a Ruby condition (`if …`) counts as if it were unconditional.
+       - A floor above the app's deployment target is refused by SwiftPM at `xtool-build`, as
+         `pod install` refuses it on a Mac.
 - How rn-xtool runs it: the driver (`scripts/rn-spm-generate.js --expo-plugin <this>/spm/plugin.js`)
   sets `RN_SPM_EXPO_PLUGIN` to this plugin, which the vendored React Native scripts load as `expo`'s
   autolinking plugin (edit E5 in `vendor/rn-spm`), and `RN_XTOOL_PROJECT_ROOT` to the app root.

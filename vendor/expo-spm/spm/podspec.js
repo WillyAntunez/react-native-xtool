@@ -258,6 +258,116 @@ function flaggedSubspecs(text, podspecDir) {
 }
 
 // ---------------------------------------------------------------------------
+// rn-xtool P7: the iOS deployment target of the top-level spec
+// ---------------------------------------------------------------------------
+
+const SPEC_RX = /\bPod::Spec\.new\b.*\bdo\s*\|\s*(\w+)\s*\|/;
+const NESTED_SPEC_RX = /\.(?:subspec|app_spec)\b/;
+const VERSION_RX = /^(?:'(\d+(?:\.\d+)*)'|"(\d+(?:\.\d+)*)")$/;
+const IOS_KEY_RX = /^\s*(?::ios\s*=>|ios:)\s*(.*?)\s*$/;
+
+/** The version a literal `'16.0'` or `"16.0"` holds, else null (a variable, a call, interpolation). */
+function versionLiteral(value) {
+  const match = VERSION_RX.exec(value.trim());
+  return match == null ? null : (match[1] ?? match[2]);
+}
+
+/** The higher of two dotted versions, either of them possibly null. */
+function higherVersion(left, right) {
+  if (left == null || right == null) return left ?? right;
+  const [a, b] = [left, right].map((version) => version.split('.').map(Number));
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const delta = (a[i] ?? 0) - (b[i] ?? 0);
+    if (delta !== 0) return delta > 0 ? left : right;
+  }
+  return left;
+}
+
+/** `text` split at the commas outside its string literals. */
+function splitAtCommas(text) {
+  const code = codeView(text);
+  const parts = [];
+  let start = 0;
+  for (let i = 0; i < code.length; i++) {
+    if (code[i] === ',') {
+      parts.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  return [...parts, text.slice(start)];
+}
+
+/** The iOS version of a `{ :ios => '…', … }` hash literal with nothing after it, else null. */
+function platformsHashIos(rhs) {
+  const hash = /^\{([\s\S]*)\}$/.exec(rhs.trim());
+  if (hash == null) return null;
+  for (const entry of splitAtCommas(hash[1])) {
+    const ios = IOS_KEY_RX.exec(entry);
+    if (ios != null) return versionLiteral(ios[1]);
+  }
+  return null;
+}
+
+/**
+ * rn-xtool P7: the iOS deployment target a podspec's top-level spec declares as a literal, the
+ * highest when several do: `<s>.platforms = { :ios => '15.1', … }` (on one line or several),
+ * `<s>.ios.deployment_target = '15.1'`, `<s>.platform = :ios, '13.0'`. `<s>` is the
+ * `Pod::Spec.new do |<s>|` receiver; subspec, app_spec and test_spec blocks do not count. null
+ * when none is declared or the value is not a literal (a variable, a call, interpolation).
+ * CocoaPods builds the pod for that target; the plugin otherwise reads only `spm.config.json`.
+ */
+function podspecIosDeploymentTarget(text) {
+  let receiver = null;
+  let nestedDepth = 0;
+  let pending = null;
+  let found = null;
+  for (const { text: line } of podspecBodyLines(text)) {
+    if (receiver == null) {
+      receiver = SPEC_RX.exec(line)?.[1] ?? null;
+      continue;
+    }
+    if (pending != null) {
+      pending.text += `\n${line}`;
+      pending.depth += braceDelta(line);
+      if (pending.depth > 0) continue;
+      found = higherVersion(found, platformsHashIos(pending.text));
+      pending = null;
+      continue;
+    }
+    if (nestedDepth > 0) {
+      nestedDepth += blockDelta(line);
+      continue;
+    }
+    if (NESTED_SPEC_RX.test(codeView(line))) {
+      nestedDepth = Math.max(blockDelta(line), 0);
+      continue;
+    }
+    const attr = (name) => new RegExp(`^\\s*${receiver}\\.${name}\\s*=(?!=)(.*)$`).exec(line)?.[1];
+    const platforms = attr('platforms');
+    if (platforms != null) {
+      const depth = braceDelta(platforms);
+      if (depth > 0) pending = { text: platforms, depth };
+      else found = higherVersion(found, platformsHashIos(platforms));
+      continue;
+    }
+    const deploymentTarget = attr('ios\\.deployment_target');
+    if (deploymentTarget != null) {
+      found = higherVersion(found, versionLiteral(deploymentTarget));
+      continue;
+    }
+    const platform = /^\s*:ios\s*,(.*)$/.exec(attr('platform') ?? '');
+    if (platform != null) found = higherVersion(found, versionLiteral(platform[1]));
+  }
+  return found;
+}
+
+/** Braces a line opens minus those it closes, outside string literals. */
+function braceDelta(line) {
+  const code = codeView(line);
+  return countMatches(code, /\{/g) - countMatches(code, /\}/g);
+}
+
+// ---------------------------------------------------------------------------
 // I/O
 // ---------------------------------------------------------------------------
 
@@ -349,6 +459,8 @@ function readPodspecFacts({ podName, podspecDir, moduleRoot }) {
     ...readPodspecs(podName, dirs),
     // rn-xtool P6: source globs are relative to the podspec that declares them.
     flaggedSubspecs: texts.flatMap((text, i) => flaggedSubspecs(text, path.dirname(files[i]))),
+    // rn-xtool P7: the highest over the pod's podspecs.
+    iosDeploymentTarget: texts.map(podspecIosDeploymentTarget).reduce(higherVersion, null),
     dependencies: [...dependencies],
     declaresSourceFiles: !texts.length || facts.some((f) => f.declaresSourceFiles),
     referencesVendor: facts.some((f) => f.referencesVendor),
@@ -372,4 +484,5 @@ module.exports = {
   sourceFacts,
   c99Identifier,
   flaggedSubspecs,
+  podspecIosDeploymentTarget,
 };

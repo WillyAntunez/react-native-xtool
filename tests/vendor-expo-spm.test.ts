@@ -617,6 +617,78 @@ describe("vendor/expo-spm edits", () => {
     expect(settingLine(targetBlock(manifest, "EXOdd"), "exclude")).toContain('"A"]');
   });
 
+  type P7Podspec = { podspecIosDeploymentTarget(text: string): string | null };
+  /** A podspec whose top-level spec (`|s|`) holds `body`. */
+  const p7Podspec = (body: string) => `Pod::Spec.new do |s|\n  s.name = 'EXFloor'\n${body}\nend\n`;
+
+  it("P7 reads the iOS deployment target a podspec declares", () => {
+    const { podspecIosDeploymentTarget } = loadSpm<P7Podspec>(vendoredSpm(), "podspec.js");
+    for (const [body, expected] of [
+      // expo-router 56.2.22's form.
+      ["  s.platforms      = {\n    :ios => '16.4'\n  }", "16.4"],
+      ["  s.platforms = { :ios => '16.4', :tvos => '16.4' }", "16.4"],
+      // Several lines, a trailing comma (@expo/dom-webview 56), the Ruby 1.9 key.
+      ["  s.platforms       = {\n    :osx => '13.4',\n    :ios => \"16.4\",\n  }", "16.4"],
+      ["  s.platforms = { ios: '15.1', tvos: '15.1' }", "15.1"],
+      ["  s.ios.deployment_target = '15.1'", "15.1"],
+      ["  s.platform = :ios, '13.0'", "13.0"],
+      // The highest literal the top-level spec declares.
+      ["  s.ios.deployment_target = '15.1'\n  s.platforms = { :ios => '16.4' } # floor", "16.4"],
+      // Not literal values.
+      ["  s.platforms = { :ios => min_ios_version_supported }", null],
+      ['  s.platforms = { :ios => "#{ios_min}" }', null],
+      ["  s.ios.deployment_target = ios_min", null],
+      ["  s.platform = :ios, '13.0'.freeze", null],
+      ["  s.platforms = { :ios => '16.4' }.merge(extra)", null],
+      // A test_spec's or a subspec's own platforms.
+      ["  s.test_spec 'Tests' do |test_spec|\n    test_spec.platforms = { :ios => '17.0' }\n  end", null],
+      ["  s.subspec 'Extra' do |ss|\n    ss.ios.deployment_target = '17.0'\n  end", null],
+      ["  s.subspec 'Shadow' do |s|\n    s.platforms = { :ios => '17.0' }\n  end\n  s.platforms = { :ios => '16.4' }", "16.4"],
+      // No iOS, no platform at all.
+      ["  s.platforms = { :osx => '13.4' }", null],
+      ["  s.platform = :ios", null],
+      ["  s.swift_version = '5.9'", null],
+    ] as const) {
+      expect(podspecIosDeploymentTarget(p7Podspec(body)), body).toBe(expected);
+    }
+    // Only the `Pod::Spec.new` receiver counts, whatever its name.
+    expect(podspecIosDeploymentTarget("Pod::Spec.new do |spec|\n  spec.platforms = { :ios => '16.4' }\nend\n")).toBe("16.4");
+    expect(podspecIosDeploymentTarget("x.platforms = { :ios => '16.4' }\n")).toBeNull();
+  });
+
+  it("P7 raises a module to its podspec's iOS floor", () => {
+    type PodIdentity = {
+      podIdentity(
+        record: { productName: string; iosDeploymentTarget: string | null } | null,
+        pod: { podName: string; podspecDir: string },
+        packageName: string,
+        autolinkedRoot: string | null,
+        readModuleRoot: { sources(root: string): unknown },
+      ): { iosDeploymentTarget: string | null; podspec: { iosDeploymentTarget?: string | null } };
+    };
+    const { podIdentity } = loadSpm<PodIdentity>(vendoredSpm(), "plugin.js");
+    const readModuleRoot = { sources: loadSpm<Classify>(vendoredSpm(), "classify.js").scanAppleSources };
+    for (const [record, podspec, expected] of [
+      [null, "16.4", "16.4"],
+      ["16.0", "16.4", "16.4"],
+      ["17.0", "16.4", "17.0"],
+      ["16.0", "15.1", "16.0"],
+      [null, null, null],
+    ] as const) {
+      const body = podspec == null ? "s.source_files = 'ios/**/*.swift'" : `s.platforms = {\n    :ios => '${podspec}'\n  }`;
+      const root = moduleFixture("EXFloor", { "ios/Floor.swift": "import Foundation\n" }, body);
+      const identity = podIdentity(
+        record == null ? null : { productName: "EXFloor", iosDeploymentTarget: record },
+        { podName: "EXFloor", podspecDir: path.join(root, "ios") },
+        "expo-floor",
+        root,
+        readModuleRoot,
+      );
+      expect(identity.podspec.iosDeploymentTarget, `${record} / ${podspec}`).toBe(podspec);
+      expect(identity.iosDeploymentTarget, `${record} / ${podspec}`).toBe(expected);
+    }
+  });
+
   it("P5 extracts without AppleDouble entries or xattr warnings", () => {
     const src = mkTmp("vendor-p5-src-");
     mkdirSync(path.join(src, "X.xcframework"));
@@ -654,9 +726,12 @@ describe("vendor/expo-spm edits", () => {
     expect(manifest).not.toContain("prefix.pch");
     const unsafe = unsafeFixture();
     const u = layoutOf(spm, "EXDevLauncher", unsafe);
-    const podspec = loadSpm<{ readPodspecFacts(o: object): { flaggedSubspecs?: unknown } }>(spm, "podspec.js");
+    const podspec = loadSpm<{ readPodspecFacts(o: object): { flaggedSubspecs?: unknown; iosDeploymentTarget?: unknown } }>(spm, "podspec.js");
     expect(podspec.readPodspecFacts({ podName: "expo-dev-launcher", podspecDir: unsafe, moduleRoot: unsafe }).flaggedSubspecs).toBeUndefined();
     expect(emit(spm, "EXDevLauncher", unsafe, u.layout!, u.sources).manifest).not.toContain("EXDevLauncher_Unsafe");
+    // P7: 58 never reads a podspec's iOS platform.
+    const floored = moduleFixture("EXFloor", {}, "s.platforms = { :ios => '16.4' }");
+    expect(podspec.readPodspecFacts({ podName: "EXFloor", podspecDir: path.join(floored, "ios"), moduleRoot: floored }).iosDeploymentTarget).toBeUndefined();
   });
 });
 

@@ -102,6 +102,7 @@ const {
   emitGeneratedSourcePackage,
   emitPureSwiftSourcePackage,
   emitSourceManifestPackage,
+  raiseFloor,
 } = require('./manifests');
 const { readPrebuiltMetadata } = require('./metadata');
 const { readPodspecFacts } = require('./podspec');
@@ -137,6 +138,7 @@ function podIdentity(record, pod, packageName, autolinkedRoot, readModuleRoot) {
   const declaringRoot =
     autolinkedRoot == null && !fs.existsSync(pod.podspecDir) ? pod.podspecDir : walkedRoot;
   const moduleRoot = documentedRoot ?? walkedRoot;
+  const podspec = readPodspecFacts({ podName: pod.podName, podspecDir: pod.podspecDir, moduleRoot });
   return {
     podName: pod.podName,
     packageName,
@@ -147,11 +149,13 @@ function podIdentity(record, pod, packageName, autolinkedRoot, readModuleRoot) {
     productName: record?.productName ?? pod.podName,
     prebuildProduct:
       record != null ? { name: record.productName, sourceOnly: record.sourceOnly } : null,
-    iosDeploymentTarget: record?.iosDeploymentTarget ?? null,
+    // rn-xtool P7: the podspec's literal iOS platform raises the floor, as CocoaPods builds the pod
+    // for it. Core's identity too, so every package is raised to core's podspec floor.
+    iosDeploymentTarget: raiseFloor(record?.iosDeploymentTarget ?? null, podspec.iosDeploymentTarget),
     spmPackages: record?.spmPackages ?? [],
     autolinkWhen: record?.autolinkWhen ?? null,
     sources: readModuleRoot.sources(moduleRoot),
-    podspec: readPodspecFacts({ podName: pod.podName, podspecDir: pod.podspecDir, moduleRoot }),
+    podspec,
   };
 }
 
@@ -1499,3 +1503,4 @@ module.exports.dependencyPackageIndex = dependencyPackageIndex;
 module.exports.unmappedDependencies = unmappedDependencies;
 module.exports.localDependencies = localDependencies;
 module.exports.emitSourceModule = emitSourceModule;
+module.exports.podIdentity = podIdentity;
