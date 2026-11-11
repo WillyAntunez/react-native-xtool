@@ -39,6 +39,18 @@ async function tempProject(
   return dir;
 }
 
+/** Merges `entries` into `<dir>/package.json`'s `field` ("dependencies" unless given). */
+async function addToPackageJson(dir: string, entries: Record<string, unknown>, field = "dependencies"): Promise<void> {
+  const file = path.join(dir, "package.json");
+  const pkg = JSON.parse(await readFile(file, "utf8").catch(() => "{}"));
+  pkg[field] = { ...pkg[field], ...entries };
+  await mkdir(dir, { recursive: true });
+  await writeFile(file, JSON.stringify(pkg));
+}
+
+/** A patch two below `version`'s: "56.0.7" → "56.0.5". */
+const twoBelow = (version: string): string => version.replace(/\d+$/, (n) => String(Number(n) - 2));
+
 describe("readExpoProject", () => {
   it("reads the fixture project", async () => {
     const dir = await tempProject();
@@ -304,16 +316,29 @@ describe("Expo SDK 56", () => {
     expect(log).not.toHaveBeenCalled();
   });
 
-  it("reads expo-file-system and expo-font where expo resolves them on SDK 56", async () => {
+  it("reads expo-file-system and expo-font where autolinking links them on SDK 56", async () => {
     // SDK 56 hoists both; the default set is the hoisted one.
     const hoisted = await expo56();
     expect(expoPackageDir(hoisted, "expo-font")).toBe(path.join(hoisted, "node_modules", "expo-font"));
     expect(expoPackageDir(hoisted, "expo-file-system")).toBe(path.join(hoisted, "node_modules", "expo-file-system"));
     await expect(readExpoProject(hoisted)).resolves.toMatchObject({ sdkVersion: 56 });
-    // A copy nested under expo is the one the build resolves, not the hoisted stray next to it.
+    // Nothing the app lists reaches the top-level copy: autolinking finds only expo's nested one, through expo.
     const nested = await expo56({}, { "expo-font": "56.0.6" });
     expect(expoPackageDir(nested, "expo-font")).toBe(path.join(nested, "node_modules", "expo", "node_modules", "expo-font"));
     await expect(readExpoProject(nested)).rejects.toThrow(PIN_ERROR("expo-font 56.0.6"));
+  });
+
+  it.each(["expo-file-system", "expo-font"] as const)("gates the %s copy the app lists on SDK 56", async (name) => {
+    // The app's own dependency is autolinking's shallowest (depth 0): its top-level copy is linked, not expo's nested one.
+    const floor = EXPO56_PINS[name]!;
+    const older = twoBelow(floor);
+    const topBelow = await expo56({ [name]: older }, { [name]: floor });
+    await addToPackageJson(topBelow, { [name]: `~${floor}` });
+    await expect(readExpoProject(topBelow)).rejects.toThrow(PIN_ERROR(`${name} ${older}`));
+    const topFloor = await expo56({}, { [name]: older });
+    await addToPackageJson(topFloor, { [name]: `~${floor}` });
+    expect(expoPackageDir(topFloor, name)).toBe(path.join(topFloor, "node_modules", name));
+    await expect(readExpoProject(topFloor)).resolves.toMatchObject({ sdkVersion: 56 });
   });
 
   it("refuses a nested expo-modules-jsi on SDK 56", async () => {
@@ -712,13 +737,41 @@ describe("Expo SDK 58 gate", () => {
     expect(log).not.toHaveBeenCalled();
   });
 
-  it.each(["expo-file-system", "expo-font"] as const)("reads %s where expo resolves it", async (name) => {
+  it.each(["expo-file-system", "expo-font"] as const)("reads %s under expo when nothing the app lists reaches a top-level copy", async (name) => {
+    // A top-level stray no dependency names is never scanned by autolinking: expo's nested copy is the one linked.
     const floor = EXPO58_PINS[name];
-    const older = floor.replace(/\d+$/, (n) => String(Number(n) - 2));
+    const older = twoBelow(floor);
     const nestedOld = await expo58({}, { [name]: older }, { [name]: floor });
     await expect(readExpoProject(nestedOld)).rejects.toThrow(PIN_ERROR(`${name} ${older}`));
     const nestedFloor = await expo58({}, {}, { [name]: older });
     await expect(readExpoProject(nestedFloor)).resolves.toMatchObject({ sdkVersion: 58 });
+  });
+
+  it.each(["expo-file-system", "expo-font"] as const)("gates the %s copy the app lists on SDK 58", async (name) => {
+    // The app's own dependency is autolinking's shallowest (depth 0): its top-level copy is linked, not expo's nested one.
+    const floor = EXPO58_PINS[name];
+    const older = twoBelow(floor);
+    const topBelow = await expo58({}, {}, { [name]: older });
+    await addToPackageJson(topBelow, { [name]: `~${floor}` });
+    await expect(readExpoProject(topBelow)).rejects.toThrow(PIN_ERROR(`${name} ${older}`));
+    const topFloor = await expo58({ [name]: older }, {}, { [name]: floor });
+    await addToPackageJson(topFloor, { [name]: `~${floor}` }, "devDependencies");
+    expect(expoPackageDir(topFloor, name)).toBe(path.join(topFloor, "node_modules", name));
+    await expect(readExpoProject(topFloor)).resolves.toMatchObject({ sdkVersion: 58 });
+  });
+
+  it.each(["expo-file-system", "expo-font"] as const)("gates the top-level %s another app dependency reaches", async (name) => {
+    // A package the app lists that depends on it reaches the top-level copy at expo's depth; the shorter path wins the tie.
+    const floor = EXPO58_PINS[name];
+    const older = twoBelow(floor);
+    const icons = (dir: string) => path.join(dir, "node_modules", "@expo", "vector-icons");
+    const viaPeer = await expo58({}, {}, { [name]: older });
+    await addToPackageJson(icons(viaPeer), { [name]: "*" }, "peerDependencies");
+    await addToPackageJson(viaPeer, { "@expo/vector-icons": "^15.0.0" });
+    await expect(readExpoProject(viaPeer)).rejects.toThrow(PIN_ERROR(`${name} ${older}`));
+    // An optional peer is not followed, so expo's nested copy (at the floor) stays the linked one.
+    await addToPackageJson(icons(viaPeer), { [name]: { optional: true } }, "peerDependenciesMeta");
+    await expect(readExpoProject(viaPeer)).resolves.toMatchObject({ sdkVersion: 58 });
   });
 
   it("refuses a nested expo-modules-jsi on SDK 58", async () => {

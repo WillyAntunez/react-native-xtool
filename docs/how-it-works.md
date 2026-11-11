@@ -183,8 +183,9 @@ still prints their layout.
 Expo SDK 58 builds with its installed SwiftPM plugin and the four bundled patches above. Its verified set is a
 floor, not an exact list: expo 58.0.21, react-native 0.88.1, expo-modules-core 58.0.28, expo-modules-jsi 58.0.21,
 expo-modules-autolinking 58.0.16, expo-file-system 58.0.13 and expo-font 58.0.11. Each is read where the build
-resolves it (expo-file-system and expo-font under `expo`, where npm nests them). `doctor` and `build` check the set
-before anything is built:
+resolves it. For expo-file-system and expo-font that is the copy expo-modules-autolinking links, the one it reaches
+shallowest: the top-level copy when the app, or a package the app lists, depends on it, else the copy under `expo`,
+where npm nests them. `doctor` and `build` check the set before anything is built:
 
 - **G1, the floor.** A package older than the floor, or missing, stops the build. react-native stays exact (0.88.1),
   because Expo's precompiled modules are built against it. A newer 58.x of the other packages prints a warning and

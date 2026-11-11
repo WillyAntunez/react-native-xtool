@@ -55,8 +55,8 @@ function packageDirFrom(from: string, pkg: string): string | undefined {
 }
 
 /**
- * Where the build resolves a pinned Expo package: expo and react-native from the root; expo-modules-core,
- * expo-file-system and expo-font from expo (npm nests the last two under `expo/node_modules`); expo-modules-jsi from
+ * Where the build resolves a pinned Expo package: expo and react-native from the root; expo-modules-core from expo;
+ * expo-file-system and expo-font where autolinking links them (`linkedExpoDependencyDir`); expo-modules-jsi from
  * core; expo-modules-autolinking from the root and else from expo (npx's order).
  * The one copy of this chain: the gate and the JSI build use it.
  */
@@ -72,12 +72,41 @@ export function expoPackageDir(root: string, pkg: ExpoPinName): string | undefin
     case "expo-modules-autolinking":
       return packageDirFrom(root, pkg) ?? from("expo");
     case "expo-modules-core":
+      return from("expo");
     case "expo-file-system":
     case "expo-font":
-      return from("expo");
+      return linkedExpoDependencyDir(root, pkg, from("expo"));
     case "expo-modules-jsi":
       return from("expo-modules-core");
   }
+}
+
+/** The names a package.json makes autolinking follow: dependencies, non-optional peers, and at the root devDependencies. */
+function followedDependencies(pkg: Record<string, any> | undefined, isRoot: boolean): string[] {
+  const peers = Object.keys(pkg?.peerDependencies ?? {}).filter((name) => pkg?.peerDependenciesMeta?.[name]?.optional !== true);
+  return [
+    ...Object.keys(pkg?.dependencies ?? {}),
+    ...(isRoot ? Object.keys(pkg?.devDependencies ?? {}) : []),
+    ...peers,
+  ];
+}
+
+/**
+ * The copy of `pkg` (a dependency of expo) the expo-modules-autolinking CLI links, which keeps the copy it reaches
+ * shallowest in the dependency tree and, on a tie, the one with fewer `node_modules` in its path. Expo's copy
+ * (`viaExpo`) is reached at depth 1. The copy the root resolves wins over it when it differs and the app lists `pkg`
+ * itself (depth 0), or a package the app lists depends on `pkg` and resolves that same copy (depth 1, shorter path).
+ */
+function linkedExpoDependencyDir(root: string, pkg: ExpoPinName, viaExpo: string | undefined): string | undefined {
+  const top = packageDirFrom(root, pkg);
+  if (top === undefined || top === viaExpo) return viaExpo;
+  const appDeps = followedDependencies(packageJsonAt(root), true);
+  if (appDeps.includes(pkg)) return top;
+  const reached = appDeps.some((name) => {
+    const dir = packageDirFrom(root, name);
+    return dir !== undefined && followedDependencies(packageJsonAt(dir), false).includes(pkg) && packageDirFrom(dir, pkg) === top;
+  });
+  return reached ? top : viaExpo;
 }
 
 function packageJsonAt(dir: string | undefined): Record<string, any> | undefined {

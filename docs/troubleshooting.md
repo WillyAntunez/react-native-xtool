@@ -1415,7 +1415,8 @@ messages and the two hybrid ones at the end, and print the sixth and go on; the 
   react-native on another version."** The installed list names only the packages below the floor, on another
   SDK's release line, missing (`not installed`), or, for react-native, not 0.88.1. Each is read where the build
   resolves it: expo-modules-core from `expo`, expo-modules-jsi from expo-modules-core, expo-file-system and expo-font
-  from `expo` (npm nests them under `node_modules/expo`). The remedy follows the order of
+  where expo-modules-autolinking links them: the top-level copy when the app, or a package the app lists, depends on
+  it, else the copy under `node_modules/expo`, where npm nests them. The remedy follows the order of
   [Moving to the 58.0.21 set](#moving-to-the-58021-set), and adapts to the project:
   - When package.json lists expo-modules-core, expo-modules-jsi or expo-modules-autolinking, it starts with
     "Remove the expo-modules-jsi and expo-modules-autolinking pins (`npm uninstall expo-modules-jsi
