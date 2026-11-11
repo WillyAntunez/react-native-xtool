@@ -329,6 +329,20 @@ describe("Expo SDK 56", () => {
   it("names expo-font not installed when autolinking links no copy on SDK 56", async () => {
     const dir = await expo56({ "expo-font": null });
     await expect(readExpoProject(dir)).rejects.toThrow(PIN_ERROR("expo-font not installed"));
+    // Excluding a package that is not installed changes nothing: it is still missing.
+    await addToPackageJson(dir, { autolinking: { exclude: ["expo-font"] } }, "expo");
+    await expect(readExpoProject(dir)).rejects.toThrow(PIN_ERROR("expo-font not installed"));
+  });
+
+  it.each(["expo-file-system", "expo-font"] as const)("skips the %s pin expo.autolinking.exclude leaves unlinked on SDK 56", async (name) => {
+    // Installed but not linked: its precompiled framework is never embedded, so there is nothing to gate.
+    const older = twoBelow(EXPO56_PINS[name]!);
+    const dir = await expo56({ [name]: older });
+    await expect(readExpoProject(dir)).rejects.toThrow(PIN_ERROR(`${name} ${older}`));
+    await addToPackageJson(dir, { autolinking: { exclude: [name] } }, "expo");
+    const log = vi.fn();
+    await expect(readExpoProject(dir, { log })).resolves.toMatchObject({ sdkVersion: 56 });
+    expect(log).not.toHaveBeenCalled();
   });
 
   it.each(["expo-file-system", "expo-font"] as const)("gates the %s copy the app lists on SDK 56", async (name) => {
@@ -858,6 +872,22 @@ describe("Expo SDK 58 gate", () => {
       await addToPackageJson(icons(viaPeer), { [name]: { optional: true } }, "peerDependenciesMeta");
       await expect(readExpoProject(viaPeer)).resolves.toMatchObject({ sdkVersion: 58 });
     });
+  });
+
+  it.each(["expo-file-system", "expo-font"] as const)("skips the %s pin expo.autolinking.exclude leaves unlinked on SDK 58", async (name) => {
+    // Installed but not linked: its precompiled framework is never embedded, so there is nothing to gate.
+    const older = twoBelow(EXPO58_PINS[name]);
+    const dir = await expo58({ [name]: older });
+    await realAutolinkingCli(dir);
+    await expect(readExpoProject(dir)).rejects.toThrow(PIN_ERROR(`${name} ${older}`));
+    await addToPackageJson(dir, { autolinking: { exclude: [name] } }, "expo");
+    const log = vi.fn();
+    await expect(readExpoProject(dir, { log })).resolves.toMatchObject({ sdkVersion: 58 });
+    expect(log).not.toHaveBeenCalled();
+    const missing = await expo58({ [name]: null });
+    await realAutolinkingCli(missing);
+    await addToPackageJson(missing, { autolinking: { exclude: [name] } }, "expo");
+    await expect(readExpoProject(missing)).rejects.toThrow(PIN_ERROR(`${name} not installed`));
   });
 
   describe("a file:-linked local library with its own expo-font (D)", () => {

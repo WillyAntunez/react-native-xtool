@@ -200,12 +200,32 @@ function versionAt(dir: string | undefined): string | undefined {
 
 /**
  * The installed version of each package the SDK pins, read where the build resolves it (undefined: not installed, or
- * for expo-file-system and expo-font not linked by autolinking); `{}` when the SDK pins nothing.
+ * for expo-file-system and expo-font not linked by autolinking); `{}` when the SDK pins nothing. `unlinked`: the
+ * autolinked pins autolinking's CLI left out of its answer although a copy is installed (by `linkedExpoDependencyDir`'s
+ * rule), as `expo.autolinking.exclude` does. Such a module is not linked, so its precompiled framework is never
+ * embedded and the gate has nothing to check.
  */
-export function readExpoPins(root: string, sdk: number): Partial<Record<ExpoPinName, string | undefined>> {
+function readPins(
+  root: string,
+  sdk: number,
+): { pins: Partial<Record<ExpoPinName, string | undefined>>; unlinked: ReadonlySet<ExpoPinName> } {
   const names = Object.keys(expoPinsFor(sdk) ?? {}) as ExpoPinName[];
   const autolinked = names.some((name) => AUTOLINKED_PINS.includes(name)) ? autolinkedModuleDirs(root, sdk) : undefined;
-  return Object.fromEntries(names.map((name) => [name, versionAt(expoPackageDir(root, name, autolinked))]));
+  const pins = Object.fromEntries(names.map((name) => [name, versionAt(expoPackageDir(root, name, autolinked))]));
+  const unlinked = new Set<ExpoPinName>();
+  if (autolinked !== undefined) {
+    const expoDir = expoPackageDir(root, "expo");
+    for (const name of names.filter((n) => AUTOLINKED_PINS.includes(n) && !autolinked.has(n))) {
+      const viaExpo = expoDir === undefined ? undefined : packageDirFrom(expoDir, name);
+      if (versionAt(linkedExpoDependencyDir(root, name, viaExpo)) !== undefined) unlinked.add(name);
+    }
+  }
+  return { pins, unlinked };
+}
+
+/** {@link readPins}' versions: what the gate and the drift watch read. */
+export function readExpoPins(root: string, sdk: number): Partial<Record<ExpoPinName, string | undefined>> {
+  return readPins(root, sdk).pins;
 }
 
 /** The version of the expo installed at the root; undefined when expo is not installed. */
@@ -313,9 +333,20 @@ function floorRemedy(root: string, kind: ProjectKind, checks: PinCheck[], failed
   return `${unpin}, then run ${fix}; then ${rnStep}${why}.`;
 }
 
-/** G1: every pin installed, none below the floor or on another release line, and react-native exact. */
-function checkExpoPinVersions(root: string, sdk: number, checks: PinCheck[], kind: ProjectKind): void {
-  const failed = checks.filter((c) => c.status === "missing" || c.status === "off" || c.status === "below");
+/**
+ * G1: every pin installed, none below the floor or on another release line, and react-native exact. A pin in `unlinked`
+ * (installed, not linked) is not checked.
+ */
+function checkExpoPinVersions(
+  root: string,
+  sdk: number,
+  checks: PinCheck[],
+  kind: ProjectKind,
+  unlinked: ReadonlySet<ExpoPinName>,
+): void {
+  const failed = checks.filter(
+    (c) => !unlinked.has(c.name) && (c.status === "missing" || c.status === "off" || c.status === "below"),
+  );
   if (failed.length === 0) return;
   const rn = checks.find((c) => c.name === "react-native")!;
   const floors = andList(checks.filter((c) => c !== rn).map((c) => `${c.name} ${c.wanted}`));
@@ -352,7 +383,8 @@ function checkTopLevelJsi(root: string, checks: PinCheck[]): void {
 }
 
 /**
- * The gate on an SDK's pinned packages (no-op when the SDK pins nothing), each step throwing: G1 the pins, G2 one
+ * The gate on an SDK's pinned packages (no-op when the SDK pins nothing), each step throwing: G1 the pins (but
+ * expo-file-system or expo-font when installed and not linked, see {@link readPins}), G2 one
  * expo-modules-jsi (the top-level copy), G3 the macros Linux binary (of the copy the Expo plugin uses: core's, else,
  * for the vendored plugin, rn-xtool's). Then the packages newer than the verified set are reported through `log`.
  * `kind` "bare" (a hybrid app) changes only G1's react-native remedy.
@@ -363,9 +395,10 @@ export function checkExpoPackages(
   log?: (line: string) => void,
   opts: { kind?: ProjectKind } = {},
 ): void {
-  const checks = checkPins(sdk, readExpoPins(root, sdk));
+  const { pins, unlinked } = readPins(root, sdk);
+  const checks = checkPins(sdk, pins);
   if (checks === undefined) return;
-  checkExpoPinVersions(root, sdk, checks, opts.kind ?? "expo");
+  checkExpoPinVersions(root, sdk, checks, opts.kind ?? "expo", unlinked);
   checkTopLevelJsi(root, checks);
   const pluginDir = expoPluginFor(sdk) === "vendored" ? path.dirname(vendoredExpoPlugin()) : undefined;
   const macros = expoMacrosBinaryError({ root, pluginDir });

@@ -1413,12 +1413,14 @@ messages and the two hybrid ones at the end, and print the sixth and go on; the 
   <version>, .... Remove any pin or override on these packages from package.json, then run
   `npx expo install --fix`; then run `npx expo install react-native@0.88.1`, since `--fix` alone can leave
   react-native on another version."** The installed list names only the packages below the floor, on another
-  SDK's release line, missing (`not installed`; for expo-file-system and expo-font, also when autolinking links no
-  copy, as when `expo.autolinking.exclude` lists it), or, for react-native, not 0.88.1. Each is read where the build
+  SDK's release line, missing (`not installed`), or, for react-native, not 0.88.1. Each is read where the build
   resolves it: expo-modules-core from `expo`, expo-modules-jsi from expo-modules-core, expo-file-system and expo-font
   where expo-modules-autolinking links them, as its own CLI answers (`resolve --platform apple --json`, the question
-  the Expo plugin asks). When that CLI cannot run, the check takes the top-level copy when the app, or a package the
-  app lists, depends on it, else the copy under `node_modules/expo`, where npm nests them. The remedy follows the
+  the Expo plugin asks). When autolinking links no copy of expo-file-system or expo-font but one is installed (as
+  when `expo.autolinking.exclude` lists it), the build never embeds its precompiled framework, so the check skips
+  it; with no copy installed it is `not installed`. When that CLI cannot run, the check takes the
+  top-level copy when the app, or a package the app lists, depends on it, else the copy under `node_modules/expo`,
+  where npm nests them (an exclusion is not read then). The remedy follows the
   order of [Moving to the 58.0.21 set](#moving-to-the-58021-set), and adapts to the project:
   - When package.json lists expo-modules-core, expo-modules-jsi or expo-modules-autolinking, it starts with
     "Remove the expo-modules-jsi and expo-modules-autolinking pins (`npm uninstall expo-modules-jsi

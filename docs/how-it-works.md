@@ -186,9 +186,11 @@ expo-modules-autolinking 58.0.16, expo-file-system 58.0.13 and expo-font 58.0.11
 resolves it. For expo-file-system and expo-font that is the copy expo-modules-autolinking links: the check asks the
 same autolinking CLI the Expo plugin runs (`resolve --platform apple --json`, from the project root), so autolinking's
 own choice decides, with the app's `expo.autolinking` settings in package.json. A package autolinking does not link
-counts as missing. When that CLI cannot run, the check falls back to a two-copy rule (the top-level copy when the
-app, or a package the app lists, depends on it, else the copy under `expo`, where npm nests them), and the build's
-own autolinking step reports the failure. `doctor` and `build` check the set before anything is built:
+is not checked when a copy is installed, as when `expo.autolinking.exclude` lists it: the build never embeds its
+precompiled framework. One that is neither linked nor installed counts as missing. When that CLI cannot run, the
+check falls back to a two-copy rule (the top-level copy when the app, or a package the app lists, depends on it, else
+the copy under `expo`, where npm nests them), and the build's own autolinking step reports the failure. `doctor` and
+`build` check the set before anything is built:
 
 - **G1, the floor.** A package older than the floor, or missing, stops the build. react-native stays exact (0.88.1),
   because Expo's precompiled modules are built against it. A newer 58.x of the other packages prints a warning and
