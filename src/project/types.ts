@@ -20,7 +20,7 @@ export interface ProjectInfo {
   rnVersion: string;
   /** Where the SwiftPM scripts come from: the installed react-native, or the copy vendored in rn-xtool. */
   rnScripts: RnScripts;
-  /** Which Expo SwiftPM plugin builds the Expo modules: the installed expo's (SDK 58+, bare) or rn-xtool's vendored copy (SDK 57). */
+  /** Which Expo SwiftPM plugin builds the Expo modules: the installed expo's (SDK 58+, bare) or rn-xtool's vendored copy (SDK 56 and 57). */
   expoPlugin: ExpoPlugin;
   sdkVersion?: number;
   hasExpoModules: boolean;

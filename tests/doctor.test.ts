@@ -1035,9 +1035,10 @@ describe("doctor --project", () => {
   it.each<[string, string, Capabilities, string, string]>([
     ["versions", "Expo 58", expo(58, "58.0.21", "0.88.1"), "ok", "Expo SDK 58: expo 58.0.21 (verified 58.0.21), react-native 0.88.1 (verified 0.88.1)"],
     ["versions", "Expo 57", expo(57, "57.0.31", "0.86.3"), "ok", "Expo SDK 57: expo 57.0.31 (verified 57.0.31), react-native 0.86.3 (verified 0.86.3)"],
+    ["versions", "Expo 56", expo(56, "56.0.24", "0.85.3"), "ok", "Expo SDK 56: expo 56.0.24 (verified 56.0.24), react-native 0.85.3 (verified 0.85.3)"],
     ["versions", "Expo 59", expo(59, "59.0.0", "0.89.0"), "info", "Expo SDK 59: no verified set in this release; the installed plugin builds it, gated by G4 only"],
     ["versions", "Expo without react-native", expo(58, "58.0.21"), "fail", "react-native is not installed: run npm install"],
-    ["versions", "Expo 56", { ...expo(56, "56.0.0", "0.85.2"), expoPlugin: "none" }, "fail", "Expo SDK 56: expo ships no SwiftPM plugin; React Native 0.85: no SwiftPM scripts; support comes with the translator"],
+    ["versions", "Expo 55", { ...expo(55, "55.0.0", "0.83.2"), expoPlugin: "none" }, "fail", "Expo SDK 55: expo ships no SwiftPM plugin; React Native 0.83: no SwiftPM scripts; support comes with the translator"],
     ["versions", "bare 0.88.1", bare("0.88.1"), "ok", "React Native 0.88.1: the 0.88 line (0.88.0 or newer), verified 0.88.0 and 0.88.1"],
     ["versions", "bare 0.87.1", bare("0.87.1"), "ok", "React Native 0.87.1: the 0.87 line (0.87.1 or newer), verified 0.87.1"],
     ["versions", "bare 0.86.4 (newer)", bare("0.86.4"), "ok", "React Native 0.86.4: the 0.86 line (0.86.2 or newer), verified 0.86.2 and 0.86.3"],

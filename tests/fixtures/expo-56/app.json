@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "Expo56",
+    "slug": "Expo56",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "icon": "./assets/expo.icon",
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.expo56"
+    }
+  }
+}

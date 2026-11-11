@@ -1,0 +1,10 @@
+{
+  "name": "expo56",
+  "version": "1.0.0",
+  "main": "expo-router/entry",
+  "dependencies": {
+    "expo": "~56.0.24",
+    "react-native": "0.85.3"
+  },
+  "private": true
+}

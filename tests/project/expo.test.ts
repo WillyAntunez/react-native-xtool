@@ -7,6 +7,8 @@ import { buildVars, defaultBundleIdentifier, MissingBundleIdentifierError, readE
 import { VersionGateError } from "../../src/project/detect.js";
 import { expoIconPath, expoMacrosBinaryError, expoPackageDir, readExpoPins } from "../../src/project/expo.js";
 import { checkPins, expoPinPolicyFor, expoPinsFor, expoPluginFor } from "../../src/versions.js";
+import { vendoredExpoPlugin } from "../../src/pipeline/rnSpm.js";
+import { EXPO56_PINS, fakeExpo56Modules } from "../support/expo56.js";
 import { EXPO57_PINS, fakeExpo57Modules } from "../support/expo57.js";
 import { EXPO58_PINS, fakeExpo58Modules } from "../support/expo58.js";
 import { EXPO_SKIP_NOTE, loadSpm, shared58Spm, vendoredSpm, type Plugin } from "../support/expoSpm.js";
@@ -78,13 +80,14 @@ describe("readExpoProject", () => {
     expect((await readExpoProject(dir)).iosTargetName).toBe("MiAppNandu2");
   });
 
-  it.each([56, 55, 54])("rejects SDK %i", async (sdk) => {
+  it.each([55, 54])("rejects SDK %i", async (sdk) => {
     const dir = await tempProject((_app, pkg) => {
       pkg.dependencies.expo = `~${sdk}.0.0`;
     }, false);
     await expect(readExpoProject(dir)).rejects.toThrow(
       new Error(
-        `Expo SDK ${sdk} is not supported; rn-xtool supports SDK 57 (expo 57.0.31 or newer 57.x) and SDK 58 or newer.`,
+        `Expo SDK ${sdk} is not supported; rn-xtool supports SDK 56 (expo 56.0.24 or newer 56.x), SDK 57 (expo 57.0.31 ` +
+          "or newer 57.x) and SDK 58 or newer.",
       ),
     );
   });
@@ -210,6 +213,139 @@ describe("readExpoProject", () => {
   });
 });
 
+describe("Expo SDK 56", () => {
+  const PREFIX =
+    "Expo SDK 56 needs react-native 0.85.3 and at least expo 56.0.24, expo-modules-core 56.0.27, expo-modules-jsi " +
+    "56.0.14, expo-modules-autolinking 56.0.24, expo-file-system 56.0.11 and expo-font 56.0.7; installed: ";
+  const FIX_REMEDY =
+    "Remove any pin or override on these packages from package.json, then run `npx expo install --fix`; then run " +
+    "`npx expo install react-native@0.85.3`, since `--fix` alone can leave react-native on another version.";
+  const EXPO_REMEDY =
+    "Remove any pin or override on these packages from package.json, then run `npx expo install expo@~56.0.24` and " +
+    "`npx expo install --fix`; then run `npx expo install react-native@0.85.3`, since `--fix` alone can leave " +
+    "react-native on another version.";
+  const RN_REMEDY = "Run `npx expo install react-native@0.85.3`.";
+  const PIN_ERROR = (list: string, remedy = FIX_REMEDY, tail = "") =>
+    new VersionGateError(`${PREFIX}${list}. ${remedy}${tail}`);
+
+  async function expo56(
+    overrides?: Parameters<typeof fakeExpo56Modules>[1],
+    nested?: Parameters<typeof fakeExpo56Modules>[2],
+  ): Promise<string> {
+    const dir = await mkdtemp(path.join(tmpdir(), "rn-xtool-expo56-"));
+    tempDirs.push(dir);
+    await cp(path.join(fixtures, "expo-56"), dir, { recursive: true });
+    await fakeExpo56Modules(dir, overrides, nested);
+    return dir;
+  }
+
+  it("has the SDK 56 pins in the supported table", () => {
+    expect(expoPinsFor(56)).toEqual(EXPO56_PINS);
+    expect(Object.keys(expoPinsFor(56)!)).toEqual(Object.keys(EXPO56_PINS));
+    expect(expoPinPolicyFor(56)).toBe("floor");
+  });
+
+  it("accepts the SDK 56 floor set", async () => {
+    const dir = await expo56();
+    const log = vi.fn();
+    const p = await readExpoProject(dir, { log });
+    expect(p).toMatchObject({ sdkVersion: 56, rnVersion: "0.85.3", rnScripts: "vendored", expoPlugin: "vendored" });
+    expect(p.iosTargetDir).toBe(path.join(dir, "ios", "Expo56"));
+    expect(readExpoPins(dir, 56)).toEqual(EXPO56_PINS);
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["expo", "56.0.23"],
+    ["expo-modules-core", "56.0.26"],
+    ["expo-modules-jsi", "56.0.13"],
+    ["expo-modules-autolinking", "56.0.23"],
+    ["expo-file-system", "56.0.10"],
+    ["expo-font", "56.0.6"],
+  ])("names each SDK 56 pin below the floor: %s %s", async (name, version) => {
+    const dir = await expo56({ [name]: version });
+    const err = (await readExpoProject(dir).catch((e: unknown) => e)) as Error;
+    expect(err).toBeInstanceOf(VersionGateError);
+    expect(err.message.startsWith(`${PREFIX}${name} ${version}. `)).toBe(true);
+    expect(err).toEqual(PIN_ERROR(`${name} ${version}`, name === "expo" ? EXPO_REMEDY : FIX_REMEDY));
+  });
+
+  it("refuses react-native other than 0.85.3", async () => {
+    const older = await expo56({ "react-native": "0.85.2" });
+    await expect(readExpoProject(older)).rejects.toThrow(PIN_ERROR("react-native 0.85.2", RN_REMEDY));
+    const newer = await expo56({ "react-native": "0.85.4" });
+    await expect(readExpoProject(newer)).rejects.toThrow(
+      PIN_ERROR(
+        "react-native 0.85.4",
+        RN_REMEDY,
+        " React Native 0.85.4 is newer than this rn-xtool release supports: pin react-native to 0.85.3, or update rn-xtool.",
+      ),
+    );
+  });
+
+  it("warns and continues on a newer 56.x", async () => {
+    const dir = await expo56({ expo: "56.0.25", "expo-modules-jsi": "56.0.15" });
+    const log = vi.fn();
+    await expect(readExpoProject(dir, { log })).resolves.toMatchObject({ sdkVersion: 56, expoPlugin: "vendored" });
+    expect(log.mock.calls).toEqual([
+      [
+        "⚠ Newer than the Expo SDK 56 set this rn-xtool release was verified with: expo 56.0.25, expo-modules-jsi " +
+          "56.0.15. Verified: expo 56.0.24, react-native 0.85.3, expo-modules-core 56.0.27, expo-modules-jsi 56.0.14, " +
+          "expo-modules-autolinking 56.0.24, expo-file-system 56.0.11 and expo-font 56.0.7. The build continues; if it " +
+          "fails or the app crashes at launch, report it at https://github.com/WillyAntunez/react-native-xtool/issues.",
+      ],
+    ]);
+  });
+
+  it("refuses a package of another SDK's line on SDK 56", async () => {
+    const dir = await expo56({ "expo-modules-jsi": "57.1.3" });
+    const log = vi.fn();
+    await expect(readExpoProject(dir, { log })).rejects.toThrow(PIN_ERROR("expo-modules-jsi 57.1.3"));
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it("reads expo-file-system and expo-font where expo resolves them on SDK 56", async () => {
+    // SDK 56 hoists both; the default set is the hoisted one.
+    const hoisted = await expo56();
+    expect(expoPackageDir(hoisted, "expo-font")).toBe(path.join(hoisted, "node_modules", "expo-font"));
+    expect(expoPackageDir(hoisted, "expo-file-system")).toBe(path.join(hoisted, "node_modules", "expo-file-system"));
+    await expect(readExpoProject(hoisted)).resolves.toMatchObject({ sdkVersion: 56 });
+    // A copy nested under expo is the one the build resolves, not the hoisted stray next to it.
+    const nested = await expo56({}, { "expo-font": "56.0.6" });
+    expect(expoPackageDir(nested, "expo-font")).toBe(path.join(nested, "node_modules", "expo", "node_modules", "expo-font"));
+    await expect(readExpoProject(nested)).rejects.toThrow(PIN_ERROR("expo-font 56.0.6"));
+  });
+
+  it("refuses a nested expo-modules-jsi on SDK 56", async () => {
+    const dir = await expo56({ "expo-modules-jsi": "57.1.3" }, { "expo-modules-jsi": "56.0.14" });
+    const err = (await readExpoProject(dir).catch((e: unknown) => e)) as Error;
+    expect(err).toBeInstanceOf(Error);
+    expect(
+      err.message.startsWith(
+        "expo-modules-jsi 56.0.14 resolves from node_modules/expo-modules-core/node_modules/expo-modules-jsi, not from " +
+          "the project's top-level node_modules",
+      ),
+    ).toBe(true);
+  });
+
+  it("checks the expo-modules-macros copy the vendored plugin finds on SDK 56", async () => {
+    // expo-modules-core 56.0.27 depends on the macOS-only @expo/expo-modules-macros-plugin, so G3 checks rn-xtool's copy.
+    const root = await expo56();
+    expect(
+      expoMacrosBinaryError({
+        root,
+        pluginDir: path.dirname(vendoredExpoPlugin()),
+        arch: "riscv64",
+        resolve: () => {
+          throw new Error("x");
+        },
+      }),
+    ).toBe(
+      "expo-modules-macros 0.22.0 has no Linux binary for riscv64 (@expo/modules-macros-linux-riscv64); reinstall react-native-xtool without --omit=optional.",
+    );
+  });
+});
+
 describe("Expo SDK 57", () => {
   const PREFIX =
     "Expo SDK 57 needs react-native 0.86.3 and at least expo 57.0.31, expo-modules-core 57.0.24, " +
@@ -236,8 +372,8 @@ describe("Expo SDK 57", () => {
 
   it("has the SDK 57 pins and plugin in the supported table", () => {
     expect(expoPinsFor(57)).toEqual(EXPO57_PINS);
-    expect([expoPluginFor(56), expoPluginFor(57), expoPluginFor(58), expoPluginFor(59)]).toEqual([
-      undefined, "vendored", "installed", "installed",
+    expect([expoPluginFor(55), expoPluginFor(56), expoPluginFor(57), expoPluginFor(58), expoPluginFor(59)]).toEqual([
+      undefined, "vendored", "vendored", "installed", "installed",
     ]);
   });
 
@@ -406,7 +542,7 @@ describe("Expo SDK 58 floor model", () => {
   it("SDK 58 pins the 58.0.21 set as a floor", () => {
     expect(expoPinsFor(58)).toEqual(EXPO58_PINS);
     expect(Object.keys(expoPinsFor(58)!)).toEqual(Object.keys(EXPO58_PINS));
-    expect([56, 57, 58, 59].map(expoPinPolicyFor)).toEqual([undefined, "floor", "floor", undefined]);
+    expect([55, 56, 57, 58, 59].map(expoPinPolicyFor)).toEqual([undefined, "floor", "floor", "floor", undefined]);
     expect(expoPinsFor(59)).toBeUndefined();
   });
 

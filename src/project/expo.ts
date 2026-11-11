@@ -11,6 +11,7 @@ import {
   compareVersions,
   expoPinsFor,
   expoPluginFor,
+  supportedExpoList,
   type ExpoPinName,
   type PinCheck,
 } from "../versions.js";
@@ -115,9 +116,9 @@ export function installedExpoMajor(root: string): number | undefined {
 /**
  * The error when expo-modules-macros has no Linux binary for the host (an `--omit=optional` install or another arch).
  * The copy is the one the Expo plugin uses (macroPluginTool in its plugin.js): the one the project's expo-modules-core
- * resolves (`root`), which must be installed on SDK 58; with `pluginDir` (SDK 57's vendored plugin, whose core depends
- * on @expo/expo-modules-macros-plugin instead) the plugin falls back to the copy its own directory resolves,
- * rn-xtool's. Without `root`: rn-xtool's own copy. `resolve` replaces only the binary lookup.
+ * resolves (`root`), which must be installed on SDK 58; with `pluginDir` (the vendored plugin of SDK 56 and 57, whose
+ * core depends on @expo/expo-modules-macros-plugin instead) the plugin falls back to the copy its own directory
+ * resolves, rn-xtool's. Without `root`: rn-xtool's own copy. `resolve` replaces only the binary lookup.
  */
 export function expoMacrosBinaryError(
   opts: { arch?: string; resolve?: (spec: string) => string; root?: string; pluginDir?: string } = {},
@@ -376,10 +377,7 @@ export async function readExpoProject(root: string, opts: ReadProjectOptions = {
   }
   const expoPlugin = expoPluginFor(sdkVersion);
   if (expoPlugin === undefined) {
-    throw new Error(
-      `Expo SDK ${sdkVersion} is not supported; rn-xtool supports SDK 57 (expo ${expoPinsFor(57)!.expo} or newer 57.x) ` +
-        "and SDK 58 or newer.",
-    );
+    throw new Error(`Expo SDK ${sdkVersion} is not supported; rn-xtool supports ${supportedExpoList()}.`);
   }
   checkExpoPackages(root, sdkVersion, opts.log);
   const bundleIdentifier = await resolveBundleIdentifier(root, config, opts);
@@ -398,7 +396,7 @@ export async function readExpoProject(root: string, opts: ReadProjectOptions = {
     infoPlistPath: path.join(root, "ios", iosTargetName, "Info.plist"),
     moduleName: "main",
     rnVersion: await installedRnVersion(root),
-    // SDK 57's React Native (0.86.3) has no usable SwiftPM scripts: rn-xtool vendors them with the plugin.
+    // The React Native of the vendored plugin's SDKs (56, 57) has no usable SwiftPM scripts: rn-xtool vendors them too.
     rnScripts: expoPlugin === "vendored" ? "vendored" : "installed",
     expoPlugin,
     hasExpoModules: true,

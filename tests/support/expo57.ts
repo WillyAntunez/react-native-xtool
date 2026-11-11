@@ -1,5 +1,6 @@
 /**
- * Fake `node_modules` for an Expo SDK 57 project: one `package.json` per pinned package, nothing else.
+ * Fake `node_modules` for an Expo SDK 57 project (and, through `fakeExpoModules`, any set laid out the same way): one
+ * `package.json` per pinned package, nothing else.
  * Only the layout matters; the readers resolve each package and read its version.
  */
 import { mkdir, writeFile } from "node:fs/promises";
@@ -32,19 +33,30 @@ async function writePackage(dir: string, name: string, version: string): Promise
 }
 
 /**
- * Writes `<dir>/node_modules/<pkg>/package.json` for every pin. `overrides` changes a version (`null` omits the
- * package); `nested` adds a copy under its resolver's `node_modules` (core and autolinking under `expo`, jsi under core).
+ * Writes `<dir>/node_modules/<pkg>/package.json` for every one of `pins` (all at the top level, as npm hoists them).
+ * `overrides` changes a version (`null` omits the package); `nested` adds a copy under its resolver's `node_modules`
+ * (core, autolinking, file-system and font under `expo`, jsi under core).
  */
-export async function fakeExpo57Modules(
+export async function fakeExpoModules(
   dir: string,
+  pins: Partial<Record<ExpoPinName, string>>,
   overrides: Partial<Record<ExpoPinName, string | null>> = {},
   nested: Partial<Record<ExpoPinName, string>> = {},
 ): Promise<void> {
-  for (const [name, pinned] of Object.entries(EXPO57_PINS) as [ExpoPinName, string][]) {
+  for (const [name, pinned] of Object.entries(pins) as [ExpoPinName, string][]) {
     const version = Object.hasOwn(overrides, name) ? overrides[name] : pinned;
     if (version !== null && version !== undefined) await writePackage(path.join(dir, "node_modules", name), name, version);
   }
   for (const [name, version] of Object.entries(nested) as [ExpoPinName, string][]) {
     await writePackage(path.join(dir, RESOLVER[name], "node_modules", name), name, version);
   }
+}
+
+/** `fakeExpoModules` on the SDK 57 set. */
+export async function fakeExpo57Modules(
+  dir: string,
+  overrides: Partial<Record<ExpoPinName, string | null>> = {},
+  nested: Partial<Record<ExpoPinName, string>> = {},
+): Promise<void> {
+  await fakeExpoModules(dir, EXPO57_PINS, overrides, nested);
 }

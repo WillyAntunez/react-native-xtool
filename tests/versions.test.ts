@@ -13,11 +13,13 @@ import {
   rnLineStatus,
   type BareLine,
   SUPPORTED_LINES,
+  supportedExpoList,
   supportedRnList,
   XTOOL_SHA256,
   XTOOL_VERSION,
 } from "../src/versions.js";
 import { GSA_503_FIXED_IN_XTOOL } from "../src/tools/xtoolErrors.js";
+import { EXPO56_PINS } from "./support/expo56.js";
 import { EXPO57_PINS } from "./support/expo57.js";
 import { EXPO58_PINS } from "./support/expo58.js";
 
@@ -37,8 +39,21 @@ describe("xtool pin", () => {
 
 describe("supported lines", () => {
   it("holds every supported line in one table", () => {
-    expect(SUPPORTED_LINES.map(lineId)).toEqual(["expo-57", "expo-58", "bare-0.85", "bare-0.86", "bare-0.87", "bare-0.88"]);
+    expect(SUPPORTED_LINES.map(lineId)).toEqual([
+      "expo-56", "expo-57", "expo-58", "bare-0.85", "bare-0.86", "bare-0.87", "bare-0.88",
+    ]);
     expect(SUPPORTED_LINES).toEqual([
+      {
+        kind: "expo",
+        sdk: 56,
+        plugin: "vendored",
+        policy: "floor",
+        scripts: "vendored",
+        artifacts: "adapted",
+        pins: EXPO56_PINS,
+        templates: ["default"],
+        createExpo: "5.1.5",
+      },
       {
         kind: "expo",
         sdk: 57,
@@ -99,6 +114,7 @@ describe("supported lines", () => {
       },
     ]);
     const pinsOf = (sdk: number) => SUPPORTED_LINES.find((l) => l.kind === "expo" && l.sdk === sdk);
+    expect(Object.keys((pinsOf(56) as { pins: object }).pins)).toEqual(Object.keys(EXPO56_PINS));
     expect(Object.keys((pinsOf(57) as { pins: object }).pins)).toEqual(Object.keys(EXPO57_PINS));
     expect(Object.keys((pinsOf(58) as { pins: object }).pins)).toEqual(Object.keys(EXPO58_PINS));
   });
@@ -135,15 +151,21 @@ describe("supported lines", () => {
     // create-expo-app@latest resolved to create-expo 5.1.5 on 2026-10-23 (local npx cache); create-expo-app 5.0.0 is
     // only `require('create-expo')` with the range ">=5.0.1", so the pin is on create-expo itself.
     const pins = Object.fromEntries(SUPPORTED_LINES.flatMap((l) => (l.kind === "expo" ? [[l.sdk, l.createExpo]] : [])));
-    expect(pins).toStrictEqual({ 57: "5.1.5", 58: "5.1.5" });
+    expect(pins).toStrictEqual({ 56: "5.1.5", 57: "5.1.5", 58: "5.1.5" });
   });
 
   it("reads today's answers from the table", () => {
-    expect([56, 57, 58, 59].map(expoPluginFor)).toEqual([undefined, "vendored", "installed", "installed"]);
-    expect([56, 57, 58, 59].map(expoPinPolicyFor)).toEqual([undefined, "floor", "floor", undefined]);
+    expect([55, 56, 57, 58, 59].map(expoPluginFor)).toEqual([undefined, "vendored", "vendored", "installed", "installed"]);
+    expect([55, 56, 57, 58, 59].map(expoPinPolicyFor)).toEqual([undefined, "floor", "floor", "floor", undefined]);
     expect(expoPinsFor(59)).toBeUndefined();
     expect(supportedRnList()).toBe(
       "0.85.x from 0.85.0, 0.86.x from 0.86.2, 0.87.x from 0.87.1 and 0.88.x from 0.88.0",
+    );
+  });
+
+  it("lists the supported Expo SDKs from the table", () => {
+    expect(supportedExpoList()).toBe(
+      "SDK 56 (expo 56.0.24 or newer 56.x), SDK 57 (expo 57.0.31 or newer 57.x) and SDK 58 or newer",
     );
   });
 

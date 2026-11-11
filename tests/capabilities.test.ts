@@ -1003,8 +1003,8 @@ describe("unsupportedReason", () => {
     expect(await reason(await bare("0.88.0-rc.1", "0.88"))).toBe(
       "React Native 0.88.0-rc.1: a prerelease; rn-xtool supports releases of the 0.88 line from 0.88.0",
     );
-    expect(await reason(await expoOther("56.0.4", "0.85.2"))).toBe(
-      "Expo SDK 56: expo ships no SwiftPM plugin; React Native 0.85: no SwiftPM scripts; support comes with the translator",
+    expect(await reason(await expoOther("55.0.4", "0.83.2"))).toBe(
+      "Expo SDK 55: expo ships no SwiftPM plugin; React Native 0.83: no SwiftPM scripts; support comes with the translator",
     );
     expect(await reason(await bare(null), noNetwork)).toBe("react-native is not installed: run npm install");
   });
@@ -1027,11 +1027,11 @@ describe("unsupportedReason", () => {
     expect(unsupportedReason(c)).toBe("expo is not installed: run npm install");
   });
 
-  it("says when an Expo SDK below 57 ships the plugin", async () => {
-    const dir = await expoOther("56.0.4", "0.85.2");
+  it("says when an Expo SDK below 56 ships the plugin", async () => {
+    const dir = await expoOther("55.0.4", "0.83.2");
     await writeFile(path.join(dir, "node_modules", "expo", "react-native.config.js"), "module.exports = { autolinkingPlugin: './p.js' };\n");
     expect(await reason(dir)).toBe(
-      "Expo SDK 56: expo ships its SwiftPM plugin; React Native 0.85: no SwiftPM scripts; support comes with the translator",
+      "Expo SDK 55: expo ships its SwiftPM plugin; React Native 0.83: no SwiftPM scripts; support comes with the translator",
     );
   });
 
@@ -1039,6 +1039,7 @@ describe("unsupportedReason", () => {
     expect(await reason(await bare("0.88.2", "0.88"))).toBeUndefined();
     expect(await reason(await bare("0.85.0", "none"))).toBeUndefined();
     expect(await reason(await bare("0.85.4", "none"))).toBeUndefined();
+    expect(await reason(await expoOther("56.0.24", "0.85.3"))).toBeUndefined();
     expect(await reason(await expo57())).toBeUndefined();
     expect(await reason(await expo58())).toBeUndefined();
     const sdk59 = await tempDir("rn-xtool-caps-expo59-");

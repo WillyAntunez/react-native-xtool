@@ -71,7 +71,7 @@ export function vendoredScriptsRoot(): string {
   return path.join(packageRoot(), "vendor", "rn-spm");
 }
 
-/** Expo 58's SwiftPM plugin, vendored for SDK 57 (whose `expo` ships none); E5 loads it as `expo`'s. */
+/** Expo 58's SwiftPM plugin, vendored for SDK 56 and 57 (whose `expo` ships none); E5 loads it as `expo`'s. */
 export function vendoredExpoPlugin(): string {
   return path.join(packageRoot(), "vendor", "expo-spm", "spm", "plugin.js");
 }
