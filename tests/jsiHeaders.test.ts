@@ -11,7 +11,14 @@ import {
   jsiObjectsDir,
   writeJsiHeadersXcframework,
 } from "../src/pipeline/jsiHeaders.js";
-import { FAKE_NATIVE_STATE, FAKE_SWIFT_HEADER, FAKE_SWIFT_INTERFACE, makeFakeJsiBuild } from "./support/fakeJsiBuild.js";
+import {
+  FAKE_NATIVE_STATE,
+  FAKE_NATIVE_STATE_FLAT,
+  FAKE_RETAINED_POINTER,
+  FAKE_SWIFT_HEADER,
+  FAKE_SWIFT_INTERFACE,
+  makeFakeJsiBuild,
+} from "./support/fakeJsiBuild.js";
 
 const tmp: string[] = [];
 const mkTmp = () => {
@@ -29,17 +36,41 @@ function listFiles(dir: string, rel = ""): string[] {
     .sort();
 }
 
-/** A fake build plus a precompiled root, and the synthesis inputs for them. */
-function setup(jsiVersion = "57.1.3") {
+/** A fake build (in jsi 57's header layout unless `layout` says otherwise) plus a precompiled root, and the synthesis inputs for them. */
+function setup(jsiVersion = "57.1.3", layout: "public" | "flat" = "public") {
   const dir = mkTmp();
-  const { objectsDir, jsiDir } = makeFakeJsiBuild(dir);
+  const { objectsDir, jsiDir } = makeFakeJsiBuild(dir, { layout });
+  const include = path.join(jsiDir, "apple", "Sources", "ExpoModulesJSI-Cxx", "include");
   const precompiledRoot = path.join(dir, "ios", "build", "expo-precompiled");
   const xcframework = path.join(precompiledRoot, "expo-modules-jsi", "output", "headers", "xcframeworks", "ExpoModulesJSIHeaders.xcframework");
   const stamp = path.join(precompiledRoot, "expo-modules-jsi", "output", "headers", ".rn-xtool-jsi-headers.json");
-  return { dir, objectsDir, jsiDir, precompiledRoot, xcframework, stamp, input: { objectsDir, jsiDir, jsiVersion, precompiledRoot } };
+  return { dir, objectsDir, jsiDir, include, precompiledRoot, xcframework, stamp, input: { objectsDir, jsiDir, jsiVersion, precompiledRoot } };
 }
 
 const SLICES = ["ios-arm64", "ios-arm64_x86_64-simulator"];
+
+/** The files of 58's tarball layout. */
+const LAYOUT_58 = [
+  "Info.plist",
+  "expo-package.json",
+  "ios-arm64/ExpoModulesJSI.swiftmodule/arm64-apple-ios.swiftinterface",
+  "ios-arm64/Headers/ExpoModulesJSI/ExpoModulesJSI-Swift.h",
+  "ios-arm64/Headers/ExpoModulesJSI/NativeState.h",
+  "ios-arm64/Headers/ExpoModulesJSI/module.modulemap",
+  "ios-arm64/libExpoModulesJSIHeaders.a",
+  "ios-arm64_x86_64-simulator/Headers/ExpoModulesJSI/ExpoModulesJSI-Swift.h",
+  "ios-arm64_x86_64-simulator/Headers/ExpoModulesJSI/NativeState.h",
+  "ios-arm64_x86_64-simulator/Headers/ExpoModulesJSI/module.modulemap",
+  "ios-arm64_x86_64-simulator/libExpoModulesJSIHeaders.a",
+];
+
+/** Asserts that a failed run left neither the xcframework, a half-written `*.tmp-*` tree nor the stamp. */
+function expectNothingWritten(s: ReturnType<typeof setup>) {
+  expect(existsSync(s.xcframework)).toBe(false);
+  expect(existsSync(s.stamp)).toBe(false);
+  const xcframeworks = path.dirname(s.xcframework);
+  expect(existsSync(xcframeworks) ? readdirSync(xcframeworks).filter((n) => n.includes(".tmp-")) : []).toEqual([]);
+}
 
 describe("ExpoModulesJSI headers paths", () => {
   it("names the build's objects dir and 58's xcframework path", () => {
@@ -57,21 +88,7 @@ describe("writeJsiHeadersXcframework", () => {
     const s = setup();
     expect(await writeJsiHeadersXcframework(s.input)).toBe("written");
     expect(jsiHeadersXcframeworkDir(s.precompiledRoot)).toBe(s.xcframework);
-    expect(listFiles(s.xcframework)).toEqual(
-      [
-        "Info.plist",
-        "expo-package.json",
-        "ios-arm64/ExpoModulesJSI.swiftmodule/arm64-apple-ios.swiftinterface",
-        "ios-arm64/Headers/ExpoModulesJSI/ExpoModulesJSI-Swift.h",
-        "ios-arm64/Headers/ExpoModulesJSI/NativeState.h",
-        "ios-arm64/Headers/ExpoModulesJSI/module.modulemap",
-        "ios-arm64/libExpoModulesJSIHeaders.a",
-        "ios-arm64_x86_64-simulator/Headers/ExpoModulesJSI/ExpoModulesJSI-Swift.h",
-        "ios-arm64_x86_64-simulator/Headers/ExpoModulesJSI/NativeState.h",
-        "ios-arm64_x86_64-simulator/Headers/ExpoModulesJSI/module.modulemap",
-        "ios-arm64_x86_64-simulator/libExpoModulesJSIHeaders.a",
-      ].sort(),
-    );
+    expect(listFiles(s.xcframework)).toEqual([...LAYOUT_58].sort());
     expect(readdirSync(path.join(s.xcframework, "ios-arm64_x86_64-simulator")).sort()).toEqual(["Headers", "libExpoModulesJSIHeaders.a"]);
     expect(JSI_HEADERS_MODULE_MAP).toBe(
       'module ExpoModulesJSI {\n  header "ExpoModulesJSI-Swift.h"\n  export *\n\n  explicit module Cxx {\n    requires cplusplus\n    header "NativeState.h"\n    export *\n  }\n}\n',
@@ -96,6 +113,57 @@ describe("writeJsiHeadersXcframework", () => {
       jsiVersion: "57.1.3",
       interfaceSha256: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
+  });
+
+  it("writes jsi 56's layout: NativeState.h from include/ with its local includes", async () => {
+    const s = setup("56.0.14", "flat");
+    expect(await writeJsiHeadersXcframework(s.input)).toBe("written");
+    expect(listFiles(s.xcframework)).toEqual(
+      [
+        ...LAYOUT_58,
+        "ios-arm64/Headers/ExpoModulesJSI/RetainedSwiftPointer.h",
+        "ios-arm64_x86_64-simulator/Headers/ExpoModulesJSI/RetainedSwiftPointer.h",
+      ].sort(),
+    );
+    for (const slice of SLICES) {
+      const headers = path.join(s.xcframework, slice, "Headers", "ExpoModulesJSI");
+      expect(readFileSync(path.join(headers, "NativeState.h"), "utf8")).toBe(FAKE_NATIVE_STATE_FLAT);
+      expect(readFileSync(path.join(headers, "RetainedSwiftPointer.h"), "utf8")).toBe(FAKE_RETAINED_POINTER);
+      expect(readFileSync(path.join(headers, "module.modulemap"), "utf8")).toBe(JSI_HEADERS_MODULE_MAP);
+    }
+  });
+
+  it("prefers include/Public when both layouts hold NativeState.h", async () => {
+    const s = setup();
+    writeFileSync(path.join(s.include, "NativeState.h"), "// the other NativeState.h\n");
+    expect(await writeJsiHeadersXcframework(s.input)).toBe("written");
+    for (const slice of SLICES) {
+      expect(readFileSync(path.join(s.xcframework, slice, "Headers", "ExpoModulesJSI", "NativeState.h"), "utf8")).toBe(
+        FAKE_NATIVE_STATE,
+      );
+    }
+    expect(listFiles(s.xcframework)).toEqual([...LAYOUT_58].sort());
+  });
+
+  it("names a local include that is not next to NativeState.h", async () => {
+    const s = setup("56.0.14", "flat");
+    rmSync(path.join(s.include, "RetainedSwiftPointer.h"));
+    await expect(writeJsiHeadersXcframework(s.input)).rejects.toThrow(
+      `NativeState.h of expo-modules-jsi 56.0.14 includes "RetainedSwiftPointer.h", which is not next to it in ${s.include}; ` +
+        "cannot make ExpoModulesJSIHeaders.xcframework.",
+    );
+    expectNothingWritten(s);
+  });
+
+  it("follows quoted includes transitively, each once", async () => {
+    const s = setup("56.0.14", "flat");
+    writeFileSync(path.join(s.include, "RetainedSwiftPointer.h"), `${FAKE_RETAINED_POINTER}#include "Extra.h"\n`);
+    writeFileSync(path.join(s.include, "Extra.h"), '#pragma once\n#include "RetainedSwiftPointer.h"\n#include "NativeState.h"\n');
+    writeFileSync(path.join(s.include, "Unused.h"), "#pragma once\n");
+    expect(await writeJsiHeadersXcframework(s.input)).toBe("written");
+    expect(listFiles(path.join(s.xcframework, "ios-arm64", "Headers", "ExpoModulesJSI"))).toEqual(
+      ["Extra.h", "ExpoModulesJSI-Swift.h", "NativeState.h", "RetainedSwiftPointer.h", "module.modulemap"].sort(),
+    );
   });
 
   it.skipIf(spawnSync("ar", ["--version"]).status !== 0)("the placeholder archives are valid (needs ar)", async () => {
@@ -166,16 +234,12 @@ describe("writeJsiHeadersXcframework", () => {
 
   it("a failed synthesis leaves no stamped xcframework", async () => {
     const s = setup();
-    const nativeStateDir = path.join(s.jsiDir, "apple", "Sources", "ExpoModulesJSI-Cxx", "include", "Public");
-    const nativeState = path.join(nativeStateDir, "NativeState.h");
+    const nativeState = path.join(s.include, "Public", "NativeState.h");
     rmSync(nativeState);
     await expect(writeJsiHeadersXcframework(s.input)).rejects.toThrow(
-      `The ExpoModulesJSI build produced no NativeState.h (expected in ${nativeStateDir}); cannot make ExpoModulesJSIHeaders.xcframework for expo-modules-jsi 57.1.3.`,
+      `The ExpoModulesJSI build produced no NativeState.h (expected in ${s.include}/Public or ${s.include}); cannot make ExpoModulesJSIHeaders.xcframework for expo-modules-jsi 57.1.3.`,
     );
-    expect(existsSync(s.xcframework)).toBe(false);
-    expect(existsSync(s.stamp)).toBe(false);
-    const xcframeworks = path.dirname(s.xcframework);
-    expect(existsSync(xcframeworks) ? readdirSync(xcframeworks).filter((n) => n.includes(".tmp-")) : []).toEqual([]);
+    expectNothingWritten(s);
 
     writeFileSync(nativeState, FAKE_NATIVE_STATE);
     expect(await writeJsiHeadersXcframework(s.input)).toBe("written");

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { EMPTY_AR_ARCHIVE, headersXcframeworkInfoPlist, swapIn, type XcframeworkLibrary } from "./rnArtifacts.js";
@@ -72,12 +72,56 @@ async function readStamp(file: string): Promise<Partial<JsiHeadersStamp> | undef
   }
 }
 
+const isFile = (file: string) => statSync(file, { throwIfNoEntry: false })?.isFile() === true;
+
+/** The headers a C++ header includes with quotes (`#include "x.h"`, `#import "x.h"`), in order. */
+function quotedIncludes(text: string): string[] {
+  return [...text.matchAll(/^[ \t]*#[ \t]*(?:include|import)[ \t]*"([^"]+)"/gm)].map((m) => m[1]!);
+}
+
+/**
+ * The public C++ headers of expo-modules-jsi `jsiVersion` at `jsiDir`: `dir` is
+ * `<jsiDir>/apple/Sources/ExpoModulesJSI-Cxx/include/Public` when it holds NativeState.h (jsi 57 and newer), else
+ * `…/include` (jsi 56); `files` is "NativeState.h", then each header it includes with quotes, transitively, found in
+ * `dir`, in include order, each once. Throws when NativeState.h is in neither, or a quoted include is not in `dir`.
+ */
+export function nativeStateHeaders(jsiDir: string, jsiVersion: string): { dir: string; files: string[] } {
+  const include = path.join(jsiDir, "apple", "Sources", "ExpoModulesJSI-Cxx", "include");
+  const dir = [path.join(include, "Public"), include].find((d) => isFile(path.join(d, NATIVE_STATE)));
+  if (dir === undefined) {
+    throw new Error(
+      `The ExpoModulesJSI build produced no ${NATIVE_STATE} (expected in ${include}/Public or ${include}); ` +
+        `cannot make ${NAME}.xcframework for expo-modules-jsi ${jsiVersion}.`,
+    );
+  }
+  const files: string[] = [];
+  const visit = (rel: string) => {
+    if (files.includes(rel)) return;
+    files.push(rel);
+    for (const name of quotedIncludes(readFileSync(path.join(dir, rel), "utf8"))) {
+      // As the compiler does: next to the including header first. Only headers inside `dir` are copied.
+      const found = path.relative(dir, path.resolve(dir, path.dirname(rel), name));
+      const outside = found === ".." || found.startsWith(`..${path.sep}`) || path.isAbsolute(found);
+      if (outside || !isFile(path.join(dir, found))) {
+        throw new Error(
+          `${NATIVE_STATE} of expo-modules-jsi ${jsiVersion} includes "${name}", which is not next to it in ${dir}; ` +
+            `cannot make ${NAME}.xcframework.`,
+        );
+      }
+      visit(found);
+    }
+  };
+  visit(NATIVE_STATE);
+  return { dir, files };
+}
+
 /**
  * Writes `ExpoModulesJSIHeaders.xcframework` for expo-modules-jsi `jsiVersion` from its build's `objectsDir` and the
- * package's public `NativeState.h` (under `jsiDir`). Returns "current" without writing when the stamp matches this
- * generator, version and interface. Otherwise the tree is assembled beside the destination, the stamp deleted, the
- * tree swapped in whole, and the stamp written last: a failed run never leaves a stamped partial tree, and one that
- * fails before the swap leaves the previous tree and its stamp as they were.
+ * package's public `NativeState.h` with the headers it includes (under `jsiDir`, see {@link nativeStateHeaders}).
+ * Returns "current" without writing when the stamp matches this generator, version and interface. Otherwise the tree
+ * is assembled beside the destination, the stamp deleted, the tree swapped in whole, and the stamp written last: a
+ * failed run never leaves a stamped partial tree, and one that fails before the swap leaves the previous tree and its
+ * stamp as they were.
  */
 export async function writeJsiHeadersXcframework(i: {
   objectsDir: string;
@@ -85,20 +129,15 @@ export async function writeJsiHeadersXcframework(i: {
   jsiVersion: string;
   precompiledRoot: string;
 }): Promise<"written" | "current"> {
-  const nativeStateDir = path.join(i.jsiDir, "apple", "Sources", "ExpoModulesJSI-Cxx", "include", "Public");
-  const inputs = [
-    [i.objectsDir, SWIFT_HEADER],
-    [i.objectsDir, SWIFT_INTERFACE],
-    [nativeStateDir, NATIVE_STATE],
-  ] as const;
-  for (const [dir, file] of inputs) {
-    if (statSync(path.join(dir, file), { throwIfNoEntry: false })?.isFile() !== true) {
+  for (const file of [SWIFT_HEADER, SWIFT_INTERFACE]) {
+    if (!isFile(path.join(i.objectsDir, file))) {
       throw new Error(
-        `The ExpoModulesJSI build produced no ${file} (expected in ${dir}); ` +
+        `The ExpoModulesJSI build produced no ${file} (expected in ${i.objectsDir}); ` +
           `cannot make ${NAME}.xcframework for expo-modules-jsi ${i.jsiVersion}.`,
       );
     }
   }
+  const cxx = nativeStateHeaders(i.jsiDir, i.jsiVersion);
 
   const dest = jsiHeadersXcframeworkDir(i.precompiledRoot);
   const stampFile = path.join(headersDir(i.precompiledRoot), STAMP);
@@ -123,7 +162,10 @@ export async function writeJsiHeadersXcframework(i: {
       const headers = path.join(tmp, slice, "Headers", "ExpoModulesJSI");
       await mkdir(headers, { recursive: true });
       await copyFile(path.join(i.objectsDir, SWIFT_HEADER), path.join(headers, SWIFT_HEADER));
-      await copyFile(path.join(nativeStateDir, NATIVE_STATE), path.join(headers, NATIVE_STATE));
+      for (const file of cxx.files) {
+        await mkdir(path.dirname(path.join(headers, file)), { recursive: true });
+        await copyFile(path.join(cxx.dir, file), path.join(headers, file));
+      }
       await writeFile(path.join(headers, "module.modulemap"), JSI_HEADERS_MODULE_MAP);
       await writeFile(path.join(tmp, slice, ARCHIVE), EMPTY_AR_ARCHIVE);
     }
