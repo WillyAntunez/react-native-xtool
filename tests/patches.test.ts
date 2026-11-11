@@ -571,10 +571,70 @@ describe("a bundled patch over a package an earlier release patched differently"
     expect(readFileSync(file, "utf8")).toContain("\n  var message: String {\n");
   }, 30_000);
 
+  /** `blocks` at their 1-based line numbers, `// line n` filler before and between them. */
+  const sourceWith = (blocks: [start: number, lines: string[]][]) => {
+    const out: string[] = [];
+    for (const [start, lines] of blocks) {
+      while (out.length < start - 1) out.push(`// line ${out.length + 1}`);
+      out.push(...lines);
+    }
+    return [...out, ""].join("\n");
+  };
+  const FROM_JSI = "  static func fromJSIValue(_ value: borrowing facebook.jsi.Value, in runtime: facebook.jsi.IRuntime)";
+  /** jsi 56.0.14's lines around the four generic conformances to its internal `~Copyable` JSIRepresentable. */
+  const JSI56_SOURCES: Record<string, string> = {
+    "apple/Sources/ExpoModulesJSI/Protocols/JSIRepresentable.swift": sourceWith([
+      [3, ["internal import jsi", "", "/// A type whose values can be represented as `facebook.jsi.Value`.",
+        "internal protocol JSIRepresentable: JavaScriptRepresentable, Sendable, ~Copyable {",
+        "  /// Creates an instance of this type from the given `facebook.jsi.Value` in `facebook.jsi.IRuntime`.",
+        `${FROM_JSI} -> Self`]],
+      [92, ["  }", "}", "", "extension Optional: JSIRepresentable where Wrapped: JSIRepresentable {", `${FROM_JSI} -> Self {`,
+        "    if value.isNull() || value.isUndefined() {"]],
+      [105, ["  }", "}", "", "extension Array: JSIRepresentable where Element: JSIRepresentable {",
+        `${FROM_JSI} -> [Element] {`, "    let jsiArray = value.getObject(runtime).getArray(runtime)"]],
+      [129, ["  }", "}", "", "extension Dictionary: JSIRepresentable where Key == String, Value: JSIRepresentable {",
+        `${FROM_JSI} -> [Key: Value] {`, "    let object = value.getObject(runtime)"]],
+    ]),
+    "apple/Sources/ExpoModulesJSI/Runtime/JavaScriptRef.swift": sourceWith([
+      [77, ["  }", "}", "", "extension JavaScriptRef: JSIRepresentable where T: JSIRepresentable & ~Copyable {",
+        `${FROM_JSI} -> JavaScriptRef {`, "    FatalError.unimplemented()"]],
+    ]),
+  };
+
+  /** jsiProject at 56.0.14, with the other files the SDK 56 patch touches. */
+  async function jsi56Project() {
+    const project = await jsiProject("  public var message: String {", { version: "56.0.14", before: 81 });
+    for (const [rel, text] of Object.entries(JSI56_SOURCES)) {
+      const file = path.join(project.root, "node_modules", "expo-modules-jsi", rel);
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, text);
+    }
+    return project;
+  }
+
   it("applies the SDK 56 jsi patch to the original file", async () => {
-    const { root, file } = await jsiProject("  public var message: String {", { version: "56.0.14", before: 81 });
+    const { root, file } = await jsi56Project();
     await applyPatches(root, undefined, { rnScripts: "vendored", expoPlugin: "vendored" });
     expect(readFileSync(file, "utf8")).toContain("\n  var message: String {\n");
+  }, 30_000);
+
+  it("the SDK 56 jsi patch carries the interface fix", async () => {
+    // jsi 57.1.3's own fix: without `@_spi(Internal)`, Swift 6.4 prints these four conformances into the public
+    // interface as `extension <T> :  where … : _ConstraintThatIsNotPartOfTheAPIOfThisLibrary {}`, which nothing parses.
+    const { root } = await jsi56Project();
+    await applyPatches(root, undefined, { rnScripts: "vendored", expoPlugin: "vendored" });
+    const read = (rel: string) => readFileSync(path.join(root, "node_modules", "expo-modules-jsi", rel), "utf8");
+    const representable = read("apple/Sources/ExpoModulesJSI/Protocols/JSIRepresentable.swift");
+    for (const type of ["Optional", "Array", "Dictionary"]) {
+      expect(representable).toContain(`\n}\n\n@_spi(Internal)\nextension ${type}: JSIRepresentable where `);
+    }
+    expect(representable).toContain(
+      "/// Mark conformances of generic types with `@_spi(Internal)`. Otherwise, because this protocol\n",
+    );
+    expect(read("apple/Sources/ExpoModulesJSI/Runtime/JavaScriptRef.swift")).toContain(
+      "\n}\n\n@_spi(Internal)\nextension JavaScriptRef: JSIRepresentable where T: JSIRepresentable & ~Copyable {\n",
+    );
+    expect(representable.match(/@_spi\(Internal\)\nextension/g)).toHaveLength(3);
   }, 30_000);
 
   it("names the package and the reinstall when the patch applies neither way", async () => {
