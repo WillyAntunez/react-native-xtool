@@ -94,6 +94,8 @@ async function generate(cli) {
     // A value left in the user's shell must never reach Expo 58 or bare runs.
     delete process.env.RN_SPM_EXPO_PLUGIN;
     delete process.env.RN_XTOOL_PROJECT_ROOT;
+    delete process.env.RN_XTOOL_APP_IOS_DEPLOYMENT_TARGET;
+    delete process.env.RN_XTOOL_PLUGIN_NOTES;
   }
   const rn = rel => require(path.join(cli.scriptsRoot, rel));
   const setup = rn('setup-apple-spm.js');

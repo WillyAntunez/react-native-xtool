@@ -306,22 +306,28 @@
  } = require('./manifests');
  const { readPrebuiltMetadata } = require('./metadata');
  const { readPodspecFacts } = require('./podspec');
-@@ -137,6 +138,7 @@
+@@ -137,6 +138,11 @@
    const declaringRoot =
      autolinkedRoot == null && !fs.existsSync(pod.podspecDir) ? pod.podspecDir : walkedRoot;
    const moduleRoot = documentedRoot ?? walkedRoot;
 +  const podspec = readPodspecFacts({ podName: pod.podName, podspecDir: pod.podspecDir, moduleRoot });
++  // rn-xtool P7: never above the App's deployment target, which nothing raises under rn-xtool.
++  const appTarget = appIosDeploymentTarget();
++  const asked = podspec.iosDeploymentTarget;
++  const capped = asked != null && appTarget != null && raiseFloor(appTarget, asked) !== appTarget;
    return {
      podName: pod.podName,
      packageName,
-@@ -147,11 +149,13 @@
+@@ -147,14 +153,74 @@
      productName: record?.productName ?? pod.podName,
      prebuildProduct:
        record != null ? { name: record.productName, sourceOnly: record.sourceOnly } : null,
 -    iosDeploymentTarget: record?.iosDeploymentTarget ?? null,
 +    // rn-xtool P7: the podspec's literal iOS platform raises the floor, as CocoaPods builds the pod
 +    // for it. Core's identity too, so every package is raised to core's podspec floor.
-+    iosDeploymentTarget: raiseFloor(record?.iosDeploymentTarget ?? null, podspec.iosDeploymentTarget),
++    iosDeploymentTarget: raiseFloor(record?.iosDeploymentTarget ?? null, capped ? appTarget : asked),
++    // rn-xtool P7: what the podspec asks for when the App's deployment target capped it.
++    cappedPodspecFloor: capped ? asked : null,
      spmPackages: record?.spmPackages ?? [],
      autolinkWhen: record?.autolinkWhen ?? null,
      sources: readModuleRoot.sources(moduleRoot),
@@ -330,7 +336,66 @@
    };
  }
  
-@@ -769,6 +773,8 @@
++// rn-xtool P7: the App's deployment target, and the file rn-xtool prints the plugin's notes from.
++const APP_TARGET_ENV = 'RN_XTOOL_APP_IOS_DEPLOYMENT_TARGET';
++const PLUGIN_NOTES_ENV = 'RN_XTOOL_PLUGIN_NOTES';
++
++/**
++ * rn-xtool P7: the iOS version rn-xtool builds the App for, or null when the plugin runs without
++ * it: a podspec's floor is then taken uncapped, and nothing is said about it.
++ */
++function appIosDeploymentTarget() {
++  const value = process.env[APP_TARGET_ENV];
++  if (value == null || value === '') return null;
++  if (!/^\d+(?:\.\d+){1,2}$/.test(value)) {
++    throw new Error(`${APP_TARGET_ENV} must be an iOS version such as 15.1, got "${value}"`);
++  }
++  return value;
++}
++
++/**
++ * rn-xtool P7: one warning per generated package whose podspec asks for more iOS than the package
++ * is compiled for, the App's deployment target having capped it. A checked-in manifest keeps its
++ * own floor, and a module's `spm.config.json` floor is never capped.
++ *
++ * @param emitted the last round's `sourceModules.emitted`, each package once.
++ * @param minimum core's floor, which `linkPasses` raises every generated package to.
++ */
++function cappedFloorWarnings(emitted, minimum) {
++  const app = appIosDeploymentTarget();
++  return emitted.flatMap(({ identity, linkedAs }) => {
++    const asked = identity.cappedPodspecFloor;
++    if (linkedAs === 'manifest' || asked == null) return [];
++    const compiledAt = raiseFloor(identity.iosDeploymentTarget, minimum);
++    if (raiseFloor(compiledAt, asked) === compiledAt) return [];
++    const name = identity.packageName;
++    return [
++      `${name}'s podspec asks for iOS ${asked}, and rn-xtool builds the app for iOS ${app}, so ${name} is ` +
++        `compiled for iOS ${compiledAt}: its code that needs iOS ${asked} must be behind an availability check ` +
++        `(\`if #available(iOS ${asked}, *)\`). On a Mac, the app's deployment target would be raised to iOS ${asked} instead.`,
++    ];
++  });
++}
++
++/**
++ * rn-xtool P7: appends each warning to `RN_XTOOL_PLUGIN_NOTES` as a `{"warning": …}` line, which
++ * rn-xtool prints once after its `rn-spm` step however many times the plugin ran; without that
++ * file, prints them as the plugin's other warnings.
++ */
++function reportCappedFloors(warnings) {
++  if (warnings.length === 0) return;
++  const file = process.env[PLUGIN_NOTES_ENV];
++  if (file) {
++    fs.appendFileSync(file, warnings.map((warning) => `${JSON.stringify({ warning })}\n`).join(''));
++    return;
++  }
++  for (const warning of warnings) console.warn(`[expo-spm-plugin] WARNING: ${warning}`);
++}
++
+ /** `read`, run at most once per module root: several pods can share one. */
+ function oncePerModuleRoot(read) {
+   const results = new Map();
+@@ -769,6 +835,8 @@
        language: layout,
        headerDir: podspec.headerDir,
        localDeps,
@@ -339,7 +404,7 @@
      },
      emitContext
    );
-@@ -1188,8 +1194,10 @@
+@@ -1188,8 +1256,10 @@
    });
    let pkgJsonPath;
    try {
@@ -351,15 +416,28 @@
      });
    } catch (error) {
      throw pluginError(
-@@ -1494,3 +1502,5 @@
+@@ -1401,6 +1471,10 @@
+   if (extraDependencies.length > 0) {
+     console.warn(renderExtraPodsWarning(extraDependencies));
+   }
++  // rn-xtool P7.
++  reportCappedFloors(
++    cappedFloorWarnings(sourceModules.emitted, coreRecord?.identity.iosDeploymentTarget ?? null)
++  );
+   if (react == null) {
+     console.warn(
+       '[expo-spm-plugin] WARNING: context.react is null — no React dependency available.'
+@@ -1494,3 +1568,7 @@
  module.exports.dependencyPackageIndex = dependencyPackageIndex;
  module.exports.unmappedDependencies = unmappedDependencies;
  module.exports.localDependencies = localDependencies;
 +module.exports.emitSourceModule = emitSourceModule;
 +module.exports.podIdentity = podIdentity;
++module.exports.cappedFloorWarnings = cappedFloorWarnings;
++module.exports.reportCappedFloors = reportCappedFloors;
 --- a/spm/podspec.js
 +++ b/spm/podspec.js
-@@ -176,6 +176,198 @@
+@@ -176,6 +176,246 @@
  }
  
  // ---------------------------------------------------------------------------
@@ -450,13 +528,60 @@
 +
 +const SPEC_RX = /\bPod::Spec\.new\b.*\bdo\s*\|\s*(\w+)\s*\|/;
 +const NESTED_SPEC_RX = /\.(?:subspec|app_spec)\b/;
-+const VERSION_RX = /^(?:'(\d+(?:\.\d+)*)'|"(\d+(?:\.\d+)*)")$/;
++const VERSION_RX = /^(?:'(\d+(?:\.\d+){0,2})'|"(\d+(?:\.\d+){0,2})")$/;
 +const IOS_KEY_RX = /^\s*(?::ios\s*=>|ios:)\s*(.*?)\s*$/;
 +
-+/** The version a literal `'16.0'` or `"16.0"` holds, else null (a variable, a call, interpolation). */
++/**
++ * The version a literal `'16.0'` or `"16.0"` holds, else null (a variable, a call, interpolation,
++ * more than three parts). A one-part `'17'` becomes `17.0`, the two parts SwiftPM documents.
++ */
 +function versionLiteral(value) {
 +  const match = VERSION_RX.exec(value.trim());
-+  return match == null ? null : (match[1] ?? match[2]);
++  if (match == null) return null;
++  const version = match[1] ?? match[2];
++  return version.includes('.') ? version : `${version}.0`;
++}
++
++// `<<~ID`, `<<-ID`, `<<~'ID'`, `<<"ID"`, or `<<ID` with an upper-case ID (`list << item` is an append).
++const HEREDOC_RX = /<<(?:([~-])(?:(['"`])([^'"`]+)\2|([A-Za-z_]\w*))|(['"`])([^'"`]+)\5|([A-Z_][A-Z0-9_]*))/g;
++const HEREDOC_AT_RX = new RegExp(HEREDOC_RX.source, 'y');
++
++/**
++ * `text` with the lines Ruby does not run as code blanked, line numbers kept: heredoc bodies with
++ * their terminators, and `=begin`…`=end` comments (both at column 0). A heredoc whose terminator
++ * never comes blanks the rest of the file, which Ruby refuses anyway.
++ */
++function withoutRubyText(text) {
++  const lines = sourceLines(text);
++  const pending = [];
++  let inComment = false;
++  return lines
++    .map((line) => {
++      if (inComment) {
++        if (/^=end\b/.test(line)) inComment = false;
++        return '';
++      }
++      if (pending.length > 0) {
++        const { id, indented } = pending[0];
++        if ((indented ? line.trim() : line.trimEnd()) === id) pending.shift();
++        return '';
++      }
++      if (/^=begin\b/.test(line)) {
++        inComment = true;
++        return '';
++      }
++      const code = codeView(stripComment(line));
++      for (const match of code.matchAll(HEREDOC_RX)) {
++        // The quoted forms' identifiers are blanked in the code view: read them from the line.
++        HEREDOC_AT_RX.lastIndex = match.index;
++        const opener = HEREDOC_AT_RX.exec(line);
++        if (opener == null) continue;
++        const id = opener[3] ?? opener[4] ?? opener[6] ?? opener[7];
++        pending.push({ id, indented: opener[1] != null });
++      }
++      return line;
++    })
++    .join('\n');
 +}
 +
 +/** The higher of two dotted versions, either of them possibly null. */
@@ -499,8 +624,9 @@
 + * rn-xtool P7: the iOS deployment target a podspec's top-level spec declares as a literal, the
 + * highest when several do: `<s>.platforms = { :ios => '15.1', … }` (on one line or several),
 + * `<s>.ios.deployment_target = '15.1'`, `<s>.platform = :ios, '13.0'`. `<s>` is the
-+ * `Pod::Spec.new do |<s>|` receiver; subspec, app_spec and test_spec blocks do not count. null
-+ * when none is declared or the value is not a literal (a variable, a call, interpolation).
++ * `Pod::Spec.new do |<s>|` receiver; subspec, app_spec and test_spec blocks, heredoc bodies and
++ * `=begin` comments do not count. null when none is declared or the value is not a literal (a
++ * variable, a call, interpolation). Ruby keeps the last assignment where this takes the highest.
 + * CocoaPods builds the pod for that target; the plugin otherwise reads only `spm.config.json`.
 + */
 +function podspecIosDeploymentTarget(text) {
@@ -508,7 +634,7 @@
 +  let nestedDepth = 0;
 +  let pending = null;
 +  let found = null;
-+  for (const { text: line } of podspecBodyLines(text)) {
++  for (const { text: line } of podspecBodyLines(withoutRubyText(text))) {
 +    if (receiver == null) {
 +      receiver = SPEC_RX.exec(line)?.[1] ?? null;
 +      continue;
@@ -558,7 +684,7 @@
  // I/O
  // ---------------------------------------------------------------------------
  
-@@ -260,10 +452,15 @@
+@@ -260,10 +500,15 @@
      podspecsIn(podspecDir).flatMap((file) => podspecDependencies(readText(file) ?? ''))
    );
    // rn-xtool: no podspec found counts as declaring sources, so nothing is taken for a meta pod.
@@ -575,7 +701,7 @@
      dependencies: [...dependencies],
      declaresSourceFiles: !texts.length || facts.some((f) => f.declaresSourceFiles),
      referencesVendor: facts.some((f) => f.referencesVendor),
-@@ -286,4 +483,6 @@
+@@ -286,4 +531,6 @@
    readPodspecFacts,
    sourceFacts,
    c99Identifier,

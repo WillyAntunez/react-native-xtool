@@ -139,6 +139,10 @@ function podIdentity(record, pod, packageName, autolinkedRoot, readModuleRoot) {
     autolinkedRoot == null && !fs.existsSync(pod.podspecDir) ? pod.podspecDir : walkedRoot;
   const moduleRoot = documentedRoot ?? walkedRoot;
   const podspec = readPodspecFacts({ podName: pod.podName, podspecDir: pod.podspecDir, moduleRoot });
+  // rn-xtool P7: never above the App's deployment target, which nothing raises under rn-xtool.
+  const appTarget = appIosDeploymentTarget();
+  const asked = podspec.iosDeploymentTarget;
+  const capped = asked != null && appTarget != null && raiseFloor(appTarget, asked) !== appTarget;
   return {
     podName: pod.podName,
     packageName,
@@ -151,12 +155,70 @@ function podIdentity(record, pod, packageName, autolinkedRoot, readModuleRoot) {
       record != null ? { name: record.productName, sourceOnly: record.sourceOnly } : null,
     // rn-xtool P7: the podspec's literal iOS platform raises the floor, as CocoaPods builds the pod
     // for it. Core's identity too, so every package is raised to core's podspec floor.
-    iosDeploymentTarget: raiseFloor(record?.iosDeploymentTarget ?? null, podspec.iosDeploymentTarget),
+    iosDeploymentTarget: raiseFloor(record?.iosDeploymentTarget ?? null, capped ? appTarget : asked),
+    // rn-xtool P7: what the podspec asks for when the App's deployment target capped it.
+    cappedPodspecFloor: capped ? asked : null,
     spmPackages: record?.spmPackages ?? [],
     autolinkWhen: record?.autolinkWhen ?? null,
     sources: readModuleRoot.sources(moduleRoot),
     podspec,
   };
+}
+
+// rn-xtool P7: the App's deployment target, and the file rn-xtool prints the plugin's notes from.
+const APP_TARGET_ENV = 'RN_XTOOL_APP_IOS_DEPLOYMENT_TARGET';
+const PLUGIN_NOTES_ENV = 'RN_XTOOL_PLUGIN_NOTES';
+
+/**
+ * rn-xtool P7: the iOS version rn-xtool builds the App for, or null when the plugin runs without
+ * it: a podspec's floor is then taken uncapped, and nothing is said about it.
+ */
+function appIosDeploymentTarget() {
+  const value = process.env[APP_TARGET_ENV];
+  if (value == null || value === '') return null;
+  if (!/^\d+(?:\.\d+){1,2}$/.test(value)) {
+    throw new Error(`${APP_TARGET_ENV} must be an iOS version such as 15.1, got "${value}"`);
+  }
+  return value;
+}
+
+/**
+ * rn-xtool P7: one warning per generated package whose podspec asks for more iOS than the package
+ * is compiled for, the App's deployment target having capped it. A checked-in manifest keeps its
+ * own floor, and a module's `spm.config.json` floor is never capped.
+ *
+ * @param emitted the last round's `sourceModules.emitted`, each package once.
+ * @param minimum core's floor, which `linkPasses` raises every generated package to.
+ */
+function cappedFloorWarnings(emitted, minimum) {
+  const app = appIosDeploymentTarget();
+  return emitted.flatMap(({ identity, linkedAs }) => {
+    const asked = identity.cappedPodspecFloor;
+    if (linkedAs === 'manifest' || asked == null) return [];
+    const compiledAt = raiseFloor(identity.iosDeploymentTarget, minimum);
+    if (raiseFloor(compiledAt, asked) === compiledAt) return [];
+    const name = identity.packageName;
+    return [
+      `${name}'s podspec asks for iOS ${asked}, and rn-xtool builds the app for iOS ${app}, so ${name} is ` +
+        `compiled for iOS ${compiledAt}: its code that needs iOS ${asked} must be behind an availability check ` +
+        `(\`if #available(iOS ${asked}, *)\`). On a Mac, the app's deployment target would be raised to iOS ${asked} instead.`,
+    ];
+  });
+}
+
+/**
+ * rn-xtool P7: appends each warning to `RN_XTOOL_PLUGIN_NOTES` as a `{"warning": …}` line, which
+ * rn-xtool prints once after its `rn-spm` step however many times the plugin ran; without that
+ * file, prints them as the plugin's other warnings.
+ */
+function reportCappedFloors(warnings) {
+  if (warnings.length === 0) return;
+  const file = process.env[PLUGIN_NOTES_ENV];
+  if (file) {
+    fs.appendFileSync(file, warnings.map((warning) => `${JSON.stringify({ warning })}\n`).join(''));
+    return;
+  }
+  for (const warning of warnings) console.warn(`[expo-spm-plugin] WARNING: ${warning}`);
 }
 
 /** `read`, run at most once per module root: several pods can share one. */
@@ -1409,6 +1471,10 @@ module.exports = function expoSpmPlugin(context) {
   if (extraDependencies.length > 0) {
     console.warn(renderExtraPodsWarning(extraDependencies));
   }
+  // rn-xtool P7.
+  reportCappedFloors(
+    cappedFloorWarnings(sourceModules.emitted, coreRecord?.identity.iosDeploymentTarget ?? null)
+  );
   if (react == null) {
     console.warn(
       '[expo-spm-plugin] WARNING: context.react is null — no React dependency available.'
@@ -1504,3 +1570,5 @@ module.exports.unmappedDependencies = unmappedDependencies;
 module.exports.localDependencies = localDependencies;
 module.exports.emitSourceModule = emitSourceModule;
 module.exports.podIdentity = podIdentity;
+module.exports.cappedFloorWarnings = cappedFloorWarnings;
+module.exports.reportCappedFloors = reportCappedFloors;

@@ -263,13 +263,60 @@ function flaggedSubspecs(text, podspecDir) {
 
 const SPEC_RX = /\bPod::Spec\.new\b.*\bdo\s*\|\s*(\w+)\s*\|/;
 const NESTED_SPEC_RX = /\.(?:subspec|app_spec)\b/;
-const VERSION_RX = /^(?:'(\d+(?:\.\d+)*)'|"(\d+(?:\.\d+)*)")$/;
+const VERSION_RX = /^(?:'(\d+(?:\.\d+){0,2})'|"(\d+(?:\.\d+){0,2})")$/;
 const IOS_KEY_RX = /^\s*(?::ios\s*=>|ios:)\s*(.*?)\s*$/;
 
-/** The version a literal `'16.0'` or `"16.0"` holds, else null (a variable, a call, interpolation). */
+/**
+ * The version a literal `'16.0'` or `"16.0"` holds, else null (a variable, a call, interpolation,
+ * more than three parts). A one-part `'17'` becomes `17.0`, the two parts SwiftPM documents.
+ */
 function versionLiteral(value) {
   const match = VERSION_RX.exec(value.trim());
-  return match == null ? null : (match[1] ?? match[2]);
+  if (match == null) return null;
+  const version = match[1] ?? match[2];
+  return version.includes('.') ? version : `${version}.0`;
+}
+
+// `<<~ID`, `<<-ID`, `<<~'ID'`, `<<"ID"`, or `<<ID` with an upper-case ID (`list << item` is an append).
+const HEREDOC_RX = /<<(?:([~-])(?:(['"`])([^'"`]+)\2|([A-Za-z_]\w*))|(['"`])([^'"`]+)\5|([A-Z_][A-Z0-9_]*))/g;
+const HEREDOC_AT_RX = new RegExp(HEREDOC_RX.source, 'y');
+
+/**
+ * `text` with the lines Ruby does not run as code blanked, line numbers kept: heredoc bodies with
+ * their terminators, and `=begin`…`=end` comments (both at column 0). A heredoc whose terminator
+ * never comes blanks the rest of the file, which Ruby refuses anyway.
+ */
+function withoutRubyText(text) {
+  const lines = sourceLines(text);
+  const pending = [];
+  let inComment = false;
+  return lines
+    .map((line) => {
+      if (inComment) {
+        if (/^=end\b/.test(line)) inComment = false;
+        return '';
+      }
+      if (pending.length > 0) {
+        const { id, indented } = pending[0];
+        if ((indented ? line.trim() : line.trimEnd()) === id) pending.shift();
+        return '';
+      }
+      if (/^=begin\b/.test(line)) {
+        inComment = true;
+        return '';
+      }
+      const code = codeView(stripComment(line));
+      for (const match of code.matchAll(HEREDOC_RX)) {
+        // The quoted forms' identifiers are blanked in the code view: read them from the line.
+        HEREDOC_AT_RX.lastIndex = match.index;
+        const opener = HEREDOC_AT_RX.exec(line);
+        if (opener == null) continue;
+        const id = opener[3] ?? opener[4] ?? opener[6] ?? opener[7];
+        pending.push({ id, indented: opener[1] != null });
+      }
+      return line;
+    })
+    .join('\n');
 }
 
 /** The higher of two dotted versions, either of them possibly null. */
@@ -312,8 +359,9 @@ function platformsHashIos(rhs) {
  * rn-xtool P7: the iOS deployment target a podspec's top-level spec declares as a literal, the
  * highest when several do: `<s>.platforms = { :ios => '15.1', … }` (on one line or several),
  * `<s>.ios.deployment_target = '15.1'`, `<s>.platform = :ios, '13.0'`. `<s>` is the
- * `Pod::Spec.new do |<s>|` receiver; subspec, app_spec and test_spec blocks do not count. null
- * when none is declared or the value is not a literal (a variable, a call, interpolation).
+ * `Pod::Spec.new do |<s>|` receiver; subspec, app_spec and test_spec blocks, heredoc bodies and
+ * `=begin` comments do not count. null when none is declared or the value is not a literal (a
+ * variable, a call, interpolation). Ruby keeps the last assignment where this takes the highest.
  * CocoaPods builds the pod for that target; the plugin otherwise reads only `spm.config.json`.
  */
 function podspecIosDeploymentTarget(text) {
@@ -321,7 +369,7 @@ function podspecIosDeploymentTarget(text) {
   let nestedDepth = 0;
   let pending = null;
   let found = null;
-  for (const { text: line } of podspecBodyLines(text)) {
+  for (const { text: line } of podspecBodyLines(withoutRubyText(text))) {
     if (receiver == null) {
       receiver = SPEC_RX.exec(line)?.[1] ?? null;
       continue;

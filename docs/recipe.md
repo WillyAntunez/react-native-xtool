@@ -211,7 +211,9 @@ differences:
     --expo-plugin <rn-xtool>/vendor/expo-spm/spm/plugin.js [--artifacts <root>]
   ```
 
-  with `EXPO_PRECOMPILED_MODULES_PATH=ios/build/expo-precompiled` next to `RN_SPM_SWIFT_HEADERS_DIR`. The driver sets
+  with `EXPO_PRECOMPILED_MODULES_PATH=ios/build/expo-precompiled`, `RN_XTOOL_APP_IOS_DEPLOYMENT_TARGET` (rn-xtool's
+  `IOS_MIN`: P7 caps a podspec's iOS floor at it) and `RN_XTOOL_PLUGIN_NOTES=ios/build/rn-xtool-plugin-notes.jsonl`
+  (P7's warnings, printed once after the step) next to `RN_SPM_SWIFT_HEADERS_DIR`. The driver sets
   `RN_SPM_EXPO_PLUGIN` (edit E5 of `vendor/rn-spm` loads it as `expo`'s autolinking plugin, since SDK 57's `expo`
   declares none) and `RN_XTOOL_PROJECT_ROOT` (P2: the plugin resolves `@expo/config-plugins` through the app's `expo`,
   and `xcode` next to it, never from rn-xtool's own copies). The scaffold rerun adds `--scaffold`, `--results <file>` and

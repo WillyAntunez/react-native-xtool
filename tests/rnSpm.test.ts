@@ -21,6 +21,7 @@ import {
 } from "../src/pipeline/rnSpm.js";
 import { projectPaths, swiftHeadersEnv, type ProjectPaths } from "../src/paths.js";
 import { packageRoot } from "../src/tools/exec.js";
+import { IOS_MIN } from "../src/versions.js";
 import { mergedPodTable, type PodTable } from "../src/project/podTable.js";
 import path from "node:path";
 
@@ -32,6 +33,7 @@ const paths = {
   iosXtool: "/proj/ios-xtool",
   scaffoldResults: RESULTS,
   podspecReads: READS,
+  pluginNotes: "/proj/ios/build/rn-xtool-plugin-notes.jsonl",
 } as unknown as ProjectPaths;
 const SWIFT_HEADERS = "/proj/ios-xtool/.build/out/Intermediates.noindex/GeneratedModuleMaps-iphoneos";
 const POD_TABLE = "/proj/ios/build/rn-xtool-pods.json";
@@ -211,6 +213,9 @@ describe("Expo on the driver", () => {
     const env = {
       RN_SPM_SWIFT_HEADERS_DIR: SWIFT_HEADERS,
       EXPO_PRECOMPILED_MODULES_PATH: "/proj/ios/build/expo-precompiled",
+      // P7: the App's deployment target caps a podspec's floor; its warnings go to the notes file.
+      RN_XTOOL_APP_IOS_DEPLOYMENT_TARGET: IOS_MIN,
+      RN_XTOOL_PLUGIN_NOTES: "/proj/ios/build/rn-xtool-plugin-notes.jsonl",
       RN_SPM_POD_TABLE: POD_TABLE,
       ...READS_ENV,
     };
@@ -372,6 +377,38 @@ describe("runRnSpm", () => {
         { runner, log: (s) => logs.push(s), rnDir, writePodTable: () => POD_TABLE },
       ).catch(() => undefined);
       expect(logs.filter((l) => l.startsWith("⚠ Ruby was not found"))).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("prints the Expo plugin's warnings once after rn-spm, however many times it ran", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "rn-spm-notes-"));
+    try {
+      const full = projectPaths(root);
+      mkdirSync(full.iosBuild, { recursive: true });
+      // A previous run's warning: never this run's.
+      writeFileSync(full.pluginNotes, `${JSON.stringify({ warning: "old" })}\n`);
+      const logs: string[] = [];
+      let runs = 0;
+      const runner: RnRunner = async (_cmd, args, o) => {
+        // patch-package and the scaffold step run no plugin.
+        if (o.env === undefined || args.includes("--scaffold")) return { exitCode: 0, output: "" };
+        runs++;
+        const file = o.env["RN_XTOOL_PLUGIN_NOTES"];
+        if (file === undefined) throw new Error("no RN_XTOOL_PLUGIN_NOTES");
+        // Each plugin run writes its warnings again; a line that is not a warning is skipped.
+        writeFileSync(file, `${JSON.stringify({ warning: "expo-x's podspec asks for iOS 17.0" })}\nnot json\n{}\n`, { flag: "a" });
+        return runs === 1 ? { exitCode: 2, output: missing("lib-a") } : { exitCode: 1, output: "boom" };
+      };
+      await runRnSpm(
+        full,
+        { kind: "expo", rnScripts: "vendored", expoPlugin: "vendored" },
+        { runner, log: (s) => logs.push(s), rnDir, writePodTable: () => POD_TABLE },
+      ).catch((e: Error) => logs.push(`error: ${e.message.split("\n")[0]}`));
+      expect(runs).toBe(2);
+      expect(logs.filter((l) => l.startsWith("⚠ expo-x") || l === "⚠ old")).toEqual(["⚠ expo-x's podspec asks for iOS 17.0"]);
+      expect(logs.at(-1)).toMatch(/^error: React Native SwiftPM setup still failed/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
