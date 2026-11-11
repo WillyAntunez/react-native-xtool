@@ -62,8 +62,11 @@ gaps with mechanisms that hold for any version, and proves it on a device.
    (also `Swift::Array`, `Swift::Dictionary`, `ExpoModulesJSI::JavaScriptRef`). Every module that imports
    ExpoModulesJSI then fails at `xtool-build` with `expected type` (ExpoUI, ExpoWebBrowser, ExpoSymbols, ExpoSystemUI,
    ExpoSplashScreen). The interface's `swift-module-flags-ignorable` line holds `-no-verify-emitted-module-interface`,
-   which is why the `jsi` step itself passed. jsi 57.1.3 has the same `~Copyable` protocols and conditional
-   conformances; its interface on Swift 6.4.1 was not checked (no build output of it is on disk). Only Swift 6.4.1 is
+   which is why the `jsi` step itself passed. The cause is in jsi 56's source (plan Task 4, Step 1): the four
+   extensions conform generic types to the internal `~Copyable` protocol `JSIRepresentable`, and Swift 6.4 prints such
+   a conformance into the public interface as a placeholder. jsi 57.1.3 marks exactly these four `@_spi(Internal)`,
+   with a comment that says why, and a fresh SDK 57 interface built on Swift 6.4.1 has no such line; the module flags
+   of the two interfaces are identical. Only Swift 6.4.1 is
    installed on this machine; `rn-xtool setup` runs `swiftly install 6.4` (`src/commands/setup.ts:295`), which takes
    the newest 6.4.x. Whether the SDK 57 verification of 2026-10-28 ran on 6.4.0 is not recorded.
 8. **The synthesised headers tree is the vendored plugin's alone.** `build` passes `headersXcframework: true` only when
@@ -192,6 +195,13 @@ no unreadable line on jsi 56.0.14, differs from today's only in the module-flags
 ExpoModulesJSI's exported symbol set unchanged, is a public `swiftc` option or a jsi source hunk (not a hidden
 `-Xfrontend` option), and needs no version branch. B2 otherwise. The guard ships with either.
 
+**Outcome: B1, the source hunk.** `patches/expo-modules-jsi+56.0.14.patch` adds jsi 57.1.3's four `@_spi(Internal)`
+marks and its comment. Built on Swift 6.4.1, jsi 56.0.14's interface then differs from the unpatched one only by the
+eight stub lines and the placeholder protocol, its `swift-module-flags` lines are unchanged, and `llvm-nm` lists the
+same defined, exported and undefined symbols. The template app then gets through `xtool-build`, ExpoUI,
+ExpoWebBrowser, ExpoSymbols, ExpoSystemUI and ExpoSplashScreen included (with core's floor raised by hand, which
+P7 does). The hunk binds the fix to jsi 56.0.14, as the patch already is; SDK 57 and 58 are not touched.
+
 ### For the iOS floor (goal 5)
 
 **P7, vendored-only (recommended).** `podspec.js` reads the literal iOS platform a podspec declares; `plugin.js` takes
@@ -274,9 +284,9 @@ The owner confirmed the rulings of rows 1–40 on 2026-11-11; rows 41–44 carry
 | 15 | `jsi` build | `swift build` of jsi 56 fails: a header missing from the adapted 0.85.3 slot, or a stricter Swift 6.4.x | user at `jsi`: the compiler's output | handle for this set: Task 6 Step 1 builds it from zero. accept for a later toolchain: the compiler output is the message (owner's ruling 1) |
 | 16 | `jsi` build | `rnArtifactsDir` points at raw or missing slots | user: the named error, with no React Native version in it | handle: Task 3 jsi.test `stops when the React Native headers are missing` (new text) |
 | 17 | Header generation | `NativeState.h` in neither layout, or a quoted include not next to the header that includes it or pointing outside the folder (a 56.x that reorganises its headers) | user at `jsi`: a named error that names the header holding the include; nothing written | handle: quoted includes (`#include "x.h"`, `#import "x.h"`) are followed transitively, each resolved next to the header that includes it, and fail closed: one that is not there, or points outside the folder (`../x.h`, an absolute path), stops the step; they are read as text, so one inside a comment or an `#if 0` block is followed too; an angle-bracket include of a package-local header is not copied, and the compiler reports it at `xtool-build`. Task 3 tests `names a local include that is not next to NativeState.h`, `names the header that holds an include that is not there`, `names a nested header's include that is not next to it`, `refuses an include that points outside the folder: %s`, `resolves an include next to the header that holds it, in a nested folder`, `follows #import as #include` and `a failed synthesis leaves no stamped xcframework` |
-| 18 | Header generation | partial or stale: an interrupted write, or a tree stamped by an older generator reused | nobody: a stale tree compiles or fails later | handle: existing swap-and-stamp tests; Task 4 test `rewrites a tree stamped by an older generator` (exit B2) |
+| 18 | Header generation | partial or stale: an interrupted write, or a tree stamped by an older generator reused | nobody: a stale tree compiles or fails later | handle: existing swap-and-stamp tests; under B1 (taken) the patched source changes the interface and its sha256, so the stamp rewrites the tree (`rewrites when the interface changes`), and the guard runs before the stamp check, so a stamped tree with an unreadable interface stops the step too (`refuses an unreadable interface even when the stamp says the tree is current`) |
 | 19 | Interface fix | the unreadable lines come back in a shape the fix does not know (a newer jsi 56.x or Swift 6.4.x; spike §8.3), or B1's flag stops working | today: users at `xtool-build`, eight `expected type` errors in other modules. With this block: user at `jsi`, a named error | handle: the guard on both exits; Task 4 test `stops on a broken line it does not know` |
-| 20 | Interface fix | B2 removes more than the stubs (a conformance consumers need) | user at `xtool-build`: "does not conform" | handle: Task 4 test `removes exactly the four stub pairs from jsi 56.0.14's interface` (byte-exact fixture) |
+| 20 | Interface fix | B2 removes more than the stubs (a conformance consumers need) | user at `xtool-build`: "does not conform" | not reached: Task 4 took B1, which removes nothing from the interface; B2's test would have owned it |
 | 21 | Interface fix | the fix changes SDK 57's build, or, under B1, SDK 58's | users of a line that worked | handle: Task 6 Step 3, which is Task 4's re-proof: the SDK 57 and SDK 58 reference apps build through G4 |
 | 22 | `rn-spm`, vendored plugin | an Expo module's podspec asks for more iOS than its `spm.config.json` and core's (expo-router 16.4; spike blocker 3, §8.4) | user at `xtool-build`: `requires minimum platform version 16.4 … supports 16.0` | handle: P7; Task 5 tests `P7 reads the iOS deployment target a podspec declares` and `P7 raises a module to its podspec's iOS floor` |
 | 23 | `rn-spm` | a podspec asks for more than the App target's 16.4 (17.0) | user at `xtool-build`: SwiftPM's `requires minimum platform version 17.0 … supports 16.4` | accept: the refusal `pod install` gives on a Mac; `docs/troubleshooting.md` entry (Task 7) |
