@@ -172,12 +172,23 @@ describe("a build interrupted during jsi", () => {
     expect(error.message).toBe(
       `${failure.message}\n` +
         "The jsi step stopped on a precompiled module file in ExpoModulesJSI's module cache that is empty or cut short " +
-        '("is not a valid module file"): a build interrupted during the jsi step leaves its module cache that way, and ' +
-        "the next builds keep reading it. Run `rn-xtool build --clean`: it removes ios-xtool/jsi-out/.jsi-build, and " +
-        "the jsi step builds ExpoModulesJSI again from the start. See " +
-        "https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/troubleshooting.md#interrupted-jsi-build",
+        '("is not a valid module file"): a build interrupted during the jsi step leaves its module cache that way, and the ' +
+        "next builds keep reading it. Run `rm -rf ios-xtool/jsi-out/.jsi-build` in the project folder, then `rn-xtool " +
+        "build`, or run `rn-xtool build --clean`, which removes that folder too; either way the jsi step builds " +
+        "ExpoModulesJSI again from the start. See " +
+        "https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/troubleshooting.md#interrupted-build",
     );
     expect(error.cause).toBe(failure);
+  });
+
+  it("leaves a module file error outside the jsi build's scratch as it is", async () => {
+    const paths = projectPaths(mkTmp());
+    const failure = Object.assign(new Error("Command failed with exit code 1: bash x"), {
+      stdout: "",
+      stderr: "fatal error: file '/var/tmp/clang/ModuleCache/X/Foundation-1.pcm' is not a valid module file\n",
+    });
+    runMock.mockRejectedValueOnce(failure);
+    await expect(buildExpoModulesJsi(paths)).rejects.toBe(failure);
   });
 
   it("leaves any other jsi failure as it is", async () => {

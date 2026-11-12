@@ -112,12 +112,20 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 ### Fixed
 - A build interrupted during the `jsi` step (Ctrl-C, a closed terminal, a reboot) no longer breaks every later build,
   `build --clean` included, with clang's "… .pcm' is not a valid module file". `build --clean` (and `run --clean`)
-  removes the jsi build's scratch, `ios-xtool/jsi-out/.jsi-build`, before the `jsi` step on every project that has
-  one; Expo's `expo prebuild --clean` leaves `ios-xtool` alone, so it stayed before. A `jsi` failure with that clang
-  error now adds "The jsi step stopped on a precompiled module file in ExpoModulesJSI's module cache that is empty or
-  cut short ("is not a valid module file"): a build interrupted during the jsi step leaves its module cache that way,
-  and the next builds keep reading it. Run `rn-xtool build --clean`: …". See
-  [troubleshooting.md](docs/troubleshooting.md#interrupted-jsi-build).
+  removes the jsi build's scratch, `ios-xtool/jsi-out/.jsi-build`, before the `jsi` step on every project that has one;
+  Expo's `expo prebuild --clean` leaves `ios-xtool` alone, so it stayed before. A `jsi` failure with that clang error
+  now adds "The jsi step stopped on a precompiled module file in ExpoModulesJSI's module cache that is empty or cut
+  short ("is not a valid module file"): a build interrupted during the jsi step leaves its module cache that way, and
+  the next builds keep reading it. Run `rm -rf ios-xtool/jsi-out/.jsi-build` in the project folder, then `rn-xtool
+  build`, or run `rn-xtool build --clean`, …". A build interrupted during `xtool-build` leaves the app build's module
+  cache, under `ios-xtool/.build`, the same way, and on Expo `build --clean` keeps that folder: an `xtool-build` failure
+  (at `build` or `install`) with that clang error now adds "xtool dev build stopped on a precompiled module file in the
+  app build's module cache (ios-xtool/.build) that is empty or cut short ("is not a valid module file"): … Run `rm -rf
+  ios-xtool/.build` in the project folder, then `rn-xtool build`: its xtool-build starts cold and takes several minutes.
+  …". A file clang names anywhere else gets no paragraph. The `jsi` and `xtool-build` steps' output now goes through a
+  pipe, so rn-xtool can read it: SwiftPM prints each progress update (`[n/m] Compiling …`) on a line of its own instead
+  of redrawing one line, and its errors without colour. See
+  [troubleshooting.md](docs/troubleshooting.md#interrupted-build).
 
 ## [0.1.0-alpha.8] - 2026-11-09
 

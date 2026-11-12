@@ -297,7 +297,7 @@ rn-xtool builds it with a vendored copy of Expo SDK 58's plugin, on the same dri
   changed. Before it writes the tree, the step reads the interface the build wrote and stops when a line of it is one
   no Swift compiler can parse ([troubleshooting.md](troubleshooting.md#unreadable-expomodulesjsi-interface)). The
   jsi build's scratch is `ios-xtool/jsi-out/.jsi-build`, which `build --clean` removes first
-  ([troubleshooting.md](troubleshooting.md#interrupted-jsi-build)).
+  ([troubleshooting.md](troubleshooting.md#interrupted-build)).
 - **The app shell.** SDK 57's template has `AppDelegate.swift` and no `SceneDelegate.swift`. On every SDK rn-xtool
   copies `SceneDelegate.swift` only when it exists, and stops when Info.plist's `UIApplicationSceneManifest` names a
   scene delegate that is missing.

@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import type { ExpoXtoolConfig } from "../config.js";
 import { cacheDir, swiftHeadersEnv } from "../paths.js";
 import { XTOOL_VERSION } from "../versions.js";
+import { explainBadModuleFile } from "../pipeline/moduleCache.js";
 import { run, runKeepingOutput, runTee, toolEnv } from "./exec.js";
 
 export interface AuthStatus {
@@ -159,12 +160,20 @@ export function devEnv(iosXtoolDir: string): NodeJS.ProcessEnv {
 /** Runs a command to completion (what it resolves with is not used); injectable for tests. */
 export type DevRunner = (...args: Parameters<typeof run>) => Promise<unknown>;
 
-export async function devBuild(bin: string, iosXtoolDir: string, runner: DevRunner = run): Promise<void> {
-  await runner(bin, ["dev", "build", "--configuration", "debug"], {
-    cwd: iosXtoolDir,
-    nice: true,
-    env: devEnv(iosXtoolDir),
-  });
+/**
+ * `xtool dev build`. Its output is shown and kept (all of it: a cold build prints about 1 MB), so a module cache a
+ * killed build left in `.build` is explained; any other failure passes through as it is.
+ */
+export async function devBuild(bin: string, iosXtoolDir: string, runner: DevRunner = runKeepingOutput): Promise<void> {
+  try {
+    await runner(bin, ["dev", "build", "--configuration", "debug"], {
+      cwd: iosXtoolDir,
+      nice: true,
+      env: devEnv(iosXtoolDir),
+    });
+  } catch (e) {
+    throw explainBadModuleFile(e, iosXtoolDir);
+  }
 }
 
 /**
