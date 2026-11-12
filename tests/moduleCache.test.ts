@@ -82,6 +82,15 @@ describe("a module file a killed build left", () => {
     expect(badModuleFileHint(clangError(pcm), projectPaths(link).iosXtool)).toBe(APP_BUILD_HINT);
   });
 
+  it("finds the folder when the project's path has an apostrophe in it", () => {
+    const quoted = projectPaths("/srv/Bob's apps/p");
+    const pcm = "/srv/Bob's apps/p/ios-xtool/.build/out/ModuleCache.noindex/X/React-1.pcm";
+    expect(badModuleFileHint(`Compiling…\n${clangError(pcm)}`, quoted.iosXtool)).toBe(APP_BUILD_HINT);
+    expect(badModuleFileHint(`${clangError(pcm)}${clangError(pcm.replace("React", "Yoga"))}`, quoted.iosXtool)).toBe(
+      APP_BUILD_HINT,
+    );
+  });
+
   it("appends the paragraph to a failure's message, keeping the failure as its cause", () => {
     const failure = Object.assign(new Error("Command failed with exit code 1: nice -n 15 xtool dev build --configuration debug"), {
       exitCode: 1,

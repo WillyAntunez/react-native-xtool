@@ -178,14 +178,19 @@ export async function devBuild(bin: string, iosXtoolDir: string, runner: DevRunn
 
 /**
  * `xtool dev run --usb`. Its output is shown and kept: it prints install errors on stdout, and a
- * known one (the App ID limit) is explained.
+ * known one (the App ID limit) is explained. It builds first, so a module cache a killed build left in `.build` is
+ * explained as `devBuild` explains it; any other failure passes through as it is.
  */
 export async function devRun(bin: string, iosXtoolDir: string, runner: DevRunner = runKeepingOutput): Promise<void> {
-  await runner(bin, ["dev", "run", "--configuration", "debug", "--usb"], {
-    cwd: iosXtoolDir,
-    nice: true,
-    env: devEnv(iosXtoolDir),
-  });
+  try {
+    await runner(bin, ["dev", "run", "--configuration", "debug", "--usb"], {
+      cwd: iosXtoolDir,
+      nice: true,
+      env: devEnv(iosXtoolDir),
+    });
+  } catch (e) {
+    throw explainBadModuleFile(e, iosXtoolDir);
+  }
 }
 
 /** Runs a command to completion and returns its output; `runTee` by default. */
@@ -198,13 +203,22 @@ export function parseIpaPath(output: string, cwd: string): string | undefined {
   return last ? resolve(cwd, last) : undefined;
 }
 
-/** `xtool dev build --sign --ipa`: a signed .ipa to install without `dev run` (Wi‑Fi path). */
+/**
+ * `xtool dev build --sign --ipa`: a signed .ipa to install without `dev run` (Wi‑Fi path). Its output is kept, so a
+ * module cache a killed build left in `.build` is explained as `devBuild` explains it; any other failure passes
+ * through as it is.
+ */
 export async function devBuildIpa(bin: string, iosXtoolDir: string, runner: CaptureRunner = runTee): Promise<string> {
-  const out = await runner(bin, ["dev", "build", "--configuration", "debug", "--sign", "--ipa"], {
-    cwd: iosXtoolDir,
-    nice: true,
-    env: devEnv(iosXtoolDir),
-  });
+  let out: string;
+  try {
+    out = await runner(bin, ["dev", "build", "--configuration", "debug", "--sign", "--ipa"], {
+      cwd: iosXtoolDir,
+      nice: true,
+      env: devEnv(iosXtoolDir),
+    });
+  } catch (e) {
+    throw explainBadModuleFile(e, iosXtoolDir);
+  }
   const ipa = parseIpaPath(out, iosXtoolDir);
   if (!ipa) throw new Error("`xtool dev build --ipa` did not report the .ipa path (no `Wrote to` line)");
   return ipa;

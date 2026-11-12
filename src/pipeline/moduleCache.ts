@@ -10,8 +10,11 @@ import { jsiScratchDir } from "./jsiHeaders.js";
  * explanation never names a remedy that cannot work.
  */
 
-/** Clang's words for a precompiled module file it cannot read, with that file's path. */
-const BAD_MODULE_FILE = /file '([^'\n]+)' is not a valid (?:precompiled )?module file/g;
+/**
+ * Clang's words for a precompiled module file it cannot read, with that file's path. The path ends at the first
+ * `' is not a valid`, not at the first quote: a folder name may hold an apostrophe.
+ */
+const BAD_MODULE_FILE = /file '([^\n]+?)' is not a valid (?:precompiled )?module file/g;
 
 const SEE = `See ${troubleshootingUrl("interrupted-build")}`;
 
