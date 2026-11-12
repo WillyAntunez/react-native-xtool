@@ -81,8 +81,8 @@ scaffolded libraries, CocoaPods binaries); [recipe.md](recipe.md) has every step
    [Expo SDK 57](#expo-sdk-57)), with Linux shims for `plutil` and `otool`. With CocoaPods binaries, the
    `pod-binaries` step writes the local package the scaffolds link, `ios/build/pod-binaries`, right before.
 4. Builds ExpoModulesJSI with the Darwin SDK and stages the runtime frameworks. On Expo SDK 56 and 57 the JSI build
-   runs before step 3, because the vendored plugin needs its headers. Before staging, the `frameworks` step checks that the
-   frameworks fit together ([G4](#precompiled-frameworks-g4)).
+   runs before step 3, because the vendored plugin needs its headers. Before staging, the `frameworks` step checks that
+   the frameworks fit together ([G4](#precompiled-frameworks-g4)).
 5. Generates `ios-xtool/` (Package.swift, xtool.yml, Info.plist, ip.txt, app config). It is a regenerable artifact; do
    not edit it by hand. It also gets:
    - the app's entitlements, as `App.entitlements`, when the file `CODE_SIGN_ENTITLEMENTS` names has keys
@@ -241,15 +241,15 @@ nests the copy expo uses, which G2 refuses, while an override applies to every c
 Expo ships some modules precompiled (ExpoModulesCore, ExpoModulesWorklets, ExpoFileSystem, ExpoFont, and ExpoImage with
 its SDWebImage and libavif frameworks), and each was linked against the versions of the modules it imports from that
 Expo built it with. A precompiled module next to an older ExpoModulesCore builds, and then the app closes on the iPhone
-at launch, before any JS runs (`dyld: Symbol not found`). The `frameworks` step therefore runs `llvm-nm` (from the Swift toolchain `setup`
-installs) on every framework it is about to embed. Each symbol a framework imports from another embedded framework
-must be exported by it; if one is not, the build stops naming both frameworks, their packages and one missing symbol
-(mangled). Weak imports and system libraries are not checked. G4 runs on every project kind (Expo SDK 56, 57 and
-58, bare, hybrid), has no bypass flag, and a missing `llvm-nm` is an error. On 2026-10-28 it passed, with no false
-positive, on the default SDK 58 template, the SDK 58 reference app with expo-router, a bare React Native 0.88.1 app,
-a hybrid app (expo 58.0.21, React Native 0.88.1), an Expo SDK 57 app and a bare React Native 0.86.3 app. On 2026-11-11
-it passed on the default SDK 56 template, 14 embedded frameworks with ExpoImage and its five SDWebImage and libavif
-frameworks, and a check of the same frameworks by hand with `llvm-nm` found no missing symbol either.
+at launch, before any JS runs (`dyld: Symbol not found`). The `frameworks` step therefore runs `llvm-nm` (from the Swift
+toolchain `setup` installs) on every framework it is about to embed. Each symbol a framework imports from another
+embedded framework must be exported by it; if one is not, the build stops naming both frameworks, their packages and one
+missing symbol (mangled). Weak imports and system libraries are not checked. G4 runs on every project kind (Expo SDK 56,
+57 and 58, bare, hybrid), has no bypass flag, and a missing `llvm-nm` is an error. On 2026-10-28 it passed, with no
+false positive, on the default SDK 58 template, the SDK 58 reference app with expo-router, a bare React Native 0.88.1
+app, a hybrid app (expo 58.0.21, React Native 0.88.1), an Expo SDK 57 app and a bare React Native 0.86.3 app. On
+2026-11-11 it passed on the default SDK 56 template, 14 embedded frameworks with ExpoImage and its five SDWebImage and
+libavif frameworks, and a check of the same frameworks by hand with `llvm-nm` found no missing symbol either.
 
 G4 compares the symbols each embedded framework imports with the ones the framework it imports from exports, the
 check dyld runs at launch. It cannot see C++ or Swift layout changes that keep the same symbols, or lookups by name
@@ -281,9 +281,9 @@ rn-xtool builds it with a vendored copy of Expo SDK 58's plugin, on the same dri
   ([troubleshooting.md](troubleshooting.md#build-and-patches)).
 - **The vendored plugin.** `vendor/expo-spm/` is expo 58.0.19's `scripts/spm/` with rn-xtool's Expo patch applied and
   seven vendored-only edits (P1–P7: the macro lookup, app packages resolved from the app root, CocoaPods' default
-  header dir and prefix header, tarballs extracted without macOS AppleDouble entries, a subspec's own compiler flags as a
-  target of its own, and each module at the iOS floor its podspec declares, capped at the App target's 16.4 with a
-  `⚠` line when a podspec asks for more); provenance and the edits in
+  header dir and prefix header, tarballs extracted without macOS AppleDouble entries, a subspec's own compiler flags as
+  a target of its own, and each module at the iOS floor its podspec declares, capped at the App target's 16.4 with a `⚠`
+  line when a podspec asks for more); provenance and the edits in
   [vendor/expo-spm/README.md](../vendor/expo-spm/README.md). expo-modules-autolinking 58.0.15 and expo-modules-macros
   0.22.0 (with the host's `@expo/modules-macros-linux-<arch>` binary) are exact dependencies of rn-xtool, which the
   plugin finds in rn-xtool's `node_modules`; every package of the app is resolved from the app.
@@ -453,8 +453,8 @@ patch above is what makes that scaffolder work for real-world podspecs.
   (`scripts/rn-spm-generate.js --scaffold`) passes each name as `--only <name>`, and nothing is forced. Every other
   library's `Package.swift`, persisted in `patches/` or edited by hand, stays as it is. A library is scaffolded again
   only once its `Package.swift` is gone ([troubleshooting.md](troubleshooting.md#scaffolded-libraries)). Bare apps,
-  Expo SDK 57 and Expo SDK 58 all go through this driver; on SDK 58 it uses Expo's autolinking command
-  ([Expo SDK 58](#expo-sdk-58)).
+  Expo SDK 56, Expo SDK 57 and Expo SDK 58 all go through this driver; on Expo it uses Expo's autolinking command
+  ([Expo SDK 58](#expo-sdk-58), [Expo SDK 57](#expo-sdk-57)).
 - The driver writes what it did for each library to `ios/build/rn-xtool-scaffold-results.json`
   (`{"results": [{"depName", "status", "reason", "warnings", "root"}]}`; `reason`, `warnings` and `root` when there are
   any). rn-xtool deletes the file before each scaffold run, so it never reads an older run's results.

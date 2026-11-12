@@ -954,11 +954,11 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   `~58.0.28`), so a newer `expo` whose modules really need newer versions could still fail at G4 or at launch. SDK 57
   gets the same two options, with the block `"overrides": { "expo-modules-core": "57.0.24", "expo-modules-autolinking":
   "57.0.16", "expo-modules-jsi": "57.1.3" }`, and SDK 56 with `"overrides": { "expo-modules-core": "56.0.27",
-  "expo-modules-jsi": "56.0.14", "expo-modules-autolinking": "56.0.24" }`. Elsewhere the message says to pin the package to the patched version, for
-  example `pin "react-native" to 0.88.1` when a newer 0.88.x does not take the 0.88.1 patch. When react-native is on a
-  release line rn-xtool bundles no patch for, the build stops before patch-package runs, with "patch-package was not
-  run: react-native <version> is installed and the bundled react-native patches are for 0.88.0 and 0.88.1." Patches that
-  applied before a failure stay in `node_modules`; see [Expo SDK 58](#expo-sdk-58).
+  "expo-modules-jsi": "56.0.14", "expo-modules-autolinking": "56.0.24" }`. Elsewhere the message says to pin the package
+  to the patched version, for example `pin "react-native" to 0.88.1` when a newer 0.88.x does not take the 0.88.1 patch.
+  When react-native is on a release line rn-xtool bundles no patch for, the build stops before patch-package runs, with
+  "patch-package was not run: react-native <version> is installed and the bundled react-native patches are for 0.88.0
+  and 0.88.1." Patches that applied before a failure stay in `node_modules`; see [Expo SDK 58](#expo-sdk-58).
 - **A reanimated or worklets patch fails at `patches` with "Applying the project's patches/ failed":** rn-xtool rewrites
   these libraries' `Package.swift` in `node_modules` so it compiles on Linux (`manifest — made … portable to Linux`).
   A patch you made with `npx patch-package react-native-reanimated` (or `react-native-worklets`) after an rn-xtool
@@ -1439,8 +1439,8 @@ same warning.
 
 On a newer version the build uses the line's patches: the patch for the installed version when rn-xtool bundles one,
 else the highest bundled patch of the same release line (react-native 0.88.2 gets the 0.88.1 patch; a newer 57.x
-expo-modules-jsi gets the 57.1.3 patch, a newer 56.x the 56.0.14 patch). When that patch does not apply, the build stops at `patches` with
-"rn-xtool could not patch <package>@<version> (patch file: <file>)". The message gives the remedy (see
+expo-modules-jsi gets the 57.1.3 patch, a newer 56.x the 56.0.14 patch). When that patch does not apply, the build stops
+at `patches` with "rn-xtool could not patch <package>@<version> (patch file: <file>)". The message gives the remedy (see
 [Build and patches](#build-and-patches)): the npm `"overrides"` block on Expo SDK 56, 57 and 58, `pin "react-native" to
 0.88.1` on bare 0.88.x.
 
@@ -1634,8 +1634,8 @@ check) and `build` stop with these messages (the refusal of an older SDK is unde
   the `(from expo-modules-core <version>)` texts of the [Expo SDK 58](#expo-sdk-58) section.
 - **"ExpoModulesJSI needs React Native's headers at <dir>, which does not exist. rnArtifactsDir must hold the adapted
   slots of the project's React Native version, as rn-xtool's rn-artifacts step writes them."** At the `jsi` step:
-  `rnArtifactsDir` points at raw 0.86.3 artifacts. Build once without `rnArtifactsDir` and point it at that project's `ios/build/rn-artifacts/0.86.3`
-  (see [bare-react-native.md](bare-react-native.md#older-artifacts-085-086)).
+  `rnArtifactsDir` points at raw 0.86.3 artifacts. Build once without `rnArtifactsDir` and point it at that project's
+  `ios/build/rn-artifacts/0.86.3` (see [bare-react-native.md](bare-react-native.md#older-artifacts-085-086)).
 
 **Install SDK 57's reanimated and worklets explicitly.** expo-router declares react-native-reanimated as a `*` peer.
 When the app does not install it, npm installs the latest reanimated and react-native-worklets, and that worklets is
@@ -1706,8 +1706,8 @@ continues. `doctor` (the `project` check) and `build` stop with the first four m
 - **"ExpoModulesCore.framework (expo-modules-core <version>, from <dir>) needs <n> symbols that
   ExpoModulesJSI.framework (built by rn-xtool from <dir>) does not export, … (expo-modules-core <version> declares
   expo-modules-jsi <range>) …"** G4, at `frameworks`. The jsi 56 patch makes the `message` of `expo.CppError`
-  internal, so that Swift 6.4 compiles it; expo-modules-core 56.0.27 imports none of it. A later core 56.x that does is refused
-  here, before the app is built. Hold the set on the verified versions with the `"overrides"` block above, run
+  internal, so that Swift 6.4 compiles it; expo-modules-core 56.0.27 imports none of it. A later core 56.x that does is
+  refused here, before the app is built. Hold the set on the verified versions with the `"overrides"` block above, run
   `npm install`, and build again.
 - **"⚠ <package>'s podspec asks for iOS <version>, and rn-xtool builds the app for iOS 16.4, so <package> is compiled
   for iOS 16.4: its code that needs iOS <version> must be behind an availability check (`if #available(iOS <version>,

@@ -1,8 +1,8 @@
-# Recipe: Expo SDK 57 and 58 iOS dev builds from Linux
+# Recipe: Expo SDK 56, 57 and 58 iOS dev builds from Linux
 
 The technical recipe behind `rn-xtool`, migrated from the original research notes (2026-10-23). The CLI
 automates exactly these steps. Paths are relative to this repo. Sections 1 to 9 describe Expo SDK 58; the differences
-for [Expo SDK 57](#expo-sdk-57-notes) and [bare React Native](#bare-react-native-notes) follow them.
+for [Expo SDK 56 and 57](#expo-sdk-57-notes) and [bare React Native](#bare-react-native-notes) follow them.
 
 ## 1. Toolchain
 
@@ -44,8 +44,8 @@ with the same `--config-command`, plus `--scaffold --results ios/build/rn-xtool-
 falling back to `repo1.maven.org/maven2`): `react-native-artifacts-<v>-reactnative-{core,dependencies}-{debug,release}.tar.gz` and
 `hermes-ios-<hv>-hermes-ios-<flavor>.tar.gz`, cached in `~/Library/Caches/ReactNative/spm-artifacts/<v>/<flavor>`.
 `rnArtifactsDir` (config) skips the download for offline use; release resolves to a symlink to debug. The Hermes
-framework is named `hermesvm.framework`. Expo SDK 57 never runs `setup-apple-spm.js`: it uses the driver of the bare
-path ([Expo SDK 57 notes](#expo-sdk-57-notes)).
+framework is named `hermesvm.framework`. Expo SDK 56 and 57 never run `setup-apple-spm.js`: they use the driver of the
+bare path ([Expo SDK 57 notes](#expo-sdk-57-notes), which cover SDK 56 too).
 
 ## 3. Expo SPM plugin and patches
 
@@ -59,11 +59,11 @@ version's release line (`releaseLine` in `src/versions.ts`: `0.y` for a `0.y.z` 
 packages other than react-native, the highest version. On a newer 58.x than the floor, that is the floor's patch:
 patch-package applies it with its version warning, or, when it does not apply, the build stops with "rn-xtool could
 not patch <package>", whose SDK 58 remedy is an npm `"overrides"` block with the verified set, or waiting for an
-rn-xtool release. With the vendored Expo plugin (SDK 57) the last fallback is left out (`lineOnly`), so only patches of
-the installed release lines are staged. It applies them, then the project's own `patches/` (persisted library
-`Package.swift` files) when present. Before that, the project read checks SDK 58's floor set (G1–G3,
-`checkExpoPackages` in `src/project/expo.ts`, texts in [troubleshooting.md](troubleshooting.md#expo-sdk-58)). An Expo
-SDK 58 project gets these four:
+rn-xtool release. With the vendored Expo plugin (SDK 56 and 57) the last fallback is left out (`lineOnly`), so only
+patches of the installed release lines are staged. It applies them, then the project's own `patches/` (persisted library
+`Package.swift` files) when present. Before that, the project read checks SDK 58's floor set (G1–G3, `checkExpoPackages`
+in `src/project/expo.ts`, texts in [troubleshooting.md](troubleshooting.md#expo-sdk-58)). An Expo SDK 58 project gets
+these four:
 
 | Patch | Effect |
 | --- | --- |
@@ -72,9 +72,11 @@ SDK 58 project gets these four:
 | `patches/expo-modules-jsi+58.0.21.patch` | Swift 6.4 rejects a `public` member in an extension of a C++ type under library evolution (`CppError.message`); made internal. |
 | `patches/react-native+0.88.1.patch` | About 3.0k lines across `read-podspec.js`, `scaffold-package-swift.js` and `spm-utils.js`: 25 generic fixes to RN's `spm scaffold` (Ruby bare lists and locals, subspecs, `header_dir`, platform-scoped fields, defines, mixed Swift + Objective-C/C++ targets, CocoaPods dependencies mapped to SwiftPM packages through a pod table file (`RN_SPM_POD_TABLE`), with umbrella-header forwarders, or to the local `pod-binaries` package of CocoaPods binaries, Swift umbrellas without the module's own `-Swift.h`, `#{package['version']}` in flags and defines, subspec `header_mappings_dir`, the `// rn-xtool-swift-importer-paths:` marker, dependencies on packages that are not installed left out, the Swift 5 language mode, Swift compilation conditions, `onlyDeps`, ...) and two to the per-app header farm (a header-less module map, bare forwarders to codegen headers). Scaffold revision 4. See `docs/upstream/react-native-scaffolder.md`. |
 
-Two more are bundled. `patches/react-native+0.88.0.patch` is a byte-identical copy of the react-native patch for bare
+Three more are bundled. `patches/react-native+0.88.0.patch` is a byte-identical copy of the react-native patch for bare
 React Native 0.88.0 (a test keeps the two identical, so a fix edits both). `patches/expo-modules-jsi+57.1.3.patch` is
 the same `CppError.message` fix for expo-modules-jsi 57.1.3, and the only one an Expo SDK 57 project gets.
+`patches/expo-modules-jsi+56.0.14.patch` is the only one an Expo SDK 56 project gets: the same fix for expo-modules-jsi
+56.0.14, and four conformances to the internal `JSIRepresentable` marked `@_spi(Internal)`, as jsi 57.1.3 does.
 
 `expo-dev-client` builds through the Expo patch (dev-launcher and dev-menu as mixed targets, json-utils as an Objective-C target); its asset catalogs are dropped (no `actool` on Linux), so launcher and menu icons are missing.
 
@@ -97,8 +99,8 @@ the same `CppError.message` fix for expo-modules-jsi 57.1.3, and the only one an
 5. The product is wrapped as `ExpoModulesJSI.framework` under `ios-xtool/jsi-out`.
 
 `RN_XTOOL_REACT_HEADERS` and `RN_XTOOL_DEPS_HEADERS` replace the `ios-arm64` `Headers` dirs of `ReactNativeHeaders`
-and `ReactNativeDependenciesHeaders` (default: under `ios/build/xcframeworks`). Only SDK 57 sets them; for every other
-build `src/pipeline/jsi.ts` removes them from the environment.
+and `ReactNativeDependenciesHeaders` (default: under `ios/build/xcframeworks`). Only SDK 56 and 57 (the vendored Expo
+plugin) set them; for every other build `src/pipeline/jsi.ts` removes them from the environment.
 
 ## 6. Framework staging
 

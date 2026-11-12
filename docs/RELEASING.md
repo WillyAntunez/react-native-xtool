@@ -188,9 +188,9 @@ The report job keeps one GitHub issue per broken line, labelled `drift` and titl
 ### Running it by hand
 
 - `gh workflow run drift-watch.yml -f mode=daily` (or "Run workflow" in the Actions tab) runs the daily check.
-- `-f drill=<line id>` (`expo-56`, `expo-57`, `expo-58`, `bare-0.85`, `bare-0.86`, `bare-0.87` or `bare-0.88`) marks that line
-  red for one daily run, with a `drill` step, to test the issue path end to end: the run opens or updates that line's
-  issue, and the next run without `drill` closes it. Any other value stops the report before it touches an issue.
+- `-f drill=<line id>` (`expo-56`, `expo-57`, `expo-58`, `bare-0.85`, `bare-0.86`, `bare-0.87` or `bare-0.88`) marks
+  that line red for one daily run, with a `drill` step, to test the issue path end to end: the run opens or updates that
+  line's issue, and the next run without `drill` closes it. Any other value stops the report before it touches an issue.
   `drill` is ignored with `mode=explore`.
 - `-f mode=explore` runs the weekly exploration.
 - Locally, after `npm run build`: `node scripts/drift-watch.mjs` prints its subcommands. `check --existing` checks a
@@ -223,7 +223,8 @@ from `EXPLORE_RN_MINORS` and `EXPLORE_RN_CLI`, in `src/drift/targets.ts`.
   or permission error, an issue list that cannot be read). That email is the only fallback when `gh` fails: nothing
   else reports it. Days with a network failure therefore send an email even when no line broke.
 - **No compile, no device, no G4.** A green line can still fail G4 or the build (on Expo SDK 56 and 57 also the `jsi`
-  step's check of the ExpoModulesJSI interface), or crash on the device. The issue body and the README say so; a compat-suite CI with a self-hosted runner would close the gap.
+  step's check of the ExpoModulesJSI interface), or crash on the device. The issue body and the README say so; a
+  compat-suite CI with a self-hosted runner would close the gap.
 - **Artifacts "unknown" stays green.** When `doctor --project` cannot check the React Native artifacts (network), the
   gates step stays green with `note: the React Native artifacts were not checked (network); they are checked again on
   the next run`. A line whose artifacts stay unchecked for days stays green meanwhile.

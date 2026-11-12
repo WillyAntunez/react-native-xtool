@@ -28,19 +28,19 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
 - Expo SDK 55 and older are refused with "Expo SDK <n> is not supported; rn-xtool supports SDK 56 (expo 56.0.24 or
   newer 56.x), SDK 57 (expo 57.0.31 or newer 57.x) and SDK 58 or newer.", and `doctor --project` gives them its
   `support comes with the translator` reason; SDK 56 was among the refused SDKs before.
-- On Expo SDK 58 (and 56), the version check reads expo-file-system and expo-font where expo-modules-autolinking links
-  them, as its own CLI answers (`resolve --platform apple --json`, the question the Expo plugin asks), instead of under
-  `node_modules/expo` only: the app's own top-level copy, a dependency's copy, a `file:`-linked library's copy and the
-  folders `expo.autolinking` settings add are read as the build links them. A package autolinking does not link is
-  skipped when a copy is installed and the app excludes it (`expo.autolinking.exclude`, or the `exclude` of
-  `expo.autolinking.apple`, else of `expo.autolinking.ios`), and stops the check when it is installed and not
-  excluded: "<package> is installed (<path>) but Expo's autolinking does not link it for iOS, and the app does not
-  exclude it: the build would succeed and the app would fail at launch with "Cannot find native module". …". When that
-  CLI cannot run (no answer within 20 seconds included), the check falls back to the top-level copy when the app, or a
-  package it lists, depends on it, else the copy under `expo`, and says so in one line: "⚠ rn-xtool could not ask
-  Expo's autolinking which expo-file-system and expo-font copies the build links (<reason>), so it read their versions
-  from node_modules: … The build asks autolinking again and may link another copy. See …". See
-  [troubleshooting.md](docs/troubleshooting.md#expo-sdk-58).
+- On Expo SDK 58 (and 56), and in hybrid apps (bare React Native with Expo modules, SDK 58), the version check reads
+  expo-file-system and expo-font where expo-modules-autolinking links them, as its own CLI answers (`resolve --platform
+  apple --json`, the question the Expo plugin asks), instead of under `node_modules/expo` only: the app's own top-level
+  copy, a dependency's copy, a `file:`-linked library's copy and the folders `expo.autolinking` settings add are read as
+  the build links them. A package autolinking does not link is skipped when a copy is installed and the app excludes it
+  (`expo.autolinking.exclude`, or the `exclude` of `expo.autolinking.apple`, else of `expo.autolinking.ios`), and stops
+  the check when it is installed and not excluded: "<package> is installed (<path>) but Expo's autolinking does not link
+  it for iOS, and the app does not exclude it: the build would succeed and the app would fail at launch with "Cannot
+  find native module". …". When that CLI cannot run (no answer within 20 seconds included), the check falls back to the
+  top-level copy when the app, or a package it lists, depends on it, else the copy under `expo`, and says so in one
+  line: "⚠ rn-xtool could not ask Expo's autolinking which expo-file-system and expo-font copies the build links
+  (<reason>), so it read their versions from node_modules: … The build asks autolinking again and may link another copy.
+  See …". See [troubleshooting.md](docs/troubleshooting.md#expo-sdk-58).
 - The `jsi` step's missing-headers error names no React Native version: "ExpoModulesJSI needs React Native's headers
   at <dir>, which does not exist. rnArtifactsDir must hold the adapted slots of the project's React Native version, as
   rn-xtool's rn-artifacts step writes them."
