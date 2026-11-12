@@ -182,7 +182,10 @@ Bare projects (no `expo`, or `expo` plus Expo modules as a hybrid) follow the sa
   C-family sources. The deployment target is fixed at 16.4 (`IOS_MIN`), Swift 5 mode.
 - **Section 9**: `ip.txt` holds `<lanIp>:<metroPort>` (RN takes only the host from `ip.txt`; the port is compiled into the
   framework as 8081); `start` runs `npx react-native start`.
-- `build --clean` removes `ios/build` and `ios-xtool` only; the user's `ios/` is never modified.
+- `build --clean` on a bare project (hybrid included) runs the `clean` step: it removes `ios/build` and all of
+  `ios-xtool` (`.build` included), and the rest of the user's `ios/` is never modified. On an Expo project it runs
+  `expo prebuild --clean` instead, which writes `ios/` again from the app config, and the `jsi` step removes the jsi
+  build's scratch (`ios-xtool/jsi-out/.jsi-build`); the rest of `ios-xtool`, `.build` included, stays.
 
 ## Expo SDK 57 notes
 

@@ -1012,20 +1012,23 @@ that way, and the next builds keep reading it. Run `rm -rf ios-xtool/jsi-out/.js
 ExpoModulesJSI again from the start. See <this section>". Deleting the folder is the quicker of the two: ExpoModulesJSI
 is built again from an empty folder (about 10 seconds on the Expo SDK 56, 57 and 58 apps rn-xtool is tested with), and
 nothing else starts over. `rn-xtool build --clean` (or `run --clean`) removes the same folder before the `jsi` step on
-every project that has one, and also runs Expo's prebuild again. A plain `rn-xtool build` keeps that folder and fails
-the same way again.
+every project that has one. On an Expo project it also runs Expo's prebuild again (`expo prebuild --clean`), and the
+rest of `ios-xtool` stays. On a hybrid app (bare React Native with Expo modules) it runs no prebuild: its `clean` step
+removes `ios/build` and all of `ios-xtool`, `.build` included, so the next `xtool-build` starts cold too. A plain
+`rn-xtool build` keeps that folder and fails the same way again.
 
 **Stopped during `xtool-build`.** The file is in the app build's module cache, under `ios-xtool/.build`, and
 `xtool-build` stops with "xtool dev build stopped on a precompiled module file in the app build's module cache
 (ios-xtool/.build) that is empty or cut short ("is not a valid module file"): a build interrupted during xtool-build
 leaves its module cache that way, and the next builds keep reading it. `rn-xtool build --clean` does not remove
 ios-xtool/.build on Expo projects. Run `rm -rf ios-xtool/.build` in the project folder, then `rn-xtool build`: its
-xtool-build starts cold and takes several minutes. See <this section>". `rn-xtool install` builds with xtool too and
-stops with the same paragraph. On an Expo project `build --clean` keeps `ios-xtool/.build`, so that every `--clean` does
-not become a cold build; on a bare project it removes `ios-xtool`, `.build` included. After the folder is deleted, the
-next `xtool-build` compiles every package and the app again (about 3 to 6 minutes on the Expo SDK 56 template app), and
-SwiftPM fetches the GitHub packages of mapped pods again, which needs the network (see [Libraries that depend on
-CocoaPods pods](#libraries-that-depend-on-cocoapods-pods)).
+xtool-build starts cold and takes several minutes. See <this section>". `rn-xtool install` and
+`rn-xtool install --network` build with xtool too and stop with the same paragraph. On an Expo project `build --clean`
+keeps `ios-xtool/.build`, so that every `--clean` does not become a cold build; on a bare project (hybrid included) it
+removes `ios-xtool`, `.build` included. After the folder is deleted, the next `xtool-build` compiles every package and
+the app again (about 3 to 6 minutes on the Expo SDK 56 template app), and SwiftPM fetches the GitHub packages of mapped
+pods again, which needs the network (see [Libraries that depend on CocoaPods
+pods](#libraries-that-depend-on-cocoapods-pods)).
 
 ### Precheck
 
@@ -1479,15 +1482,16 @@ messages and the two hybrid ones at the end, and print the sixth and go on; the 
   it: …": autolinking leaves out a module without an `expo-module.config.json` or whose config names no Apple
   platform (a damaged install, most often), and the app would build and then fail at launch with "Cannot find native
   module". Reinstall the package (`rm -rf <path> && npm install`), or list it in `expo.autolinking.exclude` if the
-  app does not use it. When that CLI cannot run (not found, a non-zero exit, no answer within 20 seconds, or output
-  that is not its JSON), the check takes the top-level copy when the app, or a package the app lists, depends on it,
-  else the copy under `node_modules/expo`, where npm nests them (an exclusion is not read then), and says so first in
-  one line: "⚠ rn-xtool could not ask Expo's autolinking which expo-file-system and expo-font copies the build links
-  (<reason>), so it read their versions from node_modules: … The build asks autolinking again and may link another
-  copy.", the reason being the exit code, the timeout, or "its answer could not be read" (`doctor --project` shows it
-  on the `project` line). Run `node node_modules/expo-modules-autolinking/bin/expo-modules-autolinking.js resolve
-  --platform apple --json` in the project folder to see why it fails. The remedy follows the order of [Moving to the
-  58.0.21 set](#moving-to-the-58021-set), and adapts to the project:
+  app does not use it. When that CLI cannot run (not found, a non-zero exit or a signal, no answer within 20 seconds, a
+  failure to start, or output that is not its JSON), the check takes the top-level copy when the app, or a package the
+  app lists, depends on it, else the copy under `node_modules/expo`, where npm nests them (an exclusion is not read
+  then), and says so first in one line: "⚠ rn-xtool could not ask Expo's autolinking which expo-file-system and
+  expo-font copies the build links (<reason>), so it read their versions from node_modules: … The build asks autolinking
+  again and may link another copy.", the reason being one of "its CLI was not found", "it exited with code <n>", "it was
+  stopped by <signal>", "it gave no answer within 20 s", "it could not run: <error>" or "its answer could not be read".
+  `rn-xtool doctor --project` asks again and shows the line on its `project` line; when it stays, report it with the
+  output of `rn-xtool doctor --report` (see [Reporting a problem](#reporting-a-problem)). The remedy follows the order
+  of [Moving to the 58.0.21 set](#moving-to-the-58021-set), and adapts to the project:
   - When package.json lists expo-modules-core, expo-modules-jsi or expo-modules-autolinking, it starts with
     "Remove the expo-modules-jsi and expo-modules-autolinking pins (`npm uninstall expo-modules-jsi
     expo-modules-autolinking`)" for the ones listed. A project pinned to the SDK 58 versions rn-xtool 0.1.0-alpha.2
