@@ -80,7 +80,7 @@ export interface BuildPlanInput {
   hasExpoModules: boolean;
   hasExpoConstants: boolean;
   /**
-   * Vendored SwiftPM scripts (bare) or the vendored Expo plugin (SDK 57), without a user-supplied `rnArtifactsDir`:
+   * Vendored SwiftPM scripts (bare) or the vendored Expo plugin, without a user-supplied `rnArtifactsDir`:
    * rn-xtool prepares the artifacts.
    */
   rnArtifacts: boolean;
@@ -99,7 +99,7 @@ function signedIdOf(installed: string, bundleIdentifier: string): boolean {
 
 /**
  * Expo: every step but rn-artifacts, with `expo prebuild` first when `ios/` is missing or on `--clean`.
- * Expo on the vendored plugin (SDK 57) also gets rn-artifacts (when planned), and jsi moves before rn-spm
+ * Expo on the vendored plugin also gets rn-artifacts (when planned), and jsi moves before rn-spm
  * because the plugin needs the JSI headers.
  * Bare: never prebuild (`--clean` removes the build outputs instead), rn-artifacts only for the
  * vendored scripts, ExpoModulesJSI only with Expo modules set up, app-config only with expo-constants.
@@ -193,7 +193,8 @@ export interface BuildDeps {
       binary?: Record<string, PodBinary>;
     },
   ) => Promise<void>;
-  buildJsi: (paths: ProjectPaths, opts?: { rnHeaders?: JsiRnHeaders; headersXcframework?: boolean }) => Promise<RuntimeFramework>;
+  /** `clean`: on `build --clean`, the jsi build starts from an empty scratch (its module cache included). */
+  buildJsi: (paths: ProjectPaths, opts?: { rnHeaders?: JsiRnHeaders; headersXcframework?: boolean; clean?: boolean }) => Promise<RuntimeFramework>;
   generateAppConfig: (paths: ProjectPaths) => Promise<void>;
   readFrameworks: (dir: string, flavor: "debug" | "release") => RuntimeFramework[];
   /** G4: throws when an embedded framework imports a symbol another embedded framework does not export. */
@@ -432,7 +433,7 @@ export async function build(
     return result;
   };
 
-  // SDK 57: the vendored Expo plugin builds against RN's prebuilt artifacts and needs the JSI headers first.
+  // The vendored Expo plugin builds against RN's prebuilt artifacts and needs the JSI headers first.
   const vendoredExpo = project.kind === "expo" && project.expoPlugin === "vendored";
   const podRoots = d.binaryPodCandidates(root, libraryChecks);
   const steps = buildSteps({
@@ -532,11 +533,12 @@ export async function build(
     : undefined;
   const artifactsRoot = preparedArtifacts ?? config.rnArtifactsDir;
   const buildJsi = (): Promise<RuntimeFramework> => {
-    if (!vendoredExpo) return d.buildJsi(paths);
+    // --clean: Expo's prebuild leaves ios-xtool alone, so a module cache an interrupted jsi build left would stay.
+    if (!vendoredExpo) return clean ? d.buildJsi(paths, { clean }) : d.buildJsi(paths);
     if (artifactsRoot === undefined) {
-      throw new Error("internal error: the SDK 57 jsi step has no React Native artifacts (rn-artifacts was not planned and rnArtifactsDir is unset)");
+      throw new Error("internal error: the vendored-plugin jsi step has no React Native artifacts (rn-artifacts was not planned and rnArtifactsDir is unset)");
     }
-    return d.buildJsi(paths, { rnHeaders: jsiRnHeaderDirs(artifactsRoot), headersXcframework: true });
+    return d.buildJsi(paths, { rnHeaders: jsiRnHeaderDirs(artifactsRoot), headersXcframework: true, ...(clean && { clean }) });
   };
   let jsi = vendoredExpo && planned("jsi") ? await step("jsi", buildJsi) : undefined;
   // On every build: the scaffolds link ../pod-binaries, and generate force-loads its archives.

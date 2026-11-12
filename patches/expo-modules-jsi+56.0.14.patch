@@ -1,0 +1,62 @@
+diff --git a/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Protocols/JSIRepresentable.swift b/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Protocols/JSIRepresentable.swift
+--- a/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Protocols/JSIRepresentable.swift
++++ b/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Protocols/JSIRepresentable.swift
+@@ -3,6 +3,11 @@
+ internal import jsi
+ 
+ /// A type whose values can be represented as `facebook.jsi.Value`.
++///
++/// Mark conformances of generic types with `@_spi(Internal)`. Otherwise, because this protocol
++/// is internal and `~Copyable`, Swift 6.4 prints placeholder conformances constrained to
++/// `_ConstraintThatIsNotPartOfTheAPIOfThisLibrary` into the public `.swiftinterface`,
++/// which external consumers can't read. Fixed upstream in swiftlang/swift#91076.
+ internal protocol JSIRepresentable: JavaScriptRepresentable, Sendable, ~Copyable {
+   /// Creates an instance of this type from the given `facebook.jsi.Value` in `facebook.jsi.IRuntime`.
+   static func fromJSIValue(_ value: borrowing facebook.jsi.Value, in runtime: facebook.jsi.IRuntime) -> Self
+@@ -92,6 +97,7 @@
+   }
+ }
+ 
++@_spi(Internal)
+ extension Optional: JSIRepresentable where Wrapped: JSIRepresentable {
+   static func fromJSIValue(_ value: borrowing facebook.jsi.Value, in runtime: facebook.jsi.IRuntime) -> Self {
+     if value.isNull() || value.isUndefined() {
+@@ -105,6 +111,7 @@
+   }
+ }
+ 
++@_spi(Internal)
+ extension Array: JSIRepresentable where Element: JSIRepresentable {
+   static func fromJSIValue(_ value: borrowing facebook.jsi.Value, in runtime: facebook.jsi.IRuntime) -> [Element] {
+     let jsiArray = value.getObject(runtime).getArray(runtime)
+@@ -129,6 +136,7 @@
+   }
+ }
+ 
++@_spi(Internal)
+ extension Dictionary: JSIRepresentable where Key == String, Value: JSIRepresentable {
+   static func fromJSIValue(_ value: borrowing facebook.jsi.Value, in runtime: facebook.jsi.IRuntime) -> [Key: Value] {
+     let object = value.getObject(runtime)
+diff --git a/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Runtime/JavaScriptRef.swift b/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Runtime/JavaScriptRef.swift
+--- a/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Runtime/JavaScriptRef.swift
++++ b/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Runtime/JavaScriptRef.swift
+@@ -77,6 +77,7 @@
+   }
+ }
+ 
++@_spi(Internal)
+ extension JavaScriptRef: JSIRepresentable where T: JSIRepresentable & ~Copyable {
+   static func fromJSIValue(_ value: borrowing facebook.jsi.Value, in runtime: facebook.jsi.IRuntime) -> JavaScriptRef {
+     FatalError.unimplemented()
+diff --git a/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Runtime/Values/JavaScriptError.swift b/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Runtime/Values/JavaScriptError.swift
+--- a/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Runtime/Values/JavaScriptError.swift
++++ b/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Runtime/Values/JavaScriptError.swift
+@@ -82,7 +82,7 @@
+ /// via the `SWIFT_NAME(_message)` annotation in `CppError.h`. This extension
+ /// wraps it in a Swift `String` for cleaner call-site usage.
+ extension expo.CppError: Error {
+-  public var message: String {
++  var message: String {
+     return String(_getMessage())
+   }
+ }

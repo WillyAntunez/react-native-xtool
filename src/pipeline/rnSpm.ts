@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { swiftHeadersEnv, type ProjectPaths } from "../paths.js";
 import type { ProjectKind } from "../project/index.js";
-import type { ExpoPlugin, RnScripts } from "../versions.js";
+import { IOS_MIN, type ExpoPlugin, type RnScripts } from "../versions.js";
 import { packageRoot, runArgv, toolEnv } from "../tools/exec.js";
 import type { PodEntry } from "../config.js";
 import { POD_TABLE_ENV, mergedPodTable, writePodTable, type PodBinary, type PodTable } from "../project/podTable.js";
@@ -71,7 +71,7 @@ export function vendoredScriptsRoot(): string {
   return path.join(packageRoot(), "vendor", "rn-spm");
 }
 
-/** Expo 58's SwiftPM plugin, vendored for SDK 57 (whose `expo` ships none); E5 loads it as `expo`'s. */
+/** Expo 58's SwiftPM plugin, vendored for SDK 56 and 57 (whose `expo` ships none); E5 loads it as `expo`'s. */
 export function vendoredExpoPlugin(): string {
   return path.join(packageRoot(), "vendor", "expo-spm", "spm", "plugin.js");
 }
@@ -99,7 +99,7 @@ export function rnSpmArgs(
  * Bare apps run RN's SwiftPM steps through our driver instead of `setup-apple-spm.js add|update`:
  * same codegen, autolinking and artifact steps, minus the injection into the user's xcodeproj
  * (which `add` refuses anyway on a CocoaPods-integrated pbxproj). Only `ios/build/` is written.
- * Expo SDK 57 (the vendored Expo plugin) runs the driver too, with Expo's autolinking config command.
+ * Expo on the vendored plugin runs the driver too, with Expo's autolinking config command.
  * Expo SDK 58 (kind "expo", the installed plugin) gets the same config command, for its scaffold step.
  * With the config's `exclude`, every kind gets its config command wrapped by the exclude filter (configCommandFor).
  */
@@ -226,14 +226,21 @@ function scaffoldFailureMessage(failed: ScaffoldOutcome["failed"]): string {
 /**
  * Env of every React Native run. RN's scaffolder warns about mixed-language libraries when the
  * Swift headers dir is unset, and any manifest it evaluates must see the same value the xtool build
- * uses. The vendored Expo plugin takes its precompiled modules from `ios/build/expo-precompiled`. The scaffolder
- * maps CocoaPods pods with the pod table file, when given. It records each podspec read in the reads file, and reads
- * every podspec with the app's `ios/` as CocoaPods' installation root.
+ * uses. The vendored Expo plugin takes its precompiled modules from `ios/build/expo-precompiled`, caps a podspec's
+ * iOS floor at the App's deployment target (IOS_MIN, edit P7) and writes its warnings to the notes file. The
+ * scaffolder maps CocoaPods pods with the pod table file, when given. It records each podspec read in the reads file,
+ * and reads every podspec with the app's `ios/` as CocoaPods' installation root.
  */
 export function rnSpmEnv(paths: ProjectPaths, expoPlugin: ExpoPlugin, podTableFile?: string): Record<string, string> {
   return {
     ...swiftHeadersEnv(paths.iosXtool),
-    ...(expoPlugin === "vendored" ? { EXPO_PRECOMPILED_MODULES_PATH: paths.expoPrecompiled } : {}),
+    ...(expoPlugin === "vendored"
+      ? {
+          EXPO_PRECOMPILED_MODULES_PATH: paths.expoPrecompiled,
+          RN_XTOOL_APP_IOS_DEPLOYMENT_TARGET: IOS_MIN,
+          RN_XTOOL_PLUGIN_NOTES: paths.pluginNotes,
+        }
+      : {}),
     ...(podTableFile !== undefined ? { [POD_TABLE_ENV]: podTableFile } : {}),
     RN_SPM_PODSPEC_READS: paths.podspecReads,
     RN_SPM_APP_IOS_DIR: paths.ios,
@@ -481,6 +488,30 @@ export function patchPackageReason(output: string, exitCode: number): string {
   return other ?? `exit ${exitCode}`;
 }
 
+/**
+ * The vendored Expo plugin's warnings in `file` (one `{"warning": …}` line each), each once however many plugin runs
+ * wrote it, in first-seen order; none without the file. A line that is not a warning is skipped.
+ */
+function pluginWarnings(file: string): string[] {
+  let raw: string;
+  try {
+    raw = readFileSync(file, "utf8");
+  } catch {
+    return [];
+  }
+  const warnings = new Set<string>();
+  for (const line of raw.split("\n")) {
+    try {
+      const v: unknown = JSON.parse(line);
+      const warning = typeof v === "object" && v !== null ? (v as { warning?: unknown }).warning : undefined;
+      if (typeof warning === "string" && warning !== "") warnings.add(warning);
+    } catch {
+      // not a warning
+    }
+  }
+  return [...warnings];
+}
+
 function tail(output: string): string {
   return output.trimEnd().split("\n").slice(-40).join("\n");
 }
@@ -519,14 +550,15 @@ export async function runRnSpm(
   const runner = deps.runner ?? streamingRunner;
   const log = deps.log ?? ((s: string) => console.log(s));
   const rnDir = deps.rnDir ?? resolveRnDir(paths);
-  // Bare apps and Expo SDK 57 never run `setup-apple-spm.js add|update`: only the driver.
+  // Bare apps and Expo on the vendored plugin never run `setup-apple-spm.js add|update`: only the driver.
   const driver = opts.kind === "bare" || opts.expoPlugin === "vendored";
   const rnArgs = driver ? rnSpmGenerateArgs(paths, opts, rnDir) : rnSpmArgs(paths, opts, rnDir);
   // Every run gets the table: the scaffold step reads it, whichever project kind runs it.
   const podTableFile = (deps.writePodTable ?? writePodTable)(paths, mergedPodTable(opts.pods, opts.binary));
   const env = rnSpmEnv(paths, opts.expoPlugin, podTableFile);
-  // A file a previous run left must never stand for this run's reads.
+  // A file a previous run left must never stand for this run's reads or warnings.
   rmSync(paths.podspecReads, { force: true });
+  rmSync(paths.pluginNotes, { force: true });
   try {
     const first = await runner("node", rnArgs, { cwd: paths.ios, env });
     if (first.exitCode === 0) return;
@@ -605,5 +637,6 @@ export async function runRnSpm(
   } finally {
     // Once per run, every React Native run's reads together; also when one failed, before its error.
     for (const line of readerLines(readPodspecReads(paths.podspecReads))) log(line);
+    for (const warning of pluginWarnings(paths.pluginNotes)) log(`⚠ ${warning}`);
   }
 }

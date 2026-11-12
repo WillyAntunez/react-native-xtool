@@ -47,6 +47,8 @@ function record(...entry) {
 fs.writeFileSync(${JSON.stringify(log)} + '.expo-env', JSON.stringify({
   RN_SPM_EXPO_PLUGIN: process.env.RN_SPM_EXPO_PLUGIN,
   RN_XTOOL_PROJECT_ROOT: process.env.RN_XTOOL_PROJECT_ROOT,
+  RN_XTOOL_APP_IOS_DEPLOYMENT_TARGET: process.env.RN_XTOOL_APP_IOS_DEPLOYMENT_TARGET,
+  RN_XTOOL_PLUGIN_NOTES: process.env.RN_XTOOL_PLUGIN_NOTES,
 }));
 module.exports = {
   resolveAppIosDeploymentTarget(args, appRoot) { record('deploymentTarget', args.xcodeprojPath, args.productName, appRoot); return '15.1'; },
@@ -235,7 +237,12 @@ describe("rn-spm-generate.js", () => {
       {
         reject: false,
         all: true,
-        env: { RN_SPM_EXPO_PLUGIN: "/stale/plugin.js", RN_XTOOL_PROJECT_ROOT: "/stale/app" },
+        env: {
+          RN_SPM_EXPO_PLUGIN: "/stale/plugin.js",
+          RN_XTOOL_PROJECT_ROOT: "/stale/app",
+          RN_XTOOL_APP_IOS_DEPLOYMENT_TARGET: "15.1",
+          RN_XTOOL_PLUGIN_NOTES: "/stale/notes.jsonl",
+        },
       },
     );
     expect(r.exitCode, r.all).toBe(0);

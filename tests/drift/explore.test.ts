@@ -76,14 +76,13 @@ const bare081 = (): WatchTarget => exploreTargets(RN_VERSIONS).find((t) => t.id 
 const expo54 = (): WatchTarget => exploreTargets(RN_VERSIONS).find((t) => t.id === "expo-54/blank-typescript")!;
 
 describe("exploreTargets", () => {
-  it("explores Expo SDK 54–56 and bare 0.81–0.84", () => {
-    expect(EXPLORE_EXPO_SDKS).toEqual([54, 55, 56]);
+  it("explores Expo SDK 54–55 and bare 0.81–0.84", () => {
+    expect(EXPLORE_EXPO_SDKS).toEqual([54, 55]);
     expect(EXPLORE_RN_MINORS).toEqual(["0.81", "0.82", "0.83", "0.84"]);
     const targets = exploreTargets(RN_VERSIONS);
     expect(targets.map((t) => t.id)).toEqual([
       "expo-54/blank-typescript",
       "expo-55/blank-typescript",
-      "expo-56/blank-typescript",
       "bare-0.81",
       "bare-0.82",
       "bare-0.83",
@@ -105,7 +104,7 @@ describe("exploreTargets", () => {
       ["bare-0.83", "0.83.10", "20.0.0"],
       ["bare-0.84", "0.84.1", "20.1.0"],
     ]);
-    expect(targets[3]!.title).toBe("Explore: React Native 0.81 (bare)");
+    expect(targets[2]!.title).toBe("Explore: React Native 0.81 (bare)");
     // Every target can be created: pinned tools, never @latest.
     for (const t of targets) expect(createCommand(t, "/w/app")[1].join(" ")).not.toContain("latest");
   });
@@ -327,7 +326,7 @@ describe("exploreTable", () => {
   });
 
   it("orders the rows by target and fills a missing one as unknown", () => {
-    const targets = exploreTargets(RN_VERSIONS).slice(3, 6);
+    const targets = exploreTargets(RN_VERSIONS).slice(2, 5);
     const rows = exploreRowsFor(targets, [row("bare-0.83"), row("bare-0.81"), row("expo-99/x")]);
     expect(rows.map((r) => r.id)).toEqual(["bare-0.81", "bare-0.82", "bare-0.83"]);
     expect(rows[0]).toEqual(row("bare-0.81"));

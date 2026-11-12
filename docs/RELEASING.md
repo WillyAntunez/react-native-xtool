@@ -63,7 +63,8 @@ pushed to.
 
 React Native's scaffolder ships twice: as `patches/react-native+0.88.0.patch` and its byte-identical copy
 `react-native+0.88.1.patch`, applied to an installed 0.88.x, and as `vendor/rn-spm/`, pristine 0.88.0 with that patch
-and `vendor/rn-spm/rn-xtool-edits.patch` (E1–E6) applied, for 0.85–0.87 and Expo SDK 57. A change to the scaffolder:
+and `vendor/rn-spm/rn-xtool-edits.patch` (E1–E6) applied, for 0.85–0.87 and Expo SDK 56 and 57. A change to the
+scaffolder:
 
 1. Edits the vendored copy (`vendor/rn-spm/spm/*.js`), and documents the fix in
    [upstream/react-native-scaffolder.md](upstream/react-native-scaffolder.md) and the count in
@@ -154,7 +155,7 @@ runner with no Swift and no Darwin SDK, uses only `GITHUB_TOKEN`, and never comp
 ### What it checks
 
 Daily (cron `23 5 * * *`, UTC), for each row of `SUPPORTED_LINES` in `src/versions.ts`, it creates a fresh project
-with the newest published version of the line: `create-expo` 5.1.5 with `blank-typescript@sdk-57`,
+with the newest published version of the line: `create-expo` 5.1.5 with `default@sdk-56`, `blank-typescript@sdk-57`,
 `blank-typescript@sdk-58` and `default@sdk-58`, and `@react-native-community/cli init` (the CLI pinned per line) with
 the newest 0.85.x, 0.86.x, 0.87.x and 0.88.x. On each project it runs three checks:
 
@@ -187,9 +188,9 @@ The report job keeps one GitHub issue per broken line, labelled `drift` and titl
 ### Running it by hand
 
 - `gh workflow run drift-watch.yml -f mode=daily` (or "Run workflow" in the Actions tab) runs the daily check.
-- `-f drill=<line id>` (`expo-57`, `expo-58`, `bare-0.85`, `bare-0.86`, `bare-0.87` or `bare-0.88`) marks that line
-  red for one daily run, with a `drill` step, to test the issue path end to end: the run opens or updates that line's
-  issue, and the next run without `drill` closes it. Any other value stops the report before it touches an issue.
+- `-f drill=<line id>` (`expo-56`, `expo-57`, `expo-58`, `bare-0.85`, `bare-0.86`, `bare-0.87` or `bare-0.88`) marks
+  that line red for one daily run, with a `drill` step, to test the issue path end to end: the run opens or updates that
+  line's issue, and the next run without `drill` closes it. Any other value stops the report before it touches an issue.
   `drill` is ignored with `mode=explore`.
 - `-f mode=explore` runs the weekly exploration.
 - Locally, after `npm run build`: `node scripts/drift-watch.mjs` prints its subcommands. `check --existing` checks a
@@ -198,7 +199,7 @@ The report job keeps one GitHub issue per broken line, labelled `drift` and titl
 
 ### Weekly exploration
 
-Weekly (cron `47 5 * * 1`, Mondays, UTC), report only: the newest Expo SDK 54, 55 and 56 `blank-typescript` templates
+Weekly (cron `47 5 * * 1`, Mondays, UTC), report only: the newest Expo SDK 54 and 55 `blank-typescript` templates
 and fresh bare React Native 0.81 to 0.84 projects (the newest patch of each, the CLI pinned per minor) go through
 the capability detector. The run summary gets an "Older lines (exploration, report only)" table: installed versions,
 scripts, artifacts, Expo plugin, Expo modules, podspec features, and the reason rn-xtool does not support the line.
@@ -221,8 +222,9 @@ from `EXPLORE_RN_MINORS` and `EXPLORE_RN_CLI`, in `src/drift/targets.ts`.
   run (a network failure after the retry, a check that crashed or left no result) and when a `gh` call fails (a token
   or permission error, an issue list that cannot be read). That email is the only fallback when `gh` fails: nothing
   else reports it. Days with a network failure therefore send an email even when no line broke.
-- **No compile, no device, no G4.** A green line can still fail G4 or the build, or crash on the device. The issue
-  body and the README say so; a compat-suite CI with a self-hosted runner would close the gap.
+- **No compile, no device, no G4.** A green line can still fail G4 or the build (on Expo SDK 56 and 57 also the `jsi`
+  step's check of the ExpoModulesJSI interface), or crash on the device. The issue body and the README say so; a
+  compat-suite CI with a self-hosted runner would close the gap.
 - **Artifacts "unknown" stays green.** When `doctor --project` cannot check the React Native artifacts (network), the
   gates step stays green with `note: the React Native artifacts were not checked (network); they are checked again on
   the next run`. A line whose artifacts stay unchecked for days stays green meanwhile.

@@ -6,15 +6,15 @@ Wi‑Fi installs, troubleshooting, library compatibility, and the research and d
 ## Guides
 
 - [how-it-works.md](how-it-works.md): what `setup` installs, the bundled patches, the build steps, how the SwiftPM
-  scripts are chosen, the Expo SDK 58 and 57 version floors and the precompiled framework check (G4), Expo SDK 57
-  through the vendored Expo SwiftPM plugin, the first-launch reload helper, dev-client discovery, mixed-language
+  scripts are chosen, the Expo SDK 58, 57 and 56 version floors and the precompiled framework check (G4), Expo SDK 57
+  and 56 through the vendored Expo SwiftPM plugin, the first-launch reload helper, dev-client discovery, mixed-language
   manifests, CocoaPods-only libraries and reference timings.
 - [bare-react-native.md](bare-react-native.md): bare React Native projects (0.85.x from 0.85.0, 0.86.x from 0.86.2,
   0.87.x from 0.87.1, 0.88.x from 0.88.0) and 0.88.1 hybrids with Expo modules: supported versions, detection, what is
   read from the Xcode project, sources, resources, Metro, limits.
 - [wifi-install.md](wifi-install.md): installing over Wi‑Fi without the cable, WSL2 pair records, Wi‑Fi troubleshooting.
 - [troubleshooting.md](troubleshooting.md): first-run checklist on the iPhone and fixes for common build, Metro and
-  signing problems, opening a dev-client app on Metro, the app icon, the Expo SDK 58 and 57 version messages, the
+  signing problems, opening a dev-client app on Metro, the app icon, the Expo SDK 58, 57 and 56 version messages, the
   warnings on versions newer than the verified ones, and what each `doctor --project` line means.
 - [libraries.md](libraries.md): library compatibility matrix (Expo and bare), tested on a physical iPhone.
 
@@ -68,7 +68,10 @@ Historical specs and implementation plans, kept as written (some in Spanish; the
   React Native projects.
 - [design/specs/2026-10-27-expo-sdk-57-design.md](design/specs/2026-10-27-expo-sdk-57-design.md): Expo SDK 57 through
   a vendored Expo SwiftPM plugin.
+- [design/specs/2026-11-11-expo-sdk-56-design.md](design/specs/2026-11-11-expo-sdk-56-design.md): Expo SDK 56 on SDK
+  57's route.
 - [design/plans/2026-10-23-expo-xtool-cli.md](design/plans/2026-10-23-expo-xtool-cli.md): CLI implementation plan.
 - [design/plans/2026-10-26-bare-react-native.md](design/plans/2026-10-26-bare-react-native.md): bare React Native
   implementation plan.
 - [design/plans/2026-10-28-expo-sdk-57.md](design/plans/2026-10-28-expo-sdk-57.md): Expo SDK 57 implementation plan.
+- [design/plans/2026-11-11-expo-sdk-56.md](design/plans/2026-11-11-expo-sdk-56.md): Expo SDK 56 implementation plan.

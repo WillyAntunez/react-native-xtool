@@ -20,7 +20,7 @@ import { LLVM_NM_MISSING } from "../src/pipeline/symbols.js";
 import { LLVM_AR_MISSING } from "../src/pods/ar.js";
 import { NODE_MIN, XTOOL_SHA256, XTOOL_VERSION } from "../src/versions.js";
 import { fakeExpo57Modules } from "./support/expo57.js";
-import { fakeExpo58Modules } from "./support/expo58.js";
+import { fakeExpo58Modules, realAutolinkingCli } from "./support/expo58.js";
 import { fakeRnScripts } from "./support/rnScripts.js";
 
 const expoProbe: ProjectProbe = {
@@ -1035,9 +1035,10 @@ describe("doctor --project", () => {
   it.each<[string, string, Capabilities, string, string]>([
     ["versions", "Expo 58", expo(58, "58.0.21", "0.88.1"), "ok", "Expo SDK 58: expo 58.0.21 (verified 58.0.21), react-native 0.88.1 (verified 0.88.1)"],
     ["versions", "Expo 57", expo(57, "57.0.31", "0.86.3"), "ok", "Expo SDK 57: expo 57.0.31 (verified 57.0.31), react-native 0.86.3 (verified 0.86.3)"],
+    ["versions", "Expo 56", expo(56, "56.0.24", "0.85.3"), "ok", "Expo SDK 56: expo 56.0.24 (verified 56.0.24), react-native 0.85.3 (verified 0.85.3)"],
     ["versions", "Expo 59", expo(59, "59.0.0", "0.89.0"), "info", "Expo SDK 59: no verified set in this release; the installed plugin builds it, gated by G4 only"],
     ["versions", "Expo without react-native", expo(58, "58.0.21"), "fail", "react-native is not installed: run npm install"],
-    ["versions", "Expo 56", { ...expo(56, "56.0.0", "0.85.2"), expoPlugin: "none" }, "fail", "Expo SDK 56: expo ships no SwiftPM plugin; React Native 0.85: no SwiftPM scripts; support comes with the translator"],
+    ["versions", "Expo 55", { ...expo(55, "55.0.0", "0.83.2"), expoPlugin: "none" }, "fail", "Expo SDK 55: expo ships no SwiftPM plugin; React Native 0.83: no SwiftPM scripts; support comes with the translator"],
     ["versions", "bare 0.88.1", bare("0.88.1"), "ok", "React Native 0.88.1: the 0.88 line (0.88.0 or newer), verified 0.88.0 and 0.88.1"],
     ["versions", "bare 0.87.1", bare("0.87.1"), "ok", "React Native 0.87.1: the 0.87 line (0.87.1 or newer), verified 0.87.1"],
     ["versions", "bare 0.86.4 (newer)", bare("0.86.4"), "ok", "React Native 0.86.4: the 0.86 line (0.86.2 or newer), verified 0.86.2 and 0.86.3"],
@@ -1095,6 +1096,7 @@ describe("readProjectProbe", () => {
     try {
       await cp(path.join(fixtures, "project"), dir, { recursive: true });
       await fakeExpo58Modules(dir, { expo: "58.0.22" });
+      await realAutolinkingCli(dir);
       const probe = await readProjectProbe(dir);
       expect(probe).toMatchObject({ kind: "expo", sdkVersion: 58, rnVersion: "0.88.1", expoPlugin: "installed" });
       expect(probe.warnings).toEqual([
@@ -1105,6 +1107,26 @@ describe("readProjectProbe", () => {
       ]);
       const project = (await doctorWithProbes({ ...good, project: async () => probe }, "/p")).checks.find((c) => c.name === "project");
       expect(project?.status).toBe("warn");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+  it("shows that the version check could not ask autolinking", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "doctor-expo58-"));
+    try {
+      await cp(path.join(fixtures, "project"), dir, { recursive: true });
+      // The fake autolinking has no CLI: the check reads expo-file-system and expo-font from node_modules.
+      await fakeExpo58Modules(dir);
+      const probe = await readProjectProbe(dir);
+      expect(probe.warnings).toEqual([
+        "rn-xtool could not ask Expo's autolinking which expo-file-system and expo-font copies the build links (its " +
+          "CLI was not found), so it read their versions from node_modules: the top-level copy when the app, or a " +
+          "package it lists, depends on it, else the copy under expo. The build asks autolinking again and may link " +
+          "another copy. See https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/troubleshooting.md#expo-sdk-58",
+      ]);
+      const project = (await doctorWithProbes({ ...good, project: async () => probe }, "/p")).checks.find((c) => c.name === "project");
+      expect(project?.status).toBe("warn");
+      expect(project?.detail).toContain("rn-xtool could not ask Expo's autolinking");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

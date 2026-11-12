@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { readableJsiInterface } from "./jsiInterface.js";
 import { EMPTY_AR_ARCHIVE, headersXcframeworkInfoPlist, swapIn, type XcframeworkLibrary } from "./rnArtifacts.js";
 
 /**
- * Expo SDK 57's npm packages ship no `ExpoModulesJSIHeaders.xcframework`, which the vendored Expo 58 SwiftPM plugin
- * reads from `EXPO_PRECOMPILED_MODULES_PATH`. This module makes it from rn-xtool's own ExpoModulesJSI build, in the
- * layout of 58's published tarball.
+ * The npm packages of the SDKs on the vendored Expo plugin ship no `ExpoModulesJSIHeaders.xcframework`, which that
+ * plugin (Expo 58's SwiftPM plugin) reads from `EXPO_PRECOMPILED_MODULES_PATH`. This module makes it from rn-xtool's
+ * own ExpoModulesJSI build, in the layout of 58's published tarball.
  */
 
 /** Bumped whenever the synthesised layout changes, so older trees are rewritten. */
@@ -35,11 +36,18 @@ const SLICES: XcframeworkLibrary[] = [
   },
 ];
 
+/**
+ * The scratch folder of `scripts/build-expo-modules-jsi.sh` (output `jsiOut`): its staged headers and its SwiftPM build,
+ * module cache included. The script makes it again when it is missing.
+ */
+export function jsiScratchDir(jsiOut: string): string {
+  return path.join(jsiOut, ".jsi-build");
+}
+
 /** Where `scripts/build-expo-modules-jsi.sh` (output `jsiOut`) leaves the Swift header and interface it generates. */
 export function jsiObjectsDir(jsiOut: string): string {
   return path.join(
-    jsiOut,
-    ".jsi-build",
+    jsiScratchDir(jsiOut),
     ".build",
     "out",
     "Intermediates.noindex",
@@ -72,12 +80,62 @@ async function readStamp(file: string): Promise<Partial<JsiHeadersStamp> | undef
   }
 }
 
+const isFile = (file: string) => statSync(file, { throwIfNoEntry: false })?.isFile() === true;
+
+/** The headers a C++ header includes with quotes (`#include "x.h"`, `#import "x.h"`), in order. */
+function quotedIncludes(text: string): string[] {
+  return [...text.matchAll(/^[ \t]*#[ \t]*(?:include|import)[ \t]*"([^"]+)"/gm)].map((m) => m[1]!);
+}
+
+/**
+ * The public C++ headers of expo-modules-jsi `jsiVersion` at `jsiDir`: `dir` is
+ * `<jsiDir>/apple/Sources/ExpoModulesJSI-Cxx/include/Public` when it holds NativeState.h (jsi 57 and newer), else
+ * `…/include` (jsi 56); `files` is "NativeState.h", then each header it includes with quotes, transitively, found in
+ * `dir`, in include order, each once. Throws when NativeState.h is in neither, or a quoted include points outside
+ * `dir` or is not next to the header that includes it; the error names that header.
+ * Read as text: a quoted include inside a comment or an `#if 0` block is followed too (and fails closed when it is
+ * not there), and an angle-bracket include is never copied.
+ */
+function nativeStateHeaders(jsiDir: string, jsiVersion: string): { dir: string; files: string[] } {
+  const include = path.join(jsiDir, "apple", "Sources", "ExpoModulesJSI-Cxx", "include");
+  const dir = [path.join(include, "Public"), include].find((d) => isFile(path.join(d, NATIVE_STATE)));
+  if (dir === undefined) {
+    // The package's own header, not a build output: jsi 57 and newer keep it in include/Public, jsi 56 in include.
+    throw new Error(
+      `expo-modules-jsi ${jsiVersion} ships no ${NATIVE_STATE} (looked in ${include}/Public and ${include}); ` +
+        `cannot make ${NAME}.xcframework.`,
+    );
+  }
+  const files: string[] = [];
+  const visit = (rel: string) => {
+    if (files.includes(rel)) return;
+    files.push(rel);
+    for (const name of quotedIncludes(readFileSync(path.join(dir, rel), "utf8"))) {
+      // As the compiler does: next to the including header first. Only headers inside `dir` are copied.
+      const found = path.relative(dir, path.resolve(dir, path.dirname(rel), name));
+      const outside = found === ".." || found.startsWith(`..${path.sep}`) || path.isAbsolute(found);
+      const where = outside ? `points outside ${dir}` : `is not next to it in ${path.join(dir, path.dirname(rel))}`;
+      if (outside || !isFile(path.join(dir, found))) {
+        throw new Error(
+          `${rel} of expo-modules-jsi ${jsiVersion} includes "${name}", which ${where}; cannot make ${NAME}.xcframework.`,
+        );
+      }
+      visit(found);
+    }
+  };
+  visit(NATIVE_STATE);
+  return { dir, files };
+}
+
 /**
  * Writes `ExpoModulesJSIHeaders.xcframework` for expo-modules-jsi `jsiVersion` from its build's `objectsDir` and the
- * package's public `NativeState.h` (under `jsiDir`). Returns "current" without writing when the stamp matches this
- * generator, version and interface. Otherwise the tree is assembled beside the destination, the stamp deleted, the
- * tree swapped in whole, and the stamp written last: a failed run never leaves a stamped partial tree, and one that
- * fails before the swap leaves the previous tree and its stamp as they were.
+ * package's public `NativeState.h` with the headers it includes (under `jsiDir`, see {@link nativeStateHeaders}).
+ * Throws UnreadableInterfaceError, before anything is written, when the build's interface holds a line no Swift
+ * compiler can parse (see {@link readableJsiInterface}).
+ * Returns "current" without writing when the stamp matches this generator, version and interface. Otherwise the tree
+ * is assembled beside the destination, the stamp deleted, the tree swapped in whole, and the stamp written last: a
+ * failed run never leaves a stamped partial tree, and one that fails before the swap leaves the previous tree and its
+ * stamp as they were.
  */
 export async function writeJsiHeadersXcframework(i: {
   objectsDir: string;
@@ -85,26 +143,22 @@ export async function writeJsiHeadersXcframework(i: {
   jsiVersion: string;
   precompiledRoot: string;
 }): Promise<"written" | "current"> {
-  const nativeStateDir = path.join(i.jsiDir, "apple", "Sources", "ExpoModulesJSI-Cxx", "include", "Public");
-  const inputs = [
-    [i.objectsDir, SWIFT_HEADER],
-    [i.objectsDir, SWIFT_INTERFACE],
-    [nativeStateDir, NATIVE_STATE],
-  ] as const;
-  for (const [dir, file] of inputs) {
-    if (statSync(path.join(dir, file), { throwIfNoEntry: false })?.isFile() !== true) {
+  for (const file of [SWIFT_HEADER, SWIFT_INTERFACE]) {
+    if (!isFile(path.join(i.objectsDir, file))) {
       throw new Error(
-        `The ExpoModulesJSI build produced no ${file} (expected in ${dir}); ` +
+        `The ExpoModulesJSI build produced no ${file} (expected in ${i.objectsDir}); ` +
           `cannot make ${NAME}.xcframework for expo-modules-jsi ${i.jsiVersion}.`,
       );
     }
   }
+  const cxx = nativeStateHeaders(i.jsiDir, i.jsiVersion);
 
   const dest = jsiHeadersXcframeworkDir(i.precompiledRoot);
   const stampFile = path.join(headersDir(i.precompiledRoot), STAMP);
-  const interfaceSha256 = createHash("sha256")
-    .update(await readFile(path.join(i.objectsDir, SWIFT_INTERFACE)))
-    .digest("hex");
+  const rawInterface = await readFile(path.join(i.objectsDir, SWIFT_INTERFACE));
+  // Before the stamp check: a tree stamped before this guard existed may hold an unreadable interface.
+  const swiftInterface = readableJsiInterface(rawInterface.toString("utf8"), i.jsiVersion);
+  const interfaceSha256 = createHash("sha256").update(rawInterface).digest("hex");
   const stamp: JsiHeadersStamp = { generatorVersion: JSI_HEADERS_GENERATOR_VERSION, jsiVersion: i.jsiVersion, interfaceSha256 };
   const prev = await readStamp(stampFile);
   if (
@@ -123,14 +177,17 @@ export async function writeJsiHeadersXcframework(i: {
       const headers = path.join(tmp, slice, "Headers", "ExpoModulesJSI");
       await mkdir(headers, { recursive: true });
       await copyFile(path.join(i.objectsDir, SWIFT_HEADER), path.join(headers, SWIFT_HEADER));
-      await copyFile(path.join(nativeStateDir, NATIVE_STATE), path.join(headers, NATIVE_STATE));
+      for (const file of cxx.files) {
+        await mkdir(path.dirname(path.join(headers, file)), { recursive: true });
+        await copyFile(path.join(cxx.dir, file), path.join(headers, file));
+      }
       await writeFile(path.join(headers, "module.modulemap"), JSI_HEADERS_MODULE_MAP);
       await writeFile(path.join(tmp, slice, ARCHIVE), EMPTY_AR_ARCHIVE);
     }
     // Only the device slice gets an interface: rn-xtool builds for devices alone.
     const swiftmodule = path.join(tmp, "ios-arm64", "ExpoModulesJSI.swiftmodule");
     await mkdir(swiftmodule, { recursive: true });
-    await copyFile(path.join(i.objectsDir, SWIFT_INTERFACE), path.join(swiftmodule, "arm64-apple-ios.swiftinterface"));
+    await writeFile(path.join(swiftmodule, "arm64-apple-ios.swiftinterface"), swiftInterface);
     await writeFile(path.join(tmp, "Info.plist"), headersXcframeworkInfoPlist(NAME, SLICES, { archive: ARCHIVE }));
     await writeFile(path.join(tmp, "expo-package.json"), JSON.stringify({ name: "expo-modules-jsi", version: i.jsiVersion }) + "\n");
     await rm(stampFile, { force: true });

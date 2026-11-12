@@ -3,7 +3,7 @@
 # Daily (23 5 * * *): each supported line gets a fresh project (the newest patch of its line), and the project gates,
 # the bundled patches and the manifest rewrite are checked on it. Nothing is compiled: there is no Swift and no
 # Darwin SDK here. One `drift` issue is kept per broken line; it is closed when the line is green again.
-# Weekly (47 5 * * 1): a report-only exploration of older lines (Expo SDK 54-56, bare React Native 0.81-0.84). It
+# Weekly (47 5 * * 1): a report-only exploration of older lines (Expo SDK 54-55, bare React Native 0.81-0.84). It
 # writes a capability table to the run summary and opens no issue.
 # By hand: workflow_dispatch with mode `daily` or `explore`; `drill` (a line id, such as bare-0.88) marks that line
 # broken for one daily run, to test the issue path end to end.

@@ -40,6 +40,11 @@
     "integrity": "sha512-YglXoBBc3QwqqFfFQD1XVfpxXdF9RkuZOVxWTn5uHPiyvXSMFiVO16GnV+VSd+njKld1EJt7vQucCsDiLp4xVA=="
   },
   {
+    "spec": "expo-modules-jsi@56.0.14",
+    "file": "expo-modules-jsi-56.0.14.tgz",
+    "integrity": "sha512-Hzjq8plGfjGb7OsensIBYkzQsVLVotws2arFVZJb6LV6vE9L8B3E1xUlejzlAsUR5eRKE3aImK+P+4X2slGVGQ=="
+  },
+  {
     "spec": "expo-modules-jsi@57.1.3",
     "file": "expo-modules-jsi-57.1.3.tgz",
     "integrity": "sha512-pwVO1gvObX2tpIjfJzGn86yBOmOBhMLxAD81n2SHnfZk6lvbbqQhag64MHEeh29E/8vg23/Dzmf3JTmJSwbQYQ=="

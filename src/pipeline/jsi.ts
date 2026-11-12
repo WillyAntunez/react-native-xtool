@@ -1,10 +1,11 @@
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
 import { jsiFramework, type RuntimeFramework } from "../frameworks.js";
 import type { ProjectPaths } from "../paths.js";
 import { expoPackageDir } from "../project/expo.js";
-import { packageRoot, run, toolEnv } from "../tools/exec.js";
-import { jsiObjectsDir, writeJsiHeadersXcframework } from "./jsiHeaders.js";
+import { packageRoot, runKeepingOutput, toolEnv } from "../tools/exec.js";
+import { jsiObjectsDir, jsiScratchDir, writeJsiHeadersXcframework } from "./jsiHeaders.js";
+import { explainBadModuleFile } from "./moduleCache.js";
 
 export function jsiArgv(paths: ProjectPaths): string[] {
   return [path.join(packageRoot(), "scripts", "build-expo-modules-jsi.sh"), paths.root, paths.jsiOut];
@@ -30,18 +31,20 @@ export function jsiEnv(h?: JsiRnHeaders): Record<string, string> {
 /**
  * Builds ExpoModulesJSI.framework into `paths.jsiOut`. `rnHeaders` points the build at React Native headers outside
  * `ios/build/xcframeworks` (checked before building); `headersXcframework` then writes ExpoModulesJSIHeaders.xcframework
- * under `paths.expoPrecompiled` (SDK 57, which does not ship it).
+ * under `paths.expoPrecompiled` (the vendored Expo plugin's SDKs, which do not ship it). `clean` (`build --clean`)
+ * removes the build's scratch first, module cache included, so a cache an interrupted build left cannot stop it.
  */
 export async function buildExpoModulesJsi(
   paths: ProjectPaths,
-  opts: { rnHeaders?: JsiRnHeaders; headersXcframework?: boolean } = {},
+  opts: { rnHeaders?: JsiRnHeaders; headersXcframework?: boolean; clean?: boolean } = {},
 ): Promise<RuntimeFramework> {
   if (opts.rnHeaders) {
     for (const dir of [opts.rnHeaders.react, opts.rnHeaders.dependencies]) {
       if (statSync(dir, { throwIfNoEntry: false })?.isDirectory() !== true) {
         throw new Error(
           `ExpoModulesJSI needs React Native's headers at ${dir}, which does not exist. ` +
-            "rnArtifactsDir must hold adapted 0.86.3 slots, as rn-xtool's rn-artifacts step writes them.",
+            "rnArtifactsDir must hold the adapted slots of the project's React Native version, as rn-xtool's rn-artifacts " +
+            "step writes them.",
         );
       }
     }
@@ -52,7 +55,12 @@ export async function buildExpoModulesJsi(
     delete env.RN_XTOOL_REACT_HEADERS;
     delete env.RN_XTOOL_DEPS_HEADERS;
   }
-  await run("bash", jsiArgv(paths), { cwd: paths.root, nice: true, env });
+  if (opts.clean) rmSync(jsiScratchDir(paths.jsiOut), { recursive: true, force: true });
+  try {
+    await runKeepingOutput("bash", jsiArgv(paths), { cwd: paths.root, nice: true, env });
+  } catch (e) {
+    throw explainBadModuleFile(e, paths.iosXtool);
+  }
   if (opts.headersXcframework) {
     // The script built the copy this resolves (it resolves expo-modules-jsi the same way), so it exists here.
     const jsiDir = expoPackageDir(paths.root, "expo-modules-jsi")!;

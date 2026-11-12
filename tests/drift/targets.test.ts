@@ -30,6 +30,7 @@ describe("watchTargets", () => {
   it("one target per template and bare line", () => {
     const targets = watchTargets(RN_VERSIONS);
     expect(targets.map((t) => t.id)).toEqual([
+      "expo-56/default",
       "expo-57/blank-typescript",
       "expo-58/blank-typescript",
       "expo-58/default",
@@ -39,6 +40,16 @@ describe("watchTargets", () => {
       "bare-0.88",
     ]);
     expect(targets).toEqual([
+      {
+        id: "expo-56/default",
+        slug: "expo-56-default",
+        line: "expo-56",
+        title: "Drift: Expo SDK 56",
+        kind: "expo",
+        sdk: 56,
+        template: "default",
+        createExpo: "5.1.5",
+      },
       {
         id: "expo-57/blank-typescript",
         slug: "expo-57-blank-typescript",
@@ -145,7 +156,7 @@ describe("createCommand", () => {
 
   it("never falls back to the latest create-expo", () => {
     const t: WatchTarget = { ...watchTargets(RN_VERSIONS)[0]!, createExpo: undefined };
-    expect(() => createCommand(t, "/w/app")).toThrow("expo-57/blank-typescript has no create-expo version");
+    expect(() => createCommand(t, "/w/app")).toThrow("expo-56/default has no create-expo version");
   });
 
   it("never falls back to the latest CLI", () => {

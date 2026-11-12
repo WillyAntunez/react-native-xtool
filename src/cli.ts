@@ -67,7 +67,7 @@ export function buildProgram(): Command {
   program
     .command("build")
     .description("Prebuild if needed (Expo), run the SwiftPM pipeline and build with xtool")
-    .option("--clean", "re-run expo prebuild --clean (Expo) or remove ios/build and ios-xtool (bare)")
+    .option("--clean", "re-run expo prebuild --clean (Expo) or remove ios/build and ios-xtool (bare); the jsi step starts from scratch")
     .option("--skip-precheck", "skip the check of the app's own sources before xtool-build")
     .action(
       action(async (o: { clean?: boolean; skipPrecheck?: boolean }) => {

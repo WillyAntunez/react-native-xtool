@@ -85,11 +85,12 @@ describe("rnSpmArgs", () => {
 });
 
 describe("patches", () => {
-  it("has exactly 6 patch-package files", () => {
+  it("has exactly 7 patch-package files", () => {
     const files = readdirSync(path.join(packageRoot(), "patches")).filter((f) => f.endsWith(".patch"));
     expect(files.sort()).toEqual([
       "expo+58.0.21.patch",
       "expo-modules-autolinking+58.0.16.patch",
+      "expo-modules-jsi+56.0.14.patch",
       "expo-modules-jsi+57.1.3.patch",
       "expo-modules-jsi+58.0.21.patch",
       "react-native+0.88.0.patch",
@@ -316,6 +317,40 @@ describe("react-native patch scope", () => {
     ]);
   });
 
+  it("stages only the jsi patch on an SDK 56 project", async () => {
+    const { root } = await tempProject();
+    await installPkg(root, "expo", "56.0.24");
+    await installPkg(root, "expo-modules-autolinking", "56.0.24");
+    await installPkg(root, "expo-modules-jsi", "56.0.14");
+    await installPkg(root, "react-native", "0.85.3");
+    expect(selectBundledPatches(root, bundled, { lineOnly: true })).toEqual(["expo-modules-jsi+56.0.14.patch"]);
+  });
+
+  it("never stages another SDK's patch on SDK 56", async () => {
+    const { root } = await tempProject();
+    await installPkg(root, "expo", "56.0.25");
+    await installPkg(root, "expo-modules-autolinking", "56.0.25");
+    await installPkg(root, "expo-modules-jsi", "56.0.15");
+    await installPkg(root, "react-native", "0.85.3");
+    expect(selectBundledPatches(root, bundled, { lineOnly: true })).toEqual(["expo-modules-jsi+56.0.14.patch"]);
+  });
+
+  it("names the SDK 56 overrides when its jsi patch fails on a newer 56.x", async () => {
+    const { root } = await tempProject();
+    await installPkg(root, "expo", "56.0.24");
+    await installPkg(root, "expo-modules-jsi", "56.0.15");
+    const output = "**ERROR** Failed to apply patch for package expo-modules-jsi at path\n    node_modules/expo-modules-jsi";
+    const exec = async () => ({ exitCode: 1, all: output });
+    const err = (await applyPatches(root, exec, { rnScripts: "vendored", expoPlugin: "vendored" }).catch(
+      (e: unknown) => e,
+    )) as Error;
+    expect(err.message).toMatch(/^rn-xtool could not patch expo-modules-jsi@56\.0\.15 \(patch file: expo-modules-jsi\+56\.0\.14\.patch\)/);
+    expect(err.message).toContain(
+      '"overrides": { "expo-modules-core": "56.0.27", "expo-modules-jsi": "56.0.14", "expo-modules-autolinking": "56.0.24" }',
+    );
+    expect(err.message).not.toContain('pin "expo-modules-jsi"');
+  });
+
   it("stages only the jsi patch on an SDK 57 project", async () => {
     const { root } = await tempProject();
     await installPkg(root, "expo", "57.0.31");
@@ -505,10 +540,10 @@ describe("findPatchMismatch", () => {
 
 describe("a bundled patch over a package an earlier release patched differently", () => {
   const JSI_FILE = "apple/Sources/ExpoModulesJSI/Runtime/Values/JavaScriptError.swift";
-  /** The lines around rn-xtool's one-line jsi change, with `line` where the change goes. */
-  const jsiSource = (line: string) =>
+  /** The lines around rn-xtool's one-line jsi change, with `line` where the change goes, after `before` filler lines. */
+  const jsiSource = (line: string, before: number) =>
     [
-      ...Array.from({ length: 87 }, (_, i) => `// line ${i + 1}`),
+      ...Array.from({ length: before }, (_, i) => `// line ${i + 1}`),
       "/// via the `SWIFT_NAME(_message)` annotation in `CppError.h`. This extension",
       "/// wraps it in a Swift `String` for cleaner call-site usage.",
       "extension expo.CppError: Error {",
@@ -519,25 +554,92 @@ describe("a bundled patch over a package an earlier release patched differently"
       "",
     ].join("\n");
 
-  async function jsiProject(line: string) {
+  /** A project whose only package is expo-modules-jsi `version`, its JavaScriptError.swift `before` lines then the change. */
+  async function jsiProject(line: string, { version, before }: { version: string; before: number }) {
     const { root } = await tempProject();
     await writeFile(path.join(root, "package.json"), JSON.stringify({ name: "app", version: "1.0.0" }));
-    await installPkg(root, "expo-modules-jsi", "58.0.21");
+    await installPkg(root, "expo-modules-jsi", version);
     const file = path.join(root, "node_modules", "expo-modules-jsi", JSI_FILE);
     await mkdir(path.dirname(file), { recursive: true });
-    await writeFile(file, jsiSource(line));
+    await writeFile(file, jsiSource(line, before));
     return { root, file };
   }
 
   it("applies to the original file", async () => {
-    const { root, file } = await jsiProject("  public var message: String {");
+    const { root, file } = await jsiProject("  public var message: String {", { version: "58.0.21", before: 87 });
     await applyPatches(root, undefined, { rnScripts: "vendored", expoPlugin: "installed" });
     expect(readFileSync(file, "utf8")).toContain("\n  var message: String {\n");
   }, 30_000);
 
+  /** `blocks` at their 1-based line numbers, `// line n` filler before and between them. */
+  const sourceWith = (blocks: [start: number, lines: string[]][]) => {
+    const out: string[] = [];
+    for (const [start, lines] of blocks) {
+      while (out.length < start - 1) out.push(`// line ${out.length + 1}`);
+      out.push(...lines);
+    }
+    return [...out, ""].join("\n");
+  };
+  const FROM_JSI = "  static func fromJSIValue(_ value: borrowing facebook.jsi.Value, in runtime: facebook.jsi.IRuntime)";
+  /** jsi 56.0.14's lines around the four generic conformances to its internal `~Copyable` JSIRepresentable. */
+  const JSI56_SOURCES: Record<string, string> = {
+    "apple/Sources/ExpoModulesJSI/Protocols/JSIRepresentable.swift": sourceWith([
+      [3, ["internal import jsi", "", "/// A type whose values can be represented as `facebook.jsi.Value`.",
+        "internal protocol JSIRepresentable: JavaScriptRepresentable, Sendable, ~Copyable {",
+        "  /// Creates an instance of this type from the given `facebook.jsi.Value` in `facebook.jsi.IRuntime`.",
+        `${FROM_JSI} -> Self`]],
+      [92, ["  }", "}", "", "extension Optional: JSIRepresentable where Wrapped: JSIRepresentable {", `${FROM_JSI} -> Self {`,
+        "    if value.isNull() || value.isUndefined() {"]],
+      [105, ["  }", "}", "", "extension Array: JSIRepresentable where Element: JSIRepresentable {",
+        `${FROM_JSI} -> [Element] {`, "    let jsiArray = value.getObject(runtime).getArray(runtime)"]],
+      [129, ["  }", "}", "", "extension Dictionary: JSIRepresentable where Key == String, Value: JSIRepresentable {",
+        `${FROM_JSI} -> [Key: Value] {`, "    let object = value.getObject(runtime)"]],
+    ]),
+    "apple/Sources/ExpoModulesJSI/Runtime/JavaScriptRef.swift": sourceWith([
+      [77, ["  }", "}", "", "extension JavaScriptRef: JSIRepresentable where T: JSIRepresentable & ~Copyable {",
+        `${FROM_JSI} -> JavaScriptRef {`, "    FatalError.unimplemented()"]],
+    ]),
+  };
+
+  /** jsiProject at 56.0.14, with the other files the SDK 56 patch touches. */
+  async function jsi56Project() {
+    const project = await jsiProject("  public var message: String {", { version: "56.0.14", before: 81 });
+    for (const [rel, text] of Object.entries(JSI56_SOURCES)) {
+      const file = path.join(project.root, "node_modules", "expo-modules-jsi", rel);
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, text);
+    }
+    return project;
+  }
+
+  it("applies the SDK 56 jsi patch to the original file", async () => {
+    const { root, file } = await jsi56Project();
+    await applyPatches(root, undefined, { rnScripts: "vendored", expoPlugin: "vendored" });
+    expect(readFileSync(file, "utf8")).toContain("\n  var message: String {\n");
+  }, 30_000);
+
+  it("the SDK 56 jsi patch carries the interface fix", async () => {
+    // jsi 57.1.3's own fix: without `@_spi(Internal)`, Swift 6.4 prints these four conformances into the public
+    // interface as `extension <T> :  where … : _ConstraintThatIsNotPartOfTheAPIOfThisLibrary {}`, which nothing parses.
+    const { root } = await jsi56Project();
+    await applyPatches(root, undefined, { rnScripts: "vendored", expoPlugin: "vendored" });
+    const read = (rel: string) => readFileSync(path.join(root, "node_modules", "expo-modules-jsi", rel), "utf8");
+    const representable = read("apple/Sources/ExpoModulesJSI/Protocols/JSIRepresentable.swift");
+    for (const type of ["Optional", "Array", "Dictionary"]) {
+      expect(representable).toContain(`\n}\n\n@_spi(Internal)\nextension ${type}: JSIRepresentable where `);
+    }
+    expect(representable).toContain(
+      "/// Mark conformances of generic types with `@_spi(Internal)`. Otherwise, because this protocol\n",
+    );
+    expect(read("apple/Sources/ExpoModulesJSI/Runtime/JavaScriptRef.swift")).toContain(
+      "\n}\n\n@_spi(Internal)\nextension JavaScriptRef: JSIRepresentable where T: JSIRepresentable & ~Copyable {\n",
+    );
+    expect(representable.match(/@_spi\(Internal\)\nextension/g)).toHaveLength(3);
+  }, 30_000);
+
   it("names the package and the reinstall when the patch applies neither way", async () => {
     // Already patched differently: neither the original line nor the one the patch writes.
-    const { root } = await jsiProject("  internal var message: String {");
+    const { root } = await jsiProject("  internal var message: String {", { version: "58.0.21", before: 87 });
     const err = (await applyPatches(root, undefined, { rnScripts: "vendored", expoPlugin: "installed" }).catch(
       (e: unknown) => e,
     )) as Error;

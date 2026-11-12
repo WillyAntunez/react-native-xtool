@@ -64,11 +64,30 @@ export interface BareLine {
 export type SupportedLine = ExpoLine | BareLine;
 
 /**
- * Every line rn-xtool supports. SDK 57 builds through the Expo 58 plugin vendored in rn-xtool, SDK 58 through the
- * installed one. On both the pins are a floor: older is refused, newer of the same release line is let through with a
- * warning (react-native stays exact). SDKs newer than the last Expo row use its plugin and pin nothing.
+ * Every line rn-xtool supports. SDK 56 and 57 build through the Expo 58 plugin vendored in rn-xtool, SDK 58 through
+ * the installed one. On all three the pins are a floor: older is refused, newer of the same release line is let through
+ * with a warning (react-native stays exact). SDKs newer than the last Expo row use its plugin and pin nothing.
  */
 export const SUPPORTED_LINES: readonly SupportedLine[] = [
+  {
+    kind: "expo",
+    sdk: 56,
+    plugin: "vendored",
+    policy: "floor",
+    scripts: "vendored",
+    artifacts: "adapted",
+    pins: {
+      expo: "56.0.24",
+      "react-native": "0.85.3",
+      "expo-modules-core": "56.0.27",
+      "expo-modules-jsi": "56.0.14",
+      "expo-modules-autolinking": "56.0.24",
+      "expo-file-system": "56.0.11",
+      "expo-font": "56.0.7",
+    },
+    templates: ["default"],
+    createExpo: "5.1.5",
+  },
   {
     kind: "expo",
     sdk: 57,
@@ -152,7 +171,7 @@ const expoLines = (): ExpoLine[] => SUPPORTED_LINES.filter((l): l is ExpoLine =>
 /** The bare React Native rows, oldest minor first. */
 export const bareLines = (): BareLine[] => SUPPORTED_LINES.filter((l): l is BareLine => l.kind === "bare");
 
-/** The row of an SDK that has one (57 and 58); undefined for any other SDK. */
+/** The row of an SDK that has one (56, 57 and 58); undefined for any other SDK. */
 export function expoLineFor(sdk: number): ExpoLine | undefined {
   return expoLines().find((l) => l.sdk === sdk);
 }
@@ -176,7 +195,7 @@ export function expoPinsFor(sdk: number): Readonly<Partial<Record<ExpoPinName, s
   return expoLineFor(sdk)?.pins;
 }
 
-/** How an SDK's pins are read: "floor" (57 and 58); undefined when the SDK pins nothing. */
+/** How an SDK's pins are read: "floor" (56, 57 and 58); undefined when the SDK pins nothing. */
 export function expoPinPolicyFor(sdk: number): ExpoPinPolicy | undefined {
   return expoLineFor(sdk)?.policy;
 }
@@ -240,6 +259,15 @@ export function rnLineStatus(version: string): { status: RnLineStatus; line?: Ba
 export function supportedRnList(): string {
   const all = bareLines().map((l) => `${l.minor}.x from ${l.floor}`);
   return `${all.slice(0, -1).join(", ")} and ${all[all.length - 1]}`;
+}
+
+/** The Expo rows for the refusal: each but the last as "SDK <n> (expo <pin> or newer <n>.x)", the last as "SDK <n> or newer". */
+export function supportedExpoList(): string {
+  const lines = expoLines();
+  const all = lines.map((l, i) =>
+    i === lines.length - 1 ? `SDK ${l.sdk} or newer` : `SDK ${l.sdk} (expo ${l.pins.expo} or newer ${l.sdk}.x)`,
+  );
+  return all.length < 2 ? all.join("") : `${all.slice(0, -1).join(", ")} and ${all[all.length - 1]}`;
 }
 
 /**

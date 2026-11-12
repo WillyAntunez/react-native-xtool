@@ -333,8 +333,11 @@ expo-modules-jsi nested after that (package-lock.json holds its place; neither a
 and `doctor` then stops on it; `npm update expo-modules-jsi` moves it to the top level without changing other
 packages. The SDK 58 checks of Expo apps apply to
 hybrids too ([how-it-works.md](how-it-works.md#expo-sdk-58), messages in
-[troubleshooting.md](troubleshooting.md#expo-sdk-58)), and an `expo` older than SDK 58 stops the build. Verified on a
-physical iPhone on 2026-10-28: a hybrid app on expo 58.0.21 and React Native 0.88.1 launched, with expo-haptics and an
+[troubleshooting.md](troubleshooting.md#expo-sdk-58)), and an `expo` older than SDK 58 stops the build. Among them,
+expo-file-system and expo-font are read where Expo's autolinking links them, as its CLI answers: one installed that
+autolinking does not link and the app does not exclude stops the build ("<package> is installed (<path>) but Expo's
+autolinking does not link it for iOS, …"), and when the CLI cannot be asked, a `⚠` line says so. Verified on a physical
+iPhone on 2026-10-28: a hybrid app on expo 58.0.21 and React Native 0.88.1 launched, with expo-haptics and an
 Objective-C module calling Swift working.
 `expo-constants` gets its `EXConstants.bundle/app.config` as in Expo apps.
 

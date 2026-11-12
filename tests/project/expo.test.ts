@@ -1,14 +1,22 @@
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildVars, defaultBundleIdentifier, MissingBundleIdentifierError, readExpoProject } from "../../src/project/index.js";
 import { VersionGateError } from "../../src/project/detect.js";
-import { expoIconPath, expoMacrosBinaryError, expoPackageDir, readExpoPins } from "../../src/project/expo.js";
+import {
+  AUTOLINKING_TIMEOUT_MS,
+  checkExpoPackages,
+  expoIconPath,
+  expoMacrosBinaryError,
+  expoPackageDir,
+  readExpoPins,
+} from "../../src/project/expo.js";
 import { checkPins, expoPinPolicyFor, expoPinsFor, expoPluginFor } from "../../src/versions.js";
-import { EXPO57_PINS, fakeExpo57Modules } from "../support/expo57.js";
-import { EXPO58_PINS, fakeExpo58Modules } from "../support/expo58.js";
+import { EXPO56_PINS, fakeExpo56Modules } from "../support/expo56.js";
+import { EXPO57_PINS, fakeExpo57Modules, writeExpoModuleFiles } from "../support/expo57.js";
+import { EXPO58_PINS, fakeExpo58Modules, realAutolinkingCli } from "../support/expo58.js";
 import { EXPO_SKIP_NOTE, loadSpm, shared58Spm, vendoredSpm, type Plugin } from "../support/expoSpm.js";
 
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures");
@@ -36,6 +44,31 @@ async function tempProject(
   await writeFile(path.join(dir, "package.json"), JSON.stringify(pkg));
   return dir;
 }
+
+/** Merges `entries` into `<dir>/package.json`'s `field` ("dependencies" unless given). */
+async function addToPackageJson(dir: string, entries: Record<string, unknown>, field = "dependencies"): Promise<void> {
+  const file = path.join(dir, "package.json");
+  const pkg = JSON.parse(await readFile(file, "utf8").catch(() => "{}"));
+  pkg[field] = { ...pkg[field], ...entries };
+  await mkdir(dir, { recursive: true });
+  await writeFile(file, JSON.stringify(pkg));
+}
+
+/** A patch two below `version`'s: "56.0.7" → "56.0.5". */
+const twoBelow = (version: string): string => version.replace(/\d+$/, (n) => String(Number(n) - 2));
+
+/** The refusal of a pinned module that is installed, not excluded, and still not linked by autolinking. */
+/** The gate's line when it could not ask autolinking and read the two autolinked pins from node_modules. */
+const AUTOLINKING_NOT_ASKED = (reason: string) =>
+  `⚠ rn-xtool could not ask Expo's autolinking which expo-file-system and expo-font copies the build links (${reason}), ` +
+  "so it read their versions from node_modules: the top-level copy when the app, or a package it lists, depends on " +
+  "it, else the copy under expo. The build asks autolinking again and may link another copy. See " +
+  "https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/troubleshooting.md#expo-sdk-58";
+const NOT_LINKED = (name: string, where: string) =>
+  `${name} is installed (${where}) but Expo's autolinking does not link it for iOS, and the app does not exclude it: ` +
+  'the build would succeed and the app would fail at launch with "Cannot find native module". Autolinking leaves out ' +
+  "a module without an expo-module.config.json or whose config names no Apple platform: reinstall it " +
+  `(\`rm -rf ${where} && npm install\`), or, if the app does not use it, list it in expo.autolinking.exclude in package.json.`;
 
 describe("readExpoProject", () => {
   it("reads the fixture project", async () => {
@@ -78,13 +111,14 @@ describe("readExpoProject", () => {
     expect((await readExpoProject(dir)).iosTargetName).toBe("MiAppNandu2");
   });
 
-  it.each([56, 55, 54])("rejects SDK %i", async (sdk) => {
+  it.each([55, 54])("rejects SDK %i", async (sdk) => {
     const dir = await tempProject((_app, pkg) => {
       pkg.dependencies.expo = `~${sdk}.0.0`;
     }, false);
     await expect(readExpoProject(dir)).rejects.toThrow(
       new Error(
-        `Expo SDK ${sdk} is not supported; rn-xtool supports SDK 57 (expo 57.0.31 or newer 57.x) and SDK 58 or newer.`,
+        `Expo SDK ${sdk} is not supported; rn-xtool supports SDK 56 (expo 56.0.24 or newer 56.x), SDK 57 (expo 57.0.31 ` +
+          "or newer 57.x) and SDK 58 or newer.",
       ),
     );
   });
@@ -210,6 +244,272 @@ describe("readExpoProject", () => {
   });
 });
 
+describe("Expo SDK 56", () => {
+  const PREFIX =
+    "Expo SDK 56 needs react-native 0.85.3 and at least expo 56.0.24, expo-modules-core 56.0.27, expo-modules-jsi " +
+    "56.0.14, expo-modules-autolinking 56.0.24, expo-file-system 56.0.11 and expo-font 56.0.7; installed: ";
+  const FIX_REMEDY =
+    "Remove any pin or override on these packages from package.json, then run `npx expo install --fix`; then run " +
+    "`npx expo install react-native@0.85.3`, since `--fix` alone can leave react-native on another version.";
+  const EXPO_REMEDY =
+    "Remove any pin or override on these packages from package.json, then run `npx expo install expo@~56.0.24` and " +
+    "`npx expo install --fix`; then run `npx expo install react-native@0.85.3`, since `--fix` alone can leave " +
+    "react-native on another version.";
+  const RN_REMEDY = "Run `npx expo install react-native@0.85.3`.";
+  const PIN_ERROR = (list: string, remedy = FIX_REMEDY, tail = "") =>
+    new VersionGateError(`${PREFIX}${list}. ${remedy}${tail}`);
+
+  async function expo56(
+    overrides?: Parameters<typeof fakeExpo56Modules>[1],
+    nested?: Parameters<typeof fakeExpo56Modules>[2],
+  ): Promise<string> {
+    const dir = await mkdtemp(path.join(tmpdir(), "rn-xtool-expo56-"));
+    tempDirs.push(dir);
+    await cp(path.join(fixtures, "expo-56"), dir, { recursive: true });
+    await fakeExpo56Modules(dir, overrides, nested);
+    return dir;
+  }
+
+  it("has the SDK 56 pins in the supported table", () => {
+    expect(expoPinsFor(56)).toEqual(EXPO56_PINS);
+    expect(Object.keys(expoPinsFor(56)!)).toEqual(Object.keys(EXPO56_PINS));
+    expect(expoPinPolicyFor(56)).toBe("floor");
+  });
+
+  it("accepts the SDK 56 floor set", async () => {
+    const dir = await expo56();
+    const log = vi.fn();
+    const p = await readExpoProject(dir, { log });
+    expect(p).toMatchObject({ sdkVersion: 56, rnVersion: "0.85.3", rnScripts: "vendored", expoPlugin: "vendored" });
+    expect(p.iosTargetDir).toBe(path.join(dir, "ios", "Expo56"));
+    expect(readExpoPins(dir, 56)).toEqual(EXPO56_PINS);
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["expo", "56.0.23"],
+    ["expo-modules-core", "56.0.26"],
+    ["expo-modules-jsi", "56.0.13"],
+    ["expo-modules-autolinking", "56.0.23"],
+    ["expo-file-system", "56.0.10"],
+    ["expo-font", "56.0.6"],
+  ])("names each SDK 56 pin below the floor: %s %s", async (name, version) => {
+    const dir = await expo56({ [name]: version });
+    const err = (await readExpoProject(dir).catch((e: unknown) => e)) as Error;
+    expect(err).toBeInstanceOf(VersionGateError);
+    expect(err.message.startsWith(`${PREFIX}${name} ${version}. `)).toBe(true);
+    expect(err).toEqual(PIN_ERROR(`${name} ${version}`, name === "expo" ? EXPO_REMEDY : FIX_REMEDY));
+  });
+
+  it("refuses react-native other than 0.85.3", async () => {
+    const older = await expo56({ "react-native": "0.85.2" });
+    await expect(readExpoProject(older)).rejects.toThrow(PIN_ERROR("react-native 0.85.2", RN_REMEDY));
+    const newer = await expo56({ "react-native": "0.85.4" });
+    await expect(readExpoProject(newer)).rejects.toThrow(
+      PIN_ERROR(
+        "react-native 0.85.4",
+        RN_REMEDY,
+        " React Native 0.85.4 is newer than this rn-xtool release supports: pin react-native to 0.85.3, or update rn-xtool.",
+      ),
+    );
+  });
+
+  it("warns and continues on a newer 56.x", async () => {
+    const dir = await expo56({ expo: "56.0.25", "expo-modules-jsi": "56.0.15" });
+    const log = vi.fn();
+    await expect(readExpoProject(dir, { log })).resolves.toMatchObject({ sdkVersion: 56, expoPlugin: "vendored" });
+    expect(log.mock.calls).toEqual([
+      [
+        "⚠ Newer than the Expo SDK 56 set this rn-xtool release was verified with: expo 56.0.25, expo-modules-jsi " +
+          "56.0.15. Verified: expo 56.0.24, react-native 0.85.3, expo-modules-core 56.0.27, expo-modules-jsi 56.0.14, " +
+          "expo-modules-autolinking 56.0.24, expo-file-system 56.0.11 and expo-font 56.0.7. The build continues; if it " +
+          "fails or the app crashes at launch, report it at https://github.com/WillyAntunez/react-native-xtool/issues.",
+      ],
+    ]);
+  });
+
+  it("refuses a package of another SDK's line on SDK 56", async () => {
+    const dir = await expo56({ "expo-modules-jsi": "57.1.3" });
+    const log = vi.fn();
+    await expect(readExpoProject(dir, { log })).rejects.toThrow(PIN_ERROR("expo-modules-jsi 57.1.3"));
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it("reads expo-file-system and expo-font where autolinking links them on SDK 56", async () => {
+    // SDK 56 hoists both; the default set is the hoisted one.
+    const hoisted = await expo56();
+    expect(readExpoPins(hoisted, 56)).toMatchObject({ "expo-file-system": "56.0.11", "expo-font": "56.0.7" });
+    await expect(readExpoProject(hoisted)).resolves.toMatchObject({ sdkVersion: 56 });
+    // Nothing the app lists reaches the top-level copy: autolinking finds only expo's nested one, through expo.
+    const nested = await expo56({}, { "expo-font": "56.0.6" });
+    expect(readExpoPins(nested, 56)["expo-font"]).toBe("56.0.6");
+    await expect(readExpoProject(nested)).rejects.toThrow(PIN_ERROR("expo-font 56.0.6"));
+  });
+
+  it("names expo-font not installed when autolinking links no copy on SDK 56", async () => {
+    const dir = await expo56({ "expo-font": null });
+    await expect(readExpoProject(dir)).rejects.toThrow(PIN_ERROR("expo-font not installed"));
+    // Excluding a package that is not installed changes nothing: it is still missing.
+    await addToPackageJson(dir, { autolinking: { exclude: ["expo-font"] } }, "expo");
+    await expect(readExpoProject(dir)).rejects.toThrow(PIN_ERROR("expo-font not installed"));
+  });
+
+  it.each(["expo-file-system", "expo-font"] as const)("skips the %s pin expo.autolinking.exclude leaves unlinked on SDK 56", async (name) => {
+    // Installed but not linked: its precompiled framework is never embedded, so there is nothing to gate.
+    const older = twoBelow(EXPO56_PINS[name]!);
+    const dir = await expo56({ [name]: older });
+    await expect(readExpoProject(dir)).rejects.toThrow(PIN_ERROR(`${name} ${older}`));
+    await addToPackageJson(dir, { autolinking: { exclude: [name] } }, "expo");
+    const log = vi.fn();
+    await expect(readExpoProject(dir, { log })).resolves.toMatchObject({ sdkVersion: 56 });
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["expo-font", "ios", { ios: { exclude: ["expo-font"] } }],
+    ["expo-font", "apple", { apple: { exclude: ["expo-font"] } }],
+    ["expo-file-system", "apple over ios", { apple: { exclude: ["expo-file-system"] }, ios: { exclude: [] } }],
+  ] as const)("skips the %s pin expo.autolinking.%s.exclude leaves unlinked on SDK 56", async (name, _form, autolinking) => {
+    const older = twoBelow(EXPO56_PINS[name]!);
+    const dir = await expo56({ [name]: older });
+    await addToPackageJson(dir, { autolinking }, "expo");
+    await expect(readExpoProject(dir)).resolves.toMatchObject({ sdkVersion: 56 });
+  });
+
+  it("gates a pin a platform list takes back out of the exclusions on SDK 56", async () => {
+    // Autolinking's Apple list replaces the top-level one: expo-font is linked again, so it is gated.
+    const older = twoBelow(EXPO56_PINS["expo-font"]!);
+    const dir = await expo56({ "expo-font": older });
+    await addToPackageJson(dir, { autolinking: { exclude: ["expo-font"], ios: { exclude: [] } } }, "expo");
+    await expect(readExpoProject(dir)).rejects.toThrow(PIN_ERROR(`expo-font ${older}`));
+  });
+
+  it.each([
+    ["no expo-module.config.json", null],
+    ["no Apple platform", JSON.stringify({ platforms: ["android"] })],
+  ])("refuses an installed expo-font autolinking does not link (%s) on SDK 56", async (_why, config) => {
+    const dir = await expo56();
+    const file = path.join(dir, "node_modules", "expo-font", "expo-module.config.json");
+    if (config === null) await rm(file);
+    else await writeFile(file, config);
+    await expect(readExpoProject(dir)).rejects.toThrow(NOT_LINKED("expo-font", "node_modules/expo-font"));
+  });
+
+  it.each(["expo-file-system", "expo-font"] as const)("gates the %s copy the app lists on SDK 56", async (name) => {
+    // The app's own dependency is autolinking's shallowest (depth 0): its top-level copy is linked, not expo's nested one.
+    const floor = EXPO56_PINS[name]!;
+    const older = twoBelow(floor);
+    const topBelow = await expo56({ [name]: older }, { [name]: floor });
+    await addToPackageJson(topBelow, { [name]: `~${floor}` });
+    await expect(readExpoProject(topBelow)).rejects.toThrow(PIN_ERROR(`${name} ${older}`));
+    const topFloor = await expo56({}, { [name]: older });
+    await addToPackageJson(topFloor, { [name]: `~${floor}` });
+    expect(readExpoPins(topFloor, 56)[name]).toBe(floor);
+    await expect(readExpoProject(topFloor)).resolves.toMatchObject({ sdkVersion: 56 });
+  });
+
+  describe("reads the expo-font copy autolinking's own CLI links", () => {
+    // Every tree: expo's nested copy at the floor, a second copy below it elsewhere; autolinking picks the second.
+    const OLDER = "56.0.5";
+
+    /** expo56() with expo-font nested under expo at the floor and no top-level copy. */
+    async function nestedFloor(): Promise<string> {
+      return expo56({ "expo-font": null }, { "expo-font": EXPO56_PINS["expo-font"]! });
+    }
+
+    /** A package.json at `dir` (an Expo module with its pod when `pod` is given). */
+    async function writePkg(dir: string, pkg: Record<string, unknown>, pod?: string): Promise<void> {
+      await mkdir(dir, { recursive: true });
+      await writeFile(path.join(dir, "package.json"), JSON.stringify(pkg));
+      if (pod !== undefined) await writeExpoModuleFiles(dir, pod);
+    }
+
+    const expoFont = (dir: string, version = OLDER) => writePkg(dir, { name: "expo-font", version }, "ExpoFont");
+
+    it("a file:-linked local library with its own copy (D)", async () => {
+      const root = await nestedFloor();
+      const lib = await mkdtemp(path.join(tmpdir(), "rn-xtool-local-lib-"));
+      tempDirs.push(lib);
+      await writePkg(lib, { name: "my-lib", version: "1.0.0", peerDependencies: { "expo-font": "*" } });
+      await expoFont(path.join(lib, "node_modules", "expo-font"));
+      await symlink(lib, path.join(root, "node_modules", "my-lib"));
+      await addToPackageJson(root, { "my-lib": `file:${lib}` });
+      expect(readExpoPins(root, 56)["expo-font"]).toBe(OLDER);
+      await expect(readExpoProject(root)).rejects.toThrow(PIN_ERROR(`expo-font ${OLDER}`));
+    });
+
+    it("an app dependency with a nested copy (A)", async () => {
+      const root = await nestedFloor();
+      const asset = path.join(root, "node_modules", "expo-asset");
+      await writePkg(asset, { name: "expo-asset", version: "56.0.0", dependencies: { "expo-font": "*" } });
+      await expoFont(path.join(asset, "node_modules", "expo-font"));
+      await addToPackageJson(root, { "expo-asset": "*" });
+      expect(readExpoPins(root, 56)["expo-font"]).toBe(OLDER);
+      await expect(readExpoProject(root)).rejects.toThrow(PIN_ERROR(`expo-font ${OLDER}`));
+    });
+
+    it.each([
+      ["searchPaths", { searchPaths: ["./node_modules"] }],
+      ["nativeModulesDir", { nativeModulesDir: "./node_modules" }],
+    ])("a top-level copy %s scans (B)", async (_name, autolinking) => {
+      const root = await nestedFloor();
+      await expoFont(path.join(root, "node_modules", "expo-font"));
+      await addToPackageJson(root, { autolinking }, "expo");
+      expect(readExpoPins(root, 56)["expo-font"]).toBe(OLDER);
+      await expect(readExpoProject(root)).rejects.toThrow(PIN_ERROR(`expo-font ${OLDER}`));
+    });
+
+    it("not the copy only a dependency autolinking skips reaches (C)", async () => {
+      // jest-expo is one of autolinking's default exclusions: its dependencies are never scanned.
+      const root = await nestedFloor();
+      await expoFont(path.join(root, "node_modules", "expo-font"));
+      await writePkg(path.join(root, "node_modules", "jest-expo"), { name: "jest-expo", version: "56.0.0", dependencies: { "expo-font": "*" } });
+      await addToPackageJson(root, { "jest-expo": "*" }, "devDependencies");
+      expect(readExpoPins(root, 56)["expo-font"]).toBe(EXPO56_PINS["expo-font"]);
+      await expect(readExpoProject(root)).resolves.toMatchObject({ sdkVersion: 56 });
+    });
+
+    it("the copy a package in expo.autolinking.exclude reaches: the exclusion drops that package, not its dependencies", async () => {
+      const root = await nestedFloor();
+      await expoFont(path.join(root, "node_modules", "expo-font"));
+      await writePkg(path.join(root, "node_modules", "some-lib"), { name: "some-lib", version: "1.0.0", dependencies: { "expo-font": "*" } }, "SomeLib");
+      await addToPackageJson(root, { "some-lib": "*" });
+      await addToPackageJson(root, { autolinking: { exclude: ["some-lib"] } }, "expo");
+      expect(readExpoPins(root, 56)["expo-font"]).toBe(OLDER);
+    });
+  });
+
+  it("refuses a nested expo-modules-jsi on SDK 56", async () => {
+    const dir = await expo56({ "expo-modules-jsi": "57.1.3" }, { "expo-modules-jsi": "56.0.14" });
+    const err = (await readExpoProject(dir).catch((e: unknown) => e)) as Error;
+    expect(err).toBeInstanceOf(Error);
+    expect(
+      err.message.startsWith(
+        "expo-modules-jsi 56.0.14 resolves from node_modules/expo-modules-core/node_modules/expo-modules-jsi, not from " +
+          "the project's top-level node_modules",
+      ),
+    ).toBe(true);
+  });
+
+  it("checks the expo-modules-macros copy the vendored plugin finds on SDK 56", async () => {
+    // expo-modules-core 56.0.27 depends on the macOS-only @expo/expo-modules-macros-plugin, so G3 checks rn-xtool's copy
+    // (the vendored plugin's fallback; the installed plugin would ask core for one). The SDK 56 row decides the path.
+    const root = await expo56();
+    const arch = Object.getOwnPropertyDescriptor(process, "arch")!;
+    Object.defineProperty(process, "arch", { ...arch, value: "riscv64" });
+    try {
+      expect(() => checkExpoPackages(root, 56)).toThrow(
+        new Error(
+          "expo-modules-macros 0.22.0 has no Linux binary for riscv64 (@expo/modules-macros-linux-riscv64); reinstall " +
+            "react-native-xtool without --omit=optional.",
+        ),
+      );
+    } finally {
+      Object.defineProperty(process, "arch", arch);
+    }
+  });
+});
+
 describe("Expo SDK 57", () => {
   const PREFIX =
     "Expo SDK 57 needs react-native 0.86.3 and at least expo 57.0.31, expo-modules-core 57.0.24, " +
@@ -236,8 +536,8 @@ describe("Expo SDK 57", () => {
 
   it("has the SDK 57 pins and plugin in the supported table", () => {
     expect(expoPinsFor(57)).toEqual(EXPO57_PINS);
-    expect([expoPluginFor(56), expoPluginFor(57), expoPluginFor(58), expoPluginFor(59)]).toEqual([
-      undefined, "vendored", "installed", "installed",
+    expect([expoPluginFor(55), expoPluginFor(56), expoPluginFor(57), expoPluginFor(58), expoPluginFor(59)]).toEqual([
+      undefined, "vendored", "vendored", "installed", "installed",
     ]);
   });
 
@@ -406,7 +706,7 @@ describe("Expo SDK 58 floor model", () => {
   it("SDK 58 pins the 58.0.21 set as a floor", () => {
     expect(expoPinsFor(58)).toEqual(EXPO58_PINS);
     expect(Object.keys(expoPinsFor(58)!)).toEqual(Object.keys(EXPO58_PINS));
-    expect([56, 57, 58, 59].map(expoPinPolicyFor)).toEqual([undefined, "floor", "floor", undefined]);
+    expect([55, 56, 57, 58, 59].map(expoPinPolicyFor)).toEqual([undefined, "floor", "floor", "floor", undefined]);
     expect(expoPinsFor(59)).toBeUndefined();
   });
 
@@ -493,6 +793,7 @@ describe("Expo SDK 58 gate", () => {
 
   it("accepts the SDK 58 floor set", async () => {
     const dir = await expo58();
+    await realAutolinkingCli(dir);
     const log = vi.fn();
     const p = await readExpoProject(dir, { log });
     expect(p).toMatchObject({ sdkVersion: 58, rnVersion: "0.88.1", rnScripts: "installed", expoPlugin: "installed" });
@@ -557,6 +858,7 @@ describe("Expo SDK 58 gate", () => {
 
   it("warns and continues on a newer 58.x", async () => {
     const dir = await expo58({ expo: "58.0.22", "expo-modules-core": "58.0.29" });
+    await realAutolinkingCli(dir);
     const log = vi.fn();
     await expect(readExpoProject(dir, { log })).resolves.toMatchObject({ sdkVersion: 58, expoPlugin: "installed" });
     expect(log.mock.calls).toEqual([[WARNING("expo 58.0.22, expo-modules-core 58.0.29")]]);
@@ -564,6 +866,7 @@ describe("Expo SDK 58 gate", () => {
 
   it("refuses a package of another SDK's line instead of warning", async () => {
     const dir = await expo58({ "expo-modules-core": "59.0.0" });
+    await realAutolinkingCli(dir);
     const log = vi.fn();
     await expect(readExpoProject(dir, { log })).rejects.toThrow(PIN_ERROR("expo-modules-core 59.0.0"));
     expect(log).not.toHaveBeenCalled();
@@ -571,19 +874,170 @@ describe("Expo SDK 58 gate", () => {
 
   it("a package below the floor wins over a newer one", async () => {
     const dir = await expo58({ expo: "58.0.22", "expo-modules-core": "58.0.27" });
+    await realAutolinkingCli(dir);
     const log = vi.fn();
     await expect(readExpoProject(dir, { log })).rejects.toThrow(PIN_ERROR("expo-modules-core 58.0.27"));
     expect(log).not.toHaveBeenCalled();
   });
 
-  it.each(["expo-file-system", "expo-font"] as const)("reads %s where expo resolves it", async (name) => {
-    const floor = EXPO58_PINS[name];
-    const older = floor.replace(/\d+$/, (n) => String(Number(n) - 2));
-    const nestedOld = await expo58({}, { [name]: older }, { [name]: floor });
-    await expect(readExpoProject(nestedOld)).rejects.toThrow(PIN_ERROR(`${name} ${older}`));
-    const nestedFloor = await expo58({}, {}, { [name]: older });
-    await expect(readExpoProject(nestedFloor)).resolves.toMatchObject({ sdkVersion: 58 });
+  describe.each([
+    ["the fallback rule (the fake autolinking has no CLI)", false],
+    ["the app's autolinking CLI", true],
+  ])("the expo-file-system and expo-font copies, through %s", (_how, cli) => {
+    async function app(...args: Parameters<typeof expo58>): Promise<string> {
+      const dir = await expo58(...args);
+      if (cli) await realAutolinkingCli(dir);
+      return dir;
+    }
+
+    it.each(["expo-file-system", "expo-font"] as const)("reads %s under expo when nothing the app lists reaches a top-level copy", async (name) => {
+      // A top-level stray no dependency names is never scanned by autolinking: expo's nested copy is the one linked.
+      const floor = EXPO58_PINS[name];
+      const older = twoBelow(floor);
+      const nestedOld = await app({}, { [name]: older }, { [name]: floor });
+      await expect(readExpoProject(nestedOld)).rejects.toThrow(PIN_ERROR(`${name} ${older}`));
+      const nestedFloor = await app({}, {}, { [name]: older });
+      await expect(readExpoProject(nestedFloor)).resolves.toMatchObject({ sdkVersion: 58 });
+    });
+
+    it.each(["expo-file-system", "expo-font"] as const)("gates the %s copy the app lists on SDK 58", async (name) => {
+      // The app's own dependency is autolinking's shallowest (depth 0): its top-level copy is linked, not expo's nested one.
+      const floor = EXPO58_PINS[name];
+      const older = twoBelow(floor);
+      const topBelow = await app({}, {}, { [name]: older });
+      await addToPackageJson(topBelow, { [name]: `~${floor}` });
+      await expect(readExpoProject(topBelow)).rejects.toThrow(PIN_ERROR(`${name} ${older}`));
+      const topFloor = await app({ [name]: older }, {}, { [name]: floor });
+      await addToPackageJson(topFloor, { [name]: `~${floor}` }, "devDependencies");
+      expect(readExpoPins(topFloor, 58)[name]).toBe(floor);
+      await expect(readExpoProject(topFloor)).resolves.toMatchObject({ sdkVersion: 58 });
+    });
+
+    it.each(["expo-file-system", "expo-font"] as const)("gates the top-level %s another app dependency reaches", async (name) => {
+      // A package the app lists that depends on it reaches the top-level copy at expo's depth; the shorter path wins the tie.
+      const floor = EXPO58_PINS[name];
+      const older = twoBelow(floor);
+      const icons = (dir: string) => path.join(dir, "node_modules", "@expo", "vector-icons");
+      const viaPeer = await app({}, {}, { [name]: older });
+      await addToPackageJson(icons(viaPeer), { [name]: "*" }, "peerDependencies");
+      await addToPackageJson(viaPeer, { "@expo/vector-icons": "^15.0.0" });
+      await expect(readExpoProject(viaPeer)).rejects.toThrow(PIN_ERROR(`${name} ${older}`));
+      // An optional peer is not followed, so expo's nested copy (at the floor) stays the linked one.
+      await addToPackageJson(icons(viaPeer), { [name]: { optional: true } }, "peerDependenciesMeta");
+      await expect(readExpoProject(viaPeer)).resolves.toMatchObject({ sdkVersion: 58 });
+    });
   });
+
+  it.each(["expo-file-system", "expo-font"] as const)("skips the %s pin expo.autolinking.exclude leaves unlinked on SDK 58", async (name) => {
+    // Installed but not linked: its precompiled framework is never embedded, so there is nothing to gate.
+    const older = twoBelow(EXPO58_PINS[name]);
+    const dir = await expo58({ [name]: older });
+    await realAutolinkingCli(dir);
+    await expect(readExpoProject(dir)).rejects.toThrow(PIN_ERROR(`${name} ${older}`));
+    await addToPackageJson(dir, { autolinking: { exclude: [name] } }, "expo");
+    const log = vi.fn();
+    await expect(readExpoProject(dir, { log })).resolves.toMatchObject({ sdkVersion: 58 });
+    expect(log).not.toHaveBeenCalled();
+    const missing = await expo58({ [name]: null });
+    await realAutolinkingCli(missing);
+    await addToPackageJson(missing, { autolinking: { exclude: [name] } }, "expo");
+    await expect(readExpoProject(missing)).rejects.toThrow(PIN_ERROR(`${name} not installed`));
+  });
+
+  it("refuses an installed expo-file-system autolinking does not link on SDK 58", async () => {
+    const dir = await expo58();
+    await realAutolinkingCli(dir);
+    // npm nests SDK 58's copy under expo.
+    const copy = "node_modules/expo/node_modules/expo-file-system";
+    await writeFile(path.join(dir, copy, "expo-module.config.json"), JSON.stringify({ platforms: ["android"] }));
+    await expect(readExpoProject(dir)).rejects.toThrow(NOT_LINKED("expo-file-system", copy));
+    // Excluded, it is skipped.
+    await addToPackageJson(dir, { autolinking: { apple: { exclude: ["expo-file-system"] } } }, "expo");
+    await expect(readExpoProject(dir)).resolves.toMatchObject({ sdkVersion: 58 });
+  });
+
+  describe("a file:-linked local library with its own expo-font (D)", () => {
+    const OLDER = "58.0.9";
+
+    /** expo58() plus a symlinked local library that peers on expo-font and has its own copy below the floor. */
+    async function withLocalLib(): Promise<string> {
+      const root = await expo58();
+      const lib = await mkdtemp(path.join(tmpdir(), "rn-xtool-local-lib-"));
+      tempDirs.push(lib);
+      await writeFile(path.join(lib, "package.json"), JSON.stringify({ name: "my-lib", version: "1.0.0", peerDependencies: { "expo-font": "*" } }));
+      const font = path.join(lib, "node_modules", "expo-font");
+      await mkdir(font, { recursive: true });
+      await writeFile(path.join(font, "package.json"), JSON.stringify({ name: "expo-font", version: OLDER }));
+      await writeExpoModuleFiles(font, "ExpoFont");
+      await symlink(lib, path.join(root, "node_modules", "my-lib"));
+      await addToPackageJson(root, { "my-lib": `file:${lib}` });
+      return root;
+    }
+
+    /** Replaces the app's autolinking CLI with `body`. */
+    async function cliThat(root: string, body: string): Promise<void> {
+      await writeFile(path.join(root, "node_modules", "expo-modules-autolinking", "bin", "expo-modules-autolinking.js"), body);
+    }
+
+    it("gates the library's copy the app's autolinking links on SDK 58", async () => {
+      const root = await withLocalLib();
+      await realAutolinkingCli(root);
+      expect(readExpoPins(root, 58)["expo-font"]).toBe(OLDER);
+      await expect(readExpoProject(root)).rejects.toThrow(PIN_ERROR(`expo-font ${OLDER}`));
+    });
+
+    it.each([
+      ["is missing", undefined],
+      ["exits non-zero", "process.exit(3);\n"],
+      ["prints no JSON", "console.log('not json');\n"],
+    ])("falls back to the two-copy rule when the CLI %s", async (_how, body) => {
+      // The rule reads expo's nested copy (at the floor) here; the CLI, had it run, would name the library's.
+      const root = await withLocalLib();
+      if (body !== undefined) {
+        await realAutolinkingCli(root);
+        await cliThat(root, body);
+      }
+      expect(readExpoPins(root, 58)["expo-font"]).toBe(EXPO58_PINS["expo-font"]);
+      await expect(readExpoProject(root)).resolves.toMatchObject({ sdkVersion: 58 });
+    });
+
+    it.each([
+      ["is missing", undefined, "its CLI was not found"],
+      ["exits non-zero", "process.exit(3);\n", "it exited with code 3"],
+      ["prints no JSON", "console.log('not json');\n", "its answer could not be read"],
+      ["prints JSON without a module list", "console.log('{}');\n", "its answer could not be read"],
+    ])("says once that autolinking could not be asked when the CLI %s", async (_how, body, reason) => {
+      const root = await withLocalLib();
+      if (body !== undefined) {
+        await realAutolinkingCli(root);
+        await cliThat(root, body);
+      }
+      const log = vi.fn();
+      await expect(readExpoProject(root, { log })).resolves.toMatchObject({ sdkVersion: 58 });
+      expect(log.mock.calls).toEqual([[AUTOLINKING_NOT_ASKED(reason)]]);
+    });
+
+    it("says once that autolinking could not be asked when the CLI does not answer in time", async () => {
+      const root = await withLocalLib();
+      await realAutolinkingCli(root);
+      await cliThat(root, "setTimeout(() => {}, 10000);\n");
+      const log = vi.fn();
+      const started = Date.now();
+      checkExpoPackages(root, 58, log, { autolinkingTimeoutMs: 500 });
+      expect(Date.now() - started).toBeLessThan(5000);
+      expect(log.mock.calls).toEqual([[AUTOLINKING_NOT_ASKED("it gave no answer within 0.5 s")]]);
+    });
+
+    it("says nothing about autolinking when the CLI answers", async () => {
+      const root = await withLocalLib();
+      await realAutolinkingCli(root);
+      const log = vi.fn();
+      // The library's copy is below the floor: the gate stops, and logged nothing before.
+      await expect(readExpoProject(root, { log })).rejects.toThrow(PIN_ERROR(`expo-font ${OLDER}`));
+      expect(log).not.toHaveBeenCalled();
+    });
+  });
+
 
   it("refuses a nested expo-modules-jsi on SDK 58", async () => {
     const dir = await expo58({}, { "expo-modules-jsi": "58.0.21" }, { "expo-modules-jsi": "58.0.19" });
@@ -677,5 +1131,49 @@ describe("buildVars", () => {
       DEVELOPMENT_LANGUAGE: "en",
       PRODUCT_BUNDLE_PACKAGE_TYPE: "APPL",
     });
+  });
+});
+
+describe("the gate's line when autolinking cannot be asked", () => {
+  /** A CLI that exits with `code`, in a fresh folder. */
+  async function failingCli(code: number): Promise<string> {
+    const dir = await mkdtemp(path.join(tmpdir(), "rn-xtool-cli-"));
+    tempDirs.push(dir);
+    const cli = path.join(dir, "expo-modules-autolinking.js");
+    await writeFile(cli, `process.exit(${code});\n`);
+    return cli;
+  }
+
+  async function project(name: string, fake: (dir: string) => Promise<void>): Promise<string> {
+    const dir = await mkdtemp(path.join(tmpdir(), `rn-xtool-${name}-`));
+    tempDirs.push(dir);
+    await cp(path.join(fixtures, name), dir, { recursive: true });
+    await fake(dir);
+    return dir;
+  }
+
+  it("asks within 20 s", () => {
+    expect(AUTOLINKING_TIMEOUT_MS).toBe(20_000);
+  });
+
+  it("is printed once on SDK 56", async () => {
+    const dir = await project("expo-56", (d) => fakeExpo56Modules(d));
+    const log = vi.fn();
+    checkExpoPackages(dir, 56, log, { autolinkingCli: await failingCli(4) });
+    expect(log.mock.calls).toEqual([[AUTOLINKING_NOT_ASKED("it exited with code 4")]]);
+  });
+
+  it("is printed once for a hybrid app on SDK 58", async () => {
+    const dir = await project("project", (d) => fakeExpo58Modules(d));
+    const log = vi.fn();
+    checkExpoPackages(dir, 58, log, { kind: "bare", autolinkingCli: await failingCli(5) });
+    expect(log.mock.calls).toEqual([[AUTOLINKING_NOT_ASKED("it exited with code 5")]]);
+  });
+
+  it("is not printed on SDK 57, which pins neither expo-file-system nor expo-font", async () => {
+    const dir = await project("expo-57", (d) => fakeExpo57Modules(d));
+    const log = vi.fn();
+    checkExpoPackages(dir, 57, log, { autolinkingCli: await failingCli(6) });
+    expect(log).not.toHaveBeenCalled();
   });
 });

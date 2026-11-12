@@ -258,6 +258,164 @@ function flaggedSubspecs(text, podspecDir) {
 }
 
 // ---------------------------------------------------------------------------
+// rn-xtool P7: the iOS deployment target of the top-level spec
+// ---------------------------------------------------------------------------
+
+const SPEC_RX = /\bPod::Spec\.new\b.*\bdo\s*\|\s*(\w+)\s*\|/;
+const NESTED_SPEC_RX = /\.(?:subspec|app_spec)\b/;
+const VERSION_RX = /^(?:'(\d+(?:\.\d+){0,2})'|"(\d+(?:\.\d+){0,2})")$/;
+const IOS_KEY_RX = /^\s*(?::ios\s*=>|ios:)\s*(.*?)\s*$/;
+
+/**
+ * The version a literal `'16.0'` or `"16.0"` holds, else null (a variable, a call, interpolation,
+ * more than three parts). A one-part `'17'` becomes `17.0`, the two parts SwiftPM documents.
+ */
+function versionLiteral(value) {
+  const match = VERSION_RX.exec(value.trim());
+  if (match == null) return null;
+  const version = match[1] ?? match[2];
+  return version.includes('.') ? version : `${version}.0`;
+}
+
+// `<<~ID`, `<<-ID`, `<<~'ID'`, `<<"ID"`, or `<<ID` with an upper-case ID (`list << item` is an append).
+const HEREDOC_RX = /<<(?:([~-])(?:(['"`])([^'"`]+)\2|([A-Za-z_]\w*))|(['"`])([^'"`]+)\5|([A-Z_][A-Z0-9_]*))/g;
+const HEREDOC_AT_RX = new RegExp(HEREDOC_RX.source, 'y');
+
+/**
+ * `text` with the lines Ruby does not run as code blanked, line numbers kept: heredoc bodies with
+ * their terminators, and `=begin`…`=end` comments (both at column 0). A heredoc whose terminator
+ * never comes blanks the rest of the file, which Ruby refuses anyway.
+ */
+function withoutRubyText(text) {
+  const lines = sourceLines(text);
+  const pending = [];
+  let inComment = false;
+  return lines
+    .map((line) => {
+      if (inComment) {
+        if (/^=end\b/.test(line)) inComment = false;
+        return '';
+      }
+      if (pending.length > 0) {
+        const { id, indented } = pending[0];
+        if ((indented ? line.trim() : line.trimEnd()) === id) pending.shift();
+        return '';
+      }
+      if (/^=begin\b/.test(line)) {
+        inComment = true;
+        return '';
+      }
+      const code = codeView(stripComment(line));
+      for (const match of code.matchAll(HEREDOC_RX)) {
+        // The quoted forms' identifiers are blanked in the code view: read them from the line.
+        HEREDOC_AT_RX.lastIndex = match.index;
+        const opener = HEREDOC_AT_RX.exec(line);
+        if (opener == null) continue;
+        const id = opener[3] ?? opener[4] ?? opener[6] ?? opener[7];
+        pending.push({ id, indented: opener[1] != null });
+      }
+      return line;
+    })
+    .join('\n');
+}
+
+/** The higher of two dotted versions, either of them possibly null. */
+function higherVersion(left, right) {
+  if (left == null || right == null) return left ?? right;
+  const [a, b] = [left, right].map((version) => version.split('.').map(Number));
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const delta = (a[i] ?? 0) - (b[i] ?? 0);
+    if (delta !== 0) return delta > 0 ? left : right;
+  }
+  return left;
+}
+
+/** `text` split at the commas outside its string literals. */
+function splitAtCommas(text) {
+  const code = codeView(text);
+  const parts = [];
+  let start = 0;
+  for (let i = 0; i < code.length; i++) {
+    if (code[i] === ',') {
+      parts.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  return [...parts, text.slice(start)];
+}
+
+/** The iOS version of a `{ :ios => '…', … }` hash literal with nothing after it, else null. */
+function platformsHashIos(rhs) {
+  const hash = /^\{([\s\S]*)\}$/.exec(rhs.trim());
+  if (hash == null) return null;
+  for (const entry of splitAtCommas(hash[1])) {
+    const ios = IOS_KEY_RX.exec(entry);
+    if (ios != null) return versionLiteral(ios[1]);
+  }
+  return null;
+}
+
+/**
+ * rn-xtool P7: the iOS deployment target a podspec's top-level spec declares as a literal, the
+ * highest when several do: `<s>.platforms = { :ios => '15.1', … }` (on one line or several),
+ * `<s>.ios.deployment_target = '15.1'`, `<s>.platform = :ios, '13.0'`. `<s>` is the
+ * `Pod::Spec.new do |<s>|` receiver; subspec, app_spec and test_spec blocks, heredoc bodies and
+ * `=begin` comments do not count. null when none is declared or the value is not a literal (a
+ * variable, a call, interpolation). Ruby keeps the last assignment where this takes the highest.
+ * CocoaPods builds the pod for that target; the plugin otherwise reads only `spm.config.json`.
+ */
+function podspecIosDeploymentTarget(text) {
+  let receiver = null;
+  let nestedDepth = 0;
+  let pending = null;
+  let found = null;
+  for (const { text: line } of podspecBodyLines(withoutRubyText(text))) {
+    if (receiver == null) {
+      receiver = SPEC_RX.exec(line)?.[1] ?? null;
+      continue;
+    }
+    if (pending != null) {
+      pending.text += `\n${line}`;
+      pending.depth += braceDelta(line);
+      if (pending.depth > 0) continue;
+      found = higherVersion(found, platformsHashIos(pending.text));
+      pending = null;
+      continue;
+    }
+    if (nestedDepth > 0) {
+      nestedDepth += blockDelta(line);
+      continue;
+    }
+    if (NESTED_SPEC_RX.test(codeView(line))) {
+      nestedDepth = Math.max(blockDelta(line), 0);
+      continue;
+    }
+    const attr = (name) => new RegExp(`^\\s*${receiver}\\.${name}\\s*=(?!=)(.*)$`).exec(line)?.[1];
+    const platforms = attr('platforms');
+    if (platforms != null) {
+      const depth = braceDelta(platforms);
+      if (depth > 0) pending = { text: platforms, depth };
+      else found = higherVersion(found, platformsHashIos(platforms));
+      continue;
+    }
+    const deploymentTarget = attr('ios\\.deployment_target');
+    if (deploymentTarget != null) {
+      found = higherVersion(found, versionLiteral(deploymentTarget));
+      continue;
+    }
+    const platform = /^\s*:ios\s*,(.*)$/.exec(attr('platform') ?? '');
+    if (platform != null) found = higherVersion(found, versionLiteral(platform[1]));
+  }
+  return found;
+}
+
+/** Braces a line opens minus those it closes, outside string literals. */
+function braceDelta(line) {
+  const code = codeView(line);
+  return countMatches(code, /\{/g) - countMatches(code, /\}/g);
+}
+
+// ---------------------------------------------------------------------------
 // I/O
 // ---------------------------------------------------------------------------
 
@@ -349,6 +507,8 @@ function readPodspecFacts({ podName, podspecDir, moduleRoot }) {
     ...readPodspecs(podName, dirs),
     // rn-xtool P6: source globs are relative to the podspec that declares them.
     flaggedSubspecs: texts.flatMap((text, i) => flaggedSubspecs(text, path.dirname(files[i]))),
+    // rn-xtool P7: the highest over the pod's podspecs.
+    iosDeploymentTarget: texts.map(podspecIosDeploymentTarget).reduce(higherVersion, null),
     dependencies: [...dependencies],
     declaresSourceFiles: !texts.length || facts.some((f) => f.declaresSourceFiles),
     referencesVendor: facts.some((f) => f.referencesVendor),
@@ -372,4 +532,5 @@ module.exports = {
   sourceFacts,
   c99Identifier,
   flaggedSubspecs,
+  podspecIosDeploymentTarget,
 };

@@ -598,7 +598,7 @@ function scriptsText(c: Capabilities, rnVersion: string): string {
 
 /**
  * Why rn-xtool cannot build the project's versions, in words for doctor and the exploration table; undefined when a
- * line covers them (a verified or newer release of a bare row, Expo SDK 57, 58 or newer).
+ * line covers them (a verified or newer release of a bare row, Expo SDK 56, 57, 58 or newer).
  */
 export function unsupportedReason(c: Capabilities): string | undefined {
   const v = c.rnVersion;

@@ -5,16 +5,16 @@ import path from "node:path";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { projectPaths } from "../src/paths.js";
 import { buildExpoModulesJsi, jsiEnv, jsiRnHeaderDirs } from "../src/pipeline/jsi.js";
-import { jsiHeadersXcframeworkDir, jsiObjectsDir } from "../src/pipeline/jsiHeaders.js";
-import { packageRoot, run, toolEnv } from "../src/tools/exec.js";
+import { jsiHeadersXcframeworkDir, jsiObjectsDir, jsiScratchDir } from "../src/pipeline/jsiHeaders.js";
+import { packageRoot, runKeepingOutput, toolEnv } from "../src/tools/exec.js";
 import { fakeExpo57Modules } from "./support/expo57.js";
 import { FAKE_NATIVE_STATE, FAKE_SWIFT_HEADER, FAKE_SWIFT_INTERFACE } from "./support/fakeJsiBuild.js";
 
 vi.mock("../src/tools/exec.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/tools/exec.js")>();
-  return { ...actual, run: vi.fn() };
+  return { ...actual, runKeepingOutput: vi.fn() };
 });
-const runMock = vi.mocked(run);
+const runMock = vi.mocked(runKeepingOutput);
 beforeEach(() => runMock.mockReset());
 
 const tmp: string[] = [];
@@ -44,7 +44,7 @@ describe("ExpoModulesJSI React Native header overrides", () => {
     const paths = projectPaths(root);
     await expect(buildExpoModulesJsi(paths, { rnHeaders: jsiRnHeaderDirs(slots) })).rejects.toThrow(
       `ExpoModulesJSI needs React Native's headers at ${slots}/debug/ReactNativeHeaders.xcframework/ios-arm64/Headers, which does not exist. ` +
-        "rnArtifactsDir must hold adapted 0.86.3 slots, as rn-xtool's rn-artifacts step writes them.",
+        "rnArtifactsDir must hold the adapted slots of the project's React Native version, as rn-xtool's rn-artifacts step writes them.",
     );
     expect(runMock).not.toHaveBeenCalled();
   });
@@ -55,7 +55,7 @@ describe("ExpoModulesJSI React Native header overrides", () => {
     mkdirSync(h.react, { recursive: true });
     await expect(buildExpoModulesJsi(projectPaths(mkTmp()), { rnHeaders: h })).rejects.toThrow(
       `ExpoModulesJSI needs React Native's headers at ${h.dependencies}, which does not exist. ` +
-        "rnArtifactsDir must hold adapted 0.86.3 slots, as rn-xtool's rn-artifacts step writes them.",
+        "rnArtifactsDir must hold the adapted slots of the project's React Native version, as rn-xtool's rn-artifacts step writes them.",
     );
     expect(runMock).not.toHaveBeenCalled();
   });
@@ -116,5 +116,88 @@ describe("buildExpoModulesJsi", () => {
       name: "expo-modules-jsi",
       version: "57.1.3",
     });
+  });
+});
+
+describe("a build interrupted during jsi", () => {
+  /** A jsi scratch as a killed build leaves it: one zero-byte module file in its module cache. */
+  const poisoned = (jsiOut: string): string => {
+    const pcm = path.join(jsiScratchDir(jsiOut), ".build", "out", "ModuleCache.noindex", "3O7AC8YK2FU8", "jsi-1QS40U1KVCYHX.pcm");
+    mkdirSync(path.dirname(pcm), { recursive: true });
+    writeFileSync(pcm, "");
+    return pcm;
+  };
+
+  it("is the script's scratch folder", () => {
+    expect(jsiScratchDir("/p/ios-xtool/jsi-out")).toBe("/p/ios-xtool/jsi-out/.jsi-build");
+    expect(readFileSync(SCRIPT, "utf8")).toMatch(/^WORK="\$OUT\/\.jsi-build"$/m);
+    expect(jsiObjectsDir("/o").startsWith(`${jsiScratchDir("/o")}/`)).toBe(true);
+  });
+
+  it("--clean removes the jsi build's scratch before the script runs, and nothing else in jsi-out", async () => {
+    const paths = projectPaths(mkTmp());
+    poisoned(paths.jsiOut);
+    const framework = path.join(paths.jsiOut, "ExpoModulesJSI.framework", "ExpoModulesJSI");
+    mkdirSync(path.dirname(framework), { recursive: true });
+    writeFileSync(framework, "last build");
+    let scratchAtRun: boolean | undefined;
+    runMock.mockImplementation(async () => {
+      scratchAtRun = existsSync(jsiScratchDir(paths.jsiOut));
+      return "";
+    });
+    await buildExpoModulesJsi(paths, { clean: true });
+    expect(scratchAtRun).toBe(false);
+    expect(readFileSync(framework, "utf8")).toBe("last build");
+  });
+
+  it("keeps the jsi build's scratch without --clean", async () => {
+    const paths = projectPaths(mkTmp());
+    const pcm = poisoned(paths.jsiOut);
+    runMock.mockResolvedValue("");
+    await buildExpoModulesJsi(paths);
+    expect(existsSync(pcm)).toBe(true);
+  });
+
+  it("names the module cache and the remedy when the build fails on a module file cut short", async () => {
+    const paths = projectPaths(mkTmp());
+    const pcm = poisoned(paths.jsiOut);
+    const failure = Object.assign(new Error(`Command failed with exit code 1: nice -n 15 bash ${SCRIPT} ${paths.root} ${paths.jsiOut}`), {
+      stdout: "Building for debugging...\nerror: Build failed\n",
+      stderr:
+        `error: clang dependency scanning failure: module-include.input:1:1: fatal error: file '${pcm}' is not a valid ` +
+        "module file: file too small to contain precompiled file magic\n",
+    });
+    runMock.mockRejectedValueOnce(failure);
+    const error = (await buildExpoModulesJsi(paths).catch((e: unknown) => e)) as Error;
+    expect(error.message).toBe(
+      `${failure.message}\n` +
+        "The jsi step stopped on a precompiled module file in ExpoModulesJSI's module cache that is empty or cut short " +
+        '("is not a valid module file"): a build interrupted during the jsi step leaves its module cache that way, and the ' +
+        "next builds keep reading it. Run `rm -rf ios-xtool/jsi-out/.jsi-build` in the project folder, then `rn-xtool " +
+        "build`, or run `rn-xtool build --clean`, which removes that folder too; either way the jsi step builds " +
+        "ExpoModulesJSI again from the start. See " +
+        "https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/troubleshooting.md#interrupted-build",
+    );
+    expect(error.cause).toBe(failure);
+  });
+
+  it("leaves a module file error outside the jsi build's scratch as it is", async () => {
+    const paths = projectPaths(mkTmp());
+    const failure = Object.assign(new Error("Command failed with exit code 1: bash x"), {
+      stdout: "",
+      stderr: "fatal error: file '/var/tmp/clang/ModuleCache/X/Foundation-1.pcm' is not a valid module file\n",
+    });
+    runMock.mockRejectedValueOnce(failure);
+    await expect(buildExpoModulesJsi(paths)).rejects.toBe(failure);
+  });
+
+  it("leaves any other jsi failure as it is", async () => {
+    const paths = projectPaths(mkTmp());
+    const failure = Object.assign(new Error("Command failed with exit code 1: bash x"), {
+      stdout: "",
+      stderr: "error: cannot find 'jsi' in scope\n",
+    });
+    runMock.mockRejectedValueOnce(failure);
+    await expect(buildExpoModulesJsi(paths)).rejects.toBe(failure);
   });
 });

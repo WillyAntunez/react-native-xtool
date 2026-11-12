@@ -25,8 +25,65 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   and `doctor --project`: "The app target <name> takes its files from the synchronized folder <folder> (an Xcode 16
   folder group); rn-xtool reads only the files a target lists. Convert the folder to a group (Xcode: Convert to
   Group) so the target lists its files".
+- Expo SDK 55 and older are refused with "Expo SDK <n> is not supported; rn-xtool supports SDK 56 (expo 56.0.24 or
+  newer 56.x), SDK 57 (expo 57.0.31 or newer 57.x) and SDK 58 or newer.", and `doctor --project` gives them its
+  `support comes with the translator` reason; SDK 56 was among the refused SDKs before.
+- On Expo SDK 58 (and 56), and in hybrid apps (bare React Native with Expo modules, SDK 58), the version check reads
+  expo-file-system and expo-font where expo-modules-autolinking links them, as its own CLI answers (`resolve --platform
+  apple --json`, the question the Expo plugin asks), instead of under `node_modules/expo` only: the app's own top-level
+  copy, a dependency's copy, a `file:`-linked library's copy and the folders `expo.autolinking` settings add are read as
+  the build links them. A package autolinking does not link is skipped when a copy is installed and the app excludes it
+  (`expo.autolinking.exclude`, or the `exclude` of `expo.autolinking.apple`, else of `expo.autolinking.ios`), and stops
+  the check when it is installed and not excluded: "<package> is installed (<path>) but Expo's autolinking does not link
+  it for iOS, and the app does not exclude it: the build would succeed and the app would fail at launch with "Cannot
+  find native module". …". When that CLI cannot run (no answer within 20 seconds included), the check falls back to the
+  top-level copy when the app, or a package it lists, depends on it, else the copy under `expo`, and says so in one
+  line: "⚠ rn-xtool could not ask Expo's autolinking which expo-file-system and expo-font copies the build links
+  (<reason>), so it read their versions from node_modules: … The build asks autolinking again and may link another copy.
+  See …". See [troubleshooting.md](docs/troubleshooting.md#expo-sdk-58).
+- The `jsi` step's missing-headers error names no React Native version: "ExpoModulesJSI needs React Native's headers
+  at <dir>, which does not exist. rnArtifactsDir must hold the adapted slots of the project's React Native version, as
+  rn-xtool's rn-artifacts step writes them."
+- The vendored Expo plugin (SDK 56 and 57) gives each generated Expo package the highest of its `spm.config.json`
+  floor, the iOS deployment target its podspec declares and core's (edit P7), capped at the App target's iOS 16.4. A
+  module whose podspec asks for more prints, once after `rn-spm`, "⚠ <package>'s podspec asks for iOS <version>, and
+  rn-xtool builds the app for iOS 16.4, so <package> is compiled for iOS 16.4: its code that needs iOS <version> must
+  be behind an availability check (`if #available(iOS <version>, *)`). On a Mac, the app's deployment target would be
+  raised to iOS <version> instead." The SDK 57 reference app's packages stay at iOS 16.4. See
+  [vendor/expo-spm/README.md](vendor/expo-spm/README.md).
+- The weekly drift exploration covers Expo SDK 54 and 55 (and bare React Native 0.81 to 0.84); SDK 56 moved to the
+  daily watch.
 
 ### Added
+- Expo SDK 56 (expo 56.0.24 or newer 56.x, react-native 0.85.3), on SDK 57's route: the vendored Expo plugin, the
+  vendored React Native 0.88.0 scripts, React Native 0.85.3's adapted artifacts, and the `jsi` step before `rn-spm`.
+  Its set is a floor: at least expo 56.0.24, expo-modules-core 56.0.27, expo-modules-jsi 56.0.14,
+  expo-modules-autolinking 56.0.24, expo-file-system 56.0.11 and expo-font 56.0.7, each on SDK 56's line, with
+  react-native exactly 0.85.3. Below it the build stops with "Expo SDK 56 needs react-native 0.85.3 and at least expo
+  56.0.24, … expo-font 56.0.7; installed: …" and the remedy; a newer 56.x builds with "⚠ Newer than the Expo SDK 56 set
+  this rn-xtool release was verified with: …". `doctor --project` reads `Expo SDK 56: expo 56.0.24 (verified
+  56.0.24), react-native 0.85.3 (verified 0.85.3)`. Build-verified only: a fresh `default@sdk-56` template with
+  expo-dev-client builds (2026-11-11; 346 s cold, 65 s warm, `App.app` 140 MB with 14 frameworks, G4 passing), and SDK
+  56 has not been run on a device yet. Known on the template: its `ios.icon` is an Icon Composer icon, so the app has
+  no icon until `ios.icon` is a PNG, and ExpoModulesWorkletsAdapter is left out because ExpoModulesCore is
+  precompiled. See [how-it-works.md](docs/how-it-works.md#expo-sdk-56).
+- `expo-modules-jsi+56.0.14.patch`, staged on SDK 56 only (also for a newer 56.x jsi): `expo.CppError`'s `message`
+  made internal so Swift 6.4 compiles it, and four conformances to the internal `JSIRepresentable` marked
+  `@_spi(Internal)`, as jsi 57.1.3 does, so Swift 6.4 writes a readable ExpoModulesJSI interface. When it does not
+  apply, the stop names the SDK 56 `"overrides"` block.
+- The `jsi` step takes `NativeState.h` from either expo-modules-jsi layout (`include/Public` on jsi 57 and newer,
+  `include` on jsi 56), with every header it includes with quotes. A missing one stops the step: "expo-modules-jsi
+  <version> ships no NativeState.h (looked in <include>/Public and <include>); cannot make
+  ExpoModulesJSIHeaders.xcframework." or "<header> of expo-modules-jsi <version> includes "<name>", which is not next
+  to it in <folder>; cannot make ExpoModulesJSIHeaders.xcframework.".
+- On Expo SDK 56 and 57 the `jsi` step reads the `ExpoModulesJSI.swiftinterface` it built and stops when an
+  `extension` line has an empty place in its list of protocols, which no Swift compiler parses: "The
+  ExpoModulesJSI.swiftinterface built for expo-modules-jsi <version> (<compiler>) has <n> lines no Swift compiler can
+  parse, for example line <line>: <text>. Every module that imports ExpoModulesJSI would fail to compile. …", naming
+  another Swift than 6.4 as the likely cause when it wrote the interface. Before, the build failed minutes later at
+  `xtool-build` with `expected type` errors. See
+  [troubleshooting.md](docs/troubleshooting.md#unreadable-expomodulesjsi-interface).
+- The daily drift watch checks `expo-56/default` (`default@sdk-56`), and `-f drill=expo-56` drills it.
 - The `precheck` build step, between `generate` and `xtool-build`: SwiftPM plans the generated package, the app's
   includes are resolved again with the App target's full include list, `swiftc -typecheck` checks the Swift files and
   `clang -fsyntax-only` each C-family file with the generated manifest's flags. When a Swift file imports a module
@@ -54,6 +111,24 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   pbxproj: "⚠ <file> sets <settings> for the app target; rn-xtool does not read xcconfig files".
 - `rn-xtool doctor --report` has a `precheck:` line: `precheck: run (last build)`, `precheck: skipped with
   --skip-precheck (last build)` or `precheck: not recorded`.
+
+### Fixed
+- A build interrupted during the `jsi` step (Ctrl-C, a closed terminal, a reboot) no longer breaks every later build,
+  `build --clean` included, with clang's "… .pcm' is not a valid module file". `build --clean` (and `run --clean`)
+  removes the jsi build's scratch, `ios-xtool/jsi-out/.jsi-build`, before the `jsi` step on every project that has one;
+  Expo's `expo prebuild --clean` leaves `ios-xtool` alone, so it stayed before. A `jsi` failure with that clang error
+  now adds "The jsi step stopped on a precompiled module file in ExpoModulesJSI's module cache that is empty or cut
+  short ("is not a valid module file"): a build interrupted during the jsi step leaves its module cache that way, and
+  the next builds keep reading it. Run `rm -rf ios-xtool/jsi-out/.jsi-build` in the project folder, then `rn-xtool
+  build`, or run `rn-xtool build --clean`, …". A build interrupted during `xtool-build` leaves the app build's module
+  cache, under `ios-xtool/.build`, the same way, and on Expo `build --clean` keeps that folder: an `xtool-build` failure
+  (at `build`, `install` or `install --network`) with that clang error now adds "xtool dev build stopped on a
+  precompiled module file in the app build's module cache (ios-xtool/.build) that is empty or cut short ("is not a valid
+  module file"): … Run `rm -rf ios-xtool/.build` in the project folder, then `rn-xtool build`: its xtool-build starts
+  cold and takes several minutes. …". A file clang names anywhere else gets no paragraph. The `jsi` and `xtool-build`
+  steps' output now goes through a pipe, so rn-xtool can read it: SwiftPM prints each progress update (`[n/m] Compiling
+  …`) on a line of its own instead of redrawing one line, and its errors without colour. See
+  [troubleshooting.md](docs/troubleshooting.md#interrupted-build).
 
 ## [0.1.0-alpha.8] - 2026-11-09
 

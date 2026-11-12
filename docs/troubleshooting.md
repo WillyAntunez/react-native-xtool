@@ -937,7 +937,7 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   `CLANG_CXX_LANGUAGE_STANDARD` (C++20 when unset) to the app's `.mm` and `.cpp` files. See
   [Mixed Swift + Objective-C/C++ app target](bare-react-native.md#mixed-swift--objective-cc-app-target).
 - **"rn-xtool could not patch <package>":** your project has a different version of a package than the one this release
-  of rn-xtool patches, and the patch does not apply to it (on SDK 57 or 58, a newer patch of the SDK that changed a
+  of rn-xtool patches, and the patch does not apply to it (on SDK 56, 57 or 58, a newer patch of the SDK that changed a
   patched file; on bare React Native, a newer patch of its line). The message names the versions. On SDK 58 (Expo
   published a newer 58.x than this release patches) it gives two options. One is an `"overrides"` block in package.json
   with the verified set, `"overrides": { "expo-modules-core": "58.0.28", "expo-modules-jsi": "58.0.21",
@@ -953,11 +953,12 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
   npm also accepts an override outside expo's own range without an error (expo-modules-core 58.0.27 under expo 58.0.21's
   `~58.0.28`), so a newer `expo` whose modules really need newer versions could still fail at G4 or at launch. SDK 57
   gets the same two options, with the block `"overrides": { "expo-modules-core": "57.0.24", "expo-modules-autolinking":
-  "57.0.16", "expo-modules-jsi": "57.1.3" }`. Elsewhere the message says to pin the package to the patched version, for
-  example `pin "react-native" to 0.88.1` when a newer 0.88.x does not take the 0.88.1 patch. When react-native is on a
-  release line rn-xtool bundles no patch for, the build stops before patch-package runs, with "patch-package was not
-  run: react-native <version> is installed and the bundled react-native patches are for 0.88.0 and 0.88.1." Patches that
-  applied before a failure stay in `node_modules`; see [Expo SDK 58](#expo-sdk-58).
+  "57.0.16", "expo-modules-jsi": "57.1.3" }`, and SDK 56 with `"overrides": { "expo-modules-core": "56.0.27",
+  "expo-modules-jsi": "56.0.14", "expo-modules-autolinking": "56.0.24" }`. Elsewhere the message says to pin the package
+  to the patched version, for example `pin "react-native" to 0.88.1` when a newer 0.88.x does not take the 0.88.1 patch.
+  When react-native is on a release line rn-xtool bundles no patch for, the build stops before patch-package runs, with
+  "patch-package was not run: react-native <version> is installed and the bundled react-native patches are for 0.88.0
+  and 0.88.1." Patches that applied before a failure stay in `node_modules`; see [Expo SDK 58](#expo-sdk-58).
 - **A reanimated or worklets patch fails at `patches` with "Applying the project's patches/ failed":** rn-xtool rewrites
   these libraries' `Package.swift` in `node_modules` so it compiles on Linux (`manifest — made … portable to Linux`).
   A patch you made with `npx patch-package react-native-reanimated` (or `react-native-worklets`) after an rn-xtool
@@ -972,6 +973,62 @@ an `ios/build/pod-binaries` from an earlier build stays on disk, unused ([Leavin
 - **"Could not write node_modules/<package>/Package.swift (EACCES) to make it portable to Linux":** `node_modules` is
   read-only, often after `sudo npm install`. Make it writable (reinstall without `sudo`), or apply the portable
   manifest yourself.
+
+### Unreadable ExpoModulesJSI interface
+
+On Expo SDK 56 and 57 rn-xtool builds ExpoModulesJSI itself, at the `jsi` step, and reads the
+`ExpoModulesJSI.swiftinterface` that build writes before anything else uses it. The step stops with "The
+ExpoModulesJSI.swiftinterface built for expo-modules-jsi <version> (<compiler>) has <n> lines no Swift compiler can
+parse, for example line <line>: <text>. Every module that imports ExpoModulesJSI would fail to compile. See <this
+section>, and report it at https://github.com/WillyAntunez/react-native-xtool/issues with the output of
+`rn-xtool doctor --report`." when an `extension` line of that interface has an empty place in its list of protocols:
+nothing after the colon (`extension Swift::Optional :  where …`, `extension X: {`), or nothing before or between its
+commas (`: , P`, `P,  where`, `P, {`). Swift prints these for conformances it leaves out of the interface, and no Swift
+compiler reads them back, the one that wrote them included. Without the check the step would pass, and every module
+that imports ExpoModulesJSI would fail later, at `xtool-build`, with `expected type` errors.
+
+- When the message also says "It was written by Swift <version>, and this rn-xtool release was verified with Swift
+  6.4: a newer or older Swift is the likely cause.", the Swift in use prints the interface differently from the one
+  rn-xtool was checked with. `rn-xtool setup` installs Swift 6.4 through swiftly.
+- When a package of the SDK's set changed (a newer expo-modules-jsi or expo-modules-core than the verified ones, which
+  the `⚠ Newer than the Expo SDK <n> set …` line names), hold the set on the verified versions with the npm
+  `"overrides"` block (see [Newer than the verified versions](#newer-than-the-verified-versions)), run `npm install`,
+  and build again.
+- Either way, report it with the output of `rn-xtool doctor --report` (see
+  [Reporting a problem](#reporting-a-problem)): the message names the first line the check stopped on.
+
+### Interrupted build
+
+A build stopped while clang writes a module cache (Ctrl-C, a closed terminal, a reboot) can leave precompiled module
+files (`.pcm`) in it that are empty or cut short. The next builds read them and stop with clang's `fatal error:
+file '…/ModuleCache.noindex/…/<module>.pcm' is not a valid module file: file too small to contain precompiled file
+magic`. rn-xtool adds a paragraph that depends on the folder that file is in; for a file anywhere else it adds none.
+
+**Stopped during the `jsi` step.** The file is in ExpoModulesJSI's module cache, under `ios-xtool/jsi-out/.jsi-build`,
+and the `jsi` step stops with "The jsi step stopped on a precompiled module file in ExpoModulesJSI's module cache that
+is empty or cut short ("is not a valid module file"): a build interrupted during the jsi step leaves its module cache
+that way, and the next builds keep reading it. Run `rm -rf ios-xtool/jsi-out/.jsi-build` in the project folder, then
+`rn-xtool build`, or run `rn-xtool build --clean`, which removes that folder too; either way the jsi step builds
+ExpoModulesJSI again from the start. See <this section>". Deleting the folder is the quicker of the two: ExpoModulesJSI
+is built again from an empty folder (about 10 seconds on the Expo SDK 56, 57 and 58 apps rn-xtool is tested with), and
+nothing else starts over. `rn-xtool build --clean` (or `run --clean`) removes the same folder before the `jsi` step on
+every project that has one. On an Expo project it also runs Expo's prebuild again (`expo prebuild --clean`), and the
+rest of `ios-xtool` stays. On a hybrid app (bare React Native with Expo modules) it runs no prebuild: its `clean` step
+removes `ios/build` and all of `ios-xtool`, `.build` included, so the next `xtool-build` starts cold too. A plain
+`rn-xtool build` keeps that folder and fails the same way again.
+
+**Stopped during `xtool-build`.** The file is in the app build's module cache, under `ios-xtool/.build`, and
+`xtool-build` stops with "xtool dev build stopped on a precompiled module file in the app build's module cache
+(ios-xtool/.build) that is empty or cut short ("is not a valid module file"): a build interrupted during xtool-build
+leaves its module cache that way, and the next builds keep reading it. `rn-xtool build --clean` does not remove
+ios-xtool/.build on Expo projects. Run `rm -rf ios-xtool/.build` in the project folder, then `rn-xtool build`: its
+xtool-build starts cold and takes several minutes. See <this section>". `rn-xtool install` and
+`rn-xtool install --network` build with xtool too and stop with the same paragraph. On an Expo project `build --clean`
+keeps `ios-xtool/.build`, so that every `--clean` does not become a cold build; on a bare project (hybrid included) it
+removes `ios-xtool`, `.build` included. After the folder is deleted, the next `xtool-build` compiles every package and
+the app again (about 3 to 6 minutes on the Expo SDK 56 template app), and SwiftPM fetches the GitHub packages of mapped
+pods again, which needs the network (see [Libraries that depend on CocoaPods
+pods](#libraries-that-depend-on-cocoapods-pods)).
 
 ### Precheck
 
@@ -1363,10 +1420,11 @@ same warning.
 
 - **"⚠ Newer than the Expo SDK <n> set this rn-xtool release was verified with: <package> <version>, .... Verified:
   <the SDK's set>. The build continues; if it fails or the app crashes at launch, report it at
-  https://github.com/WillyAntunez/react-native-xtool/issues."** On Expo SDK 57 or 58, a package of the verified set
-  is newer than its floor, on the same SDK. A package of another SDK's line (for example expo-modules-jsi 58.0.19 on
-  SDK 57) is not "newer": G1 names it and the build stops ([Expo SDK 57](#expo-sdk-57), [Expo SDK 58](#expo-sdk-58)).
-  react-native gets no warning, because it stays exact: 0.86.3 on SDK 57, 0.88.1 on SDK 58.
+  https://github.com/WillyAntunez/react-native-xtool/issues."** On Expo SDK 56, 57 or 58, a package of the verified
+  set is newer than its floor, on the same SDK. A package of another SDK's line (for example expo-modules-jsi 58.0.19
+  on SDK 57) is not "newer": G1 names it and the build stops ([Expo SDK 56](#expo-sdk-56), [Expo SDK 57](#expo-sdk-57),
+  [Expo SDK 58](#expo-sdk-58)). react-native gets no warning, because it stays exact: 0.85.3 on SDK 56, 0.86.3 on
+  SDK 57, 0.88.1 on SDK 58.
 - **"⚠ Newer than the React Native <minor> line this rn-xtool release was verified with: react-native <version>.
   Verified: <versions>. The build continues; if it fails or the app crashes at launch, move react-native back to
   <version> as https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/bare-react-native.md#upgrading-react-native
@@ -1384,9 +1442,9 @@ same warning.
 
 On a newer version the build uses the line's patches: the patch for the installed version when rn-xtool bundles one,
 else the highest bundled patch of the same release line (react-native 0.88.2 gets the 0.88.1 patch; a newer 57.x
-expo-modules-jsi gets the 57.1.3 patch). When that patch does not apply, the build stops at `patches` with
-"rn-xtool could not patch <package>@<version> (patch file: <file>)". The message gives the remedy (see
-[Build and patches](#build-and-patches)): the npm `"overrides"` block on Expo SDK 57 and 58, `pin "react-native" to
+expo-modules-jsi gets the 57.1.3 patch, a newer 56.x the 56.0.14 patch). When that patch does not apply, the build stops
+at `patches` with "rn-xtool could not patch <package>@<version> (patch file: <file>)". The message gives the remedy (see
+[Build and patches](#build-and-patches)): the npm `"overrides"` block on Expo SDK 56, 57 and 58, `pin "react-native" to
 0.88.1` on bare 0.88.x.
 
 **If a newer version builds but the app fails at launch**, go back to the verified versions:
@@ -1394,7 +1452,7 @@ expo-modules-jsi gets the 57.1.3 patch). When that patch does not apply, the bui
 - Bare React Native: move react-native back to the version the warning names, with the sequence in
   [Upgrading React Native](bare-react-native.md#upgrading-react-native) (react-native and every `@react-native/*`
   package together).
-- Expo SDK 57 and 58: hold the packages on the verified set with the npm `"overrides"` block described under
+- Expo SDK 56, 57 and 58: hold the packages on the verified set with the npm `"overrides"` block described under
   [Build and patches](#build-and-patches).
 
 Then report the version at https://github.com/WillyAntunez/react-native-xtool/issues. G4 stops a build whose
@@ -1415,8 +1473,25 @@ messages and the two hybrid ones at the end, and print the sixth and go on; the 
   react-native on another version."** The installed list names only the packages below the floor, on another
   SDK's release line, missing (`not installed`), or, for react-native, not 0.88.1. Each is read where the build
   resolves it: expo-modules-core from `expo`, expo-modules-jsi from expo-modules-core, expo-file-system and expo-font
-  from `expo` (npm nests them under `node_modules/expo`). The remedy follows the order of
-  [Moving to the 58.0.21 set](#moving-to-the-58021-set), and adapts to the project:
+  where expo-modules-autolinking links them, as its own CLI answers (`resolve --platform apple --json`, the question
+  the Expo plugin asks). When autolinking links no copy of expo-file-system or expo-font but one is installed and the
+  app excludes it (`expo.autolinking.exclude`, or the `exclude` list of `expo.autolinking.apple`, else of
+  `expo.autolinking.ios`, which replaces the top-level one), the build never embeds its precompiled framework, so the
+  check skips it; with no copy installed it is `not installed`. Installed and not excluded, the check stops first
+  with "<package> is installed (<path>) but Expo's autolinking does not link it for iOS, and the app does not exclude
+  it: …": autolinking leaves out a module without an `expo-module.config.json` or whose config names no Apple
+  platform (a damaged install, most often), and the app would build and then fail at launch with "Cannot find native
+  module". Reinstall the package (`rm -rf <path> && npm install`), or list it in `expo.autolinking.exclude` if the
+  app does not use it. When that CLI cannot run (not found, a non-zero exit or a signal, no answer within 20 seconds, a
+  failure to start, or output that is not its JSON), the check takes the top-level copy when the app, or a package the
+  app lists, depends on it, else the copy under `node_modules/expo`, where npm nests them (an exclusion is not read
+  then), and says so first in one line: "⚠ rn-xtool could not ask Expo's autolinking which expo-file-system and
+  expo-font copies the build links (<reason>), so it read their versions from node_modules: … The build asks autolinking
+  again and may link another copy.", the reason being one of "its CLI was not found", "it exited with code <n>", "it was
+  stopped by <signal>", "it gave no answer within 20 s", "it could not run: <error>" or "its answer could not be read".
+  `rn-xtool doctor --project` asks again and shows the line on its `project` line; when it stays, report it with the
+  output of `rn-xtool doctor --report` (see [Reporting a problem](#reporting-a-problem)). The remedy follows the order
+  of [Moving to the 58.0.21 set](#moving-to-the-58021-set), and adapts to the project:
   - When package.json lists expo-modules-core, expo-modules-jsi or expo-modules-autolinking, it starts with
     "Remove the expo-modules-jsi and expo-modules-autolinking pins (`npm uninstall expo-modules-jsi
     expo-modules-autolinking`)" for the ones listed. A project pinned to the SDK 58 versions rn-xtool 0.1.0-alpha.2
@@ -1534,10 +1609,8 @@ rn-xtool builds Expo SDK 57 on a floor of verified versions, like SDK 58: at lea
 57.0.24, expo-modules-autolinking 57.0.16 and expo-modules-jsi 57.1.3, each on SDK 57's line (57.x), with react-native
 exactly 0.86.3 (see [how-it-works.md](how-it-works.md#expo-sdk-57)). A newer 57.x prints the warning in
 [Newer than the verified versions](#newer-than-the-verified-versions) and the build continues. `doctor` (the `project`
-check) and `build` stop with these messages:
+check) and `build` stop with these messages (the refusal of an older SDK is under [Expo SDK 56](#expo-sdk-56)):
 
-- **"Expo SDK <n> is not supported; rn-xtool supports SDK 57 (expo 57.0.31 or newer 57.x) and SDK 58 or newer."** The
-  project is on SDK 56 or older.
 - **"Expo SDK 57 needs react-native 0.86.3 and at least expo 57.0.31, expo-modules-core 57.0.24,
   expo-modules-autolinking 57.0.16 and expo-modules-jsi 57.1.3; installed: <package> <version>, .... Remove any pin or
   override on these packages from package.json, then run `npx expo install --fix`; then run
@@ -1563,10 +1636,10 @@ check) and `build` stop with these messages:
   a host architecture without a binary, leaves it out. When another package or a parent folder installs an
   expo-modules-macros that expo-modules-core resolves, the plugin uses that copy instead, and the check names it with
   the `(from expo-modules-core <version>)` texts of the [Expo SDK 58](#expo-sdk-58) section.
-- **"ExpoModulesJSI needs React Native's headers at <dir>, which does not exist. rnArtifactsDir must hold adapted
-  0.86.3 slots, as rn-xtool's rn-artifacts step writes them."** At the `jsi` step: `rnArtifactsDir` points at raw
-  0.86.3 artifacts. Build once without `rnArtifactsDir` and point it at that project's `ios/build/rn-artifacts/0.86.3`
-  (see [bare-react-native.md](bare-react-native.md#older-artifacts-085-086)).
+- **"ExpoModulesJSI needs React Native's headers at <dir>, which does not exist. rnArtifactsDir must hold the adapted
+  slots of the project's React Native version, as rn-xtool's rn-artifacts step writes them."** At the `jsi` step:
+  `rnArtifactsDir` points at raw 0.86.3 artifacts. Build once without `rnArtifactsDir` and point it at that project's
+  `ios/build/rn-artifacts/0.86.3` (see [bare-react-native.md](bare-react-native.md#older-artifacts-085-086)).
 
 **Install SDK 57's reanimated and worklets explicitly.** expo-router declares react-native-reanimated as a `*` peer.
 When the app does not install it, npm installs the latest reanimated and react-native-worklets, and that worklets is
@@ -1581,6 +1654,92 @@ expo-router's web dependencies, and it needs react ^19.3.1 while the SDK 57 temp
 `ERESOLVE could not resolve`: `expo install` still writes the package into `package.json`, and nothing is installed.
 `npx expo install react-dom` installs SDK 57's react-dom 19.2.3 and clears it; the native build does not use react-dom.
 
+## Expo SDK 56
+
+rn-xtool builds Expo SDK 56 on SDK 57's route (the vendored Expo plugin), on a floor of verified versions: at least
+expo 56.0.24, expo-modules-core 56.0.27, expo-modules-jsi 56.0.14, expo-modules-autolinking 56.0.24, expo-file-system
+56.0.11 and expo-font 56.0.7, each on SDK 56's line (56.x), with react-native exactly 0.85.3 (see
+[how-it-works.md](how-it-works.md#expo-sdk-56)). SDK 56 is build-verified only: it has not been run on a device yet. A
+newer 56.x prints the warning in [Newer than the verified versions](#newer-than-the-verified-versions) and the build
+continues. `doctor` (the `project` check) and `build` stop with the first four messages; the others come from the
+`jsi`, `patches`, `rn-spm`, `frameworks` and `xtool-build` steps of `build`.
+
+- **"Expo SDK <n> is not supported; rn-xtool supports SDK 56 (expo 56.0.24 or newer 56.x), SDK 57 (expo 57.0.31 or
+  newer 57.x) and SDK 58 or newer."** The project is on SDK 55 or older.
+- **"Expo SDK 56 needs react-native 0.85.3 and at least expo 56.0.24, expo-modules-core 56.0.27, expo-modules-jsi
+  56.0.14, expo-modules-autolinking 56.0.24, expo-file-system 56.0.11 and expo-font 56.0.7; installed: <package>
+  <version>, .... <remedy>"** G1. The installed list names only the packages below the floor, on another SDK's
+  release line (for example `expo-modules-jsi 57.1.3`), missing (`not installed`), or, for react-native, not 0.85.3.
+  Each is read where the build resolves it: expo-modules-core from `expo`, expo-modules-jsi from expo-modules-core,
+  expo-modules-autolinking from the project root, else from `expo`, and expo-file-system and expo-font where
+  expo-modules-autolinking links them, as on SDK 58 (the same autolinking question, the same skip of a package the app
+  excludes, and the same "<package> is installed (<path>) but Expo's autolinking does not link it for iOS, and the app
+  does not exclude it: …" stop; see [Expo SDK 58](#expo-sdk-58)). On SDK 56 that question goes to rn-xtool's own
+  expo-modules-autolinking 58.0.15, the one the vendored plugin runs. The remedy is SDK 57's, with SDK 56's versions:
+  it names the pins package.json lists, moves `expo` first when `expo` itself is listed (`npx expo install
+  expo@~56.0.24`), and names `npx expo install react-native@0.85.3`. When react-native is newer than 0.85.3, the
+  message ends with "React Native <version> is newer than this rn-xtool release supports: pin react-native to 0.85.3,
+  or update rn-xtool."
+- **"expo-modules-jsi <version> resolves from <path>, not from the project's top-level node_modules: …"** G2, the same
+  check and text as on SDK 57 and 58 ([Expo SDK 57](#expo-sdk-57)).
+- **"expo-modules-macros 0.22.0 has no Linux binary for <arch> (@expo/modules-macros-linux-<arch>); reinstall
+  react-native-xtool without --omit=optional."** G3, as on SDK 57: core 56's own macro plugin is macOS-only, so the
+  vendored plugin uses rn-xtool's expo-modules-macros 0.22.0.
+- **"ExpoModulesJSI needs React Native's headers at <dir>, which does not exist. rnArtifactsDir must hold the adapted
+  slots of the project's React Native version, as rn-xtool's rn-artifacts step writes them."** At the `jsi` step:
+  `rnArtifactsDir` points at raw 0.85.3 artifacts. Build once without `rnArtifactsDir` and point it at that project's
+  `ios/build/rn-artifacts/0.85.3` (see [bare-react-native.md](bare-react-native.md#older-artifacts-085-086)).
+- **"expo-modules-jsi <version> ships no NativeState.h (looked in <include>/Public and <include>); cannot make
+  ExpoModulesJSIHeaders.xcframework."** At the `jsi` step: jsi 56 keeps its public C++ headers in
+  `apple/Sources/ExpoModulesJSI-Cxx/include`, jsi 57 and newer in `include/Public`, and this package has neither.
+  Reinstall it (`rm -rf node_modules/expo-modules-jsi && npm install`); if it stays, report it.
+- **"<header> of expo-modules-jsi <version> includes "<name>", which is not next to it in <folder>; cannot make
+  ExpoModulesJSIHeaders.xcframework."** (or `which points outside <dir>`). At the `jsi` step: rn-xtool copies
+  `NativeState.h` and every header it includes with quotes (jsi 56's `RetainedSwiftPointer.h`) into the headers
+  xcframework, and one of them is missing from the package or lies outside its include folder. Reinstall
+  expo-modules-jsi; if it stays, report it with the version.
+- **"The ExpoModulesJSI.swiftinterface built for expo-modules-jsi <version> (<compiler>) has <n> lines no Swift compiler
+  can parse, …"** The guard of [Unreadable ExpoModulesJSI interface](#unreadable-expomodulesjsi-interface). On jsi
+  56.0.14 the bundled patch marks four internal conformances so that Swift 6.4 leaves them out of the interface; a
+  newer 56.x that adds another one stops here.
+- **"rn-xtool could not patch expo-modules-jsi@<version> (patch file: expo-modules-jsi+56.0.14.patch)"**, at
+  `patches`: a newer 56.x jsi changed a file the 56.0.14 patch touches. The message gives the npm `"overrides"` block
+  `"overrides": { "expo-modules-core": "56.0.27", "expo-modules-jsi": "56.0.14", "expo-modules-autolinking": "56.0.24" }`
+  and the other option, to wait for an rn-xtool release ([Build and patches](#build-and-patches)). An SDK 56 project
+  gets only jsi patches of the 56 line, never SDK 57's or 58's.
+- **"ExpoModulesCore.framework (expo-modules-core <version>, from <dir>) needs <n> symbols that
+  ExpoModulesJSI.framework (built by rn-xtool from <dir>) does not export, … (expo-modules-core <version> declares
+  expo-modules-jsi <range>) …"** G4, at `frameworks`. The jsi 56 patch makes the `message` of `expo.CppError`
+  internal, so that Swift 6.4 compiles it; expo-modules-core 56.0.27 imports none of it. A later core 56.x that does is
+  refused here, before the app is built. Hold the set on the verified versions with the `"overrides"` block above, run
+  `npm install`, and build again.
+- **"⚠ <package>'s podspec asks for iOS <version>, and rn-xtool builds the app for iOS 16.4, so <package> is compiled
+  for iOS 16.4: its code that needs iOS <version> must be behind an availability check (`if #available(iOS <version>,
+  *)`). On a Mac, the app's deployment target would be raised to iOS <version> instead."** Printed once after `rn-spm`
+  on SDK 56 and 57. The vendored plugin (edit P7) gives each Expo module the iOS floor its podspec declares, capped
+  at the App target's iOS 16.4, which rn-xtool does not raise. The build goes on. A call in that module to an API
+  newer than iOS 16.4 that is not behind an availability check fails at `xtool-build` with Swift's
+  `'<name>' is only available in iOS <version> or newer`; on an iPhone running an older iOS, code behind the check
+  does not run. None of the default template's modules asks for more than 16.4.
+- **"The package product '<product>' requires minimum platform version <version> for the iOS platform, but this
+  target supports <lower>"**, at `xtool-build`: a generated Expo package asks for a lower iOS than a package it
+  depends on (before P7, ExpoRouter got iOS 16.0 and its react-native-screens dependency asks for 16.4). P7 gives every
+  generated Expo package at least core's podspec floor (16.4 on SDK 56) and each module its own podspec's floor up to
+  16.4, so the template builds. If it appears, report it with the product and the target it names.
+- **A damaged precompiled module**: the `rn-spm` step stops with tar's error while it extracts a precompiled module
+  (ExpoModulesCore, ExpoModulesWorklets, ExpoFileSystem, ExpoFont, ExpoImage or its `spm-deps`) from its npm package,
+  most often after an interrupted `npm install`. Reinstall that package (`rm -rf node_modules/<package> && npm
+  install`) and build again.
+- **A later 56.x module that fails to compile at `xtool-build` with a macro error**: the SDK 56 modules compiled from
+  source get their `@Expo…` macros expanded by rn-xtool's expo-modules-macros 0.22.0, not by the macro plugin
+  expo-modules-core 56 depends on, which is macOS-only. Hold the set on the verified versions with the `"overrides"`
+  block above and report the module.
+
+**ExpoModulesWorkletsAdapter is left out.** With ExpoModulesCore precompiled, the vendored plugin prints
+`warning: Expo module "expo-modules-core" links its pod ExpoModulesCore as a precompiled XCFramework, so its product
+"ExpoModulesWorkletsAdapter" is left out of the app.` (as on SDK 57 and 58). The app builds without it; what it does at
+runtime on SDK 56 has not been checked on a device yet.
+
 ## doctor --project
 
 `rn-xtool doctor --project` checks only the project in the current folder: no toolchain, login, device or Wi‑Fi
@@ -1593,7 +1752,8 @@ checks, so it also runs on a machine without Swift or xtool. Run it from the pro
 - **versions**: the line that covers the installed versions, for example
   `React Native 0.88.1: the 0.88 line (0.88.0 or newer), verified 0.88.0 and 0.88.1`,
   `React Native 0.85.0: the 0.85 line (0.85.0 or newer), verified 0.85.0 and 0.85.3` or
-  `Expo SDK 58: expo 58.0.21 (verified 58.0.21), react-native 0.88.1 (verified 0.88.1)`. It fails with a reason when
+  `Expo SDK 58: expo 58.0.21 (verified 58.0.21), react-native 0.88.1 (verified 0.88.1)` (on SDK 56:
+  `Expo SDK 56: expo 56.0.24 (verified 56.0.24), react-native 0.85.3 (verified 0.85.3)`). It fails with a reason when
   no line covers the version (below), and adds `; refused by the version gate (see project)` when a version gate (G1,
   a bare floor, a hybrid's gate) refuses the project; the `project` line then holds the gate's message. Expo SDK 59
   and newer read `Expo SDK <n>: no verified set in this release; the installed plugin builds it, gated by G4 only`.
@@ -1700,7 +1860,7 @@ promise the vendored copy.
   once it is verified on a device`.
 - `React Native <minor>: <what its scripts are>; support comes with the translator`, for older minors such as 0.81,
   and `Expo SDK <n>: expo ships <its|no> SwiftPM plugin; React Native <minor>: <what its scripts are>; support comes
-  with the translator` for Expo SDK 56 and older. `<what its scripts are>` is `no SwiftPM scripts`,
+  with the translator` for Expo SDK 55 and older. `<what its scripts are>` is `no SwiftPM scripts`,
   `SwiftPM scripts without the entry points rn-xtool needs`,
   `SwiftPM scripts rn-xtool could use, not verified on this line` or `SwiftPM scripts rn-xtool does not recognise`,
   followed by `, no prebuilt artifacts for <version>` when the artifacts are not published. The translator is planned
@@ -1723,6 +1883,10 @@ it in the app. It prints what it used:
   lists sizes without files).
 - `ℹ No app icon: <file> is not a PNG file. Replace it with a 1024×1024 PNG.`
 - `` ℹ No app icon: <icon> is an Icon Composer icon, which needs Xcode's actool. Set a 1024×1024 PNG as "icon" in the app config, then run `rn-xtool build --clean`. ``
+  The Expo SDK 56 default template (`default@sdk-56`) sets `ios.icon` to `./assets/expo.icon`, an Icon Composer icon,
+  so it builds without an icon and prints `ℹ No app icon: assets/expo.icon is an Icon Composer icon, …`. Set `ios.icon`
+  to `./assets/images/icon.png` (the template's 1024×1024 PNG, already its top-level `icon`), then run
+  `rn-xtool build --clean`.
 - `⚠ No app icon: an app resource is copied to the app bundle as AppIcon.png, the name rn-xtool gives the icon. Rename that resource to give the app its icon.`
 - `⚠ App icon <file> is <w>×<h>, not square: iOS stretches it. Use a 1024×1024 PNG.` and
   `⚠ App icon <file> is <w>×<h>, smaller than 180×180: it looks blurry on the home screen. Use a 1024×1024 PNG.`
