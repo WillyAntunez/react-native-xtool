@@ -20,7 +20,7 @@ import { LLVM_NM_MISSING } from "../src/pipeline/symbols.js";
 import { LLVM_AR_MISSING } from "../src/pods/ar.js";
 import { NODE_MIN, XTOOL_SHA256, XTOOL_VERSION } from "../src/versions.js";
 import { fakeExpo57Modules } from "./support/expo57.js";
-import { fakeExpo58Modules } from "./support/expo58.js";
+import { fakeExpo58Modules, realAutolinkingCli } from "./support/expo58.js";
 import { fakeRnScripts } from "./support/rnScripts.js";
 
 const expoProbe: ProjectProbe = {
@@ -1096,6 +1096,7 @@ describe("readProjectProbe", () => {
     try {
       await cp(path.join(fixtures, "project"), dir, { recursive: true });
       await fakeExpo58Modules(dir, { expo: "58.0.22" });
+      await realAutolinkingCli(dir);
       const probe = await readProjectProbe(dir);
       expect(probe).toMatchObject({ kind: "expo", sdkVersion: 58, rnVersion: "0.88.1", expoPlugin: "installed" });
       expect(probe.warnings).toEqual([
@@ -1106,6 +1107,26 @@ describe("readProjectProbe", () => {
       ]);
       const project = (await doctorWithProbes({ ...good, project: async () => probe }, "/p")).checks.find((c) => c.name === "project");
       expect(project?.status).toBe("warn");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+  it("shows that the version check could not ask autolinking", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "doctor-expo58-"));
+    try {
+      await cp(path.join(fixtures, "project"), dir, { recursive: true });
+      // The fake autolinking has no CLI: the check reads expo-file-system and expo-font from node_modules.
+      await fakeExpo58Modules(dir);
+      const probe = await readProjectProbe(dir);
+      expect(probe.warnings).toEqual([
+        "rn-xtool could not ask Expo's autolinking which expo-file-system and expo-font copies the build links (its " +
+          "CLI was not found), so it read their versions from node_modules: the top-level copy when the app, or a " +
+          "package it lists, depends on it, else the copy under expo. The build asks autolinking again and may link " +
+          "another copy. See https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/troubleshooting.md#expo-sdk-58",
+      ]);
+      const project = (await doctorWithProbes({ ...good, project: async () => probe }, "/p")).checks.find((c) => c.name === "project");
+      expect(project?.status).toBe("warn");
+      expect(project?.detail).toContain("rn-xtool could not ask Expo's autolinking");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

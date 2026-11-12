@@ -10,6 +10,13 @@ import { isInstalled } from "../../src/project/expo.js";
 import { fakeExpo58Modules } from "../support/expo58.js";
 import { fakeRnScripts, shapeForVersion } from "../support/rnScripts.js";
 
+/** The gate's line for a hybrid app whose autolinking has no CLI (the fake modules ship none). */
+const NOT_ASKED =
+  "⚠ rn-xtool could not ask Expo's autolinking which expo-file-system and expo-font copies the build links (its CLI " +
+  "was not found), so it read their versions from node_modules: the top-level copy when the app, or a package it " +
+  "lists, depends on it, else the copy under expo. The build asks autolinking again and may link another copy. See " +
+  "https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/troubleshooting.md#expo-sdk-58";
+
 const fixtures = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "fixtures");
 const tempDirs: string[] = [];
 
@@ -173,7 +180,8 @@ describe("readBareProject", () => {
           "update rn-xtool.",
       ),
     );
-    expect(log).not.toHaveBeenCalled();
+    // The fake autolinking has no CLI: the gate's only line says so.
+    expect(log.mock.calls).toEqual([[NOT_ASKED]]);
   });
 
   it("rejects Expo modules on a vendored version", async () => {
@@ -243,7 +251,7 @@ describe("readBareProject", () => {
     await fakeExpo58Modules(floor);
     const log = vi.fn();
     await expect(readBareProject(floor, { log })).resolves.toMatchObject({ rnVersion: "0.88.1", hasExpoModules: true });
-    expect(log).not.toHaveBeenCalled();
+    expect(log.mock.calls).toEqual([[NOT_ASKED]]);
 
     const rn0880 = await tempBare({ rn: "0.88.0", useExpoModules: true });
     await fakeExpo58Modules(rn0880, { "react-native": "0.88.0" });

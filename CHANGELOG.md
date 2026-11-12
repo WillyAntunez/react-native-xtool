@@ -36,8 +36,11 @@ versions follow [Semantic Versioning](https://semver.org/) with `alpha` prerelea
   `expo.autolinking.apple`, else of `expo.autolinking.ios`), and stops the check when it is installed and not
   excluded: "<package> is installed (<path>) but Expo's autolinking does not link it for iOS, and the app does not
   exclude it: the build would succeed and the app would fail at launch with "Cannot find native module". …". When that
-  CLI cannot run, the check falls back to the top-level copy when the app, or a package it lists, depends on it, else
-  the copy under `expo`. See [troubleshooting.md](docs/troubleshooting.md#expo-sdk-58).
+  CLI cannot run (no answer within 20 seconds included), the check falls back to the top-level copy when the app, or a
+  package it lists, depends on it, else the copy under `expo`, and says so in one line: "⚠ rn-xtool could not ask
+  Expo's autolinking which expo-file-system and expo-font copies the build links (<reason>), so it read their versions
+  from node_modules: … The build asks autolinking again and may link another copy. See …". See
+  [troubleshooting.md](docs/troubleshooting.md#expo-sdk-58).
 - The `jsi` step's missing-headers error names no React Native version: "ExpoModulesJSI needs React Native's headers
   at <dir>, which does not exist. rnArtifactsDir must hold the adapted slots of the project's React Native version, as
   rn-xtool's rn-artifacts step writes them."

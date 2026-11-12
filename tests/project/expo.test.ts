@@ -5,7 +5,14 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildVars, defaultBundleIdentifier, MissingBundleIdentifierError, readExpoProject } from "../../src/project/index.js";
 import { VersionGateError } from "../../src/project/detect.js";
-import { checkExpoPackages, expoIconPath, expoMacrosBinaryError, expoPackageDir, readExpoPins } from "../../src/project/expo.js";
+import {
+  AUTOLINKING_TIMEOUT_MS,
+  checkExpoPackages,
+  expoIconPath,
+  expoMacrosBinaryError,
+  expoPackageDir,
+  readExpoPins,
+} from "../../src/project/expo.js";
 import { checkPins, expoPinPolicyFor, expoPinsFor, expoPluginFor } from "../../src/versions.js";
 import { EXPO56_PINS, fakeExpo56Modules } from "../support/expo56.js";
 import { EXPO57_PINS, fakeExpo57Modules, writeExpoModuleFiles } from "../support/expo57.js";
@@ -51,6 +58,12 @@ async function addToPackageJson(dir: string, entries: Record<string, unknown>, f
 const twoBelow = (version: string): string => version.replace(/\d+$/, (n) => String(Number(n) - 2));
 
 /** The refusal of a pinned module that is installed, not excluded, and still not linked by autolinking. */
+/** The gate's line when it could not ask autolinking and read the two autolinked pins from node_modules. */
+const AUTOLINKING_NOT_ASKED = (reason: string) =>
+  `⚠ rn-xtool could not ask Expo's autolinking which expo-file-system and expo-font copies the build links (${reason}), ` +
+  "so it read their versions from node_modules: the top-level copy when the app, or a package it lists, depends on " +
+  "it, else the copy under expo. The build asks autolinking again and may link another copy. See " +
+  "https://github.com/WillyAntunez/react-native-xtool/blob/main/docs/troubleshooting.md#expo-sdk-58";
 const NOT_LINKED = (name: string, where: string) =>
   `${name} is installed (${where}) but Expo's autolinking does not link it for iOS, and the app does not exclude it: ` +
   'the build would succeed and the app would fail at launch with "Cannot find native module". Autolinking leaves out ' +
@@ -780,6 +793,7 @@ describe("Expo SDK 58 gate", () => {
 
   it("accepts the SDK 58 floor set", async () => {
     const dir = await expo58();
+    await realAutolinkingCli(dir);
     const log = vi.fn();
     const p = await readExpoProject(dir, { log });
     expect(p).toMatchObject({ sdkVersion: 58, rnVersion: "0.88.1", rnScripts: "installed", expoPlugin: "installed" });
@@ -844,6 +858,7 @@ describe("Expo SDK 58 gate", () => {
 
   it("warns and continues on a newer 58.x", async () => {
     const dir = await expo58({ expo: "58.0.22", "expo-modules-core": "58.0.29" });
+    await realAutolinkingCli(dir);
     const log = vi.fn();
     await expect(readExpoProject(dir, { log })).resolves.toMatchObject({ sdkVersion: 58, expoPlugin: "installed" });
     expect(log.mock.calls).toEqual([[WARNING("expo 58.0.22, expo-modules-core 58.0.29")]]);
@@ -851,6 +866,7 @@ describe("Expo SDK 58 gate", () => {
 
   it("refuses a package of another SDK's line instead of warning", async () => {
     const dir = await expo58({ "expo-modules-core": "59.0.0" });
+    await realAutolinkingCli(dir);
     const log = vi.fn();
     await expect(readExpoProject(dir, { log })).rejects.toThrow(PIN_ERROR("expo-modules-core 59.0.0"));
     expect(log).not.toHaveBeenCalled();
@@ -858,6 +874,7 @@ describe("Expo SDK 58 gate", () => {
 
   it("a package below the floor wins over a newer one", async () => {
     const dir = await expo58({ expo: "58.0.22", "expo-modules-core": "58.0.27" });
+    await realAutolinkingCli(dir);
     const log = vi.fn();
     await expect(readExpoProject(dir, { log })).rejects.toThrow(PIN_ERROR("expo-modules-core 58.0.27"));
     expect(log).not.toHaveBeenCalled();
@@ -983,7 +1000,44 @@ describe("Expo SDK 58 gate", () => {
       expect(readExpoPins(root, 58)["expo-font"]).toBe(EXPO58_PINS["expo-font"]);
       await expect(readExpoProject(root)).resolves.toMatchObject({ sdkVersion: 58 });
     });
+
+    it.each([
+      ["is missing", undefined, "its CLI was not found"],
+      ["exits non-zero", "process.exit(3);\n", "it exited with code 3"],
+      ["prints no JSON", "console.log('not json');\n", "its answer could not be read"],
+      ["prints JSON without a module list", "console.log('{}');\n", "its answer could not be read"],
+    ])("says once that autolinking could not be asked when the CLI %s", async (_how, body, reason) => {
+      const root = await withLocalLib();
+      if (body !== undefined) {
+        await realAutolinkingCli(root);
+        await cliThat(root, body);
+      }
+      const log = vi.fn();
+      await expect(readExpoProject(root, { log })).resolves.toMatchObject({ sdkVersion: 58 });
+      expect(log.mock.calls).toEqual([[AUTOLINKING_NOT_ASKED(reason)]]);
+    });
+
+    it("says once that autolinking could not be asked when the CLI does not answer in time", async () => {
+      const root = await withLocalLib();
+      await realAutolinkingCli(root);
+      await cliThat(root, "setTimeout(() => {}, 10000);\n");
+      const log = vi.fn();
+      const started = Date.now();
+      checkExpoPackages(root, 58, log, { autolinkingTimeoutMs: 500 });
+      expect(Date.now() - started).toBeLessThan(5000);
+      expect(log.mock.calls).toEqual([[AUTOLINKING_NOT_ASKED("it gave no answer within 0.5 s")]]);
+    });
+
+    it("says nothing about autolinking when the CLI answers", async () => {
+      const root = await withLocalLib();
+      await realAutolinkingCli(root);
+      const log = vi.fn();
+      // The library's copy is below the floor: the gate stops, and logged nothing before.
+      await expect(readExpoProject(root, { log })).rejects.toThrow(PIN_ERROR(`expo-font ${OLDER}`));
+      expect(log).not.toHaveBeenCalled();
+    });
   });
+
 
   it("refuses a nested expo-modules-jsi on SDK 58", async () => {
     const dir = await expo58({}, { "expo-modules-jsi": "58.0.21" }, { "expo-modules-jsi": "58.0.19" });
@@ -1077,5 +1131,49 @@ describe("buildVars", () => {
       DEVELOPMENT_LANGUAGE: "en",
       PRODUCT_BUNDLE_PACKAGE_TYPE: "APPL",
     });
+  });
+});
+
+describe("the gate's line when autolinking cannot be asked", () => {
+  /** A CLI that exits with `code`, in a fresh folder. */
+  async function failingCli(code: number): Promise<string> {
+    const dir = await mkdtemp(path.join(tmpdir(), "rn-xtool-cli-"));
+    tempDirs.push(dir);
+    const cli = path.join(dir, "expo-modules-autolinking.js");
+    await writeFile(cli, `process.exit(${code});\n`);
+    return cli;
+  }
+
+  async function project(name: string, fake: (dir: string) => Promise<void>): Promise<string> {
+    const dir = await mkdtemp(path.join(tmpdir(), `rn-xtool-${name}-`));
+    tempDirs.push(dir);
+    await cp(path.join(fixtures, name), dir, { recursive: true });
+    await fake(dir);
+    return dir;
+  }
+
+  it("asks within 20 s", () => {
+    expect(AUTOLINKING_TIMEOUT_MS).toBe(20_000);
+  });
+
+  it("is printed once on SDK 56", async () => {
+    const dir = await project("expo-56", (d) => fakeExpo56Modules(d));
+    const log = vi.fn();
+    checkExpoPackages(dir, 56, log, { autolinkingCli: await failingCli(4) });
+    expect(log.mock.calls).toEqual([[AUTOLINKING_NOT_ASKED("it exited with code 4")]]);
+  });
+
+  it("is printed once for a hybrid app on SDK 58", async () => {
+    const dir = await project("project", (d) => fakeExpo58Modules(d));
+    const log = vi.fn();
+    checkExpoPackages(dir, 58, log, { kind: "bare", autolinkingCli: await failingCli(5) });
+    expect(log.mock.calls).toEqual([[AUTOLINKING_NOT_ASKED("it exited with code 5")]]);
+  });
+
+  it("is not printed on SDK 57, which pins neither expo-file-system nor expo-font", async () => {
+    const dir = await project("expo-57", (d) => fakeExpo57Modules(d));
+    const log = vi.fn();
+    checkExpoPackages(dir, 57, log, { autolinkingCli: await failingCli(6) });
+    expect(log).not.toHaveBeenCalled();
   });
 });

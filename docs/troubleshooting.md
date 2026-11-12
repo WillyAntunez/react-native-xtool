@@ -1479,10 +1479,15 @@ messages and the two hybrid ones at the end, and print the sixth and go on; the 
   it: …": autolinking leaves out a module without an `expo-module.config.json` or whose config names no Apple
   platform (a damaged install, most often), and the app would build and then fail at launch with "Cannot find native
   module". Reinstall the package (`rm -rf <path> && npm install`), or list it in `expo.autolinking.exclude` if the
-  app does not use it. When that CLI cannot run, the check takes the
-  top-level copy when the app, or a package the app lists, depends on it, else the copy under `node_modules/expo`,
-  where npm nests them (an exclusion is not read then). The remedy follows the
-  order of [Moving to the 58.0.21 set](#moving-to-the-58021-set), and adapts to the project:
+  app does not use it. When that CLI cannot run (not found, a non-zero exit, no answer within 20 seconds, or output
+  that is not its JSON), the check takes the top-level copy when the app, or a package the app lists, depends on it,
+  else the copy under `node_modules/expo`, where npm nests them (an exclusion is not read then), and says so first in
+  one line: "⚠ rn-xtool could not ask Expo's autolinking which expo-file-system and expo-font copies the build links
+  (<reason>), so it read their versions from node_modules: … The build asks autolinking again and may link another
+  copy.", the reason being the exit code, the timeout, or "its answer could not be read" (`doctor --project` shows it
+  on the `project` line). Run `node node_modules/expo-modules-autolinking/bin/expo-modules-autolinking.js resolve
+  --platform apple --json` in the project folder to see why it fails. The remedy follows the order of [Moving to the
+  58.0.21 set](#moving-to-the-58021-set), and adapts to the project:
   - When package.json lists expo-modules-core, expo-modules-jsi or expo-modules-autolinking, it starts with
     "Remove the expo-modules-jsi and expo-modules-autolinking pins (`npm uninstall expo-modules-jsi
     expo-modules-autolinking`)" for the ones listed. A project pinned to the SDK 58 versions rn-xtool 0.1.0-alpha.2

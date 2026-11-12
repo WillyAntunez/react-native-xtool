@@ -16,6 +16,7 @@ import {
   type ExpoPinName,
   type PinCheck,
 } from "../versions.js";
+import { troubleshootingUrl } from "../docs.js";
 import { VersionGateError } from "./detect.js";
 import type { ProjectInfo, ProjectKind, ReadProjectOptions } from "./types.js";
 
@@ -118,32 +119,59 @@ function moduleRootOf(dir: string): string {
 }
 
 /**
+ * How long the gate waits for autolinking's answer. The call takes about 0.1 s (SDK 56 and 58 apps, a machine under a
+ * load of 9 on 12 cores); 20 s leaves room for a much busier machine or a cold disk cache, and a CLI that hangs holds
+ * `doctor` and `build` up for 20 s, not a minute.
+ */
+export const AUTOLINKING_TIMEOUT_MS = 20_000;
+
+/** The gate's autolinking call: the CLI and timeout, which tests replace. */
+export interface AutolinkingCall {
+  autolinkingCli?: string;
+  autolinkingTimeoutMs?: number;
+}
+
+const UNREADABLE = "its answer could not be read";
+
+/**
  * The package folder of each Expo module the build links for Apple, asked of the build's own autolinking: the plugin's
  * `resolve --platform apple --json` (vendor/expo-spm/spm/cli.js), run the same way (from the root, no options:
  * autolinking reads searchPaths, nativeModulesDir and exclude from the app's package.json itself). A module's folder is
- * the one above its podspec that holds a package.json, as the plugin finds it. Undefined when the CLI cannot run (not
- * found, a non-zero exit, no answer within a minute, output that is not its JSON): the caller then falls back to
- * `linkedExpoDependencyDir`'s rule, and the build's own autolinking step reports the failure.
+ * the one above its podspec that holds a package.json, as the plugin finds it. When the CLI cannot run (not found, a
+ * non-zero exit, no answer within {@link AUTOLINKING_TIMEOUT_MS}, output that is not its JSON), `failed` says why in a
+ * few words: the caller then falls back to `linkedExpoDependencyDir`'s rule and says so, and the build's own
+ * autolinking step asks again.
  */
-function autolinkedModuleDirs(root: string, sdk: number): ReadonlyMap<string, string> | undefined {
-  const cli = autolinkingCli(root, sdk);
-  if (cli === undefined) return undefined;
+function autolinkedModuleDirs(
+  root: string,
+  sdk: number,
+  call: AutolinkingCall,
+): { dirs: ReadonlyMap<string, string> } | { failed: string } {
+  const cli = call.autolinkingCli ?? autolinkingCli(root, sdk);
+  if (cli === undefined) return { failed: "its CLI was not found" };
+  const timeout = call.autolinkingTimeoutMs ?? AUTOLINKING_TIMEOUT_MS;
   const run = spawnSync(process.execPath, [cli, "resolve", "--platform", "apple", "--json"], {
     cwd: root,
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
-    timeout: 60_000,
+    timeout,
   });
-  if (run.error !== undefined || run.status !== 0) return undefined;
+  if ((run.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+    return { failed: `it gave no answer within ${timeout / 1000} s` };
+  }
+  if (run.error !== undefined) return { failed: `it could not run: ${run.error.message}` };
+  if (run.status !== 0) {
+    return { failed: run.status === null ? `it was stopped by ${run.signal ?? "a signal"}` : `it exited with code ${run.status}` };
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(run.stdout);
   } catch {
-    return undefined;
+    return { failed: UNREADABLE };
   }
   // Older CLIs print the bare module list.
   const modules: unknown = Array.isArray(parsed) ? parsed : (parsed as { modules?: unknown } | null)?.modules;
-  if (!Array.isArray(modules)) return undefined;
+  if (!Array.isArray(modules)) return { failed: UNREADABLE };
   const dirs = new Map<string, string>();
   for (const module of modules as { packageName?: unknown; pods?: { podspecDir?: unknown }[] }[]) {
     const podspecDir = module?.pods?.[0]?.podspecDir;
@@ -151,7 +179,7 @@ function autolinkedModuleDirs(root: string, sdk: number): ReadonlyMap<string, st
       dirs.set(module.packageName, moduleRootOf(podspecDir));
     }
   }
-  return dirs;
+  return { dirs };
 }
 
 /** The names a package.json makes autolinking follow: dependencies, non-optional peers, and at the root devDependencies. */
@@ -225,18 +253,24 @@ function autolinkingExclusions(root: string): ReadonlySet<string> {
  * `unlinked`, those the app excludes (`autolinkingExclusions`), which the build does not link, so their precompiled
  * framework is never embedded and the gate has nothing to check; `notLinked`, the others, with their copy's folder:
  * autolinking leaves them out for another reason (no expo-module.config.json, or one that names no Apple platform),
- * and the app would build and then fail at launch.
+ * and the app would build and then fail at launch. `notAsked`: the line saying the CLI could not be asked, when the
+ * SDK pins expo-file-system or expo-font and their versions were read by that rule instead.
  */
 function readPins(
   root: string,
   sdk: number,
+  call: AutolinkingCall = {},
 ): {
   pins: Partial<Record<ExpoPinName, string | undefined>>;
   unlinked: ReadonlySet<ExpoPinName>;
   notLinked: ReadonlyMap<ExpoPinName, string>;
+  notAsked?: string;
 } {
   const names = Object.keys(expoPinsFor(sdk) ?? {}) as ExpoPinName[];
-  const autolinked = names.some((name) => AUTOLINKED_PINS.includes(name)) ? autolinkedModuleDirs(root, sdk) : undefined;
+  const autolinkedPins = names.filter((name) => AUTOLINKED_PINS.includes(name));
+  const answer = autolinkedPins.length > 0 ? autolinkedModuleDirs(root, sdk, call) : undefined;
+  const autolinked = answer !== undefined && "dirs" in answer ? answer.dirs : undefined;
+  const notAsked = answer !== undefined && "failed" in answer ? autolinkingNotAsked(autolinkedPins, answer.failed) : undefined;
   const pins = Object.fromEntries(names.map((name) => [name, versionAt(expoPackageDir(root, name, autolinked))]));
   const unlinked = new Set<ExpoPinName>();
   const notLinked = new Map<ExpoPinName, string>();
@@ -251,7 +285,17 @@ function readPins(
       else notLinked.set(name, copy!);
     }
   }
-  return { pins, unlinked, notLinked };
+  return { pins, unlinked, notLinked, ...(notAsked !== undefined && { notAsked }) };
+}
+
+/** The gate's line when autolinking's CLI could not be asked (`reason`) and `names` were read by the fallback rule. */
+function autolinkingNotAsked(names: readonly ExpoPinName[], reason: string): string {
+  return (
+    `⚠ rn-xtool could not ask Expo's autolinking which ${andList(names)} copies the build links (${reason}), so it ` +
+    "read their versions from node_modules: the top-level copy when the app, or a package it lists, depends on it, " +
+    "else the copy under expo. The build asks autolinking again and may link another copy. See " +
+    troubleshootingUrl("expo-sdk-58")
+  );
 }
 
 /** An installed pin autolinking does not link although the app does not exclude it: the app would fail at launch. */
@@ -439,9 +483,10 @@ export function checkExpoPackages(
   root: string,
   sdk: number,
   log?: (line: string) => void,
-  opts: { kind?: ProjectKind } = {},
+  opts: { kind?: ProjectKind } & AutolinkingCall = {},
 ): void {
-  const { pins, unlinked, notLinked } = readPins(root, sdk);
+  const { pins, unlinked, notLinked, notAsked } = readPins(root, sdk, opts);
+  if (notAsked !== undefined) log?.(notAsked);
   const checks = checkPins(sdk, pins);
   if (checks === undefined) return;
   checkLinkedPins(root, notLinked);
