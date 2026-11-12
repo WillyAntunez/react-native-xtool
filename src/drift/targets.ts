@@ -71,7 +71,7 @@ export function watchTargets(rnVersions: readonly string[]): WatchTarget[] {
 }
 
 /** The Expo SDKs the weekly exploration looks at (older than every Expo row), from the blank-typescript template. */
-export const EXPLORE_EXPO_SDKS: readonly number[] = [54, 55, 56];
+export const EXPLORE_EXPO_SDKS: readonly number[] = [54, 55];
 /** The bare React Native minors the weekly exploration looks at (older than every bare row), at their newest patch. */
 export const EXPLORE_RN_MINORS: readonly string[] = ["0.81", "0.82", "0.83", "0.84"];
 /**
