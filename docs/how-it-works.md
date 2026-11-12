@@ -1,10 +1,11 @@
 # How it works
 
 rn-xtool does not reimplement Xcode. It patches the official React Native 0.88 and Expo SDK 58 SwiftPM pipeline so it
-runs on Linux (React Native 0.85, 0.86 and 0.87 and Expo SDK 57, which ship none, run vendored copies of it), generates
+runs on Linux (React Native 0.85, 0.86 and 0.87 and Expo SDK 56 and 57, which ship none, run vendored copies of it),
+generates
 a SwiftPM package for your app in `ios-xtool/`, and hands it to [xtool](https://github.com/xtool-org/xtool), which
 builds, signs and installs it with the Darwin SDK extracted from your own `Xcode.xip`. This page is the overview
-(toolchain, patches, build steps, Expo SDK 58 and 57, rebuild detection, the first launch, dev-client discovery,
+(toolchain, patches, build steps, Expo SDK 58, 57 and 56, rebuild detection, the first launch, dev-client discovery,
 scaffolded libraries, CocoaPods binaries); [recipe.md](recipe.md) has every step with file locations.
 
 [Back to README](../README.md)
@@ -41,7 +42,8 @@ scaffolded libraries, CocoaPods binaries); [recipe.md](recipe.md) has every step
    projects (each patch only when its package is installed, so a bare project without Expo modules gets only the
    React Native one). Bare 0.85, 0.86 and 0.87 projects get none: the fixes live in the vendored scripts. An Expo SDK 57
    project gets only the patches of its installed versions' release lines, which is `expo-modules-jsi+57.1.3.patch`
-   (see [Expo SDK 57](#expo-sdk-57)). An Expo SDK 58 project gets four patches, named
+   (see [Expo SDK 57](#expo-sdk-57)), and an Expo SDK 56 project `expo-modules-jsi+56.0.14.patch` (see
+   [Expo SDK 56](#expo-sdk-56)). An Expo SDK 58 project gets four patches, named
    after the versions of the 58.0.21 set (a newer 58.x gets the same ones, see [Expo SDK 58](#expo-sdk-58)). Two are
    one-liners (the `@ExpoModule` scanner gate in `expo-modules-autolinking+58.0.16.patch`, a Swift 6.4 access-level
    error in `expo-modules-jsi+58.0.21.patch`). The other two are large:
@@ -70,16 +72,16 @@ scaffolded libraries, CocoaPods binaries); [recipe.md](recipe.md) has every step
    Packages linked from outside the project are skipped, with a line saying so. Today the snippet is `CFGetTypeID`,
    checked in react-native-reanimated 4.7.1 and react-native-worklets 0.13.0 and 0.13.1
    ([upstream/reanimated-worklets-manifest.md](upstream/reanimated-worklets-manifest.md)).
-3. Bare projects on the vendored SwiftPM scripts (React Native 0.85, 0.86 or 0.87), and Expo SDK 57 projects, first run
-   the `rn-artifacts` step (downloads
+3. Bare projects on the vendored SwiftPM scripts (React Native 0.85, 0.86 or 0.87), and Expo SDK 56 and 57 projects,
+   first run the `rn-artifacts` step (downloads
    and, for 0.85 and 0.86, adapts the prebuilt artifacts, see
    [bare-react-native.md](bare-react-native.md#older-artifacts-085-086)).
    Then runs React Native 0.88's SwiftPM pipeline (the vendored copy for 0.85, 0.86 and 0.87, see
-   [below](#vendored-swiftpm-scripts)) and Expo's SPM plugin (the vendored copy for SDK 57, see
+   [below](#vendored-swiftpm-scripts)) and Expo's SPM plugin (the vendored copy for SDK 56 and 57, see
    [Expo SDK 57](#expo-sdk-57)), with Linux shims for `plutil` and `otool`. With CocoaPods binaries, the
    `pod-binaries` step writes the local package the scaffolds link, `ios/build/pod-binaries`, right before.
-4. Builds ExpoModulesJSI with the Darwin SDK and stages the runtime frameworks. On Expo SDK 57 the JSI build runs before
-   step 3, because the vendored plugin needs its headers. Before staging, the `frameworks` step checks that the
+4. Builds ExpoModulesJSI with the Darwin SDK and stages the runtime frameworks. On Expo SDK 56 and 57 the JSI build
+   runs before step 3, because the vendored plugin needs its headers. Before staging, the `frameworks` step checks that the
    frameworks fit together ([G4](#precompiled-frameworks-g4)).
 5. Generates `ios-xtool/` (Package.swift, xtool.yml, Info.plist, ip.txt, app config). It is a regenerable artifact; do
    not edit it by hand. It also gets:
@@ -137,8 +139,8 @@ Xcode project, ExpoModulesJSI only with Expo modules): see [bare-react-native.md
 React Native 0.85 and 0.86 ship no SwiftPM scripts, and 0.87's lack exports and an option rn-xtool's driver calls.
 Rather than patching those installs, rn-xtool bundles the 0.88.0 scripts in `vendor/rn-spm/` (the 29 scaffolder fixes
 already applied; provenance and how it is checked in [vendor/rn-spm/README.md](../vendor/rn-spm/README.md)) and the
-driver is given `--scripts-root` pointing at them. Expo SDK 57 (React Native 0.86.3) uses them too. The installed React
-Native keeps its own codegen. Six edits to the vendored copy:
+driver is given `--scripts-root` pointing at them. Expo SDK 57 (React Native 0.86.3) and 56 (0.85.3) use them too.
+The installed React Native keeps its own codegen. Six edits to the vendored copy:
 
 - **E1**: the codegen template (`Package.swift.spm-template`, missing from 0.85 and 0.86) is read from the vendored
   copy.
@@ -148,7 +150,7 @@ Native keeps its own codegen. Six edits to the vendored copy:
   headers xcframeworks is downloaded instead of rejected (the `rn-artifacts` step then adapts it).
 - **E5**: `spm/autolinking-plugins.js` takes the autolinking plugin of the dependency named `expo` from the
   `RN_SPM_EXPO_PLUGIN` environment variable (set by the driver's `--expo-plugin`) when `expo` declares none, which is
-  the case on Expo SDK 57.
+  the case on Expo SDK 56 and 57.
 - **E6**: `spm/generate-spm-autolinking.js` rethrows a podspec reader failure from its header search path read instead
   of returning no paths, so autolinking stops with the reader's message (React Native 0.88.1 has no such read, so the
   0.88 patches cannot carry it).
@@ -174,7 +176,7 @@ says so and names what is missing, and the build falls back to the line's script
 (`src/versions.ts`). For every supported version the result equals that table: 0.85.x, 0.86.x and 0.87.x vendored,
 0.88.x installed. The scripts mode also plans the `rn-artifacts` step: with the vendored scripts rn-xtool downloads the
 artifacts itself (unless `rnArtifactsDir` is set), and with the installed ones the build first checks that a bundled
-react-native patch of the installed line exists. Expo projects do not use this detection: SDK 57 always takes the
+react-native patch of the installed line exists. Expo projects do not use this detection: SDK 56 and 57 always take the
 vendored scripts, because the vendored Expo plugin needs them (E5), and SDK 58 the installed ones; `doctor --project`
 still prints their layout.
 
@@ -235,21 +237,25 @@ nests the copy expo uses, which G2 refuses, while an override applies to every c
 
 ## Precompiled frameworks (G4)
 
-Expo ships some modules precompiled (ExpoModulesCore, ExpoModulesWorklets, ExpoFileSystem, ExpoFont), and each was
-linked against the versions of the modules it imports from that Expo built it with. A precompiled module next to an
-older ExpoModulesCore builds, and then the app closes on the iPhone at launch, before any JS runs
-(`dyld: Symbol not found`). The `frameworks` step therefore runs `llvm-nm` (from the Swift toolchain `setup`
+Expo ships some modules precompiled (ExpoModulesCore, ExpoModulesWorklets, ExpoFileSystem, ExpoFont, and ExpoImage with
+its SDWebImage and libavif frameworks), and each was linked against the versions of the modules it imports from that
+Expo built it with. A precompiled module next to an older ExpoModulesCore builds, and then the app closes on the iPhone
+at launch, before any JS runs (`dyld: Symbol not found`). The `frameworks` step therefore runs `llvm-nm` (from the Swift toolchain `setup`
 installs) on every framework it is about to embed. Each symbol a framework imports from another embedded framework
 must be exported by it; if one is not, the build stops naming both frameworks, their packages and one missing symbol
-(mangled). Weak imports and system libraries are not checked. G4 runs on every project kind (Expo SDK 57 and 58,
-bare, hybrid), has no bypass flag, and a missing `llvm-nm` is an error. On 2026-10-28 it passed, with no false
+(mangled). Weak imports and system libraries are not checked. G4 runs on every project kind (Expo SDK 56, 57 and
+58, bare, hybrid), has no bypass flag, and a missing `llvm-nm` is an error. On 2026-10-28 it passed, with no false
 positive, on the default SDK 58 template, the SDK 58 reference app with expo-router, a bare React Native 0.88.1 app,
-a hybrid app (expo 58.0.21, React Native 0.88.1), an Expo SDK 57 app and a bare React Native 0.86.3 app.
+a hybrid app (expo 58.0.21, React Native 0.88.1), an Expo SDK 57 app and a bare React Native 0.86.3 app. On 2026-11-11
+it passed on the default SDK 56 template, 14 embedded frameworks with ExpoImage and its five SDWebImage and libavif
+frameworks, and a check of the same frameworks by hand with `llvm-nm` found no missing symbol either.
 
 G4 compares the symbols each embedded framework imports with the ones the framework it imports from exports, the
 check dyld runs at launch. It cannot see C++ or Swift layout changes that keep the same symbols, or lookups by name
 at runtime (NSClassFromString, Swift _typeByName). rn-xtool pins react-native exactly (0.88.1 on SDK 58) because
-Expo's precompiled modules are built against it.
+Expo's precompiled modules are built against it. On SDK 56 and 57, rn-xtool builds ExpoModulesJSI from source next to
+the precompiled ExpoModulesCore, so a C++ layout change between the two that keeps the same symbols (`NativeState`,
+`CppError`) is outside what G4 sees too.
 
 ## Expo SDK 57
 
@@ -265,16 +271,18 @@ rn-xtool builds it with a vendored copy of Expo SDK 58's plugin, on the same dri
   version, a missing one, or one of another SDK's line (expo-modules-jsi 58.x) stops the build; a newer 57.x prints a
   warning and the build continues. expo-modules-jsi must also be the top-level copy, the only one patch-package
   patches. The messages are in [troubleshooting.md](troubleshooting.md#expo-sdk-57). SDK 58 and newer keep their
-  installed plugin; SDK 56 and older are refused.
+  installed plugin; SDK 56 takes this route with its own set ([Expo SDK 56](#expo-sdk-56)); SDK 55 and older are
+  refused.
 - **Patches by release line.** An SDK 57 project gets, for each package, the bundled patch for its installed version,
   else the highest bundled patch of the same release line, and never another SDK's patch (`lineOnly`). Today that is
   `expo-modules-jsi+57.1.3.patch`, also on a newer 57.x jsi. When it does not apply, the build stops with
   "rn-xtool could not patch expo-modules-jsi@<version>" and the npm `"overrides"` block for the 57 set
   ([troubleshooting.md](troubleshooting.md#build-and-patches)).
 - **The vendored plugin.** `vendor/expo-spm/` is expo 58.0.19's `scripts/spm/` with rn-xtool's Expo patch applied and
-  six vendored-only edits (P1–P6: the macro lookup, app packages resolved from the app root, CocoaPods' default header
-  dir and prefix header, tarballs extracted without macOS AppleDouble entries, a subspec's own compiler flags as a
-  target of its own); provenance and the edits in
+  seven vendored-only edits (P1–P7: the macro lookup, app packages resolved from the app root, CocoaPods' default
+  header dir and prefix header, tarballs extracted without macOS AppleDouble entries, a subspec's own compiler flags as a
+  target of its own, and each module at the iOS floor its podspec declares, capped at the App target's 16.4 with a
+  `⚠` line when a podspec asks for more); provenance and the edits in
   [vendor/expo-spm/README.md](../vendor/expo-spm/README.md). expo-modules-autolinking 58.0.15 and expo-modules-macros
   0.22.0 (with the host's `@expo/modules-macros-linux-<arch>` binary) are exact dependencies of rn-xtool, which the
   plugin finds in rn-xtool's `node_modules`; every package of the app is resolved from the app.
@@ -286,7 +294,10 @@ rn-xtool builds it with a vendored copy of Expo SDK 58's plugin, on the same dri
   of the adapted artifacts (`ios/build/xcframeworks` does not exist yet), then writes
   `ExpoModulesJSIHeaders.xcframework` in SDK 58's published layout under `ios/build/expo-precompiled`, which the plugin
   reads through `EXPO_PRECOMPILED_MODULES_PATH`. A stamp (jsi version, interface hash) skips the rewrite when nothing
-  changed.
+  changed. Before it writes the tree, the step reads the interface the build wrote and stops when a line of it is one
+  no Swift compiler can parse ([troubleshooting.md](troubleshooting.md#unreadable-expomodulesjsi-interface)). The
+  jsi build's scratch is `ios-xtool/jsi-out/.jsi-build`, which `build --clean` removes first
+  ([troubleshooting.md](troubleshooting.md#interrupted-jsi-build)).
 - **The app shell.** SDK 57's template has `AppDelegate.swift` and no `SceneDelegate.swift`. On every SDK rn-xtool
   copies `SceneDelegate.swift` only when it exists, and stops when Info.plist's `UIApplicationSceneManifest` names a
   scene delegate that is missing.
@@ -295,10 +306,67 @@ rn-xtool builds it with a vendored copy of Expo SDK 58's plugin, on the same dri
   set SDK 57's own autolinking links.
 
 The build steps for SDK 57: `prebuild` (when `ios/` is missing, or with `--clean`), `patches`, `rn-artifacts` (skipped
-with `rnArtifactsDir`, which must then hold adapted 0.86.3 slots), `jsi`, `rn-spm`, `app-config`, `frameworks`,
+with `rnArtifactsDir`, which must then hold 0.86.3's adapted slots), `jsi`, `rn-spm`, `app-config`, `frameworks`,
 `generate`, `xtool-build`. Disk use is that of a bare 0.86.3 project (the artifact slots, see
 [bare-react-native.md](bare-react-native.md#older-artifacts-085-086)) plus SDK 57's precompiled modules, which the
 plugin extracts to `ios/build/expo-xcframeworks`.
+
+## Expo SDK 56
+
+Expo SDK 56 (expo 56.0.24, React Native 0.85.3) builds on SDK 57's route: the vendored Expo plugin, the vendored React
+Native 0.88.0 scripts, React Native's prebuilt artifacts adapted as for bare 0.85, and the `jsi` step before `rn-spm`.
+No code path branches on the SDK number: the line is one row of rn-xtool's version table. SDK 56 is build-verified
+only: a fresh default template (`default@sdk-56` with expo-dev-client) builds on 2026-11-11, and it has not
+been run on a device yet.
+
+- **A floor of seven pins.** At least expo 56.0.24, expo-modules-core 56.0.27, expo-modules-jsi 56.0.14,
+  expo-modules-autolinking 56.0.24, expo-file-system 56.0.11 and expo-font 56.0.7, each on SDK 56's line (56.x), and
+  react-native exactly 0.85.3. Each is read where the build resolves it; expo-file-system and expo-font are read where
+  expo-modules-autolinking links them, as on SDK 58 ([Expo SDK 58](#expo-sdk-58)): the check asks rn-xtool's own
+  autolinking CLI, the one the vendored plugin runs, skips a package the app excludes, and stops on one that is
+  installed but neither linked nor excluded. A newer 56.x prints the newer-than warning and the build continues; the
+  messages are in [troubleshooting.md](troubleshooting.md#expo-sdk-56).
+- **The jsi patch.** `expo-modules-jsi+56.0.14.patch` (also used for a newer 56.x jsi, never SDK 57's or 58's) makes
+  the `message` of `expo.CppError` internal, as the 57.1.3 patch does, so that Swift 6.4 compiles it, and marks four
+  conformances of generic types to the internal `~Copyable` protocol `JSIRepresentable` `@_spi(Internal)`, as jsi
+  57.1.3 does. Without those marks Swift 6.4 prints placeholder conformances into `ExpoModulesJSI.swiftinterface`
+  that no compiler reads back, and every module that imports ExpoModulesJSI fails at `xtool-build`. The `jsi` step
+  checks the interface it built and stops when such a line is left
+  ([Unreadable ExpoModulesJSI interface](troubleshooting.md#unreadable-expomodulesjsi-interface)).
+- **The headers.** jsi 56 keeps `NativeState.h` in `apple/Sources/ExpoModulesJSI-Cxx/include`, next to the
+  `RetainedSwiftPointer.h` it includes; jsi 57 and newer keep it in `include/Public`. The `jsi` step takes it from
+  either folder, with every header it includes with quotes, into `ExpoModulesJSIHeaders.xcframework` under
+  `ios/build/expo-precompiled`.
+- **The iOS floor of each module.** The vendored plugin's edit P7 gives each generated Expo package the highest of its
+  `spm.config.json` floor, its podspec's iOS deployment target and core's (core 56's podspec says 16.4, its
+  `spm.config.json` 16.0), capped at the App target's 16.4. expo-router 56 has no `spm.config.json` and needs 16.4 for
+  react-native-screens; every generated package of the default template is at iOS 16.4. A podspec that asks for more
+  gets a `⚠` line ([troubleshooting.md](troubleshooting.md#expo-sdk-56)).
+- **Precompiled modules.** ExpoModulesCore, ExpoModulesWorklets, ExpoFileSystem, ExpoFont and ExpoImage ship
+  precompiled in their npm packages; ExpoImage brings SDWebImage, SDWebImageAVIFCoder, SDWebImageSVGCoder,
+  SDWebImageWebPCoder and libavif from its `prebuilds/spm-deps`. The template's app embeds 14 frameworks: those ten,
+  ExpoModulesJSI (built by rn-xtool), React, ReactNativeDependencies and hermesvm. G4 checks them
+  ([Precompiled frameworks](#precompiled-frameworks-g4)).
+- **React Native 0.85.3.** The `rn-artifacts` step downloads and adapts 0.85.3's prebuilt artifacts, as for bare 0.85
+  ([bare-react-native.md](bare-react-native.md#older-artifacts-085-086)); Hermes is 250829098.0.10.
+- **Macros.** As on SDK 57, core 56's macro plugin is macOS-only, so the modules compiled from source get their macros
+  expanded by rn-xtool's expo-modules-macros 0.22.0 ([vendor/expo-spm/README.md](../vendor/expo-spm/README.md)).
+
+The build steps for SDK 56 are SDK 57's: `prebuild` (when `ios/` is missing, or with `--clean`), `patches`,
+`rn-artifacts`, `jsi`, `rn-spm`, `app-config`, `frameworks`, `generate`, `precheck`, `xtool-build`. After the first
+build of the template (2026-11-11), `App.app` is 140 MB, `ios-xtool/.build` 1.8 GB, `ios/` 973 MB and `node_modules`
+594 MB, about 3.5 GB in all; times are under [Reference timings](#reference-timings).
+
+Two things the default template shows:
+
+- **No app icon.** The template's `ios.icon` is `./assets/expo.icon`, an Icon Composer icon, which needs Xcode's
+  `actool`. The app builds without an icon and the build says so with an `ℹ` line. Set `ios.icon` to
+  `./assets/images/icon.png` (the template's 1024×1024 PNG) and run `rn-xtool build --clean` for one
+  ([troubleshooting.md](troubleshooting.md#app-icon-and-launch-screen)).
+- **ExpoModulesWorkletsAdapter is left out.** With ExpoModulesCore precompiled, the vendored plugin leaves out core's
+  ExpoModulesWorkletsAdapter product, which CocoaPods links when the app has react-native-worklets, and prints a
+  warning that says so. ExpoModulesWorklets itself is embedded. What the adapter's absence changes for reanimated and
+  expo-router at runtime has not been checked on a device yet.
 
 ## Rebuild detection
 
@@ -657,6 +725,12 @@ The `precheck` step (2026-11-10, two series on a loaded machine), with the modul
 warm (the next `build`): a bare React Native 0.88.1 app 8.6–11.1 s and 1.8–2.9 s, the Expo SDK 58 app 7.7–7.8 s and
 3.3–6.7 s (its Swift files are left to `xtool-build`; most of the warm time is SwiftPM planning the package), the Expo
 SDK 57 app 3.0 s and 0.6 s, an Objective-C 0.88.1 app 6.9 s cold.
+
+The Expo SDK 56 default template with expo-dev-client (2026-11-11), from a fresh project with the 0.85.3 artifacts
+already in rn-xtool's cache: `build --clean` 346 s (`prebuild` 1.2 s, `patches` 0.1 s, `rn-artifacts` 1.6 s, `jsi`
+9.4 s, `rn-spm` 98.3 s, `frameworks` 1.8 s, `precheck` 8.9 s, `xtool-build` 223.1 s), then the next `build` 65 s
+(`jsi` 7.9 s, `rn-spm` 11.0 s, `frameworks` 1.6 s, `precheck` 1.5 s, `xtool-build` 38.4 s). The resulting `App.app` is
+140 MB with 14 embedded frameworks.
 
 ## Further reading
 

@@ -185,7 +185,11 @@ Bare projects (no `expo`, or `expo` plus Expo modules as a hybrid) follow the sa
 ## Expo SDK 57 notes
 
 Expo SDK 57 projects (`expoPlugin: "vendored"`, `rnScripts: "vendored"` in `ProjectInfo`) follow the recipe with these
-differences:
+differences. Expo SDK 56 projects (the `expo-56` row) follow the same ones with SDK 56's set (expo 56.0.24,
+expo-modules-core 56.0.27, expo-modules-jsi 56.0.14, expo-modules-autolinking 56.0.24, expo-file-system 56.0.11 and
+expo-font 56.0.7, the last two read where expo-modules-autolinking links them; react-native exactly 0.85.3), the
+0.85.3 artifacts, `expo-modules-jsi+56.0.14.patch`, and `NativeState.h` with its local includes taken from jsi 56's
+`include` folder ([how-it-works.md](how-it-works.md#expo-sdk-56)):
 
 - **Gate** (the `expo-57` row of `SUPPORTED_LINES` in `src/versions.ts`, `readExpoProject` and `checkExpoPackages` in
   `src/project/expo.ts`): SDK 57 is a floor, like SDK 58. It needs at least expo 57.0.31, expo-modules-core 57.0.24,
@@ -201,7 +205,7 @@ differences:
 - **Steps** (`buildSteps` in `src/commands/build.ts`): `prebuild` (when `ios/` is missing, or `--clean`), `patches`,
   `rn-artifacts` (unless `rnArtifactsDir` is set), `jsi`, `rn-spm`, `app-config`, `frameworks`, `generate`,
   `xtool-build`. `rn-artifacts` is the bare 0.86 step (download and adapt the 0.86.3 slot into
-  `ios/build/rn-artifacts/0.86.3`); an `rnArtifactsDir` must hold adapted 0.86.3 slots.
+  `ios/build/rn-artifacts/0.86.3`); an `rnArtifactsDir` must hold 0.86.3's adapted slots.
 - **Section 2** (`src/pipeline/rnSpm.ts`): no `setup-apple-spm.js`, no injection. From `ios/`:
 
   ```
@@ -223,7 +227,7 @@ differences:
   the highest bundled one of its release line, and never another SDK's: today only `expo-modules-jsi+57.1.3.patch`
   (also on a newer 57.x jsi). A patch that does not apply gets the SDK 57 `"overrides"` remedy (`floorRemedy` in
   `src/pipeline/patches.ts`). Expo's plugin is the vendored `vendor/expo-spm/spm/plugin.js`: expo 58.0.19's
-  `scripts/spm/`, plus `patches/expo+58.0.21.patch`, plus the vendored-only edits P1–P6 of
+  `scripts/spm/`, plus `patches/expo+58.0.21.patch`, plus the vendored-only edits P1–P7 of
   `vendor/expo-spm/rn-xtool-edits.patch` (see [vendor/expo-spm/README.md](../vendor/expo-spm/README.md)). It calls
   expo-modules-autolinking 58.0.15 and loads the
   macro plugin of expo-modules-macros 0.22.0, both exact dependencies of rn-xtool, so Expo source modules compile with
@@ -237,7 +241,8 @@ differences:
   `<artifacts>/debug/ReactNativeHeaders.xcframework/ios-arm64/Headers` and
   `<artifacts>/debug/ReactNativeDependenciesHeaders.xcframework/ios-arm64/Headers` (`RN_XTOOL_REACT_HEADERS`,
   `RN_XTOOL_DEPS_HEADERS`), checked first: `ExpoModulesJSI needs React Native's headers at <dir>, which does not exist.
-  rnArtifactsDir must hold adapted 0.86.3 slots, as rn-xtool's rn-artifacts step writes them.` Then
+  rnArtifactsDir must hold the adapted slots of the project's React Native version, as rn-xtool's rn-artifacts step
+  writes them.` With `build --clean` the step first removes the build's scratch, `ios-xtool/jsi-out/.jsi-build`. Then
   `src/pipeline/jsiHeaders.ts` writes
   `ios/build/expo-precompiled/expo-modules-jsi/output/headers/xcframeworks/ExpoModulesJSIHeaders.xcframework`, the
   layout of SDK 58's published tarball:

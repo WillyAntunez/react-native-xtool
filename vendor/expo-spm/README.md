@@ -1,8 +1,8 @@
 # Vendored Expo SwiftPM plugin
 
 Expo's React Native SwiftPM autolinking plugin from Expo SDK 58.0.19 (`scripts/spm/`, without
-`__tests__/` and `jest.config.js`). rn-xtool runs it for Expo SDK 57, which ships no SwiftPM plugin
-of its own. SDK 58 and newer keep using the plugin installed in the app.
+`__tests__/` and `jest.config.js`). rn-xtool runs it for Expo SDK 56 and 57, which ship no SwiftPM
+plugin of their own. SDK 58 and newer keep using the plugin installed in the app.
 
 - Origin: expo 58.0.19, MIT, 650 Industries, Inc. (aka Expo) (see `LICENSE`).
 - Modifications, in order:
@@ -11,7 +11,12 @@ of its own. SDK 58 and newer keep using the plugin installed in the app.
   2. Seven vendored-only edits (P1-P7) in `rn-xtool-edits.patch` (`patch -p1`, run in this
      directory). SDK 58 never runs them:
      - P1 (`plugin.js`): `expo-modules-macros` is resolved from expo-modules-core, then from this
-       copy, so rn-xtool's `expo-modules-macros` 0.22.0 is used when core lacks it (SDK 57).
+       copy, so rn-xtool's `expo-modules-macros` 0.22.0 is used when core lacks it (SDK 56 and 57,
+       whose cores depend on the macOS-only `@expo/expo-modules-macros-plugin`). Limit: the modules
+       compiled from source then get their macros expanded by expo-modules-macros 0.22.0, not by the
+       macro plugin their core was released with. The SDK 56 set (expo-modules-core 56.0.27) builds
+       with it (checked on the default template, 2026-11-11); a later 56.x module that uses a macro
+       the two expand differently fails at `xtool-build` with the compiler's error.
      - P2 (`app-target.js`, `flavored-frameworks.js`): the app's `@expo/config-plugins` (through
        the app's `expo`, as the installed copy finds it, and the `xcode` next to it) and the
        monorepo precompiled base are resolved from `RN_XTOOL_PROJECT_ROOT`, never from this copy's
@@ -102,7 +107,7 @@ of its own. SDK 58 and newer keep using the plugin installed in the app.
   `rn-spm` step sets both, and the driver clears values inherited from the shell when it runs no
   vendored plugin) and `EXPO_PRECOMPILED_MODULES_PATH` (optional, as upstream). rn-xtool sets the latter to
   `ios/build/expo-precompiled`, where its `jsi` step writes the `ExpoModulesJSIHeaders.xcframework`
-  that SDK 57 does not ship.
+  that SDK 56 and 57 do not ship.
 - `expo-modules-autolinking` 58.0.15 and `expo-modules-macros` 0.22.0 (with the host's
   `@expo/modules-macros-linux-<arch>`) are exact dependencies of rn-xtool; this copy finds them in
   rn-xtool's `node_modules`. Every package of the app (`expo`, `expo-modules-core`, the modules,

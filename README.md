@@ -23,10 +23,11 @@ Demo video coming soon.
 | --- | --- |
 | Expo SDK 58 (expo 58.0.21 or newer 58.x, react-native 0.88.1) | ✅ [details](docs/how-it-works.md#expo-sdk-58) |
 | Expo SDK 57 (expo 57.0.31 or newer 57.x, react-native 0.86.3) | ✅ [details](docs/how-it-works.md#expo-sdk-57) |
+| Expo SDK 56 (expo 56.0.24 or newer 56.x, react-native 0.85.3; build-verified only) | ✅ [details](docs/how-it-works.md#expo-sdk-56) |
 | Bare React Native 0.88.x from 0.88.0 (`@react-native-community/cli init`) | ✅ [details](docs/bare-react-native.md) |
 | Bare React Native 0.85.x from 0.85.0, 0.86.x from 0.86.2, 0.87.x from 0.87.1 (0.85.3 and 0.86.2 build-verified only) | ✅ [details](docs/bare-react-native.md#supported-react-native-versions) |
 | Bare React Native + Expo modules (hybrid), React Native 0.88.1 | ✅ [details](docs/bare-react-native.md#hybrid-bare--expo-modules) |
-| Expo SDK 54–56, React Native 0.84 and older, 0.86.0, 0.86.1, 0.87.0 | ⏳ not yet (Expo SDK 53 and older are refused as well) |
+| Expo SDK 54–55, React Native 0.84 and older, 0.86.0, 0.86.1, 0.87.0 | ⏳ not yet (Expo SDK 53 and older are refused as well) |
 | iOS simulator | ❌ macOS only |
 | Production / App Store builds | ❌ use EAS |
 | macOS or Windows as the host | ❌ (WSL2 on x86_64 should work as Linux; not tested yet, reports welcome) |
@@ -36,9 +37,10 @@ Bare React Native versions: 0.85.x from 0.85.0, 0.86.x from 0.86.2, 0.87.x from 
 run on a device), see
 [Supported React Native versions](docs/bare-react-native.md#supported-react-native-versions). A newer patch of one of
 these lines builds with a warning naming the verified versions. An older version, a prerelease or another minor stops
-with one error naming these floors. Expo SDK 57 and 58 work the same way: newer patches of the SDK's packages build
-with a warning, older ones stop, and react-native stays exact (0.86.3 on SDK 57, 0.88.1 on SDK 58)
-([details](docs/troubleshooting.md#newer-than-the-verified-versions)).
+with one error naming these floors. Expo SDK 56, 57 and 58 work the same way: newer patches of the SDK's packages
+build with a warning, older ones stop, and react-native stays exact (0.85.3 on SDK 56, 0.86.3 on SDK 57, 0.88.1 on
+SDK 58) ([details](docs/troubleshooting.md#newer-than-the-verified-versions)). Expo SDK 56 is build-verified only: a
+fresh default template builds (2026-11-11), and it has not been run on a device yet.
 
 Apps that grew from older React Native templates build too: a production bare React Native 0.85.0 app with an
 Objective-C app target (`main.m`, `AppDelegate.h` and `AppDelegate.mm` next to the project, a bridging header and a
