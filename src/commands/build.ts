@@ -193,7 +193,8 @@ export interface BuildDeps {
       binary?: Record<string, PodBinary>;
     },
   ) => Promise<void>;
-  buildJsi: (paths: ProjectPaths, opts?: { rnHeaders?: JsiRnHeaders; headersXcframework?: boolean }) => Promise<RuntimeFramework>;
+  /** `clean`: on `build --clean`, the jsi build starts from an empty scratch (its module cache included). */
+  buildJsi: (paths: ProjectPaths, opts?: { rnHeaders?: JsiRnHeaders; headersXcframework?: boolean; clean?: boolean }) => Promise<RuntimeFramework>;
   generateAppConfig: (paths: ProjectPaths) => Promise<void>;
   readFrameworks: (dir: string, flavor: "debug" | "release") => RuntimeFramework[];
   /** G4: throws when an embedded framework imports a symbol another embedded framework does not export. */
@@ -532,11 +533,12 @@ export async function build(
     : undefined;
   const artifactsRoot = preparedArtifacts ?? config.rnArtifactsDir;
   const buildJsi = (): Promise<RuntimeFramework> => {
-    if (!vendoredExpo) return d.buildJsi(paths);
+    // --clean: Expo's prebuild leaves ios-xtool alone, so a module cache an interrupted jsi build left would stay.
+    if (!vendoredExpo) return clean ? d.buildJsi(paths, { clean }) : d.buildJsi(paths);
     if (artifactsRoot === undefined) {
       throw new Error("internal error: the vendored-plugin jsi step has no React Native artifacts (rn-artifacts was not planned and rnArtifactsDir is unset)");
     }
-    return d.buildJsi(paths, { rnHeaders: jsiRnHeaderDirs(artifactsRoot), headersXcframework: true });
+    return d.buildJsi(paths, { rnHeaders: jsiRnHeaderDirs(artifactsRoot), headersXcframework: true, ...(clean && { clean }) });
   };
   let jsi = vendoredExpo && planned("jsi") ? await step("jsi", buildJsi) : undefined;
   // On every build: the scaffolds link ../pod-binaries, and generate force-loads its archives.

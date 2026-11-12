@@ -36,11 +36,18 @@ const SLICES: XcframeworkLibrary[] = [
   },
 ];
 
+/**
+ * The scratch folder of `scripts/build-expo-modules-jsi.sh` (output `jsiOut`): its staged headers and its SwiftPM build,
+ * module cache included. The script makes it again when it is missing.
+ */
+export function jsiScratchDir(jsiOut: string): string {
+  return path.join(jsiOut, ".jsi-build");
+}
+
 /** Where `scripts/build-expo-modules-jsi.sh` (output `jsiOut`) leaves the Swift header and interface it generates. */
 export function jsiObjectsDir(jsiOut: string): string {
   return path.join(
-    jsiOut,
-    ".jsi-build",
+    jsiScratchDir(jsiOut),
     ".build",
     "out",
     "Intermediates.noindex",

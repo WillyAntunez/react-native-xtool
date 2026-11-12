@@ -996,6 +996,22 @@ that imports ExpoModulesJSI would fail later, at `xtool-build`, with `expected t
 - Either way, report it with the output of `rn-xtool doctor --report` (see
   [Reporting a problem](#reporting-a-problem)): the message names the first line the check stopped on.
 
+### Interrupted jsi build
+
+A build stopped while the `jsi` step runs (Ctrl-C, a closed terminal, a reboot) can leave the ExpoModulesJSI build's
+module cache, under `ios-xtool/jsi-out/.jsi-build`, with precompiled module files (`.pcm`) that are empty or cut short.
+The next build reads them and stops at `jsi` with clang's `fatal error: file '…/ModuleCache.noindex/…/<module>.pcm' is
+not a valid module file: file too small to contain precompiled file magic`, followed by "The jsi step stopped on a
+precompiled module file in ExpoModulesJSI's module cache that is empty or cut short ("is not a valid module file"): a
+build interrupted during the jsi step leaves its module cache that way, and the next builds keep reading it. Run
+`rn-xtool build --clean`: it removes ios-xtool/jsi-out/.jsi-build, and the jsi step builds ExpoModulesJSI again from the
+start. See <this section>".
+
+Run `rn-xtool build --clean` (or `run --clean`). On every project with a `jsi` step it removes
+`ios-xtool/jsi-out/.jsi-build` before that step, so ExpoModulesJSI is built again from an empty folder (about 10 seconds
+on the Expo SDK 56, 57 and 58 apps rn-xtool is tested with). A plain `rn-xtool build` keeps that folder and fails the
+same way again.
+
 ### Precheck
 
 `build` checks the app target's own sources twice before `xtool-build` compiles them. Pass 1 runs before the `patches`

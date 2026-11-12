@@ -771,6 +771,20 @@ describe("build", () => {
     await build(b.root, {}, { ...b.deps, buildJsi: bareJsi });
     expect(bareJsi.mock.calls).toEqual([[expect.objectContaining({ root: b.root })]]);
   });
+  it("--clean asks the jsi step for a clean build on every kind that has one", async () => {
+    const kinds = [sdk57, { kind: "expo" as const }, { kind: "bare" as const, hasExpoModules: true, hasExpoConstants: false }];
+    for (const project of kinds) {
+      const t = setup({ hasIos: true, project });
+      const buildJsi = vi.fn(async () => ({ name: "ExpoModulesJSI" }) as never);
+      await build(t.root, { clean: true }, { ...t.deps, buildJsi });
+      expect(buildJsi).toHaveBeenCalledTimes(1);
+      expect(buildJsi.mock.calls[0]![1]).toMatchObject({ clean: true });
+      const plain = setup({ hasIos: true, project });
+      const plainJsi = vi.fn(async () => ({ name: "ExpoModulesJSI" }) as never);
+      await build(plain.root, {}, { ...plain.deps, buildJsi: plainJsi });
+      expect(plainJsi.mock.calls[0]![1]?.clean).toBeUndefined();
+    }
+  });
   it("makes library manifests portable in the patches step, after patch-package and before rn-spm", async () => {
     const manifests = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "manifests");
     const t = setup({ hasIos: true });

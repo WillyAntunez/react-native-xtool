@@ -265,7 +265,7 @@ The process, end to end:
 12. `install`, launch, Metro, the dev client.
 13. Over time: new 56.x packages, a new Swift 6.4.x, the drift watch.
 
-The owner confirmed the rulings of rows 1–40 on 2026-11-11; rows 41–44 carry a ruling awaiting the owner's confirmation.
+The owner confirmed the rulings of rows 1–40 on 2026-11-11; rows 41–45 carry a ruling awaiting the owner's confirmation.
 
 | # | Hop | Fails how | Who learns | Ruling |
 |---|-----|-----------|------------|-----------------|
@@ -313,6 +313,7 @@ The owner confirmed the rulings of rows 1–40 on 2026-11-11; rows 41–44 carry
 | 42 | npm install | pnpm, Yarn PnP or another layout without a flat `node_modules` | user at `build` and `doctor --project`: the early refusal, before anything is built | accept: existing behaviour; `build` refuses these setups early (`knownLimits.allow` lets them through, and the build may then fail later), and README's "Before you start" lists npm or Yarn classic as the requirement (troubleshooting "pnpm and Yarn PnP") (awaiting the owner's confirmation) |
 | 43 | `xtool-build` | the SDK 56 modules compiled from source get their macros expanded by rn-xtool's expo-modules-macros 0.22.0, not by the plugin core 56 depends on; a later 56.x module that uses a macro the two expand differently fails after a green gate | user at `xtool-build`: the compiler's error | accept: a loud compiler failure; Task 6 Step 1 covers this set, and the vendored plugin's README states the limit (Task 7) (awaiting the owner's confirmation) |
 | 44 | `doctor`/`build`: the gate | the autolinking CLI cannot run at gate time: not found, a non-zero exit, no answer within a minute, or output that is not its JSON | user at the build's autolinking step, which runs the same CLI and stops there | handle: the gate falls back to the two-copy rule (the top-level copy when the app, or a package the app lists, depends on it; else expo's) and never stops on the CLI's failure itself; Task 1 tests `falls back to the two-copy rule when the CLI %s` and the `through the fallback rule` group on SDK 58 (awaiting the owner's confirmation) |
+| 45 | jsi build | a build interrupted during `jsi` (Ctrl-C, a closed terminal, a reboot) leaves a truncated module cache: zero-byte or cut-short `.pcm` files under `ios-xtool/jsi-out/.jsi-build`; the next `build`, and on Expo also `build --clean` (its prebuild leaves `ios-xtool` alone), fail at `jsi` with clang's `… is not a valid module file` | user at `jsi` | handle: `build --clean` removes the jsi build's scratch (`ios-xtool/jsi-out/.jsi-build`) before the `jsi` step on every kind that has one, and a `jsi` failure whose output says `is not a valid module file` names the cause and `rn-xtool build --clean`, with troubleshooting's "Interrupted jsi build"; no automatic retry. Tests: jsi.test `--clean removes the jsi build's scratch before the script runs, and nothing else in jsi-out`, `keeps the jsi build's scratch without --clean`, `names the module cache and the remedy when the build fails on a module file cut short`, `leaves any other jsi failure as it is`, `is the script's scratch folder`; build.test `--clean asks the jsi step for a clean build on every kind that has one` (awaiting the owner's confirmation) |
 
 ## Verification
 
