@@ -96,7 +96,7 @@ function quotedIncludes(text: string): string[] {
  * Read as text: a quoted include inside a comment or an `#if 0` block is followed too (and fails closed when it is
  * not there), and an angle-bracket include is never copied.
  */
-export function nativeStateHeaders(jsiDir: string, jsiVersion: string): { dir: string; files: string[] } {
+function nativeStateHeaders(jsiDir: string, jsiVersion: string): { dir: string; files: string[] } {
   const include = path.join(jsiDir, "apple", "Sources", "ExpoModulesJSI-Cxx", "include");
   const dir = [path.join(include, "Public"), include].find((d) => isFile(path.join(d, NATIVE_STATE)));
   if (dir === undefined) {

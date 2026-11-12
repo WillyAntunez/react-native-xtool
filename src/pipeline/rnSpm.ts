@@ -492,7 +492,7 @@ export function patchPackageReason(output: string, exitCode: number): string {
  * The vendored Expo plugin's warnings in `file` (one `{"warning": …}` line each), each once however many plugin runs
  * wrote it, in first-seen order; none without the file. A line that is not a warning is skipped.
  */
-export function pluginWarnings(file: string): string[] {
+function pluginWarnings(file: string): string[] {
   let raw: string;
   try {
     raw = readFileSync(file, "utf8");
